@@ -23,7 +23,7 @@ below:
   higher-capability provider (BeRF-FR) ships only in a separate `pantr-berf` wheel; no dependency
   that would stop pantr being MIT; `pantr::pantr` and `pantr::mpi` are header-only INTERFACE
   targets; contraction (`-ffp-contract=on`) and `-march=native` propagated by the INTERFACE target,
-  both optional; SIMD chosen by macros with a scalar fallback; multi-ISA wheels; dependencies
+  both optional (the latter decided in the consumer, DR-9); SIMD chosen by macros with a scalar fallback; multi-ISA wheels; dependencies
   C++20, Threads, Eigen, Spectra, Kokkos mdspan where `<mdspan>` is missing; pantr's own
   `std::thread` pool sized from the affinity mask (no OpenMP, no TBB); METIS optional behind a seam;
   numpy and scipy (scipy only at the Python boundary) at runtime, Numba and threadpoolctl removed;

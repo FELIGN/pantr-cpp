@@ -13,8 +13,9 @@
 /// Fork safety: a forked child inherits the pool's memory but none of its threads. The pool
 /// records the process id that created it; a child that calls a parallel loop finds a different
 /// id, leaves the inherited pool untouched (its mutexes may have been held at the fork) and builds
-/// its own. The holder is constant-initialized and its fork handler is registered at load time, so
-/// no static-initialization guard or creation mutex can be inherited mid-update.
+/// its own. The holder is constant-initialized and its fork handler registered by dynamic
+/// initialization, so no static-initialization guard or creation mutex is inherited mid-update.
+/// The pool is never destroyed (see `detail::PoolHolder`).
 ///
 /// Note: the pool, the holder and the thread-local setting are inline variables. Shared objects
 /// that each include these headers and keep their symbols local (hidden visibility, or `dlopen`
@@ -35,6 +36,7 @@
 #include <exception>
 #include <mutex>
 #include <string>
+#include <system_error>
 #include <thread>
 #include <vector>
 
@@ -137,6 +139,8 @@ class RegionGuard {
 ///     stop_ (bool): Set by the destructor; workers exit.
 ///     pid_ (std::int64_t): Process that created the pool.
 ///     threads_ (std::vector<std::thread>): The workers.
+///     inherited_ (Pool*): The pool this one replaced after a `fork`, kept reachable, never
+///         touched; null otherwise.
 class Pool {
  public:
   /// Start `workers` worker threads.
@@ -193,10 +197,14 @@ class Pool {
         const std::lock_guard<std::mutex> lock(mutex_);
         jobs_.push_back(&job);
       }
-      // Wake only as many workers as the job admits; waking all would make every idle worker
-      // contend for the mutex just to go back to sleep.
-      for (std::size_t i = 0; i < wanted; ++i) {
-        work_cv_.notify_one();
+      // When the job admits every worker, one broadcast is cheapest. Otherwise wake only as many
+      // as it admits, so the others do not contend for the mutex just to go back to sleep.
+      if (wanted == threads_.size()) {
+        work_cv_.notify_all();
+      } else {
+        for (std::size_t i = 0; i < wanted; ++i) {
+          work_cv_.notify_one();
+        }
       }
     }
     {
@@ -221,7 +229,8 @@ class Pool {
   ///
   /// Raises:
   ///     value_error: `PANTR_NUM_THREADS` is malformed (see `max_threads`).
-  ///     std::system_error: The affinity query or a thread start failed.
+  ///     std::system_error: The affinity query or a thread start failed, or the fork handler could
+  ///         not be registered.
   static Pool& instance();
 
  private:
@@ -274,41 +283,40 @@ class Pool {
   bool stop_ = false;
   std::int64_t pid_;
   std::vector<std::thread> threads_;
+  Pool* inherited_ = nullptr;
 };
 
 namespace detail {
 
 /// Owner of the process pool. Constant-initialized (no static-initialization guard), so a forked
-/// child can never inherit it half-constructed; its destructor, at exit, joins the pool this
-/// process created and leaves any pool inherited through `fork` alone.
+/// child can never inherit it half-constructed.
+///
+/// The pool is deliberately never destroyed: its workers stay blocked on their condition variable
+/// until the process ends. Destroying it at exit would race every static destructor, in any
+/// translation unit, that still runs a parallel loop (their order relative to this object is
+/// unspecified), and joining idle workers buys nothing at exit.
 ///
 /// Attributes:
 ///     mutex (std::mutex): Serializes pool creation.
 ///     current (std::atomic<Pool*>): The pool of the process that owns it, or null.
-///     inherited (std::vector<Pool*>): Pools inherited through `fork`, kept reachable, never
-///     touched.
 struct PoolHolder {
   std::mutex mutex;
   std::atomic<Pool*> current{nullptr};
-  std::vector<Pool*> inherited;
 
   constexpr PoolHolder() noexcept = default;
   PoolHolder(const PoolHolder&) = delete;
   PoolHolder& operator=(const PoolHolder&) = delete;
-  ~PoolHolder() {
-    Pool* p = current.load(std::memory_order_acquire);
-    if (p != nullptr && p->creator_pid() == current_pid()) {
-      delete p;
-    }
-  }
+  ~PoolHolder() = default;
 };
 
 /// The process's pool holder.
 inline constinit PoolHolder pool_holder;
 
 #if !defined(_WIN32)
-/// Registered when the library is loaded: `pool_holder.mutex` is held by the forking thread across
-/// `fork` and released in both processes, so a child never inherits it locked by a thread it lacks.
+/// Registered by dynamic initialization (in practice when the library is loaded; at the latest
+/// before `Pool::instance` reads it): `pool_holder.mutex` is held by the forking thread across
+/// `fork` and released in both processes, so a child never inherits it locked by a thread it
+/// lacks. Nonzero means registration failed, which `Pool::instance` reports.
 inline const int pool_atfork_status =
     ::pthread_atfork([] { pool_holder.mutex.lock(); }, [] { pool_holder.mutex.unlock(); },
                      [] { pool_holder.mutex.unlock(); });
@@ -318,6 +326,13 @@ inline const int pool_atfork_status =
 
 inline Pool& Pool::instance() {
   detail::PoolHolder& h = detail::pool_holder;
+#if !defined(_WIN32)
+  // Reading the status here also odr-uses it, so its registration cannot be deferred past this.
+  if (detail::pool_atfork_status != 0) {
+    throw std::system_error(detail::pool_atfork_status, std::generic_category(),
+                            "pthread_atfork: the pool's fork handler could not be registered");
+  }
+#endif
   Pool* p = h.current.load(std::memory_order_acquire);
   if (p != nullptr && p->pid_ == detail::current_pid()) {
     return *p;
@@ -326,11 +341,11 @@ inline Pool& Pool::instance() {
   p = h.current.load(std::memory_order_relaxed);
   if (p == nullptr || p->pid_ != detail::current_pid()) {
     // In a forked child the inherited pool's threads do not exist and its mutex may be locked:
-    // never touch it. It stays reachable through `inherited` and is never destroyed.
-    if (p != nullptr) {
-      h.inherited.push_back(p);
-    }
+    // never touch it. The new pool keeps a pointer to it, so it stays reachable (no leak report)
+    // and is never destroyed.
+    Pool* inherited = p;
     p = new Pool(max_threads() - 1);
+    p->inherited_ = inherited;
     h.current.store(p, std::memory_order_release);
   }
   return *p;

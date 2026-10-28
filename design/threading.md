@@ -30,11 +30,14 @@ the Python suite stay the oracle across thread counts. Architecture: `design/por
   machine, where a threshold measured on many cores would be wrong on a laptop.
 - **Exceptions**: the first exception a chunk throws is captured, the chunks not yet started are
   skipped, and it is rethrown on the caller after the join.
+- **The pool is never destroyed.** Its workers stay blocked until the process ends. Destroying it
+  at exit would race every static destructor in any translation unit that still runs a parallel
+  loop, since their order relative to the pool's owner is unspecified.
 - **Fork safety**: the pool records the process id that created it. A forked child that calls a
   parallel loop sees a different id, leaves the inherited pool untouched (its threads do not exist
   in the child, and its mutexes may have been held at the fork) and builds its own. The mutex that
-  guards pool creation is held across `fork` with `pthread_atfork`, registered when the library is
-  loaded, so a child never inherits it locked by a thread it does not have. The pool's holder and
+  guards pool creation is held across `fork` with `pthread_atfork`, registered by dynamic
+  initialization (a failed registration is reported when the pool is first needed), so a child never inherits it locked by a thread it does not have. The pool's holder and
   the cached capacity are constant-initialized rather than function-local statics: a static's
   initialization guard, inherited mid-initialization, would block the child forever.
 

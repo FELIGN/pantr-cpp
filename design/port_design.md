@@ -105,7 +105,7 @@ path in the build tree and in the install tree is the same string.
 
 | Target | Kind | Carries | Exported |
 |---|---|---|---|
-| `pantr::pantr` | INTERFACE | `include/`, `cxx_std_20`, `Threads::Threads`, `Eigen3::Eigen`, `Spectra::Spectra`, `std::mdspan`/Kokkos `mdspan::mdspan`, contraction flag, optional `-march=native`, `EIGEN_MPL2_ONLY`, `EIGEN_USE_AVX512_TRSM_KERNELS=0` (GNU) | yes |
+| `pantr::pantr` | INTERFACE | `include/`, `cxx_std_20`, `Threads::Threads`, `Eigen3::Eigen`, `Spectra::Spectra`, `std::mdspan`/Kokkos `mdspan::mdspan`, contraction flag, optional `-march=native` (added in the consumer, DR-9), `EIGEN_MPL2_ONLY`, `EIGEN_USE_AVX512_TRSM_KERNELS=0` (GNU) | yes |
 | `pantr::mpi` | INTERFACE | links `pantr::pantr` + `MPI::MPI_CXX` | yes, component `mpi` |
 | `pantr::berf` | INTERFACE | `providers/berf/include`, links `pantr::pantr` + `berf::berf` | only with `PANTR_WITH_BERF=ON`, component `berf` |
 | `pantr::metis` | INTERFACE | `providers/metis/include`, links `METIS::metis` | only with `PANTR_WITH_METIS=ON` |
@@ -120,9 +120,9 @@ path in the build tree and in the install tree is the same string.
 | Option | Default | Effect and reason |
 |---|---|---|
 | `PANTR_FP_CONTRACT` | ON | `-ffp-contract=on` (`/fp:contract`) on `pantr::pantr`, inherited by consumers. On GCC < 14, where `on` behaves as `fast` (lesson 1, row "Never -ffast-math"), set `-ffp-contract=off` instead and say so in a configure message. This is the one version test: contraction semantics cannot be probed by compiling a snippet. |
-| `PANTR_NATIVE_ARCH` | ON | `-march=native` on the INTERFACE target, as ruled (chosen by the maintainer after the portability warning). Forced OFF in every wheel build and every CI leg that targets a named ISA. |
+| `PANTR_NATIVE_ARCH` | ON | `-march=native` for the consumer, as ruled; decided in `pantrConfig.cmake` from the consumer's own setting, never frozen into the export (DR-9) (chosen by the maintainer after the portability warning). Forced OFF in every wheel build and every CI leg that targets a named ISA. |
 | `PANTR_FORCE_SCALAR` | OFF | defines `PANTR_SIMD_FORCE_SCALAR`. |
-| `PANTR_USE_STD_MDSPAN` | OFF | see 2.6; picks `std::mdspan` for every consumer TU uniformly. |
+| `PANTR_USE_STD_MDSPAN` | OFF | see 2.6; picks `std::mdspan` for every consumer TU uniformly. Not supported in stage 0 (`design/mdspan_identity.md`). |
 | `PANTR_WITH_BERF` / `PANTR_WITH_METIS` | OFF | build, test and export the provider target. Never changes a core header. |
 | `PANTR_BUILD_TESTS` / `PANTR_BUILD_PYTHON` / `PANTR_BUILD_PYTHON_MPI` / `PANTR_BUILD_BENCHMARKS` | ON (top level) / OFF / OFF / OFF | as named. |
 | `PANTR_MULTI_ISA` | OFF | the per-ISA module variants (wheels). Fatal with `PANTR_NATIVE_ARCH=ON`. |

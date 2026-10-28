@@ -4,8 +4,10 @@ include(GNUInstallDirs)
 
 option(PANTR_FP_CONTRACT
        "Put -ffp-contract=on (/fp:contract) on pantr::pantr, inherited by consumers" ON)
-# Consumed in two places: here for pantr's own tests, and in pantrConfig.cmake, where a consumer
-# sets it before find_package(pantr). It is never frozen into the exported target.
+# Consumed in two places: here for pantr's own tests (target pantr_native_arch), and in
+# pantrConfig.cmake, where a consumer sets it before find_package(pantr). It is never frozen into
+# the exported target. A project that adds pantr with add_subdirectory or FetchContent gets no ISA
+# flag from pantr::pantr and sets its own.
 option(PANTR_NATIVE_ARCH "Compile for the build machine's ISA (-march=native)" ON)
 option(PANTR_FORCE_SCALAR "Define PANTR_SIMD_FORCE_SCALAR (the scalar SIMD fallback)" OFF)
 option(PANTR_WARNINGS_AS_ERRORS "Add -Werror (/WX) to pantr's own warnings target" OFF)

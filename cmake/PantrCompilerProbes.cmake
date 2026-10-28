@@ -38,10 +38,25 @@ if(NOT PANTR_HAVE_FP_TO_CHARS)
   message(FATAL_ERROR "pantr: the C++ standard library has no floating-point std::to_chars")
 endif()
 
-# Toggle: a standard <mdspan>. Decided here, once, and set as a compile definition on the exported
-# target, so every translation unit of a consumer program sees the same pantr::mdspan type. A
-# header-level __has_include test would give two types in a program that mixes C++20 and C++23
-# translation units: an ODR violation in every signature that mentions it.
+# Hard gate: a constant-initialized struct of a mutex and an atomic pointer, the shape of the
+# pool's holder in parallel/pool.hpp (no static-initialization guard, so fork-safe).
+check_cxx_source_compiles(
+  [=[
+  #include <atomic>
+  #include <mutex>
+  struct S {
+    std::mutex m;
+    std::atomic<void*> p{nullptr};
+    constexpr S() noexcept = default;
+  };
+  constinit S s;
+  int main() { return s.p.load() == nullptr ? 0 : 1; }
+  ]=]
+  PANTR_HAVE_CONSTINIT_MUTEX)
+if(NOT PANTR_HAVE_CONSTINIT_MUTEX)
+  message(FATAL_ERROR "pantr: the C++ standard library cannot constant-initialize a std::mutex")
+endif()
+
 # Hard gate: std::make_shared for arrays (C++20), which core/ndarray.hpp allocates with.
 check_cxx_source_compiles(
   [=[
@@ -53,6 +68,10 @@ if(NOT PANTR_HAVE_MAKE_SHARED_ARRAY)
   message(FATAL_ERROR "pantr: the C++ standard library has no std::make_shared<T[]>")
 endif()
 
+# Toggle: a standard <mdspan>. Meant to be decided here, once, and set as a compile definition on
+# the exported target, so every translation unit of a consumer program sees the same
+# pantr::mdspan type (a header-level __has_include test would give two types in a program that
+# mixes C++20 and C++23 translation units: an ODR violation in every signature that mentions it).
 check_cxx_source_compiles(
   [=[
   #include <mdspan>
@@ -73,11 +92,7 @@ endif()
 if(PANTR_HAVE_STD_MDSPAN)
   message(STATUS "pantr: this toolchain has <mdspan>; the bundled mdspan is used regardless")
 endif()
-if(PANTR_USE_STD_MDSPAN)
-  message(STATUS "pantr: pantr::mdspan is std::mdspan")
-else()
-  message(STATUS "pantr: pantr::mdspan is the bundled Kokkos reference mdspan")
-endif()
+message(STATUS "pantr: pantr::mdspan is the bundled Kokkos reference mdspan")
 
 if(_pantr_saved_std)
   set(CMAKE_CXX_STANDARD "${_pantr_saved_std}")

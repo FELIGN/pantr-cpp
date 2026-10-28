@@ -109,6 +109,21 @@ add_test(NAME install.consumer
                  -P "${CMAKE_CURRENT_SOURCE_DIR}/consumer/run_consumer_test.cmake")
 set_tests_properties(install.consumer PROPERTIES TIMEOUT 600)
 
+# The exported targets carry no ISA flag even when pantr itself is built with PANTR_NATIVE_ARCH=ON.
+set(_pantr_dep_sources "")
+foreach(_dep EIGEN SPECTRA MDSPAN BOOST_MULTIPRECISION BOOST_CONFIG)
+  string(TOLOWER "${_dep}" _lower)
+  list(APPEND _pantr_dep_sources "-DFETCHCONTENT_SOURCE_DIR_PANTR_${_dep}=${pantr_${_lower}_SOURCE_DIR}")
+endforeach()
+string(REPLACE ";" "|" _pantr_dep_sources "${_pantr_dep_sources}")
+add_test(NAME install.native_flag_not_exported
+         COMMAND "${CMAKE_COMMAND}" -DSOURCE_DIR=${PROJECT_SOURCE_DIR}
+                 -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/native_export_run
+                 -DCXX_COMPILER=${CMAKE_CXX_COMPILER} -DGENERATOR=${CMAKE_GENERATOR}
+                 -DMAKE_PROGRAM=${CMAKE_MAKE_PROGRAM} "-DDEP_SOURCES=${_pantr_dep_sources}"
+                 -P "${CMAKE_CURRENT_SOURCE_DIR}/consumer/run_native_export_test.cmake")
+set_tests_properties(install.native_flag_not_exported PROPERTIES TIMEOUT 600)
+
 # The tests above drive `cmake --build` or `cmake --install` on this very build tree; two of them at
 # once would regenerate it concurrently.
 set_tests_properties(header_rules.poison_mpi_control header_rules.rejects-ffast-math

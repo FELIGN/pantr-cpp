@@ -272,31 +272,41 @@ TEST_CASE("Pool: after a chunk throws, the chunks not yet started are skipped") 
   CHECK(ran.load() == 1);
 }
 
-TEST_CASE("parallel_for: pool workers take part") {
+TEST_CASE("parallel_for: every admitted worker takes part") {
   if (par::max_threads() < 2) {
     MESSAGE("one CPU available: no worker exists to take part");
     return;
   }
-  const ThreadsGuard guard(2);
-  // Each chunk waits (bounded) until a chunk has run on a second thread, which only a worker can
-  // provide: a pool that never woke its workers would leave one thread id.
-  std::mutex m;
-  std::set<std::thread::id> ids;
-  std::atomic<bool> two_seen{false};
-  par::parallel_for(8, std::size_t{1}, [&](std::size_t, std::size_t) {
-    {
-      const std::lock_guard<std::mutex> lock(m);
-      ids.insert(std::this_thread::get_id());
-      if (ids.size() >= 2) {
-        two_seen = true;
-      }
-    }
+  // Two threads, the suite's usual count, and the full capacity (bounded, so a large machine does
+  // not block that many threads): fewer than all workers, and all of them, are woken differently.
+  std::set<std::size_t> counts{2, test_threads()};
+  if (par::max_threads() <= 64) {
+    counts.insert(par::max_threads());
+  }
+  for (const std::size_t t : counts) {
+    CAPTURE(t);
+    const ThreadsGuard guard(t);
+    // Each thread's first chunk waits (bounded) until t distinct threads have run a chunk, which
+    // only t - 1 woken workers plus the caller can provide.
+    std::mutex m;
+    std::set<std::thread::id> ids;
+    std::atomic<bool> all_seen{false};
+    // One deadline for the whole loop, so a pool that never wakes its workers fails in seconds.
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-    while (!two_seen.load() && std::chrono::steady_clock::now() < deadline) {
-      std::this_thread::yield();
-    }
-  });
-  CHECK(ids.size() == 2);
+    par::parallel_for(4 * t, std::size_t{1}, [&](std::size_t, std::size_t) {
+      {
+        const std::lock_guard<std::mutex> lock(m);
+        ids.insert(std::this_thread::get_id());
+        if (ids.size() >= t) {
+          all_seen = true;
+        }
+      }
+      while (!all_seen.load() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::yield();
+      }
+    });
+    CHECK(ids.size() == t);
+  }
 }
 
 TEST_CASE("Pool: the caller completes a loop with no worker at all") {
@@ -389,5 +399,51 @@ TEST_CASE("Pool: a forked child builds its own pool and runs parallel loops") {
   CHECK(WEXITSTATUS(wstatus) == 0);
   // The parent's pool is untouched.
   CHECK(par::Pool::instance().creator_pid() == parent_pid);
+}
+
+TEST_CASE("Pool: a fork while another thread holds the creation mutex leaves the child usable") {
+  if (par::max_threads() < 2) {
+    MESSAGE("one CPU available: the child would run serially, so the pool path is not reached");
+    return;
+  }
+  const ThreadsGuard guard(test_threads());
+  par::parallel_for(1000, std::size_t{10}, [](std::size_t, std::size_t) {});  // parent pool exists
+  // Another thread holds the creation mutex while this one forks. The fork handler makes the fork
+  // wait for it and releases it in the child; without the handler the child would inherit it
+  // locked and block forever creating its own pool.
+  std::atomic<bool> held{false};
+  std::thread holder([&] {
+    const std::lock_guard<std::mutex> lock(par::detail::pool_holder.mutex);
+    held = true;
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  });
+  while (!held.load()) {
+    std::this_thread::yield();
+  }
+  const pid_t child = ::fork();
+  REQUIRE(child >= 0);
+  if (child == 0) {
+    ::alarm(30);
+    int status = 0;
+    try {
+      std::vector<int> out(20000, 0);
+      par::parallel_for(out.size(), std::size_t{100}, [&](std::size_t b, std::size_t e) {
+        for (std::size_t i = b; i < e; ++i) {
+          out[i] = 1;
+        }
+      });
+      for (const int v : out) {
+        status |= v == 1 ? 0 : 1;
+      }
+    } catch (...) {
+      status = 4;
+    }
+    ::_exit(status);
+  }
+  holder.join();
+  int wstatus = 0;
+  REQUIRE(::waitpid(child, &wstatus, 0) == child);
+  REQUIRE(WIFEXITED(wstatus));
+  CHECK(WEXITSTATUS(wstatus) == 0);
 }
 #endif

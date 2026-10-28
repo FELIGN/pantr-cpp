@@ -176,7 +176,7 @@ class NdArray {
   }
 
   static std::size_t checked_size(const std::vector<std::size_t>& shape) {
-    constexpr std::size_t max_elements = std::numeric_limits<std::size_t>::max() / sizeof(T);
+    constexpr std::size_t max_elements = (std::numeric_limits<std::size_t>::max)() / sizeof(T);
     // A zero extent makes the array empty whatever the other extents are.
     if (std::find(shape.begin(), shape.end(), std::size_t{0}) != shape.end()) {
       return 0;
