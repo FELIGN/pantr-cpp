@@ -24,12 +24,25 @@ NUMBA_DISABLE_JIT=1 pytest --cov=src/pantr --cov-report=xml # coverage (JIT disa
 ruff check .                                                # lint
 ruff format .                                               # format
 mypy --config-file mypy.ini src tests                       # type check
-PYTHONPATH=src lint-imports                                 # import boundaries (core must not import pantr.mpi)
+make import-lint                                            # import boundaries (core must not import pantr.mpi)
 NUMBA_DISABLE_JIT=1 make docs SPHINXOPTS="-W --keep-going -j auto"  # docs build (matches CI)
 pip install -e ".[dev]"                                     # full dev env (pulls all optional extras)
 pip install "pantr[mpi]"                                    # opt in to MPI (pantr.mpi + mpi4py)
 PANTR_RUN_MPI=1 mpiexec -n 2 python -m pytest tests/mpi/    # MPI smoke tests (needs mpi4py + MPI launcher)
+python tools/ac1_ledger.py main..HEAD                       # changed test assertions, for a stage's AC1 ledger
 ```
+
+The C++ library (`include/pantr`, tests in `cpp/tests`) builds with CMake presets
+(`CMakePresets.json`: `gcc-release`, `clang-release`, `gcc-scalar`, `{gcc,clang}-asan-ubsan`,
+`{gcc,clang}-tsan`), each in `build/<preset>`:
+
+```bash
+cmake --preset gcc-release && cmake --build --preset gcc-release && ctest --preset gcc-release
+```
+
+> The presets share fetched dependency sources in `build/_deps`, so configure one preset at a time.
+> The `pantr-cpp` env's Clang has no sanitizer runtime (conda's `compiler-rt` is not installed), so
+> the `clang-asan-ubsan` and `clang-tsan` presets fail to link locally; the GCC ones work.
 
 > `tests/mpi/` holds real-MPI smoke tests; they are **skipped** unless `PANTR_RUN_MPI` is set
 > (and run under `mpiexec`). The default `pytest` run collects and skips them. CI runs them in a
@@ -76,7 +89,8 @@ The local suite passing is necessary but not sufficient. Known traps:
   raising, taking the whole run with it. Three things hide it from a local green — a full-file run
   usually gives the warmup time to finish during the first test's own compilation, a warm Numba
   cache shortens the window to nothing, and the abort needs a *fast* test that reaches kernels
-  early. `make test` is `pytest -n auto`, so every xdist worker imports and starts immediately,
+  early. `make test` is `pytest -n 8` (`PYTEST_WORKERS`; CI passes `auto`), so every xdist worker
+  imports and starts immediately,
   which is exactly the racing pattern. Measured: a new 60-case `locate` sweep aborted 4 of 4 runs
   as the first thing in a process, serially and under `-n 4`, and 0 of 4 with the barrier. **Run a
   new kernel-heavy test file on its own** (`pytest tests/test_x.py -k ...`) before trusting it, and
