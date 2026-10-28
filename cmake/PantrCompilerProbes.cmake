@@ -42,6 +42,17 @@ endif()
 # target, so every translation unit of a consumer program sees the same pantr::mdspan type. A
 # header-level __has_include test would give two types in a program that mixes C++20 and C++23
 # translation units: an ODR violation in every signature that mentions it.
+# Hard gate: std::make_shared for arrays (C++20), which core/ndarray.hpp allocates with.
+check_cxx_source_compiles(
+  [=[
+  #include <memory>
+  int main() { auto p = std::make_shared<double[]>(3); return static_cast<int>(p[0]); }
+  ]=]
+  PANTR_HAVE_MAKE_SHARED_ARRAY)
+if(NOT PANTR_HAVE_MAKE_SHARED_ARRAY)
+  message(FATAL_ERROR "pantr: the C++ standard library has no std::make_shared<T[]>")
+endif()
+
 check_cxx_source_compiles(
   [=[
   #include <mdspan>
@@ -52,16 +63,15 @@ check_cxx_source_compiles(
   }
   ]=]
   PANTR_HAVE_STD_MDSPAN)
-if(NOT DEFINED PANTR_USE_STD_MDSPAN)
-  set(_pantr_std_mdspan_default OFF)
-  if(PANTR_HAVE_STD_MDSPAN)
-    set(_pantr_std_mdspan_default ON)
-  endif()
-  set(PANTR_USE_STD_MDSPAN ${_pantr_std_mdspan_default}
-      CACHE BOOL "Use std::mdspan (ON) or the bundled Kokkos reference mdspan (OFF)")
+# Until pantr's code can index a std::mdspan (it has no operator(), which pantr code uses; see
+# design/mdspan_identity.md), the probe is reported but the bundled implementation is always used.
+set(PANTR_USE_STD_MDSPAN OFF CACHE BOOL "Use std::mdspan instead of the bundled Kokkos mdspan")
+if(PANTR_USE_STD_MDSPAN)
+  message(FATAL_ERROR "pantr: PANTR_USE_STD_MDSPAN=ON is not supported yet: pantr indexes with "
+                      "operator(), which std::mdspan does not provide")
 endif()
-if(PANTR_USE_STD_MDSPAN AND NOT PANTR_HAVE_STD_MDSPAN)
-  message(FATAL_ERROR "pantr: PANTR_USE_STD_MDSPAN=ON but this toolchain has no <mdspan>")
+if(PANTR_HAVE_STD_MDSPAN)
+  message(STATUS "pantr: this toolchain has <mdspan>; the bundled mdspan is used regardless")
 endif()
 if(PANTR_USE_STD_MDSPAN)
   message(STATUS "pantr: pantr::mdspan is std::mdspan")

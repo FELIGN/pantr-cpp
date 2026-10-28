@@ -18,14 +18,30 @@ set(_pantr_test_sources
     test_parallel.cpp
     test_dependencies.cpp)
 add_executable(pantr_tests ${_pantr_test_sources})
-target_link_libraries(pantr_tests PRIVATE pantr::pantr pantr_doctest pantr_cxx_warnings)
+target_link_libraries(pantr_tests PRIVATE pantr::pantr pantr_native_arch pantr_doctest
+                                          pantr_cxx_warnings)
 doctest_discover_tests(pantr_tests)
 
 # The scalar SIMD fallback, as the forced-scalar build sees it.
 add_executable(pantr_tests_scalar test_main.cpp test_simd.cpp)
-target_link_libraries(pantr_tests_scalar PRIVATE pantr::pantr pantr_doctest pantr_cxx_warnings)
+target_link_libraries(pantr_tests_scalar PRIVATE pantr::pantr pantr_native_arch pantr_doctest
+                                                 pantr_cxx_warnings)
 target_compile_definitions(pantr_tests_scalar PRIVATE PANTR_SIMD_FORCE_SCALAR PANTR_TEST_EXPECT_SCALAR)
 doctest_discover_tests(pantr_tests_scalar TEST_PREFIX "scalar: ")
+
+# PANTR_NUM_THREADS wiring: one process per setting, since max_threads() reads it once.
+add_executable(pantr_tests_env test_main.cpp test_env.cpp)
+target_link_libraries(pantr_tests_env PRIVATE pantr::pantr pantr_native_arch pantr_doctest
+                                              pantr_cxx_warnings)
+add_test(NAME env.num_threads_lowers_capacity COMMAND pantr_tests_env)
+set_tests_properties(env.num_threads_lowers_capacity PROPERTIES
+                     ENVIRONMENT "PANTR_NUM_THREADS=2;PANTR_TEST_EXPECT=2")
+add_test(NAME env.num_threads_cannot_raise_capacity COMMAND pantr_tests_env)
+set_tests_properties(env.num_threads_cannot_raise_capacity PROPERTIES
+                     ENVIRONMENT "PANTR_NUM_THREADS=100000;PANTR_TEST_EXPECT=100000")
+add_test(NAME env.num_threads_malformed COMMAND pantr_tests_env)
+set_tests_properties(env.num_threads_malformed PROPERTIES
+                     ENVIRONMENT "PANTR_NUM_THREADS=two;PANTR_TEST_EXPECT=malformed")
 
 # --- Header rules ---------------------------------------------------------------------------------
 # Every public header compiles on its own (self-contained) with a poisoned mpi.h first on the
@@ -45,12 +61,12 @@ foreach(_h IN LISTS _pantr_headers)
   list(APPEND _pantr_header_tus "${_tu}")
 endforeach()
 add_library(pantr_header_check OBJECT ${_pantr_header_tus})
-target_include_directories(pantr_header_check BEFORE PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/poison_mpi")
-target_link_libraries(pantr_header_check PRIVATE pantr::pantr pantr_cxx_warnings)
+target_include_directories(pantr_header_check BEFORE PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/header_rules/poison_mpi")
+target_link_libraries(pantr_header_check PRIVATE pantr::pantr pantr_native_arch pantr_cxx_warnings)
 
 # The poison works: a unit that includes mpi.h through the same include path fails with its message.
-add_library(pantr_poison_control OBJECT EXCLUDE_FROM_ALL poison_control.cpp)
-target_include_directories(pantr_poison_control BEFORE PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/poison_mpi")
+add_library(pantr_poison_control OBJECT EXCLUDE_FROM_ALL header_rules/poison_control.cpp)
+target_include_directories(pantr_poison_control BEFORE PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/header_rules/poison_mpi")
 add_test(NAME header_rules.poison_mpi_control
          COMMAND "${CMAKE_COMMAND}" --build "${PROJECT_BINARY_DIR}" --target pantr_poison_control)
 set_tests_properties(header_rules.poison_mpi_control PROPERTIES
@@ -60,12 +76,12 @@ set_tests_properties(header_rules.poison_mpi_control PROPERTIES
 # check would not reach).
 add_test(NAME header_rules.no_mpi_include_text
          COMMAND "${CMAKE_COMMAND}" -DINCLUDE_DIR=${PROJECT_SOURCE_DIR}/include
-                 -DALLOWED=${PANTR_MPI_HEADER_ALLOWED} -P "${CMAKE_CURRENT_SOURCE_DIR}/check_no_mpi.cmake")
+                 -DALLOWED=${PANTR_MPI_HEADER_ALLOWED} -P "${CMAKE_CURRENT_SOURCE_DIR}/header_rules/check_no_mpi.cmake")
 
 # config.hpp rejects fast-math, under each flag that enables it.
 foreach(_flag -ffast-math -ffinite-math-only)
   string(MAKE_C_IDENTIFIER "${_flag}" _id)
-  add_library(pantr_reject${_id} OBJECT EXCLUDE_FROM_ALL fast_math_probe.cpp)
+  add_library(pantr_reject${_id} OBJECT EXCLUDE_FROM_ALL header_rules/fast_math_probe.cpp)
   target_link_libraries(pantr_reject${_id} PRIVATE pantr::pantr)
   target_compile_options(pantr_reject${_id} PRIVATE ${_flag})
   add_test(NAME header_rules.rejects${_flag}
@@ -74,11 +90,11 @@ foreach(_flag -ffast-math -ffinite-math-only)
                        PASS_REGULAR_EXPRESSION "must not be compiled with fast-math")
 endforeach()
 
-# Every pinned dependency commit is listed, with its licence, in THIRD_PARTY_NOTICES.md.
+# Every pinned dependency commit is listed, with its license, in THIRD_PARTY_NOTICES.md.
 add_test(NAME notices.pins_listed
          COMMAND "${CMAKE_COMMAND}" -DDEPS_FILE=${PROJECT_SOURCE_DIR}/cmake/PantrDependencies.cmake
                  -DNOTICES_FILE=${PROJECT_SOURCE_DIR}/THIRD_PARTY_NOTICES.md
-                 -P "${CMAKE_CURRENT_SOURCE_DIR}/check_notices.cmake")
+                 -P "${CMAKE_CURRENT_SOURCE_DIR}/header_rules/check_notices.cmake")
 
 # --- Installed package ---------------------------------------------------------------------------
 # Install this build to a fresh prefix, then configure, build and run cpp/tests/consumer against

@@ -15,7 +15,7 @@ using pantr::parallel::worth_parallel;
 
 TEST_CASE("work model: grain is ceil(chunk_ops / ops_per_item), at least one") {
   CHECK(grain_for(WorkEstimate{1.0}) == static_cast<std::size_t>(chunk_ops));
-  CHECK(grain_for(WorkEstimate{3.0}) == static_cast<std::size_t>(std::ceil(chunk_ops / 3.0)));
+  CHECK(grain_for(WorkEstimate{3.0}) == 5462);  // ceil(16384 / 3)
   CHECK(grain_for(WorkEstimate{chunk_ops}) == 1);
   CHECK(grain_for(WorkEstimate{10.0 * chunk_ops}) == 1);
 }

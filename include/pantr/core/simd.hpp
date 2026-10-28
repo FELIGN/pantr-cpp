@@ -7,9 +7,9 @@
 /// `PANTR_FORCE_SCALAR`) selects the scalar level whatever the target. `PANTR_SIMD_ISA_NAME` names
 /// the level.
 ///
-/// Policy: vectorise across independent items, never inside a recurrence; rely on
-/// auto-vectorisation first; block loops before reaching for intrinsics. These macros select block
-/// widths. Explicit intrinsics are written only where a benchmark shows auto-vectorisation fails,
+/// Policy: vectorize across independent items, never inside a recurrence; rely on
+/// auto-vectorization first; block loops before reaching for intrinsics. These macros select block
+/// widths. Explicit intrinsics are written only where a benchmark shows auto-vectorization fails,
 /// and then beside a scalar reference that the forced-scalar build checks against.
 ///
 /// No public type's layout may depend on these macros: a program may mix translation units

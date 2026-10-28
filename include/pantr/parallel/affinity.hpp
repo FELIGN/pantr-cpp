@@ -9,6 +9,8 @@
 #include "pantr/config.hpp"
 #include "pantr/core/errors.hpp"
 
+#include <atomic>
+#include <cerrno>
 #include <cstddef>
 #include <cstdlib>
 #include <string>
@@ -17,7 +19,7 @@
 
 #if defined(__linux__)
 #include <sched.h>
-#include <cerrno>
+
 #include <new>
 #elif defined(__APPLE__)
 #include <sys/sysctl.h>
@@ -149,13 +151,16 @@ namespace detail {
   return requested == 0 || requested > affinity ? affinity : requested;
 }
 
+/// Cached pool capacity; 0 until the first `max_threads()` call computes it.
+inline constinit std::atomic<std::size_t> capacity_cache{0};
+
 }  // namespace detail
 
 /// Get the pool capacity: the most threads a pantr parallel call may use.
 ///
 /// The affinity count, lowered by the environment variable `PANTR_NUM_THREADS` when it is set.
-/// Read once, on the first call in the process; later changes to the affinity or the environment
-/// are not seen.
+/// Read on the first call in the process (and possibly by concurrent first calls); later changes to
+/// the affinity or the environment are not seen.
 ///
 /// Returns:
 ///     std::size_t: At least 1.
@@ -164,9 +169,16 @@ namespace detail {
 ///     value_error: `PANTR_NUM_THREADS` is set to something other than a positive integer.
 ///     std::system_error: The affinity query failed.
 [[nodiscard]] inline std::size_t max_threads() {
-  static const std::size_t capacity = detail::capacity_from(
-      affinity_cpu_count(), detail::parse_num_threads_env(std::getenv("PANTR_NUM_THREADS")));
-  return capacity;
+  // A constant-initialized atomic rather than a function-local static: a static's initialization
+  // guard could be inherited mid-initialization by a forked child, which would then block on it
+  // forever. Concurrent first calls compute the same value; a call that throws stores nothing.
+  std::size_t cap = detail::capacity_cache.load(std::memory_order_acquire);
+  if (cap == 0) {
+    cap = detail::capacity_from(affinity_cpu_count(),
+                                detail::parse_num_threads_env(std::getenv("PANTR_NUM_THREADS")));
+    detail::capacity_cache.store(cap, std::memory_order_release);
+  }
+  return cap;
 }
 
 }  // namespace pantr::parallel

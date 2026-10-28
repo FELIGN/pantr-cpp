@@ -3,11 +3,13 @@
 # Every dependency of pantr::pantr is header-only. None is added with add_subdirectory: their own
 # build systems would contribute targets, tests and install rules pantr does not want. The sources
 # are populated only, and pantr_deps carries their include directories as SYSTEM includes, so
-# pantr's -Werror never applies to third-party code. `cmake --install` copies their headers and
-# licence files under include/pantr/third_party/, which makes an installed pantr self-contained.
+# pantr's -Werror never applies to third-party code. With nothing added as a subdirectory, the
+# SYSTEM and EXCLUDE_FROM_ALL keywords below have no effect today; they keep each declaration
+# correct should a dependency ever be built from its own CMakeLists. `cmake --install` copies their headers and
+# license files under include/pantr/third_party/, which makes an installed pantr self-contained.
 #
 # Offline builds: -DFETCHCONTENT_SOURCE_DIR_<NAME>=<checkout> per dependency, plus
-# -DFETCHCONTENT_FULLY_DISCONNECTED=ON. Licences and versions: THIRD_PARTY_NOTICES.md, which must
+# -DFETCHCONTENT_FULLY_DISCONNECTED=ON. Licenses and versions: THIRD_PARTY_NOTICES.md, which must
 # be updated together with any pin below.
 include_guard(GLOBAL)
 include(FetchContent)

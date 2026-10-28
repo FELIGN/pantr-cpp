@@ -3,9 +3,9 @@
 pantr itself is MIT-licensed (`LICENSE`). Its C++ build fetches the dependencies below, each pinned
 to a full commit SHA in `cmake/PantrDependencies.cmake`; update this file together with any pin
 there. All are header-only. `cmake --install` copies the headers of those marked "installed",
-unmodified and with their licence files, under `include/pantr/third_party/<name>/`.
+unmodified and with their license files, under `include/pantr/third_party/<name>/`.
 
-| Dependency | Version | Commit | Upstream | Licence (SPDX) | Use | Distribution |
+| Dependency | Version | Commit | Upstream | License (SPDX) | Use | Distribution |
 |---|---|---|---|---|---|---|
 | Eigen | 5.0.1 | `bc3b39870ecb690a623a3f49149a358b95c5781d` | https://gitlab.com/libeigen/eigen | `MPL-2.0` (see below) | dense linear algebra | installed |
 | Spectra | 1.2.0 | `6841bcbacaa0f0a8446210314e682057a084be4e` | https://github.com/yixuan/spectra | `MPL-2.0` | sparse symmetric eigensolver | installed |
@@ -17,12 +17,12 @@ unmodified and with their licence files, under `include/pantr/third_party/<name>
 ## Notes
 
 - **Eigen** is primarily MPL-2.0. Some of its files carry code under other MPL-2.0-compatible
-  licences (BSD, Apache-2.0, MINPACK); its `COPYING.*` files, installed beside the headers, list
+  licenses (BSD, Apache-2.0, MINPACK); its `COPYING.*` files, installed beside the headers, list
   them. pantr defines `EIGEN_MPL2_ONLY` on `pantr::pantr`, which makes Eigen refuse direct inclusion
   of its non-MPL-2.0 modules; that is a tripwire against an accidental include, not a guarantee
   about every file.
 - **MPL-2.0** is file-level copyleft: the Eigen and Spectra headers are shipped unmodified, with
-  their licence text, which keeps pantr distributable under MIT.
+  their license text, which keeps pantr distributable under MIT.
 - **Boost.Multiprecision and Boost.Config** share one installed `boost/` tree and the Boost
   Software License text from Boost.Multiprecision. A consumer that also uses its own Boost should
   make sure only one `boost/config.hpp` is reachable.

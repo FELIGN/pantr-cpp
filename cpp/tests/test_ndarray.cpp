@@ -8,7 +8,7 @@
 #include <utility>
 #include <vector>
 
-TEST_CASE("NdArray: shape, size, zero initialisation") {
+TEST_CASE("NdArray: shape, size, zero initialization") {
   pantr::NdArray<double> a({2, 3, 4});
   CHECK(a.rank() == 3);
   CHECK(a.size() == 24);
@@ -57,9 +57,11 @@ TEST_CASE("NdArray: copies do not alias, moves leave an empty array") {
   CHECK(b.data()[1] == 8.0);
   pantr::NdArray<double> c = std::move(a);
   CHECK(c.data()[1] == 7.0);
-  CHECK(a.size() == 0);        // NOLINT(bugprone-use-after-move): the moved-from state is specified
-  CHECK(a.data() == nullptr);  // NOLINT(bugprone-use-after-move)
-  a = b;                       // a moved-from array can be assigned to
+  // NOLINTBEGIN(bugprone-use-after-move): the moved-from state is part of the contract under test
+  CHECK(a.size() == 0);
+  CHECK(a.data() == nullptr);
+  // NOLINTEND(bugprone-use-after-move)
+  a = b;  // a moved-from array can be assigned to
   CHECK(a.data()[1] == 8.0);
   b = c;
   CHECK(b.data()[1] == 7.0);
@@ -72,8 +74,10 @@ TEST_CASE("NdArray: into_buffer hands over the elements without copying") {
   auto buffer = std::move(a).into_buffer();
   CHECK(buffer.get() == before);
   CHECK(buffer[3] == 1.5);
-  CHECK(a.size() == 0);        // NOLINT(bugprone-use-after-move)
-  CHECK(a.data() == nullptr);  // NOLINT(bugprone-use-after-move)
+  // NOLINTBEGIN(bugprone-use-after-move): into_buffer's consumed state is part of the contract
+  CHECK(a.size() == 0);
+  CHECK(a.data() == nullptr);
+  // NOLINTEND(bugprone-use-after-move)
 }
 
 TEST_CASE("NdArray: an element count that overflows is a capacity_error") {
@@ -82,4 +86,13 @@ TEST_CASE("NdArray: an element count that overflows is a capacity_error") {
   // One element too many in bytes, though the count itself fits.
   const std::size_t over_bytes = std::numeric_limits<std::size_t>::max() / sizeof(double) + 1;
   CHECK_THROWS_AS(pantr::NdArray<double>({over_bytes}), pantr::capacity_error);
+  // Each extent fits alone; the product overflows only at the third.
+  const std::size_t e = std::size_t{1} << 21;
+  CHECK_THROWS_AS(pantr::NdArray<double>({e, e, e}), pantr::capacity_error);
+}
+
+TEST_CASE("NdArray: a zero extent gives an empty array, wherever it sits") {
+  const std::size_t huge = std::numeric_limits<std::size_t>::max() / 2;
+  CHECK(pantr::NdArray<double>({huge, 0}).size() == 0);
+  CHECK(pantr::NdArray<double>({0, huge}).size() == 0);
 }

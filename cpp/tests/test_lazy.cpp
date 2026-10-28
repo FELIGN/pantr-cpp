@@ -71,7 +71,8 @@ TEST_CASE("Lazy: a computation that throws stores nothing, and the next call com
 TEST_CASE("Lazy: a copy starts empty") {
   const pantr::detail::Lazy<int> a;
   CHECK(a.get([] { return 1; }) == 1);
-  const pantr::detail::Lazy<int> b(a);  // NOLINT(performance-unnecessary-copy-initialization)
+  // NOLINTNEXTLINE(performance-unnecessary-copy-initialization): the copy is what is under test
+  const pantr::detail::Lazy<int> b(a);
   CHECK_FALSE(b.ready());
   CHECK(b.get([] { return 2; }) == 2);
 }

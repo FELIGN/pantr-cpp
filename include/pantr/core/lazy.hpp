@@ -6,7 +6,8 @@
 /// to compute eagerly live in one grouped block per type behind `Lazy<Block>`: double-checked
 /// locking, with an acquire load of an atomic flag on the fast path and a mutex on the slow path.
 /// Not a bare `mutable std::optional` (a data race that value tests do not see) and not
-/// `std::call_once` (whose first-call cost and exception semantics differ per implementation).
+/// `std::call_once` (which needs a `std::once_flag` beside each block and offers no `ready()`
+/// query).
 #pragma once
 
 #include "pantr/config.hpp"
@@ -32,9 +33,10 @@ namespace pantr::detail {
 ///
 /// Attributes:
 ///     ready_ (std::atomic<bool>): Set, with release ordering, once `value_` holds the block.
-///     mutex_ (std::mutex): Serialises the computation.
+///     mutex_ (std::mutex): Serializes the computation.
 ///     value_ (std::optional<Block>): The block, written once under `mutex_`.
 template <class Block>
+requires std::is_object_v<Block> && std::is_destructible_v<Block>
 class Lazy {
  public:
   Lazy() = default;
@@ -45,7 +47,8 @@ class Lazy {
   /// Return the block, computing it with `compute()` if no call has stored it yet.
   ///
   /// Args:
-  ///     compute (F&&): Callable returning a `Block`; called at most once per stored block.
+  ///     compute (F&&): Callable returning a `Block`; called at most once per stored block. It
+  ///         must not call `get` on this same `Lazy`, which would deadlock on its mutex.
   ///
   /// Returns:
   ///     const Block&: The stored block, valid for the lifetime of this `Lazy`.

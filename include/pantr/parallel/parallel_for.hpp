@@ -12,6 +12,8 @@
 #include "pantr/parallel/pool.hpp"
 #include "pantr/parallel/work_model.hpp"
 
+// `(std::min)` throughout: a consumer may include <windows.h> without NOMINMAX first.
+
 #include <algorithm>
 #include <concepts>
 #include <cstddef>
@@ -24,7 +26,7 @@ namespace detail {
 template <class F>
 void run_chunk(F& body, std::size_t n, std::size_t grain, std::size_t k) {
   const std::size_t begin = k * grain;
-  const std::size_t end = std::min(n, begin + grain);
+  const std::size_t end = (std::min)(n, begin + grain);
   body(begin, end);
 }
 
@@ -74,7 +76,7 @@ void parallel_for(std::size_t n, std::size_t grain, F&& body) {
                     auto* c = static_cast<Context*>(p);
                     detail::run_chunk(c->body, c->n, c->grain, k);
                   },
-                  std::min(threads - 1, n_chunks - 1)};
+                  (std::min)(threads - 1, n_chunks - 1)};
   Pool::instance().run(job);
 }
 

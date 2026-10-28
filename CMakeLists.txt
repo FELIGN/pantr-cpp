@@ -17,7 +17,10 @@ set(_pantr_version "${_pantr_version_MAJOR}.${_pantr_version_MINOR}.${_pantr_ver
 # The Python package carries the same version; refuse to configure when the two disagree.
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/src/pantr/__init__.py" _pantr_py_version_line
      REGEX "^__version__: Final\\[str\\] = \"[^\"]+\"$")
-if(NOT _pantr_py_version_line MATCHES "\"([^\"]+)\"" OR NOT CMAKE_MATCH_1 STREQUAL _pantr_version)
+if(NOT _pantr_py_version_line MATCHES "\"([^\"]+)\"")
+  message(FATAL_ERROR "pantr: no `__version__: Final[str] = \"...\"` line in src/pantr/__init__.py")
+endif()
+if(NOT CMAKE_MATCH_1 STREQUAL _pantr_version)
   message(FATAL_ERROR "pantr: include/pantr/version.hpp says ${_pantr_version} but "
                       "src/pantr/__init__.py says '${CMAKE_MATCH_1}'; update both together")
 endif()
@@ -29,7 +32,7 @@ project(pantr VERSION ${_pantr_version} LANGUAGES CXX)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
-if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+if(PROJECT_IS_TOP_LEVEL AND NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
@@ -65,9 +68,10 @@ if(PANTR_FP_CONTRACT)
                                          $<$<CXX_COMPILER_ID:MSVC>:/fp:contract>)
 endif()
 # -march=native is not part of the exported target: pantrConfig.cmake decides it in the consumer
-# from PANTR_NATIVE_ARCH. The build tree applies the same rule to pantr's own tests.
+# from PANTR_NATIVE_ARCH. pantr's own tests get it from pantr_native_arch, which is never exported.
 include(PantrNativeArch)
-pantr_apply_native_arch(pantr "${PANTR_NATIVE_ARCH}")
+add_library(pantr_native_arch INTERFACE)
+pantr_apply_native_arch(pantr_native_arch "${PANTR_NATIVE_ARCH}")
 pantr_report_fp_contract("${PANTR_FP_CONTRACT}")
 
 # --- pantr::mpi_capsule (component mpi-capsule) --------------------------------------------------

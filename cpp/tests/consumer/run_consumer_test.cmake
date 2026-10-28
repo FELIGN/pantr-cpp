@@ -22,12 +22,23 @@ endfunction()
 
 run_step(install "${CMAKE_COMMAND}" --install "${BUILD_DIR}" --prefix "${prefix}")
 
+# The native-ISA flag is the consumer's decision: the exported targets must not carry one.
+file(GLOB targets_file "${prefix}/*/cmake/pantr/pantrTargets.cmake")
+if(NOT targets_file)
+  message(FATAL_ERROR "no pantrTargets.cmake under ${prefix}")
+endif()
+file(READ "${targets_file}" exported)
+if(exported MATCHES "-m(arch|cpu)=")
+  message(FATAL_ERROR "the installed pantrTargets.cmake carries an ISA flag")
+endif()
+
 # Core: find_package(pantr) with every search location except the fresh prefix switched off.
 set(isolate
     -DCMAKE_FIND_USE_CMAKE_SYSTEM_PATH=OFF -DCMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH=OFF
     -DCMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH=OFF -DCMAKE_FIND_USE_PACKAGE_REGISTRY=OFF
     -DCMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY=OFF -DCMAKE_FIND_USE_INSTALL_PREFIX=OFF)
-set(common -G "${GENERATOR}" -DCMAKE_MAKE_PROGRAM=${MAKE_PROGRAM} -DCMAKE_CXX_COMPILER=${CXX_COMPILER} -DCMAKE_BUILD_TYPE=${BUILD_TYPE}
+set(common -G "${GENERATOR}" -DCMAKE_MAKE_PROGRAM=${MAKE_PROGRAM}
+           -DCMAKE_CXX_COMPILER=${CXX_COMPILER} -DCMAKE_BUILD_TYPE=${BUILD_TYPE}
            -DCMAKE_PREFIX_PATH=${prefix} -DPANTR_EXPECTED_PREFIX=${prefix})
 
 # The core consumer leaves PANTR_NATIVE_ARCH at its default (ON: built and run on this machine);
@@ -37,6 +48,10 @@ run_step(configure-core "${CMAKE_COMMAND}" -S "${CONSUMER_SOURCE}" -B "${WORK_DI
 run_step(build-core "${CMAKE_COMMAND}" --build "${WORK_DIR}/core")
 run_step(run-core "${WORK_DIR}/core/pantr_consumer")
 message(STATUS "consumer output: ${last_output}")
+
+# The same consumer with PANTR_NATIVE_ARCH=OFF: configuring asserts the flag is absent.
+run_step(configure-core-off "${CMAKE_COMMAND}" -S "${CONSUMER_SOURCE}" -B "${WORK_DIR}/core-off"
+         ${common} ${isolate} -DPANTR_NATIVE_ARCH=OFF)
 
 # Component mpi-capsule alone loads the capsule target and nothing else.
 run_step(configure-capsule "${CMAKE_COMMAND}" -S "${CONSUMER_SOURCE}" -B "${WORK_DIR}/capsule"

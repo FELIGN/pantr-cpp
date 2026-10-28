@@ -33,11 +33,19 @@ the Python suite stay the oracle across thread counts. Architecture: `design/por
 - **Fork safety**: the pool records the process id that created it. A forked child that calls a
   parallel loop sees a different id, leaves the inherited pool untouched (its threads do not exist
   in the child, and its mutexes may have been held at the fork) and builds its own. The mutex that
-  guards pool creation is held across `fork` with `pthread_atfork`, so a child never inherits it
-  locked by a thread it does not have.
+  guards pool creation is held across `fork` with `pthread_atfork`, registered when the library is
+  loaded, so a child never inherits it locked by a thread it does not have. The pool's holder and
+  the cached capacity are constant-initialized rather than function-local statics: a static's
+  initialization guard, inherited mid-initialization, would block the child forever.
 
 ## Consequences
 
+- **One pool per copy of the inline variables, not per process.** The pool, its holder and the
+  thread-local setting are inline variables of header-only code. Shared objects that each include
+  the headers and keep their symbols local (hidden visibility, or `dlopen` with `RTLD_LOCAL` on
+  toolchains without GNU unique symbols) each get their own pool and their own setting. Several
+  extension modules in one process must therefore route parallel work through one of them; how is
+  decided with the packaging (stage 0, second half).
 - The Numba warmup barrier and the serial-twin kernels have no C++ counterpart: concurrent callers
   are safe by construction, and the serial path is the parallel path's chunks run in order.
 - Thread-count invariance is tested on integers (chunk boundaries, exactly) and on values within a

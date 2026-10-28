@@ -44,6 +44,6 @@ suite's message assertions depend on it. Architecture: `design/port_design.md` Â
   binding would rebuild exceptions from codes anyway; kept for the C ABI between extension modules
   only, where exceptions cannot cross.
 - Assertions (`assert`) as the validation channel: release builds would check nothing, leaving a C++
-  caller with undefined behaviour on bad input.
+  caller with undefined behavior on bad input.
 - Raising on incompleteness: a partial result with a status is more useful to a caller than none,
   and it is what the Python API does today (a warning, not an exception).

@@ -1,4 +1,4 @@
-# install(): pantr's headers, the bundled third-party headers and licences, and the CMake package.
+# install(): pantr's headers, the bundled third-party headers and licenses, and the CMake package.
 include_guard(GLOBAL)
 include(CMakePackageConfigHelpers)
 
@@ -6,7 +6,7 @@ set(PANTR_INSTALL_CMAKEDIR "${CMAKE_INSTALL_LIBDIR}/cmake/pantr")
 
 install(DIRECTORY "${PROJECT_SOURCE_DIR}/include/pantr" DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
 
-# Third-party headers, each with its licence, under include/pantr/third_party/<name>/.
+# Third-party headers, each with its license, under include/pantr/third_party/<name>/.
 set(_pantr_tp "${CMAKE_INSTALL_INCLUDEDIR}/pantr/third_party")
 install(DIRECTORY "${pantr_eigen_SOURCE_DIR}/Eigen" DESTINATION "${_pantr_tp}/eigen")
 install(FILES "${pantr_eigen_SOURCE_DIR}/COPYING.README" "${pantr_eigen_SOURCE_DIR}/COPYING.MPL2"

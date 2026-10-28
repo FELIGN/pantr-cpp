@@ -30,6 +30,7 @@ Architecture: `design/port_design.md` §2.6; plan directive Di5.
 - Kokkos mdspan 0.6.0 declares its types in `std::experimental` and has no macro to choose that
   namespace (the plan's U8 asked; the macros appeared only in later, untagged versions). A consumer
   that bundles a different Kokkos mdspan version in the same program would collide on those names.
-- `std::mdspan` has no `operator()`. Code that must also build with `PANTR_USE_STD_MDSPAN` cannot
-  index with `operator()`; how pantr's kernels index in that configuration is open, to be settled
-  with the first kernel that takes an `mdspan` (stage 1).
+- `std::mdspan` has no `operator()`, which pantr code uses. Until that is settled (how pantr's code
+  indexes in that configuration, with the first kernel that takes an `mdspan`, stage 1), the probe
+  only reports whether `<mdspan>` exists, and setting `PANTR_USE_STD_MDSPAN=ON` is a configure
+  error rather than a build that cannot compile.

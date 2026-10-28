@@ -37,7 +37,7 @@ template <class T>
 requires std::is_arithmetic_v<T>
 class NdArray {
  public:
-  /// Allocate a zero-initialised array of the given shape.
+  /// Allocate a zero-initialized array of the given shape.
   ///
   /// Args:
   ///     shape (std::vector<std::size_t>): Extents, outermost first. An empty vector gives a
@@ -177,9 +177,13 @@ class NdArray {
 
   static std::size_t checked_size(const std::vector<std::size_t>& shape) {
     constexpr std::size_t max_elements = std::numeric_limits<std::size_t>::max() / sizeof(T);
+    // A zero extent makes the array empty whatever the other extents are.
+    if (std::find(shape.begin(), shape.end(), std::size_t{0}) != shape.end()) {
+      return 0;
+    }
     std::size_t n = 1;
     for (const std::size_t extent : shape) {
-      if (extent != 0 && n > max_elements / extent) {
+      if (n > max_elements / extent) {
         throw capacity_error("NdArray shape " + py_repr(std::span<const std::size_t>(shape)) +
                              " has more elements than fit in memory");
       }

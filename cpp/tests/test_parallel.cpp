@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <limits>
@@ -89,8 +90,10 @@ RunRecord run_kernel(std::size_t n) {
 
 TEST_CASE("parallel_for: every item is visited exactly once, in chunks of the grain") {
   const ThreadsGuard guard(test_threads());
-  for (const std::size_t n : {0UL, 1UL, 7UL, 64UL, 1000UL, 100003UL}) {
-    for (const std::size_t grain : {1UL, 3UL, 64UL, 5000UL}) {
+  for (const std::size_t n : {std::size_t{0}, std::size_t{1}, std::size_t{7}, std::size_t{64},
+                              std::size_t{1000}, std::size_t{100003}}) {
+    for (const std::size_t grain :
+         {std::size_t{1}, std::size_t{3}, std::size_t{64}, std::size_t{5000}}) {
       CAPTURE(n);
       CAPTURE(grain);
       std::vector<std::atomic<int>> visits(n);
@@ -119,8 +122,8 @@ TEST_CASE("parallel_for: results and chunks do not depend on the thread count") 
   const std::size_t grain = par::grain_for(kKernelWork);
   const auto serial_limit =
       static_cast<std::size_t>(std::ceil(par::parallel_min_ops / kKernelWork.ops_per_item));
-  for (const std::size_t n : {1UL, grain - 1, grain, grain + 1, serial_limit - 1, serial_limit,
-                              serial_limit + 1, 20 * serial_limit}) {
+  for (const std::size_t n : {std::size_t{1}, grain - 1, grain, grain + 1, serial_limit - 1,
+                              serial_limit, serial_limit + 1, 20 * serial_limit}) {
     CAPTURE(n);
     RunRecord reference;
     {
@@ -215,16 +218,13 @@ TEST_CASE("parallel_for: a nested loop runs inline on the thread of the outer ch
 TEST_CASE("parallel_for: the first exception reaches the caller, and the pool stays usable") {
   const ThreadsGuard guard(test_threads());
   for (int attempt = 0; attempt < 10; ++attempt) {
-    std::atomic<int> started{0};
     CHECK_THROWS_WITH_AS(par::parallel_for(1000, std::size_t{1},
                                            [&](std::size_t b, std::size_t) {
-                                             started.fetch_add(1);
                                              if (b % 97 == 13) {
                                                throw std::runtime_error("chunk failed");
                                              }
                                            }),
                          "chunk failed", std::runtime_error);
-    CHECK(started.load() <= 1000);
   }
   // A pantr exception keeps its type through the pool.
   CHECK_THROWS_AS(
@@ -253,6 +253,50 @@ TEST_CASE("parallel_for: one thread runs every chunk on the caller, in order") {
   CHECK_FALSE(other_thread);
   CHECK(std::is_sorted(order.begin(), order.end()));
   CHECK(order.size() == 12);
+}
+
+TEST_CASE("Pool: after a chunk throws, the chunks not yet started are skipped") {
+  // A pool with no worker runs the chunks on the caller in claim order, so the skip is
+  // deterministic: chunk 0 throws, and none of the other nine may run.
+  par::Pool pool(0);
+  std::atomic<int> ran{0};
+  par::detail::Job job{10, &ran,
+                       [](void* p, std::size_t k) {
+                         static_cast<std::atomic<int>*>(p)->fetch_add(1);
+                         if (k == 0) {
+                           throw std::runtime_error("first chunk failed");
+                         }
+                       },
+                       0};
+  CHECK_THROWS_WITH_AS(pool.run(job), "first chunk failed", std::runtime_error);
+  CHECK(ran.load() == 1);
+}
+
+TEST_CASE("parallel_for: pool workers take part") {
+  if (par::max_threads() < 2) {
+    MESSAGE("one CPU available: no worker exists to take part");
+    return;
+  }
+  const ThreadsGuard guard(2);
+  // Each chunk waits (bounded) until a chunk has run on a second thread, which only a worker can
+  // provide: a pool that never woke its workers would leave one thread id.
+  std::mutex m;
+  std::set<std::thread::id> ids;
+  std::atomic<bool> two_seen{false};
+  par::parallel_for(8, std::size_t{1}, [&](std::size_t, std::size_t) {
+    {
+      const std::lock_guard<std::mutex> lock(m);
+      ids.insert(std::this_thread::get_id());
+      if (ids.size() >= 2) {
+        two_seen = true;
+      }
+    }
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!two_seen.load() && std::chrono::steady_clock::now() < deadline) {
+      std::this_thread::yield();
+    }
+  });
+  CHECK(ids.size() == 2);
 }
 
 TEST_CASE("Pool: the caller completes a loop with no worker at all") {
@@ -312,7 +356,9 @@ TEST_CASE("Pool: a forked child builds its own pool and runs parallel loops") {
   const pid_t child = ::fork();
   REQUIRE(child >= 0);
   if (child == 0) {
-    // Child: report through the exit status only (no doctest machinery after a fork).
+    // Child: report through the exit status only (no doctest machinery after a fork). A hang
+    // ends with SIGALRM instead of stalling the suite.
+    ::alarm(60);
     int status = 0;
     try {
       std::vector<double> out(50000, 0.0);
