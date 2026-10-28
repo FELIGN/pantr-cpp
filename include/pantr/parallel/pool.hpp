@@ -1,0 +1,340 @@
+/// @file pool.hpp
+/// @brief The process thread pool and the calling thread's parallelism setting.
+///
+/// One pool per process, created on first use with `max_threads() - 1` workers: the thread that
+/// calls a parallel loop always works on it too, so a call never waits for a free worker, and
+/// `max_threads()` threads run at full parallelism. Concurrent calls from several threads share the
+/// workers; a parallel loop started from inside a running one runs inline on its thread.
+///
+/// The parallelism of a call is the calling thread's own setting (`set_num_threads`), as with
+/// Numba: setting it in one thread does not change another's.
+///
+/// Fork safety: a forked child inherits the pool's memory but none of its threads. The pool
+/// records the process id that created it; a child that calls a parallel loop finds a different
+/// id, leaves the inherited pool untouched (its mutexes may have been held at the fork) and builds
+/// its own. Design note: design/threading.md.
+#pragma once
+
+#include "pantr/config.hpp"
+#include "pantr/core/errors.hpp"
+#include "pantr/parallel/affinity.hpp"
+
+#include <algorithm>
+#include <atomic>
+#include <condition_variable>
+#include <cstddef>
+#include <cstdint>
+#include <exception>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <vector>
+
+#if !defined(_WIN32)
+#include <pthread.h>
+#include <unistd.h>
+#endif
+
+namespace pantr::parallel {
+
+namespace detail {
+
+/// The calling thread's parallelism setting; 0 means "not set", i.e. `max_threads()`.
+inline thread_local std::size_t tl_num_threads = 0;
+
+/// True while the thread executes chunks of a parallel loop (always, on a pool worker).
+inline thread_local bool tl_in_parallel_region = false;
+
+/// Process id, used to detect that the pool was inherited through `fork`.
+[[nodiscard]] inline std::int64_t current_pid() noexcept {
+#if defined(_WIN32)
+  return 0;  // no fork on Windows
+#else
+  return static_cast<std::int64_t>(::getpid());
+#endif
+}
+
+/// One parallel loop in flight: `n_chunks` chunks claimed through an atomic counter.
+///
+/// Lives on the calling thread's stack for the duration of `Pool::run`. Fields marked "pool mutex"
+/// are read and written only under the pool's mutex.
+///
+/// Attributes:
+///     n_chunks (std::size_t): Number of chunks.
+///     ctx (void*): The loop body, type-erased.
+///     run_chunk (void (*)(void*, std::size_t)): Runs chunk `k` of the body at `ctx`.
+///     max_workers (std::size_t): Pool workers allowed to join (the caller's setting minus one).
+///     next (std::atomic<std::size_t>): Next chunk to claim; values `>= n_chunks` mean none left.
+///     failed (std::atomic<bool>): Set by the first chunk that throws.
+///     error (std::exception_ptr): That chunk's exception, written once by the thread that set
+///         `failed`, read by the caller after the join.
+///     joined (std::size_t): Workers that have joined so far (pool mutex).
+///     active (std::size_t): Workers currently running chunks (pool mutex).
+struct Job {
+  std::size_t n_chunks;
+  void* ctx;
+  void (*run_chunk)(void*, std::size_t);
+  std::size_t max_workers;
+  std::atomic<std::size_t> next{0};
+  std::atomic<bool> failed{false};
+  std::exception_ptr error{};
+  std::size_t joined = 0;
+  std::size_t active = 0;
+
+  /// Claim and run chunks until none are left; after a failure, claim the rest without running.
+  void run_chunks() noexcept {
+    for (;;) {
+      const std::size_t k = next.fetch_add(1, std::memory_order_relaxed);
+      if (k >= n_chunks) {
+        return;
+      }
+      if (failed.load(std::memory_order_relaxed)) {
+        continue;  // a chunk failed: drain the counter, run nothing more
+      }
+      try {
+        run_chunk(ctx, k);
+      } catch (...) {
+        bool expected = false;
+        if (failed.compare_exchange_strong(expected, true, std::memory_order_relaxed)) {
+          error = std::current_exception();
+        }
+      }
+    }
+  }
+};
+
+/// Sets `tl_in_parallel_region` for a scope and restores the previous value.
+class RegionGuard {
+ public:
+  RegionGuard() noexcept : previous_(tl_in_parallel_region) { tl_in_parallel_region = true; }
+  RegionGuard(const RegionGuard&) = delete;
+  RegionGuard& operator=(const RegionGuard&) = delete;
+  ~RegionGuard() { tl_in_parallel_region = previous_; }
+
+ private:
+  bool previous_;
+};
+
+}  // namespace detail
+
+/// A fixed set of worker threads executing the chunks of parallel loops.
+///
+/// Use `Pool::instance()`; constructing another pool is allowed (tests do) but is never needed.
+///
+/// Attributes:
+///     mutex_ (std::mutex): Guards `jobs_`, `stop_` and every job's `joined`/`active`.
+///     work_cv_ (std::condition_variable): Signals workers that a job was posted or `stop_` set.
+///     done_cv_ (std::condition_variable): Signals callers that a job's last worker left.
+///     jobs_ (std::vector<detail::Job*>): Jobs open to workers, oldest first.
+///     stop_ (bool): Set by the destructor; workers exit.
+///     pid_ (std::int64_t): Process that created the pool.
+///     threads_ (std::vector<std::thread>): The workers.
+class Pool {
+ public:
+  /// Start `workers` worker threads.
+  ///
+  /// Args:
+  ///     workers (std::size_t): Number of worker threads; 0 gives a pool that runs every loop on
+  ///         the calling thread.
+  ///
+  /// Raises:
+  ///     std::system_error: A thread could not be started (the started ones are joined first).
+  explicit Pool(std::size_t workers) : pid_(detail::current_pid()) {
+    threads_.reserve(workers);
+    try {
+      for (std::size_t i = 0; i < workers; ++i) {
+        threads_.emplace_back([this] { worker_loop(); });
+      }
+    } catch (...) {
+      shutdown();
+      throw;
+    }
+  }
+
+  Pool(const Pool&) = delete;
+  Pool& operator=(const Pool&) = delete;
+
+  /// Stop and join the workers. No loop may be running on this pool.
+  ~Pool() { shutdown(); }
+
+  /// Get the number of worker threads.
+  ///
+  /// Returns:
+  ///     std::size_t: Workers, not counting the threads that call `run`.
+  [[nodiscard]] std::size_t workers() const noexcept { return threads_.size(); }
+
+  /// Get the id of the process that created the pool.
+  ///
+  /// Returns:
+  ///     std::int64_t: The creator's process id (0 on Windows).
+  [[nodiscard]] std::int64_t creator_pid() const noexcept { return pid_; }
+
+  /// Run every chunk of `job`, on the calling thread and up to `job.max_workers` workers.
+  ///
+  /// Returns after every chunk has run and every worker has left the job.
+  ///
+  /// Args:
+  ///     job (detail::Job&): The loop; must outlive the call.
+  ///
+  /// Raises:
+  ///     The exception of the first chunk that threw, after the join.
+  void run(detail::Job& job) {
+    if (job.max_workers > 0 && !threads_.empty()) {
+      {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        jobs_.push_back(&job);
+      }
+      work_cv_.notify_all();
+    }
+    {
+      const detail::RegionGuard region;
+      job.run_chunks();
+    }
+    {
+      std::unique_lock<std::mutex> lock(mutex_);
+      // No chunk is left to claim, so no new worker may join; wait for the ones that did.
+      jobs_.erase(std::remove(jobs_.begin(), jobs_.end(), &job), jobs_.end());
+      done_cv_.wait(lock, [&job] { return job.active == 0; });
+    }
+    if (job.error) {
+      std::rethrow_exception(job.error);
+    }
+  }
+
+  /// Get the process pool, creating it on first use (and again in a forked child).
+  ///
+  /// Returns:
+  ///     Pool&: The pool of the calling process, with `max_threads() - 1` workers.
+  ///
+  /// Raises:
+  ///     value_error: `PANTR_NUM_THREADS` is malformed (see `max_threads`).
+  ///     std::system_error: The affinity query or a thread start failed.
+  static Pool& instance() {
+    Holder& h = holder();
+    Pool* p = h.current.load(std::memory_order_acquire);
+    if (p != nullptr && p->pid_ == detail::current_pid()) {
+      return *p;
+    }
+    const std::lock_guard<std::mutex> lock(h.mutex);
+    p = h.current.load(std::memory_order_relaxed);
+    if (p == nullptr || p->pid_ != detail::current_pid()) {
+      // In a forked child the inherited pool's threads do not exist and its mutex may be locked:
+      // never touch it. It stays reachable through `inherited` and is never destroyed.
+      if (p != nullptr) {
+        h.inherited.push_back(p);
+      }
+      p = new Pool(max_threads() - 1);
+      h.current.store(p, std::memory_order_release);
+    }
+    return *p;
+  }
+
+ private:
+  /// Owner of the process pool. Its destructor (at exit) joins the pool this process created.
+  struct Holder {
+    std::mutex mutex;
+    std::atomic<Pool*> current{nullptr};
+    std::vector<Pool*> inherited;
+
+    Holder() {
+#if !defined(_WIN32)
+      // Keep `mutex` consistent across fork: held by the forking thread during the fork, then
+      // released in both processes, so a child never inherits it locked by a thread it lacks.
+      ::pthread_atfork([] { holder().mutex.lock(); }, [] { holder().mutex.unlock(); },
+                       [] { holder().mutex.unlock(); });
+#endif
+    }
+    Holder(const Holder&) = delete;
+    Holder& operator=(const Holder&) = delete;
+    ~Holder() {
+      Pool* p = current.load(std::memory_order_acquire);
+      if (p != nullptr && p->pid_ == detail::current_pid()) {
+        delete p;
+      }
+    }
+  };
+
+  static Holder& holder() {
+    static Holder h;
+    return h;
+  }
+
+  void shutdown() noexcept {
+    {
+      const std::lock_guard<std::mutex> lock(mutex_);
+      stop_ = true;
+    }
+    work_cv_.notify_all();
+    for (std::thread& t : threads_) {
+      t.join();
+    }
+    threads_.clear();
+  }
+
+  detail::Job* find_joinable() const noexcept {
+    for (detail::Job* job : jobs_) {
+      if (job->joined < job->max_workers &&
+          job->next.load(std::memory_order_relaxed) < job->n_chunks) {
+        return job;
+      }
+    }
+    return nullptr;
+  }
+
+  void worker_loop() {
+    detail::tl_in_parallel_region = true;  // a loop started from a chunk runs inline
+    std::unique_lock<std::mutex> lock(mutex_);
+    for (;;) {
+      detail::Job* job = nullptr;
+      work_cv_.wait(lock, [&] { return stop_ || (job = find_joinable()) != nullptr; });
+      if (stop_) {
+        return;
+      }
+      ++job->joined;
+      ++job->active;
+      lock.unlock();
+      job->run_chunks();
+      lock.lock();
+      if (--job->active == 0) {
+        done_cv_.notify_all();
+      }
+    }
+  }
+
+  std::mutex mutex_;
+  std::condition_variable work_cv_;
+  std::condition_variable done_cv_;
+  std::vector<detail::Job*> jobs_;
+  bool stop_ = false;
+  std::int64_t pid_;
+  std::vector<std::thread> threads_;
+};
+
+/// Set the calling thread's parallelism for pantr's parallel loops.
+///
+/// Args:
+///     n (std::int64_t): Threads a loop called from this thread may use, the caller included.
+///
+/// Raises:
+///     value_error: `n < 1` or `n > max_threads()`.
+inline void set_num_threads(std::int64_t n) {
+  if (n < 1) {
+    throw value_error("n must be >= 1, got " + std::to_string(n));
+  }
+  const std::size_t cap = max_threads();
+  if (static_cast<std::uint64_t>(n) > cap) {
+    throw value_error("n must be <= the pool capacity (" + std::to_string(cap) + "), got " +
+                      std::to_string(n));
+  }
+  detail::tl_num_threads = static_cast<std::size_t>(n);
+}
+
+/// Get the calling thread's parallelism for pantr's parallel loops.
+///
+/// Returns:
+///     std::size_t: The value last set on this thread, else `max_threads()`.
+[[nodiscard]] inline std::size_t get_num_threads() {
+  return detail::tl_num_threads != 0 ? detail::tl_num_threads : max_threads();
+}
+
+}  // namespace pantr::parallel
