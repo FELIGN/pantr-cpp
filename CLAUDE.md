@@ -6,12 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **Never run `git push` without first running the full check suite** (ruff, ruff format, mypy, import-lint, pytest, docs build). This applies every time — new PRs, review fixes, hotfixes, everything. `make pre-pull-request` runs all of it; the individual commands are in the Commands section below.
 - **Run every check on the whole repo, not on single files.** Checking one file while skipping a repo-wide check has let real failures through.
-- Always run commands in the `pantr` conda environment, as `conda run -n pantr <command>`. Do not use `conda activate` — shell state does not persist between tool calls, so an `activate` in one call is gone by the next.
+- Always run commands in the `pantr-cpp` conda environment, as `conda run -n pantr-cpp <command>`. Do not use `conda activate` — shell state does not persist between tool calls, so an `activate` in one call is gone by the next. Not the `pantr` environment: its editable install belongs to the FELIGN/pantr checkout, so `import pantr` there loads a different tree without any error.
 - Always use git worktrees for implementing changes (via the `EnterWorktree` tool or `git worktree add`). `pytest.ini` sets `pythonpath = src`, so tests import the worktree's own source without a per-worktree reinstall.
 
 ## Commands
 
-All of these assume the `pantr` env, i.e. prefix with `conda run -n pantr`.
+All of these assume the `pantr-cpp` env, i.e. prefix with `conda run -n pantr-cpp`.
 
 ```bash
 make pre-pull-request                                       # the full check suite CI runs
