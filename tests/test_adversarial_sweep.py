@@ -41,6 +41,8 @@ import sys
 
 import pytest
 
+from tests._tree_env import subprocess_env
+
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
 _LAUNCHER = _ROOT / "tools" / "sweep.py"
 
@@ -102,7 +104,7 @@ def _run_sweep(cache_dir: pathlib.Path, journal: pathlib.Path) -> subprocess.Com
     Returns:
         subprocess.CompletedProcess[str]: The finished process, with output captured.
     """
-    env = dict(os.environ)
+    env = subprocess_env()
     env["NUMBA_BOUNDSCHECK"] = "1"
     env["NUMBA_CACHE_DIR"] = str(cache_dir)
     # The coverage run sets this globally, and with the JIT off nothing is compiled and

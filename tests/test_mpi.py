@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
-import os
 import subprocess
 import sys
-from pathlib import Path
 
 import pytest
 
 import pantr.mpi
+from tests._tree_env import subprocess_env
 
 
 def test_import_and_public_surface() -> None:
@@ -101,17 +100,12 @@ def test_require_mpi_returns_module_when_available() -> None:
 def test_pantr_toplevel_does_not_import_mpi() -> None:
     """``import pantr`` must not cause ``pantr.mpi`` to appear in ``sys.modules``.
 
-    The subprocess is pointed at the same source tree this process imported. ``pantr``
-    reaches this process through ``pytest.ini``'s ``pythonpath = src``, which a
+    The subprocess is pointed at this checkout's source tree (``tests._tree_env``).
+    ``pantr`` reaches this process through ``pytest.ini``'s ``pythonpath = src``, which a
     subprocess does not inherit; without the hand-off it would resolve whatever the
     editable install points at, and fail outright when that target no longer exists.
     """
-    src_dir = Path(pantr.__file__).resolve().parents[1]
-    inherited = os.environ.get("PYTHONPATH", "")
-    env = {
-        **os.environ,
-        "PYTHONPATH": f"{src_dir}{os.pathsep}{inherited}" if inherited else str(src_dir),
-    }
+    env = subprocess_env()
     result = subprocess.run(
         [
             sys.executable,

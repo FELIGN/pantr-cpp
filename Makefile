@@ -77,11 +77,15 @@ type-check:
 	mypy --config-file mypy.ini src tests
 
 # Import boundary checks: serial core must not import pantr.mpi.
-# PYTHONPATH=src pins the analysis to this checkout's source: import-linter resolves
-# `pantr` through sys.path, so without it the contract is checked against whatever the
-# editable install points at, which in a git worktree is a different tree entirely.
+# PYTHONPATH pins the analysis to this checkout's source: import-linter resolves `pantr`
+# through sys.path, so without it the contract is checked against whatever the editable
+# install points at, which in a git worktree is a different tree entirely. The path is
+# absolute because a relative one resolves against whatever working directory the command
+# is given (`conda run` may give another checkout's), and `tests._tree_env` first proves
+# that `pantr` resolves to this tree.
 import-lint:
-	PYTHONPATH=src lint-imports
+	PYTHONPATH="$(CURDIR)/src" python -m tests._tree_env
+	PYTHONPATH="$(CURDIR)/src" lint-imports
 
 # Build documentation
 docs:
