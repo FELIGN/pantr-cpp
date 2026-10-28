@@ -15,9 +15,13 @@ help:
 	@echo "  docs      : build the documentation."
 	@echo "  pre-pull-request: run lint, format, format check, type check, import lint, tests, coverage, and docs."
 
-# Run the test suite with Numba JIT enabled
+# Run the test suite with Numba JIT enabled. PYTEST_WORKERS defaults to 8, not auto:
+# pytest-xdist sizes `auto` from os.cpu_count(), which ignores the process affinity mask,
+# so on a shared many-core machine it starts far more workers than the CPUs allowed. CI
+# runners are sized for their job, so CI passes PYTEST_WORKERS=auto explicitly.
+PYTEST_WORKERS ?= 8
 test:
-	pytest -n auto
+	pytest -n $(PYTEST_WORKERS)
 
 # Run the docstring examples shipped in the package sources. Kept out of `test`
 # because `testpaths = tests` in pytest.ini deliberately excludes src/, and a plain

@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, feat/cpp-port]
   pull_request:
     branches: [main]
 
@@ -187,7 +187,7 @@ jobs:
       - name: Run tests with JIT (populates Numba cache)
         run: |
           . .venv/bin/activate
-          make test
+          make test PYTEST_WORKERS=auto
 
       # On the full matrix rather than once, because an example can drift from the code
       # on any version and a numpy release that prints a value differently breaks it on
