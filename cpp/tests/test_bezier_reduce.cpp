@@ -900,11 +900,11 @@ TEST_CASE("reduction table: out-of-range pairs are refused and degrees past the 
   CHECK_THROWS_AS(static_cast<void>(pb::elevation_matrix(-1, 1)), pantr::value_error);
   CHECK_THROWS_AS(static_cast<void>(pb::elevation_matrix(2, 0)), pantr::value_error);
   pb::reduction_cache_clear();
-  // Degree 62 is past the cap: each call computes a fresh operator and none is kept. (Reduced to a
+  // One degree past the cap: each call computes a fresh operator and none is kept. (Reduced to a
   // line, so the exact solve is trivial.)
-  REQUIRE(62 > pb::reduction_cache_max_degree);
-  const auto a = pb::cached_reduction_operator(pb::ReductionKind::interpolating, 62, 61);
-  const auto b = pb::cached_reduction_operator(pb::ReductionKind::interpolating, 62, 61);
+  const long long past = pb::reduction_cache_max_degree + 1;
+  const auto a = pb::cached_reduction_operator(pb::ReductionKind::interpolating, past, past - 1);
+  const auto b = pb::cached_reduction_operator(pb::ReductionKind::interpolating, past, past - 1);
   CHECK(a.get() != b.get());
   CHECK(pb::reduction_cache_size() == 0);
   REQUIRE(a->size() == b->size());
@@ -912,8 +912,9 @@ TEST_CASE("reduction table: out-of-range pairs are refused and degrees past the 
     CHECK(a->data()[i] == b->data()[i]);
   }
   // At the cap itself it is kept.
-  const auto c = pb::cached_reduction_operator(pb::ReductionKind::interpolating, 61, 60);
-  const auto d = pb::cached_reduction_operator(pb::ReductionKind::interpolating, 61, 60);
+  const long long cap = pb::reduction_cache_max_degree;
+  const auto c = pb::cached_reduction_operator(pb::ReductionKind::interpolating, cap, cap - 1);
+  const auto d = pb::cached_reduction_operator(pb::ReductionKind::interpolating, cap, cap - 1);
   CHECK(c.get() == d.get());
   CHECK(pb::reduction_cache_size() == 1);
 }

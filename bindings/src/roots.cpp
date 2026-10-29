@@ -6,7 +6,6 @@
 
 #include "pantr/core/errors.hpp"
 #include "pantr/core/ndarray.hpp"
-#include "pantr/parallel/work_model.hpp"
 #include "pantr/roots/roots.hpp"
 
 #include <nanobind/nanobind.h>
@@ -15,7 +14,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <optional>
 #include <span>
 #include <string>
 #include <tuple>
@@ -55,11 +53,9 @@ NumpyArray<double> vector_to_numpy(const std::vector<double>& v) {
   return to_numpy(std::move(a));
 }
 
-/// Whether a batch of `n` polynomials of `n_coeff` coefficients runs on the pool (then the GIL is
-/// released around it).
-bool batch_parallel(std::size_t n, std::size_t n_coeff) {
-  return parallel::worth_parallel(
-      n, parallel::WorkEstimate{rd::ops_per_polynomial(n_coeff > 0 ? n_coeff - 1 : 0)});
+/// Operations per polynomial of `n_coeff` coefficients, for the GIL decision (the batch's own).
+double batch_ops(std::size_t n_coeff) {
+  return rd::ops_per_polynomial(n_coeff > 0 ? n_coeff - 1 : 0);
 }
 
 template <class T>
@@ -101,10 +97,7 @@ void def_provider(nb::module_& m, const std::string& sfx) {
   m.def(("find_roots_batch" + sfx).c_str(),
         [](const Mat<T>& c, double param_tol, double value_tol) {
           pantr::roots::BatchRootSet r = [&] {
-            std::optional<nb::gil_scoped_release> release;
-            if (batch_parallel(c.shape(0), c.shape(1))) {
-              release.emplace();
-            }
+            const ReleaseIfParallel release(c.shape(0), batch_ops(c.shape(1)));
             return Builtin{}.find_roots_batch<T>(view_of(c), {param_tol, value_tol});
           }();
           NdArray<std::int64_t> counts({r.counts.size()}, for_overwrite);
@@ -126,10 +119,7 @@ void def_provider(nb::module_& m, const std::string& sfx) {
   m.def(("find_monotone_root_batch" + sfx).c_str(),
         [](const Mat<T>& c, double param_tol) {
           std::vector<double> r = [&] {
-            std::optional<nb::gil_scoped_release> release;
-            if (batch_parallel(c.shape(0), c.shape(1))) {
-              release.emplace();
-            }
+            const ReleaseIfParallel release(c.shape(0), batch_ops(c.shape(1)));
             return Builtin{}.find_monotone_roots_batch<T>(view_of(c), param_tol);
           }();
           return vector_to_numpy(r);

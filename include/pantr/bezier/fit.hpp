@@ -5,9 +5,11 @@
 /// through its SVD with the singular values below `tol * sigma_max` dropped (Golub and Van Loan,
 /// *Matrix Computations*: regularised least squares). On a tensor-product grid the system
 /// separates and one pseudo-inverse per direction is applied along its axis; at scattered points
-/// the full tensor-product Vandermonde is built and pseudo-inverted once. Everything runs in the
-/// storage type `T`, as the previous release ran NumPy's LAPACK in the array's dtype; Eigen's
-/// `BDCSVD` (divide and conquer, Jacobi below 16 columns) stands for LAPACK's `gesdd` (design §6).
+/// the full tensor-product Vandermonde is built and pseudo-inverted once. As in the previous
+/// release (NumPy's `linalg.svd`), the decomposition runs in `double` and its factors are rounded
+/// to the storage type `T`; the Vandermonde matrix, the truncation, the pseudo-inverse and its
+/// application are in `T`. Eigen's `BDCSVD` (divide and conquer, Jacobi below 16 columns) stands
+/// for LAPACK's `gesdd` (design §6).
 #pragma once
 
 #include "pantr/basis/bernstein.hpp"
@@ -64,24 +66,29 @@ using UInt = std::conditional_t<sizeof(T) == 8, std::uint64_t, std::uint32_t>;
 template <StorageFloat T>
 [[nodiscard]] NdArray<T> truncated_pinv(const linalg::RowMatrix<T>& v, double tol) {
   using Mat = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>;
+  using MatD = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic>;
   // LAPACK's gesdd reports a NaN or infinite entry as a failure to converge (NumPy's LinAlgError,
   // a ValueError); Eigen would return NaN singular values, which the truncation below would then
   // zero, a silent wrong answer. The same refusal, as a value_error with NumPy's message.
   if (!v.allFinite()) {
     throw value_error("SVD did not converge");
   }
-  const Eigen::BDCSVD<Mat, Eigen::ComputeThinU | Eigen::ComputeThinV> svd(v);
+  // In double, as NumPy decomposes every real matrix, then the factors rounded to T.
+  const Eigen::BDCSVD<MatD, Eigen::ComputeThinU | Eigen::ComputeThinV> svd(
+      v.template cast<double>());
   if (svd.info() != Eigen::Success) {
     throw value_error("SVD did not converge");
   }
-  const auto& sigma = svd.singularValues();
+  const Eigen::Matrix<T, Eigen::Dynamic, 1> sigma = svd.singularValues().template cast<T>();
+  const Mat u = svd.matrixU().template cast<T>();
+  const Mat vv = svd.matrixV().template cast<T>();
   const auto k = sigma.size();
   Eigen::Matrix<T, Eigen::Dynamic, 1> inv(k);
   const T cut = k > 0 ? static_cast<T>(tol) * sigma(0) : T(0);
   for (Eigen::Index i = 0; i < k; ++i) {
     inv(i) = sigma(i) >= cut ? T(1) / sigma(i) : T(0);
   }
-  const Mat pinv = svd.matrixV() * inv.asDiagonal() * svd.matrixU().transpose();
+  const Mat pinv = vv * inv.asDiagonal() * u.transpose();
   NdArray<T> out({static_cast<std::size_t>(pinv.rows()), static_cast<std::size_t>(pinv.cols())},
                  for_overwrite);
   Eigen::Map<linalg::RowMatrix<T>>(out.data(), pinv.rows(), pinv.cols()) = pinv;
@@ -188,7 +195,7 @@ template <StorageFloat T>
       pinvs[d] = pinvs[same];
     }
     const NdArray<T>& pinv = *pinvs[d];
-    if (cur[d] == 1 && pinv.shape()[0] == 1) {
+    if (cur[d] == 1) {
       continue;  // a single node and degree 0: the value is the coefficient
     }
     const NdArray<T> flat = detail::flatten_along_axis<T>(current.flat(), cur, d);
@@ -237,9 +244,13 @@ template <StorageFloat T>
   std::size_t n_coeffs = 1;
   for (std::size_t d = 0; d < dim; ++d) {
     basis::detail::check_degree(degrees[d]);  // the tabulation's message, as before
+    if (degrees[d] >= static_cast<long long>((std::numeric_limits<int>::max)())) {
+      throw capacity_error("fit_scattered: degree " + std::to_string(degrees[d]) +
+                           " exceeds the largest supported degree");
+    }
     orders[d] = static_cast<std::size_t>(degrees[d]) + 1;
-    n_coeffs *= orders[d];
   }
+  n_coeffs = checked_product(orders);
   if (n_coeffs > n_pts) {
     throw value_error("Underdetermined: " + std::to_string(n_coeffs) + " coefficients but only " +
                       std::to_string(n_pts) + " sample points.");

@@ -44,7 +44,7 @@ template <class S>
     if (std::isnan(d)) {
       return d;
     }
-    r = want_max ? std::max(r, d) : std::min(r, d);
+    r = want_max ? (std::max)(r, d) : (std::min)(r, d);
   }
   return r;
 }
@@ -74,7 +74,7 @@ template <StorageFloat S>
   // `float32` element is a `float32`.
   const S f_lo = coeff[0];
   const S f_hi = coeff.back();
-  if (have_same_sign(f_lo, f_hi)) {
+  if (have_same_sign(static_cast<double>(f_lo), static_cast<double>(f_hi))) {
     return std::numeric_limits<double>::quiet_NaN();
   }
   double x = 0.5 * (lo + hi);
@@ -84,11 +84,11 @@ template <StorageFloat S>
     const double step = static_cast<double>(quotient) * (hi - lo);
     x = lo + step;
     const double margin = 0.1 * (hi - lo);
-    x = std::max(lo + margin, std::min(x, hi - margin));
+    x = (std::max)(lo + margin, (std::min)(x, hi - margin));
   }
   for (int it = 0; it < max_iter; ++it) {
     const auto [fx, dfx] = eval_and_deriv<S>(coeff, x);
-    if (spans_zero(f_lo, fx)) {
+    if (spans_zero(static_cast<double>(f_lo), fx)) {
       hi = x;
     } else {
       lo = x;
@@ -222,8 +222,8 @@ template <StorageFloat S>
   S d_min = coeff[0];
   S d_max = coeff[0];
   for (std::size_t i = 1; i <= n; ++i) {
-    d_min = std::min(d_min, coeff[i]);
-    d_max = std::max(d_max, coeff[i]);
+    d_min = (std::min)(d_min, coeff[i]);
+    d_max = (std::max)(d_max, coeff[i]);
   }
   if (d_min > 0 || d_max < 0) {
     return {};
@@ -270,8 +270,8 @@ template <StorageFloat S>
     double lo_val = coeff_lev[0];
     double hi_val = coeff_lev[0];
     for (std::size_t i = 1; i <= deg_lev; ++i) {
-      lo_val = std::min(lo_val, coeff_lev[i]);
-      hi_val = std::max(hi_val, coeff_lev[i]);
+      lo_val = (std::min)(lo_val, coeff_lev[i]);
+      hi_val = (std::max)(hi_val, coeff_lev[i]);
     }
     if (lo_val > 0.0 || hi_val < 0.0) {
       crit.clear();

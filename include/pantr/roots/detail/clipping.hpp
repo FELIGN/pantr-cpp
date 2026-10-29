@@ -57,7 +57,7 @@ struct ClipResult {
 /// whose largest coefficient magnitude is `scale`.
 [[nodiscard]] inline double zero_tolerance(double scale, std::size_t n, double geom_tol) noexcept {
   const double bound = scale * static_cast<double>(n + 1) * clip_eval_error_factor * dbl_epsilon;
-  return std::max(bound, geom_tol);
+  return (std::max)(bound, geom_tol);
 }
 
 /// Find root candidates of a Bernstein polynomial by Bezier clipping.
@@ -86,7 +86,7 @@ template <StorageFloat S>
   ClipResult res;
   double coeff_scale = 0.0;
   for (const S c : root_coeff) {
-    coeff_scale = std::max(coeff_scale, static_cast<double>(std::abs(c)));
+    coeff_scale = (std::max)(coeff_scale, static_cast<double>(std::abs(c)));
   }
   const double zero_tol = zero_tolerance(coeff_scale, n, geom_tol);
   if (std::abs(static_cast<double>(root_coeff[0])) <= zero_tol) {
@@ -167,7 +167,7 @@ template <StorageFloat S>
     const std::vector<double> local = subdivide<S>(root_coeff, lo, hi);
     double local_scale = 0.0;
     for (const double v : local) {
-      local_scale = std::max(local_scale, std::abs(v));
+      local_scale = (std::max)(local_scale, std::abs(v));
     }
     const double local_zero_tol = zero_tolerance(local_scale, n, geom_tol);
 
@@ -175,8 +175,8 @@ template <StorageFloat S>
     double c_min = local[0];
     double c_max = local[0];
     for (std::size_t i = 1; i <= n; ++i) {
-      c_min = std::min(c_min, local[i]);
-      c_max = std::max(c_max, local[i]);
+      c_min = (std::min)(c_min, local[i]);
+      c_max = (std::max)(c_max, local[i]);
     }
 
     // Step 4: quick rejection (one sign), with a polish when the margin is within the noise.
@@ -239,8 +239,8 @@ template <StorageFloat S>
     }
     // A safety margin against rounding in the hull crossing (admitted, as the zero tolerance).
     const double margin = static_cast<double>(n + 1) * clip_eval_error_factor * dbl_epsilon;
-    const double t_lo_safe = std::max(clip.t_lo - margin, 0.0);
-    const double t_hi_safe = std::min(clip.t_hi + margin, 1.0);
+    const double t_lo_safe = (std::max)(clip.t_lo - margin, 0.0);
+    const double t_hi_safe = (std::min)(clip.t_hi + margin, 1.0);
     const double lo_offset = t_lo_safe * span;
     const double hi_offset = t_hi_safe * span;
     const double new_lo = lo + lo_offset;
@@ -304,10 +304,10 @@ template <StorageFloat S>
   const std::size_t n = coeff.size() - 1;
   double coeff_scale = 0.0;
   for (const S c : coeff) {
-    coeff_scale = std::max(coeff_scale, std::abs(static_cast<double>(c)));
+    coeff_scale = (std::max)(coeff_scale, std::abs(static_cast<double>(c)));
   }
   const double zero_tol = zero_tolerance(coeff_scale, n, geom_tol);
-  const double base_dedup = std::max(param_tol * 2.0, zero_tol * 4.0);
+  const double base_dedup = (std::max)(param_tol * 2.0, zero_tol * 4.0);
   const double radius_cap = std::pow(zero_tol, 1.0 / 3.0);
   // Insertion sort, as the previous release: stable, and the order of equal keys is moot.
   for (std::size_t i = 1; i < raw.size(); ++i) {
@@ -326,8 +326,8 @@ template <StorageFloat S>
       continue;
     }
     const double df = eval_and_deriv<S>(coeff, raw[count - 1]).second;
-    const double local_tol = zero_tol / std::max(std::abs(df), dbl_epsilon);
-    if (gap <= std::max(base_dedup, std::min(local_tol * 4.0, radius_cap))) {
+    const double local_tol = zero_tol / (std::max)(std::abs(df), dbl_epsilon);
+    if (gap <= (std::max)(base_dedup, (std::min)(local_tol * 4.0, radius_cap))) {
       continue;
     }
     raw[count++] = raw[i];

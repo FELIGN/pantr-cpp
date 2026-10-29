@@ -6,8 +6,8 @@
 /// one that keeps both end values; it is assembled in exact rational arithmetic and rounded to
 /// `double` once, entry by entry, to nearest (as `float(Fraction)` rounded in the previous
 /// release, so the operators are the same bits). The exact assembly is what makes the operator
-/// usable at high degree: the interior Gram block it inverts has condition number `5.4e10` at
-/// `q = 19`, so a `double` solve would lose eleven digits (measured in the previous release).
+/// usable at high degree: the interior Gram block it inverts has a condition number of order
+/// `1e10` at `q = 19`, so a `double` solve would lose some ten digits.
 ///
 /// Errors are measured in the space the caller budgets in: for a polynomial Bézier the exact
 /// Bernstein-Gram `L^2` norm of the coefficient difference; for a rational one the relative
@@ -29,9 +29,9 @@
 #include "pantr/quad/rules_1d.hpp"
 
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <cstddef>
-#include <cstdio>
 #include <limits>
 #include <map>
 #include <memory>
@@ -39,6 +39,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <tuple>
 #include <utility>
@@ -52,14 +53,16 @@ namespace pantr::bezier {
 
 /// Default relative tolerance of `minimize_degree`, in units of the dtype's epsilon: three digits
 /// above the round-off floor of a reduce-then-elevate round trip (each accumulates `O(p)`
-/// roundings), which an exactly reducible curve reaches. Kept from the previous release, whose
-/// measurement put the floor of the rational (projected) measure at `1.55 eps`.
+/// roundings), which an exactly reducible curve reaches: a small multiple of `eps`, for the
+/// polynomial measure and for the rational (projected) one alike. Kept from the previous release;
+/// an admitted factor.
 inline constexpr double auto_reduction_tol_factor = 1.0e3;
 
-/// Largest degree whose reduction operators the process table keeps (the exactness envelope of
-/// the binomial kernel; past it an operator is computed per call). With every key present the
-/// table holds about 14 MB; an admitted bound, not a derived one.
-inline constexpr long long reduction_cache_max_degree = bincoeff_max_n;
+/// Largest degree whose reduction operators the process table keeps; past it an operator is
+/// computed per call. A memory bound: with every interpolating key up to it present the table
+/// holds `sum_p 8 (p + 1) p (p + 1) / 2` bytes, under 20 MB, and the change-of-basis tables use
+/// the same degree. An admitted bound, not a derived one.
+inline constexpr long long reduction_cache_max_degree = 64;
 
 namespace detail {
 
@@ -69,12 +72,9 @@ using exact::Rational;
 /// A matrix of exact rationals, row-major.
 using ExactMatrix = std::vector<std::vector<Rational>>;
 
-/// `C(n, k)` as an exact integer (`0` outside `0 <= k <= n`).
+/// `C(n, k)` as an exact integer, for `0 <= k <= n` (unchecked: every caller is in range).
 [[nodiscard]] inline Integer comb_exact(long long n, long long k) {
-  if (k < 0 || k > n) {
-    return Integer(0);
-  }
-  k = std::min(k, n - k);
+  k = (std::min)(k, n - k);
   Integer r(1);
   for (long long i = 1; i <= k; ++i) {
     r *= n - k + i;
@@ -117,7 +117,7 @@ using ExactMatrix = std::vector<std::vector<Rational>>;
   ExactMatrix m(static_cast<std::size_t>(p + 1),
                 std::vector<Rational>(static_cast<std::size_t>(q + 1)));
   for (long long i = 0; i <= p; ++i) {
-    for (long long j = std::max(0LL, i - t); j <= std::min(q, i); ++j) {
+    for (long long j = (std::max)(0LL, i - t); j <= (std::min)(q, i); ++j) {
       m[static_cast<std::size_t>(i)][static_cast<std::size_t>(j)] =
           Rational(comb_exact(q, j) * comb_exact(t, i - j), comb_exact(p, i));
     }
@@ -340,9 +340,11 @@ inline void check_reduction_table_atfork() {
 
 /// Get a reduction operator from the process table, computing it on first use.
 ///
-/// Every call with the same key returns the same immutable matrix (one per program image) for
-/// degrees up to `reduction_cache_max_degree`; past it each call computes a fresh one. The matrix
-/// is computed outside the lock; when two threads compute one key at once, the first stored wins.
+/// Every call with the same key returns the same immutable matrix (one allocation per key per
+/// program image: each shared object built from these headers with hidden symbols, such as each
+/// Python extension module, has its own table) for degrees up to `reduction_cache_max_degree`; past
+/// it each call computes a fresh one. The matrix is computed outside the lock; when two threads
+/// compute one key at once, the first stored wins.
 ///
 /// Args:
 ///     kind (ReductionKind): Which operator.
@@ -395,8 +397,9 @@ namespace detail {
 /// Apply `op` (`(q + 1, p + 1)`) to the columns of `ctrl` (`(p + 1, n_cols)`): `out = op ctrl`,
 /// accumulated in `double` and rounded to `T` once. Each product is a statement of its own, so no
 /// `fma` is contracted: the unit rows of the interpolating operator then reproduce their inputs
-/// bit for bit whatever the build, except that a `-0.0` comes back as `+0.0` (the sum starts at
-/// `+0.0`, as the previous release's did).
+/// bit for bit whatever the build, for finite inputs: a `-0.0` comes back as `+0.0` (the sum starts
+/// at `+0.0`, as the previous release's did), and an infinite input makes every output it meets NaN
+/// (`0 * inf`).
 ///
 /// Note:
 ///     Inputs are assumed to be correct (no validation performed).
@@ -483,9 +486,12 @@ template <StorageFloat T>
   if (std::isinf(x)) {
     return x > 0 ? "inf" : "-inf";
   }
+  // `std::to_chars` rather than `printf`: no locale (a comma as decimal point), as format.hpp.
   char buf[64];
-  std::snprintf(buf, sizeof buf, "%.3e", x);
-  return buf;
+  const auto res = std::to_chars(buf, buf + sizeof(buf), x, std::chars_format::scientific, 3);
+  std::string out(buf, res.ptr);
+  // C++ writes the exponent with at least two digits, as Python does: `1.000e-05`.
+  return out;
 }
 
 /// Refuse a rational net whose smallest control weight is not strictly positive (NaN included):
@@ -502,7 +508,7 @@ void refuse_inverted_weight(const NdArray<T>& ctrl, std::string_view remedy) {
       smallest = w;
       break;
     }
-    smallest = std::min(smallest, w);
+    smallest = (std::min)(smallest, w);
   }
   if (smallest > 0.0) {
     return;
@@ -520,8 +526,8 @@ void refuse_inverted_weight(const NdArray<T>& ctrl, std::string_view remedy) {
 ///
 /// Among the polynomials of the lower degree that agree with this one at both ends of each
 /// reduced direction, the result is the closest in `L^2([0, 1]^dim)`; the end values are
-/// reproduced bit for bit (a `-0.0` as `+0.0`). A reduction to degree 0 returns the plain
-/// projection (the mean).
+/// reproduced bit for bit when the control points are finite (a `-0.0` as `+0.0`). A reduction to
+/// degree 0 returns the plain projection (the mean).
 ///
 /// Args:
 ///     b (const Bezier<T>&): The Bézier.
@@ -637,8 +643,8 @@ template <class V>
 
 /// Gauss-Legendre nodes per direction grading a rational reduction: `2p + 2`, the smallest rule
 /// exact on the numerator `w C~ - w~ C` of the projected difference (degree `4p`) plus one node.
-/// The `1 / (w w~)^2` factor is not polynomial and not bounded here; the previous release measured
-/// the estimate within 3% of a dense reference over degrees 3 to 20 and weight ratios to 100.
+/// The `1 / (w w~)^2` factor is not polynomial and not bounded here: an estimate, checked against a
+/// dense reference in the previous release rather than proved.
 [[nodiscard]] inline std::size_t projected_quadrature_size(std::size_t degree) noexcept {
   return 2 * degree + 2;
 }

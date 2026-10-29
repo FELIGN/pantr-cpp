@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <span>
 #include <utility>
 #include <vector>
@@ -28,7 +29,7 @@ namespace pantr::roots::detail {
 
 /// Machine epsilon of `double`, the unit every scale-relative bound of the provider is written in
 /// (the Numba code's `_DBL_EPSILON`; used for both storage types, as there).
-inline constexpr double dbl_epsilon = 2.2204460492503131e-16;
+inline constexpr double dbl_epsilon = std::numeric_limits<double>::epsilon();
 
 /// `(1 - t) * a + t * b` as two rounded products and a rounded sum (no contraction).
 ///
@@ -107,7 +108,8 @@ template <StorageFloat S>
   const double s = 1.0 - t;
   for (std::size_t k = 1; k <= n; ++k) {
     for (std::size_t i = 0; i + k <= n; ++i) {
-      work[i] = static_cast<S>(lerp_uncontracted(s, t, work[i], work[i + 1]));
+      work[i] = static_cast<S>(
+          lerp_uncontracted(s, t, static_cast<double>(work[i]), static_cast<double>(work[i + 1])));
     }
   }
   return static_cast<double>(work[0]);
@@ -137,12 +139,13 @@ template <StorageFloat S>
   std::vector<S> row(coeff.begin(), coeff.end());
   for (std::size_t k = 1; k < n; ++k) {
     for (std::size_t i = 0; i + k <= n; ++i) {
-      row[i] = static_cast<S>(lerp_uncontracted(s, t, row[i], row[i + 1]));
+      row[i] = static_cast<S>(
+          lerp_uncontracted(s, t, static_cast<double>(row[i]), static_cast<double>(row[i + 1])));
     }
   }
   const S d0 = row[0];
   const S d1 = row[1];
-  const double f = lerp_uncontracted(s, t, d0, d1);
+  const double f = lerp_uncontracted(s, t, static_cast<double>(d0), static_cast<double>(d1));
   const S diff = d1 - d0;
   return {f, static_cast<double>(n) * static_cast<double>(diff)};
 }
@@ -218,8 +221,8 @@ template <StorageFloat S>
   if (t_min <= 0.0 && t_max >= 1.0) {
     return {coeff.begin(), coeff.end()};
   }
-  t_min = std::min(std::max(t_min, 0.0), 1.0);
-  t_max = std::min(std::max(t_max, 0.0), 1.0);
+  t_min = (std::min)(std::max(t_min, 0.0), 1.0);
+  t_max = (std::min)(std::max(t_max, 0.0), 1.0);
   return restrict_to<S>(coeff, t_min, t_max);
 }
 
@@ -285,8 +288,8 @@ struct HullClip {
   const double inv_n = 1.0 / static_cast<double>(n);
   HullClip clip{1.0, 0.0, false};
   const auto take = [&](double t) {
-    clip.t_lo = std::min(clip.t_lo, t);
-    clip.t_hi = std::max(clip.t_hi, t);
+    clip.t_lo = (std::min)(clip.t_lo, t);
+    clip.t_hi = (std::max)(clip.t_hi, t);
     clip.found = true;
   };
   const auto cross = [&](std::size_t j0, std::size_t j1, std::size_t i) {
@@ -365,7 +368,7 @@ template <StorageFloat S>
   if (std::abs(df_mid) > dbl_epsilon) {
     double newton = mid - f_mid / df_mid;
     if (lo - param_tol <= newton && newton <= hi + param_tol) {
-      newton = std::max(0.0, std::min(1.0, newton));
+      newton = (std::max)(0.0, (std::min)(1.0, newton));
       const double f_newton = eval<S>(coeff, newton);
       if (std::abs(f_newton) <= std::abs(f_mid)) {
         return {newton, f_newton, df_mid};

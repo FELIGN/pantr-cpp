@@ -134,7 +134,7 @@ namespace detail {
 inline constexpr std::size_t clip_min_degree = 6;
 
 /// Largest `max |c| / min nonzero |c|` for which clipping is used, chosen in the previous release
-/// by a 27 000-trial sweep of clipping against Yuksel (an empirical bound, admitted as such).
+/// by a sweep of clipping against Yuksel (an empirical bound, admitted as such).
 inline constexpr double clip_coeff_range_limit = 1e8;
 
 /// Sort ascending with NaN last (NumPy's order).
@@ -163,9 +163,14 @@ RootSet<double> dispatch_single(std::span<const T> coeff, double param_tol, doub
   if (n < 1) {
     return computed_set({}, {});
   }
+  // The previous release compared in NumPy, which rounds the tolerance (a Python float) to the
+  // array's dtype first (NEP 50): in `T` here, a tolerance past `T`'s range reading as infinite.
+  const T tol_t = std::abs(geom_tol) > static_cast<double>((std::numeric_limits<T>::max)())
+                      ? std::numeric_limits<T>::infinity()
+                      : static_cast<T>(geom_tol);
   bool all_zero = true;
   for (const T c : coeff) {
-    all_zero = all_zero && std::abs(static_cast<double>(c)) <= geom_tol;  // NaN: not zero
+    all_zero = all_zero && std::abs(c) <= tol_t;  // NaN: not zero
   }
   if (all_zero) {
     return computed_set({}, {});
@@ -178,9 +183,9 @@ RootSet<double> dispatch_single(std::span<const T> coeff, double param_tol, doub
     for (const T c : coeff) {
       const double a = std::abs(static_cast<double>(c));
       nan = nan || std::isnan(a);
-      c_max = std::max(c_max, a);
+      c_max = (std::max)(c_max, a);
       if (a > 0.0) {
-        c_min = std::min(c_min, a);
+        c_min = (std::min)(c_min, a);
       }
     }
     // NumPy's max propagates NaN, and NaN <= limit is false: Yuksel.
@@ -224,7 +229,7 @@ RootSet<double> dispatch_batch_row(std::span<const T> coeff, double param_tol, d
     double c_min = std::numeric_limits<double>::infinity();
     for (const T c : coeff) {
       const double a = std::abs(static_cast<double>(c));
-      c_max = std::max(c_max, a);
+      c_max = (std::max)(c_max, a);
       if (a > 0.0 && a < c_min) {
         c_min = a;
       }
@@ -251,7 +256,7 @@ RootSet<double> dispatch_batch_row(std::span<const T> coeff, double param_tol, d
 /// heuristic, of the order of a few Newton iterations per root (design §2.8).
 [[nodiscard]] inline double ops_per_polynomial(std::size_t n) {
   const auto d = static_cast<double>(n + 1);
-  return std::max(1.0, 8.0 * d * d * d);
+  return (std::max)(1.0, 8.0 * d * d * d);
 }
 
 inline void check_coeffs(std::size_t n_coeff) {
@@ -318,7 +323,7 @@ class Builtin {
     detail::check_tol(o.value_tol, "value_tol");
     const std::size_t n_polys = coeffs.extent(0);
     const std::size_t degree = coeffs.extent(1) - 1;
-    const std::size_t width = std::max<std::size_t>(degree, 1);
+    const std::size_t width = (std::max)(degree, std::size_t{1});
     BatchRootSet out{NdArray<double>({n_polys, width}, for_overwrite),
                      std::vector<std::int64_t>(n_polys, 0),
                      std::vector<Completeness>(n_polys, Completeness::complete)};
@@ -336,7 +341,7 @@ class Builtin {
                                    detail::dispatch_batch_row<T>(row, o.param_tol, o.value_tol);
                                // At most `degree` distinct roots; the clamp keeps a merge artefact
                                // inside the row.
-                               const std::size_t count = std::min(r.roots.size(), width);
+                               const std::size_t count = (std::min)(r.roots.size(), width);
                                for (std::size_t j = 0; j < count; ++j) {
                                  roots[i * width + j] = r.roots[j].x;
                                }
