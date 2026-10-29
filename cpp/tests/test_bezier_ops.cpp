@@ -236,8 +236,8 @@ TEST_CASE_TEMPLATE("bezier elevate: every message, in the order the Python check
   const std::vector<long long> three = {1, 1, 1};
   const std::vector<long long> negative = {-1};
   const std::vector<long long> zero = {0};
-  const std::vector<long long> far = {59};
-  const std::vector<long long> far2 = {1};
+  const std::vector<long long> to_60 = {59};
+  const std::vector<long long> to_2 = {1};
   CHECK_THROWS_WITH_AS(static_cast<void>(pb::elevate_degree<T>(curve, three)),
                        "Number of degree increments (3) must match dimension (1).",
                        pantr::value_error);
@@ -254,8 +254,8 @@ TEST_CASE_TEMPLATE("bezier elevate: every message, in the order the Python check
       "without an int64 overflow. Past that the coefficients wrap silently and the result is "
       "corrupted rather than merely inaccurate.",
       pantr::value_error);
-  CHECK_NOTHROW(static_cast<void>(pb::elevate_degree<T>(curve, far)));
-  CHECK_NOTHROW(static_cast<void>(pb::elevate_degree<T>(curve, far2)));
+  CHECK_NOTHROW(static_cast<void>(pb::elevate_degree<T>(curve, to_60)));
+  CHECK_NOTHROW(static_cast<void>(pb::elevate_degree<T>(curve, to_2)));
   // An increment so large that degree + increment would overflow still gives the envelope error.
   const std::vector<long long> huge = {(std::numeric_limits<long long>::max)()};
   CHECK_THROWS_AS(static_cast<void>(pb::elevate_degree<T>(curve, huge)), pantr::value_error);
@@ -390,6 +390,8 @@ TEST_CASE_TEMPLATE("bezier multiply: rational operands", T, float, double) {
   CHECK(mixed.degree(0) == 3);
   const NdArray<T> lv = eval1(lin, ts);
   const NdArray<T> mv = eval1(mixed, ts);
+  // Each product coefficient is a sum of at most 5 binomial-weighted terms of magnitude <= 1, each
+  // a few roundings (n eps sum|terms|); evaluating degree 3 adds 4 more: 64 eps per term, 5 terms.
   const double rel = 64.0 * 5.0 * eps;
   for (std::size_t j = 0; j < ts.size(); ++j) {
     const double x = static_cast<double>(base.data()[2 * j]);
@@ -460,6 +462,8 @@ TEST_CASE_TEMPLATE(
   const NdArray<T> fu = pb::bernstein_product<T>(f, two_dir, unit, one_dir);
   REQUIRE(fu.size() == 4);
   for (std::size_t i = 0; i < 4; ++i) {
+    // A product with the constant 1 is f times binomial ratios equal to 1, a few roundings each:
+    // 8 eps of the largest coefficient magnitude, 5.
     CHECK(std::fabs(static_cast<double>(fu.data()[i]) - static_cast<double>(f[i])) <=
           8.0 * eps * 5.0);
   }

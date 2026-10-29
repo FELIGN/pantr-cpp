@@ -139,6 +139,11 @@ class AABB {
       throw value_error("from_bounds: bounds must have shape (ndim, 2); got " + py_repr(shape) +
                         ".");
     }
+    if (bounds.size() != 2 * shape[0]) {
+      throw value_error("from_bounds: bounds hold " + std::to_string(bounds.size()) +
+                        " values, but the shape " + py_repr(shape) + " needs " +
+                        std::to_string(2 * shape[0]) + ".");
+    }
     std::vector<double> lo(shape[0]);
     std::vector<double> hi(shape[0]);
     for (std::size_t i = 0; i < shape[0]; ++i) {
@@ -362,6 +367,10 @@ class AABB {
       throw value_error("transform(): affine.matrix must be (" + std::to_string(n) + ", " +
                         std::to_string(n) + "); got " + py_repr(matrix_shape) + ".");
     }
+    if (matrix.size() != n * n) {
+      throw value_error("transform(): affine.matrix holds " + std::to_string(matrix.size()) +
+                        " values, but its shape needs " + std::to_string(n * n) + ".");
+    }
     if (offset.size() != n) {
       const std::size_t os[1] = {offset.size()};
       throw value_error("transform(): affine.offset must have shape (" + std::to_string(n) +
@@ -378,8 +387,11 @@ class AABB {
         const double a = matrix[i * n + j];
         const double t_lo = a == 0.0 ? 0.0 : a * rep_->lo[j];
         const double t_hi = a == 0.0 ? 0.0 : a * rep_->hi[j];
-        const double c_lo = (std::min)(t_lo, t_hi);
-        const double c_hi = (std::max)(t_lo, t_hi);
+        // NaN propagates, as through np.minimum / np.maximum (std::min and std::max would drop
+        // it in one argument position): an infinite entry of A against a zero bound gives one.
+        const bool nan = std::isnan(t_lo) || std::isnan(t_hi);
+        const double c_lo = nan ? t_lo + t_hi : (std::min)(t_lo, t_hi);
+        const double c_hi = nan ? t_lo + t_hi : (std::max)(t_lo, t_hi);
         sum_lo = j == 0 ? c_lo : sum_lo + c_lo;
         sum_hi = j == 0 ? c_hi : sum_hi + c_hi;
       }

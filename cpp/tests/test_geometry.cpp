@@ -54,9 +54,9 @@ TEST_CASE("AABB: emptiness, containment and overlap on the closed box") {
   CHECK_THROWS_WITH_AS(static_cast<void>(a.contains_point(nan_x)),
                        "contains_point: x must not contain NaN.", pantr::value_error);
   const AABB touching = box({1.0, 2.0}, {3.0, 3.0});
-  const AABB far = box({1.5, 0.0}, {3.0, 3.0});
+  const AABB apart = box({1.5, 0.0}, {3.0, 3.0});
   CHECK(a.overlaps(touching));
-  CHECK_FALSE(a.overlaps(far));
+  CHECK_FALSE(a.overlaps(apart));
   CHECK_FALSE(a.overlaps(AABB::empty(2)));
   CHECK_THROWS_WITH_AS(static_cast<void>(a.overlaps(AABB::empty(3))),
                        "AABB.overlaps: dimension mismatch (a.ndim=2 vs b.ndim=3).",
@@ -148,4 +148,28 @@ TEST_CASE("AABB: from_bounds and as_bounds are inverse, equality is IEEE") {
                        pantr::value_error);
   CHECK(box({-0.0}, {1.0}) == box({0.0}, {1.0}));
   CHECK_FALSE(box({0.0}, {1.0}) == box({0.0, 0.0}, {1.0, 1.0}));
+}
+
+TEST_CASE("AABB: spans that do not hold what their shapes say are refused") {
+  const std::vector<double> two = {0.0, 1.0};
+  const std::size_t four_rows[2] = {4, 2};
+  CHECK_THROWS_WITH_AS(static_cast<void>(AABB::from_bounds(two, four_rows)),
+                       "from_bounds: bounds hold 2 values, but the shape (4, 2) needs 8.",
+                       pantr::value_error);
+  const AABB a = box({0.0, 0.0}, {1.0, 1.0});
+  const std::vector<double> m3 = {1.0, 0.0, 0.0};
+  const std::size_t shape[2] = {2, 2};
+  const std::vector<double> b = {0.0, 0.0};
+  CHECK_THROWS_WITH_AS(static_cast<void>(a.transform(2, m3, shape, b)),
+                       "transform(): affine.matrix holds 3 values, but its shape needs 4.",
+                       pantr::value_error);
+}
+
+TEST_CASE("AABB: an infinite matrix entry against a zero bound is NaN, refused as NumPy's was") {
+  // [[inf]] on [-1, 0]: the terms are (-inf, inf * 0 = NaN); np.minimum propagates the NaN.
+  const AABB a = box({-1.0}, {0.0});
+  const std::vector<double> m = {std::numeric_limits<double>::infinity()};
+  const std::size_t shape[2] = {1, 1};
+  const std::vector<double> b = {0.0};
+  CHECK_THROWS_AS(static_cast<void>(a.transform(1, m, shape, b)), pantr::value_error);
 }

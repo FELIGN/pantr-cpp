@@ -123,9 +123,10 @@ template <StorageFloat T>
 
 /// Apply the affine map `x -> A x + b` to the image of a Bezier.
 ///
-/// `A` and the offset are first rounded to `T`, and every operation is in `T`, as NumPy computes
+/// `A` and the offset are first rounded to `T`, and every operation is in `T`, as NumPy computed
 /// `cp @ A.T + b`: each coordinate is the sum over the columns of `A` of the products with the
-/// control point, added in the order of the column index, plus the offset. For a rational Bezier
+/// control point, added in the order of the column index, plus the offset (NumPy's BLAS product
+/// may sum in another order, so the two agree to rounding, not bit for bit). For a rational Bezier
 /// the stored control points are weighted coordinates `(w x, w)`, so the linear part acts on the
 /// weighted coordinates and the offset is scaled by the weight, `A (w x) + w b`; the weights are
 /// copied unchanged and the projected map undergoes `A x + b`.

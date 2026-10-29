@@ -66,7 +66,9 @@ class Bezier {
   ///         `control_points` size that does not match `shape`.
   ///     capacity_error: The product of the extents overflows `std::size_t`.
   Bezier(std::span<const T> control_points, std::vector<std::size_t> shape, bool rational)
-      : Bezier(copy_of(control_points, shape), std::move(shape), rational) {}
+      // `shape` is copied, not moved: the order in which the two arguments are evaluated is
+      // unspecified, and a moved-from shape would skip `copy_of`'s size check.
+      : Bezier(copy_of(control_points, shape), shape, rational) {}
 
   /// Build a Bézier over an existing immutable buffer, without copying (a result, or a
   /// conversion that shares another immutable value's control points).

@@ -106,6 +106,10 @@ TEST_CASE("AffineTransform: mirror, shear and scaling act as their closed forms"
   CHECK(sc[1] == 2.0);
   const std::vector<double> zf = {1.0, 0.0};
   CHECK_THROWS_AS(static_cast<void>(AffineTransform::scaling(zf)), pantr::value_error);
+  // Finiteness is checked over every factor before any zero, as the previous release did.
+  const std::vector<double> zero_then_inf = {0.0, std::numeric_limits<double>::infinity()};
+  CHECK_THROWS_WITH_AS(static_cast<void>(AffineTransform::scaling(zero_then_inf)),
+                       "scaling factors must be finite.", pantr::value_error);
 }
 
 TEST_CASE("AffineTransform: composition order and the inverse") {

@@ -172,7 +172,7 @@ template <StorageFloat T>
   }
   std::vector<std::size_t> shape(r_ext);
   shape.push_back(rank);
-  NdArray<T> out(std::move(shape));
+  NdArray<T> out(std::move(shape), for_overwrite);
   const std::size_t n_out = inv_w_r.size();
   std::vector<T> h(n_out * rank, static_cast<T>(0));
   std::vector<std::size_t> p_ext(ndim);

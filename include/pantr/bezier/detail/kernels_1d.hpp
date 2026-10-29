@@ -27,8 +27,10 @@
 namespace pantr::bezier::detail {
 
 /// Midpoint at which `evaluate_1d_kernel` switches to the mirrored recurrence. It bounds the
-/// recurrence seed (`(1 - u)^p` or `u^p`) below by `0.5^p`, so the seed does not underflow for any
-/// degree the result can represent; `basis/bernstein.hpp` mirrors at the same midpoint.
+/// recurrence seed (`(1 - u)^p` or `u^p`) below by `0.5^p`, so the seed does not underflow below
+/// degree 1075 (the seed is a double in both storage types), the envelope `basis/bernstein.hpp`
+/// states; past it the seed is zero and so is the value, as in the previous release.
+/// `basis/bernstein.hpp` mirrors at the same midpoint.
 inline constexpr double mirror_threshold = 0.5;
 
 /// Evaluate a 1D Bezier at every point, fusing the Bernstein recurrence with the contraction.

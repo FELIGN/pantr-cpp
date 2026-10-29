@@ -8,6 +8,7 @@
 #include "pantr/core/ndarray.hpp"
 #include "pantr/linalg/dense.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <memory>
@@ -36,8 +37,10 @@ struct AffineRep {
 /// An affine map `x -> A x + b` on R^n, with `A` any square matrix (singular included).
 ///
 /// An immutable value: `A` and `b` are copied in at construction and shared by every copy.
-/// Composition and application follow numpy's order of operations in the Python implementation
-/// this replaces (`A @ B`, then `A @ b' + b`).
+/// Composition and application compute what the Python implementation this replaces computed
+/// (`A @ B`, then `A @ b' + b`), summing each product over the index in ascending order; NumPy's
+/// BLAS products may sum in another order or contract into FMAs, so results agree to rounding,
+/// not bit for bit.
 ///
 /// Attributes:
 ///     rep_ (std::shared_ptr<const detail::AffineRep>): `A` and `b`.
@@ -101,13 +104,12 @@ class AffineTransform {
   [[nodiscard]] static AffineTransform scaling(
       std::span<const double> factors,
       std::optional<std::span<const double>> center = std::nullopt) {
-    for (const double f : factors) {
-      if (!std::isfinite(f)) {
-        throw value_error("scaling factors must be finite.");
-      }
-      if (f == 0.0) {
-        throw value_error("scaling factors must be non-zero (singular transform).");
-      }
+    // Every factor finite first, then none zero, in the previous release's order.
+    if (!std::all_of(factors.begin(), factors.end(), [](double f) { return std::isfinite(f); })) {
+      throw value_error("scaling factors must be finite.");
+    }
+    if (std::any_of(factors.begin(), factors.end(), [](double f) { return f == 0.0; })) {
+      throw value_error("scaling factors must be non-zero (singular transform).");
     }
     const std::size_t n = factors.size();
     std::vector<double> mat(n * n, 0.0);
