@@ -29,6 +29,9 @@ OpenMP run on one thread, and `NUMBA_NUM_THREADS` is the thread setting.
 | `results/2026-10-29-s1-baseline` | `compare.py --side main=<scratch>/main-11ab436/src --side branch=<this tree at 1e0a66c>/src --k 10 --threads 1 8 --cpus 0-7 --filter '^S1\.'` |
 | `results/2026-10-29-r6-abi3` | `compare.py --side main=<scratch>/main-11ab436/src --side abi3=<this tree at 1e0a66c>/src --side vs=<scratch>/branch-vs/src --k 10 --threads 1 8 --cpus 0-7 --filter '^r6\.' --r6 abi3,vs`, where `branch-vs` is a worktree of 1e0a66c built with `make ext EXT_STABLE_ABI=OFF` |
 | `results/2026-10-29-r6-abi3-rerun` | the same, a fresh interleaved re-run (a flag counts only when a re-run flags it again) |
+| `results/2026-10-29-s1-ac6-at-9b0f2c8` | `compare.py --side main=<scratch>/main-11ab436/src --side branch=<this tree at 9b0f2c8>/src --k 10 --threads 1 8 --cpus 0-7 --filter '^S1\.'`: the quadrature/basis stage's first gate run, whose flags the following commits addressed |
+| `results/2026-10-29-s1-ac6` | the same at 365ef21 with `--filter '^(S1\|r6)\.'` (the r6 cases now time the public operations on both trees) |
+| `results/2026-10-29-s1-ac6-rerun` | the same at 365ef21 with `--filter '^S1\.tabulate_legendre_1d\.large'`: the fresh interleaved re-run of the one case the previous run flagged |
 
 Each holds `summary.md` (the statistic and range per side and case, and the flags), `summary.json`
 (the same with every process median, the protocol, the commits and the machine) and `raw/` (each
