@@ -16,6 +16,8 @@ option(PANTR_BUILD_TESTS "Build the C++ test suite" ${PROJECT_IS_TOP_LEVEL})
 option(PANTR_BUILD_PYTHON "Build the Python extension modules (_pantr, _pantr_cpu)" OFF)
 option(PANTR_STABLE_ABI "Build the Python extension modules for the stable ABI (abi3, CPython >= 3.12)"
        ON)
+# The extension modules never take PANTR_NATIVE_ARCH (which reaches pantr's C++ tests and C++
+# consumers only): each rung is compiled for its named ISA, the base module for the baseline.
 option(PANTR_MULTI_ISA "Build one extension module per ISA rung (x86-64: v3, v4; arm64: NEON)" OFF)
 option(PANTR_BUILD_PYTHON_TEST_MODULES
        "Build the test-only extension modules (never shipped in a wheel)" OFF)
@@ -30,9 +32,3 @@ foreach(_provider BERF METIS)
                         "the provider is not part of this version")
   endif()
 endforeach()
-
-# The ISA rungs are the portable alternative to the native flag; a native-tuned "baseline" module
-# would fault on the machines the baseline exists for.
-if(PANTR_MULTI_ISA AND PANTR_NATIVE_ARCH)
-  message(FATAL_ERROR "pantr: PANTR_MULTI_ISA=ON needs PANTR_NATIVE_ARCH=OFF")
-endif()

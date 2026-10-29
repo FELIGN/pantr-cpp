@@ -17,7 +17,14 @@
 ///
 /// Every function in the table is `noexcept` and reports failure by a status code and a message:
 /// an exception thrown in one module and caught in another may fail to match its handler where the
-/// two modules each carry the exception type's identity. Design note: design/threading.md.
+/// two modules each carry the exception type's identity. A chunk's exception crosses only as a
+/// `std::exception_ptr` stored in the job and rethrown by the module that started the loop.
+///
+/// Assumption, stated rather than checkable: the modules sharing a table are built with the same
+/// compiler and standard library (pantr's extension modules are built together, from one source
+/// tree, against one nanobind pin), since a `Job` holds `std::atomic` and `std::exception_ptr`
+/// members that both sides read and write. What attach does check is the table's layout version and
+/// size and the size and alignment of `Job`. Design note: design/threading.md.
 #pragma once
 
 #include "pantr/config.hpp"
@@ -26,13 +33,64 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <stdexcept>
 #include <string>
 
 namespace pantr::parallel {
 
 namespace detail {
-struct Job;
+
+/// One parallel loop in flight: `n_chunks` chunks claimed through an atomic counter.
+///
+/// Lives on the calling thread's stack for the duration of `Pool::run`. Part of the table's ABI:
+/// in a module attached to another, the owner's workers run the chunks of a job this module built.
+/// Fields marked "pool mutex" are read and written only under the pool's mutex.
+///
+/// Attributes:
+///     n_chunks (std::size_t): Number of chunks.
+///     ctx (void*): The loop body, type-erased.
+///     run_chunk (void (*)(void*, std::size_t)): Runs chunk `k` of the body at `ctx`.
+///     max_workers (std::size_t): Pool workers allowed to join (the caller's setting minus one).
+///     next (std::atomic<std::size_t>): Next chunk to claim; values `>= n_chunks` mean none left.
+///     failed (std::atomic<bool>): Set by the first chunk that throws.
+///     error (std::exception_ptr): That chunk's exception, written once by the thread that set
+///         `failed`, read by the caller after the join.
+///     joined (std::size_t): Workers that have joined so far (pool mutex).
+///     active (std::size_t): Workers currently running chunks (pool mutex).
+struct Job {
+  std::size_t n_chunks;
+  void* ctx;
+  void (*run_chunk)(void*, std::size_t);
+  std::size_t max_workers;
+  std::atomic<std::size_t> next{0};
+  std::atomic<bool> failed{false};
+  std::exception_ptr error{};
+  std::size_t joined = 0;
+  std::size_t active = 0;
+
+  /// Claim and run chunks until none are left; after a failure, claim the rest without running.
+  void run_chunks() noexcept {
+    for (;;) {
+      const std::size_t k = next.fetch_add(1, std::memory_order_relaxed);
+      if (k >= n_chunks) {
+        return;
+      }
+      if (failed.load(std::memory_order_relaxed)) {
+        continue;  // a chunk failed: drain the counter, run nothing more
+      }
+      try {
+        run_chunk(ctx, k);
+      } catch (...) {
+        bool expected = false;
+        if (failed.compare_exchange_strong(expected, true, std::memory_order_relaxed)) {
+          error = std::current_exception();
+        }
+      }
+    }
+  }
+};
+
 }  // namespace detail
 
 /// Layout version of `SharedParallelism` and of `detail::Job`, which crosses the table. Bump it
@@ -54,6 +112,8 @@ enum class SharedStatus : int {
 /// Attributes:
 ///     abi (std::uint32_t): `kSharedParallelismAbi` of the owner's headers.
 ///     size (std::uint32_t): `sizeof(SharedParallelism)` in the owner.
+///     job_size (std::uint32_t): `sizeof(detail::Job)` in the owner.
+///     job_align (std::uint32_t): `alignof(detail::Job)` in the owner.
 ///     max_threads (int (*)(std::size_t*, char*, std::size_t) noexcept): Writes the owner's pool
 ///         capacity; on failure writes a message (truncated, null-terminated) and returns a
 ///         `SharedStatus`.
@@ -67,6 +127,8 @@ enum class SharedStatus : int {
 struct SharedParallelism {
   std::uint32_t abi;
   std::uint32_t size;
+  std::uint32_t job_size;
+  std::uint32_t job_align;
   int (*max_threads)(std::size_t* out, char* message, std::size_t message_size) noexcept;
   int (*run)(detail::Job* job, char* message, std::size_t message_size) noexcept;
   std::size_t* (*thread_setting)() noexcept;
@@ -121,13 +183,15 @@ inline void write_shared_message(const char* text, char* buffer, std::size_t siz
 ///
 /// Raises:
 ///     value_error: `table` is null.
-///     state_error: The table's layout version or size differs from this module's headers, or a
+///     state_error: The table's layout version or size, or the size or alignment of a job, differs
+///         from this module's headers, or a
 ///         different table is already attached.
 inline void attach_shared_parallelism(const SharedParallelism* table) {
   if (table == nullptr) {
     throw value_error("the shared-parallelism table is null");
   }
-  if (table->abi != kSharedParallelismAbi || table->size != sizeof(SharedParallelism)) {
+  if (table->abi != kSharedParallelismAbi || table->size != sizeof(SharedParallelism) ||
+      table->job_size != sizeof(detail::Job) || table->job_align != alignof(detail::Job)) {
     throw state_error(
         "pantr extension modules were built from different headers: the owner's "
         "shared-parallelism layout is version " +

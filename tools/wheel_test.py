@@ -1,4 +1,4 @@
-"""Run the Python suite against the installed pantr, once per ISA rung this machine can run.
+"""Run the Python suite against the installed pantr: under the default rung, then under generic.
 
 Usage::
 

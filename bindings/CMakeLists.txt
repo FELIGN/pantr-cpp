@@ -2,7 +2,7 @@
 #
 # Layout and reasons: design/port_design.md, sections 1.8 and 1.9, and design/packaging.md.
 # Every module is built NB_STATIC, NOMINSIZE (nanobind otherwise appends -Os after -O3 and the last
-# flag wins, a silent factor of about three), NOSTRIP (nanobind otherwise links release modules
+# flag wins, so kernels silently compile for size; design/lessons_first_port.md), NOSTRIP (nanobind otherwise links release modules
 # with -s; pyproject.toml's install.strip = false covers scikit-build-core's own strip) and
 # NB_SUPPRESS_WARNINGS (nanobind's and Python's include directories become SYSTEM, so -Werror
 # applies to pantr's code only).

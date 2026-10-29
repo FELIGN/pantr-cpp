@@ -125,7 +125,7 @@ path in the build tree and in the install tree is the same string.
 | `PANTR_USE_STD_MDSPAN` | OFF | ON is a configure error: `std::mdspan` has no `operator()`, so the port uses Kokkos mdspan 0.6.0 only (DR-21, 2.6); the `<mdspan>` probe stays informational. |
 | `PANTR_WITH_BERF` / `PANTR_WITH_METIS` | OFF | build, test and export the provider target. Never changes a core header. |
 | `PANTR_BUILD_TESTS` / `PANTR_BUILD_PYTHON` / `PANTR_BUILD_PYTHON_MPI` / `PANTR_BUILD_BENCHMARKS` | ON (top level) / OFF / OFF / OFF | as named. |
-| `PANTR_MULTI_ISA` | OFF | the per-ISA module variants (wheels). Fatal with `PANTR_NATIVE_ARCH=ON`. |
+| `PANTR_MULTI_ISA` | OFF | the per-ISA module variants (wheels). `PANTR_NATIVE_ARCH` never reaches an extension module, so the two are independent. |
 | `PANTR_BUILD_PYTHON` / `PANTR_STABLE_ABI` / `PANTR_BUILD_PYTHON_TEST_MODULES` | OFF / ON / OFF | the extension modules (`bindings/`); built for the stable ABI unless OFF (the version-specific build exists to measure the difference, 9.4); the test-only twin modules (DR-20's test), installed in the `testing` component that no wheel installs. |
 | `PANTR_WARNINGS_AS_ERRORS` | OFF (ON in CI) | on `pantr_cxx_warnings` only. |
 | `PANTR_INSTALL` | ON | install headers, export, config; the bundled third-party headers under `include/pantr/third_party/` when fetched. |
@@ -206,7 +206,7 @@ TUs compiled for different ISAs (function multiversioning) cannot hit an ODR lay
 
 `pyproject.toml`: `build-backend = scikit_build_core.build`, `requires = ["scikit-build-core==<pin>", "nanobind==<pin>"]`,
 `wheel.py-api = "cp312"`, `install.strip = false`, and `NOMINSIZE NOSTRIP` on every module (the `-Os`-after-`-O3`
-trap, a silent factor of about three, lesson 2; nanobind also links release modules with `-s` unless `NOSTRIP`),
+trap, silent, lesson 2; nanobind also links release modules with `-s` unless `NOSTRIP`),
 `install.components = ["python"]` (the test-only modules are in `testing`), `build-dir = "build/skbuild/{wheel_tag}"`, `cmake.define.PANTR_NATIVE_ARCH = "OFF"`,
 `requires-python >= 3.12`, `numpy` and `scipy` runtime, Numba and threadpoolctl removed in the last stage.
 

@@ -20,7 +20,7 @@ import pytest
 
 from pantr import _ext, _isa
 from pantr._ext import EXPECTED_INTERFACE, check_interface, ext, source_root, stale_sources
-from tests._tree_env import TESTING_INSTALLED, subprocess_env
+from tests._tree_env import subprocess_env
 
 # --- The ladder ----------------------------------------------------------------------------------
 
@@ -154,6 +154,52 @@ def test_each_runnable_rung_loads_under_the_override(rung: str) -> None:
     assert result.stdout.split() == [_isa.module_name("pantr", "_pantr", rung), rung]
 
 
+# The SIMD level each rung must be compiled for: a rung built without its ISA flag still loads and
+# still reports its rung name, so the level its headers saw is what shows the flag reached it.
+_SIMD_OF_RUNG = {"generic": "scalar", "v3": "avx2", "v4": "avx512", "neon": "neon"}
+
+
+@pytest.mark.parametrize("rung", _installed_rungs())
+def test_each_rung_is_compiled_for_its_isa(rung: str) -> None:
+    """Every runnable rung's headers saw the ISA the rung is named for."""
+    env = subprocess_env()
+    env[_isa.ENV_VAR] = rung
+    result = subprocess.run(
+        [sys.executable, "-c", "from pantr._ext import ext; print(ext.simd_isa)"],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == _SIMD_OF_RUNG[rung]
+
+
+def test_cpu_supports_rejects_an_unknown_rung() -> None:
+    """The real rung check, not a fake, refuses a misspelt rung."""
+    with pytest.raises(ValueError, match="unknown ISA rung"):
+        _isa.cpu_supports("avx3")
+
+
+@pytest.mark.parametrize(
+    ("arch", "expected"), [("x86_64", ["v4", "v3", "generic"]), ("arm64", ["neon", "generic"]),
+                           ("other", ["generic"])],
+)  # fmt: skip
+def test_candidates_follow_the_architecture(
+    monkeypatch: pytest.MonkeyPatch, arch: str, expected: list[str]
+) -> None:
+    """The default ladder offers each architecture's rungs, best first, then the base."""
+    monkeypatch.setattr(_isa, "machine_arch", lambda: arch)
+    assert _isa.candidates() == expected
+
+
+@pytest.mark.parametrize(("arch", "runs"), [("arm64", True), ("x86_64", False)])
+def test_neon_runs_on_arm64_only(monkeypatch: pytest.MonkeyPatch, arch: str, runs: bool) -> None:
+    """NEON is the AArch64 baseline: supported there without a probe, nowhere else."""
+    monkeypatch.setattr(_isa, "machine_arch", lambda: arch)
+    assert _isa.cpu_supports("neon") is runs
+
+
 # --- The CPU probe ------------------------------------------------------------------------------
 
 # x86-64 microarchitecture levels (x86-64 psABI) in the kernel's flag names. The kernel lists a
@@ -184,6 +230,65 @@ def test_probe_agrees_with_the_kernel(level: str, flags: set[str]) -> None:
 
     assert _pantr_cpu.arch == "x86_64"
     assert _pantr_cpu.supports(level) == flags.issubset(_cpuinfo_flags())
+
+
+# Register bits per level, from the x86-64 psABI's microarchitecture-level table, written out
+# here independently of the probe: (register, bit) pairs.
+_V2_BITS = [("l1", 0), ("l1", 9), ("l1", 13), ("l1", 19), ("l1", 20), ("l1", 23), ("e1", 0)]
+_V3_BITS = [("l1", 28), ("l7", 5), ("l7", 3), ("l7", 8), ("l1", 29), ("l1", 12), ("e1", 5),
+            ("l1", 22)]  # fmt: skip
+_V4_BITS = [("l7", 16), ("l7", 30), ("l7", 28), ("l7", 17), ("l7", 31)]
+_OSXSAVE = ("l1", 27)
+_XCR0_FULL = 0xE7  # x87, XMM, YMM, opmask, ZMM_Hi256, Hi16_ZMM
+
+
+def _registers(bits: list[tuple[str, int]]) -> dict[str, int]:
+    regs = {"l1": 0, "l7": 0, "e1": 0}
+    for reg, n in bits:
+        regs[reg] |= 1 << n
+    return regs
+
+
+def _levels(bits: list[tuple[str, int]], xcr0: int) -> tuple[bool, bool, bool]:
+    from pantr import _pantr_cpu  # noqa: PLC0415
+
+    r = _registers(bits)
+    return _pantr_cpu._levels_from_registers(r["l1"], r["l7"], r["e1"], xcr0)
+
+
+_ALL_BITS = [*_V2_BITS, *_V3_BITS, *_V4_BITS, _OSXSAVE]
+
+
+def test_levels_with_every_feature_and_state() -> None:
+    """Every bit and the full vector state: all three levels."""
+    assert _levels(_ALL_BITS, _XCR0_FULL) == (True, True, True)
+
+
+@pytest.mark.parametrize(
+    ("xcr0", "expected"),
+    [(0x7, (True, True, False)), (0x3, (True, False, False)), (0x1, (True, False, False))],
+)
+def test_levels_fail_closed_on_os_vector_state(xcr0: int, expected: tuple[bool, ...]) -> None:
+    """A CPU with every feature, under an OS that does not save ZMM or YMM state, gets no v4/v3."""
+    assert _levels(_ALL_BITS, xcr0) == expected
+
+
+def test_levels_without_osxsave_ignore_xcr0() -> None:
+    """Without OSXSAVE, XCR0 is not consulted: no vector level, whatever the value passed."""
+    bits = [b for b in _ALL_BITS if b != _OSXSAVE]
+    assert _levels(bits, _XCR0_FULL) == (True, False, False)
+
+
+@pytest.mark.parametrize("missing", _ALL_BITS)
+def test_levels_need_every_bit(missing: tuple[str, int]) -> None:
+    """Removing any one feature bit removes its level and every level above it."""
+    got = _levels([b for b in _ALL_BITS if b != missing], _XCR0_FULL)
+    if missing in _V2_BITS:
+        assert got == (False, False, False)
+    elif missing in _V3_BITS or missing == _OSXSAVE:
+        assert got == (True, False, False)
+    else:
+        assert got == (True, True, False)
 
 
 def test_probe_rejects_an_unknown_level() -> None:
@@ -231,6 +336,7 @@ def _fake_tree(root: Path) -> Path:
     """Build a source tree with a module in src/pantr and one header; return the module."""
     (root / "include" / "pantr").mkdir(parents=True)
     (root / "bindings" / "src").mkdir(parents=True)
+    (root / "cmake").mkdir()
     (root / "providers" / "berf" / "include").mkdir(parents=True)
     (root / "src" / "pantr").mkdir(parents=True)
     module = root / "src" / "pantr" / "_pantr.abi3.so"
@@ -258,7 +364,13 @@ def test_source_root_ignores_an_installed_module(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     "relative",
-    ["include/pantr/x.hpp", "bindings/src/module.cpp", "providers/berf/include/p.hpp"],
+    [
+        "include/pantr/x.hpp",
+        "bindings/src/module.cpp",
+        "providers/berf/include/p.hpp",
+        "cmake/PantrFlags.cmake",
+        "CMakeLists.txt",
+    ],
 )
 def test_a_source_newer_than_the_module_is_stale(tmp_path: Path, relative: str) -> None:
     """Each source directory the module is built from is watched."""
@@ -285,36 +397,27 @@ def test_sources_older_than_the_module_are_not_stale(tmp_path: Path) -> None:
     assert stale_sources(module, tmp_path) == []
 
 
-@pytest.mark.skipif(TESTING_INSTALLED, reason="the session check guards a development build")
-def test_session_refuses_a_stale_module(tmp_path: Path) -> None:
-    """A test session whose module is older than a source refuses to start (conftest)."""
-    module = Path(ext.__file__)
-    root = source_root(module)
-    assert root is not None
-    # Age the module rather than touch a source: the tree's sources stay as they are.
-    original = module.stat().st_mtime
-    try:
-        _set_mtime(module, 0.0)
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "pytest",
-                "-q",
-                "-p",
-                "no:cacheprovider",
-                str(root / "tests" / "test_metadata.py"),
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-            cwd=root,
-            env=subprocess_env(),
-        )
-    finally:
-        _set_mtime(module, original)
-    assert result.returncode != 0
-    assert "rebuild it with `make ext`" in result.stdout + result.stderr
+def test_session_refuses_a_stale_module(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The session hook (conftest) refuses a module older than a source, and names the rebuild.
+
+    Run in-process against a fake tree, so the real module's timestamp is never touched.
+    """
+    from tests import conftest  # noqa: PLC0415
+
+    module = _fake_tree(tmp_path)
+    now = time.time()
+    _set_mtime(module, now - 100)
+    header = tmp_path / "include" / "pantr" / "x.hpp"
+    header.write_text("// edited\n")
+    _set_mtime(header, now)
+    fake = types.ModuleType("pantr._pantr")
+    fake.__file__ = str(module)
+    monkeypatch.setattr(_ext, "ext", fake)
+    monkeypatch.setattr(conftest, "TESTING_INSTALLED", False)
+    with pytest.raises(pytest.UsageError, match="rebuild it with `make ext`"):
+        conftest.pytest_sessionstart(None)  # type: ignore[arg-type]
+    _set_mtime(module, now + 100)
+    conftest.pytest_sessionstart(None)  # type: ignore[arg-type]
 
 
 def test_capsule_is_the_shared_parallelism_table() -> None:

@@ -38,10 +38,18 @@ THREAD_VARS = (
 
 
 def _git_commit(path: Path) -> str:
+    """Return HEAD's SHA, suffixed ``-dirty`` when tracked files differ from it."""
     result = subprocess.run(
         ["git", "-C", str(path), "rev-parse", "HEAD"], capture_output=True, text=True, check=False
     )
-    return result.stdout.strip() or "unknown"
+    sha = result.stdout.strip() or "unknown"
+    status = subprocess.run(
+        ["git", "-C", str(path), "status", "--porcelain", "--untracked-files=no"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return f"{sha}-dirty" if status.stdout.strip() else sha
 
 
 def _cpu_model() -> str:

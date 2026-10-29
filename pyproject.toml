@@ -147,9 +147,9 @@ skip = ["*-musllinux_*", "*-win32"]
 build-verbosity = 1
 manylinux-x86_64-image = "manylinux_2_28"
 manylinux-aarch64-image = "manylinux_2_28"
-# The suite against the installed wheel, once per rung the runner executes (tools/wheel_test.py
-# sets PANTR_TEST_INSTALLED=1 and empties pytest.ini's pythonpath, so the checkout's src is never
-# imported).
+# The suite against the installed wheel, under the rung the ladder picks and then under generic
+# (tools/wheel_test.py sets PANTR_TEST_INSTALLED=1 and empties pytest.ini's pythonpath, so the
+# checkout's src is never imported).
 test-requires = ["pytest>=7.4,<9", "pytest-xdist>=3,<4"]
 test-command = "python {project}/tools/wheel_test.py {project} -n 4"
 

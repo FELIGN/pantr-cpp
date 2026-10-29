@@ -10,6 +10,7 @@ test-only and installed by ``make ext``; a wheel does not ship them.
 from __future__ import annotations
 
 import importlib
+import os
 import subprocess
 import sys
 import types
@@ -120,3 +121,76 @@ def test_twin_starts_no_threads_of_its_own(capacity: int, twin: str, routed: boo
     assert result.returncode == 0, result.stderr
     cap, added = (int(x) for x in result.stdout.split())
     assert added == (0 if routed else cap - 1)
+
+
+# The owner's own failure, reported through the table: a malformed PANTR_NUM_THREADS. The real
+# owner's status path (a value_error becomes status 1 and is raised again in the attached module)
+# runs only in a fresh process, since the capacity is read once.
+_OWNER_ERROR_SCRIPT = """
+import pantr._pantr_twin as twin
+
+for call in (twin.max_threads, lambda: twin.count_threads_used(8, 10), twin.get_num_threads):
+    try:
+        call()
+    except ValueError as e:
+        assert "PANTR_NUM_THREADS must be a positive integer" in str(e), e
+    else:
+        raise AssertionError("no ValueError")
+try:
+    twin.set_num_threads(0)
+except ValueError as e:
+    assert "n must be >= 1" in str(e), e
+else:
+    raise AssertionError("no ValueError")
+print("ok")
+"""
+
+
+def test_owner_errors_reach_the_twin_as_python_errors() -> None:
+    """The owner's ValueError crosses the table as a status and is raised by the twin as one."""
+    env = subprocess_env()
+    env["PANTR_NUM_THREADS"] = "abc"
+    result = subprocess.run(
+        [sys.executable, "-c", _OWNER_ERROR_SCRIPT],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "ok"
+
+
+_FORK_SCRIPT = """
+import os
+from pantr._ext import ext
+import pantr._pantr_twin as twin
+
+ext.set_num_threads(3)
+assert twin.count_threads_used(64, 2000) == 3  # the owner's pool exists in the parent
+pid = os.fork()
+if pid == 0:
+    # The child inherits the pool's memory but none of its threads; through the table the owner
+    # builds a new pool in the child.
+    ok = twin.count_threads_used(64, 2000) == 3
+    os._exit(0 if ok else 1)
+_, status = os.waitpid(pid, 0)
+assert os.waitstatus_to_exitcode(status) == 0, status
+assert twin.count_threads_used(64, 2000) == 3
+print("ok")
+"""
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="needs fork")
+def test_twin_loops_survive_a_fork(capacity: int) -> None:
+    """A forked child's loop through the table runs on a pool the owner builds in the child."""
+    result = subprocess.run(
+        [sys.executable, "-c", _FORK_SCRIPT],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=subprocess_env(),
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "ok"

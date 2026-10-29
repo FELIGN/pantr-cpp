@@ -133,15 +133,29 @@ class TestDrivesTheCppPool:
         assert ext._testing.count_threads_used(64, 200) == 1
 
     def test_cpp_setting_is_capped_at_the_pool_capacity(self) -> None:
-        """Numba's maximum may exceed the CPUs the process may use; the C++ side never does."""
-        import numba as nb  # noqa: PLC0415
+        """Where Numba's maximum exceeds the C++ capacity, the C++ setting stops at the capacity.
 
-        from pantr._ext import ext  # noqa: PLC0415
+        A fresh process with ``PANTR_NUM_THREADS=2`` (the C++ capacity) and
+        ``NUMBA_NUM_THREADS=4`` (Numba's maximum), both read once at start.
+        """
+        import subprocess  # noqa: PLC0415
+        import sys  # noqa: PLC0415
 
-        numba_max: int = nb.config.NUMBA_NUM_THREADS
-        set_num_threads(numba_max)
-        assert get_num_threads() == numba_max
-        assert ext.get_num_threads() == min(numba_max, ext.max_threads())
+        from tests._tree_env import subprocess_env  # noqa: PLC0415
+
+        env = subprocess_env()
+        env["PANTR_NUM_THREADS"] = "2"
+        env["NUMBA_NUM_THREADS"] = "4"
+        script = (
+            "import pantr; from pantr._ext import ext\n"
+            "pantr.set_num_threads(4)\n"
+            "print(pantr.get_num_threads(), ext.get_num_threads(), ext.max_threads())\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script], capture_output=True, text=True, check=False, env=env
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.split() == ["4", "2", "2"]
 
     def test_context_manager_restores_the_cpp_setting(self) -> None:
         """``num_threads`` restores both pools on exit."""

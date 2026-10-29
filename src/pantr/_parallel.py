@@ -8,10 +8,12 @@ While the C++ port is under way, PaNTr's parallel kernels run on two pools:
 Numba's and the C++ pool of the compiled extension. One setting drives both
 (:func:`set_num_threads`); the value reported and validated is Numba's until
 its last kernel is removed. The C++ side receives the same count, capped at
-its pool's capacity: Numba's maximum (``NUMBA_NUM_THREADS``) defaults to the
-machine's CPU count, which can exceed the CPUs this process may run on, and the
-C++ pool never runs more threads than those (``pantr._ext.ext.max_threads()``,
-the affinity CPU count, lowered by ``PANTR_NUM_THREADS``).
+its pool's capacity (``pantr._ext.ext.max_threads()``: the CPUs this process
+may run on, lowered by ``PANTR_NUM_THREADS``). The two maxima agree by default,
+since Numba too sizes from the affinity where the OS reports one; they differ
+when ``PANTR_NUM_THREADS`` lowers the C++ capacity, or when ``NUMBA_NUM_THREADS``
+is set above the CPUs the process may use, and then the C++ pool still never
+runs more threads than its capacity.
 
 Typical usage::
 
@@ -97,7 +99,8 @@ def set_num_threads(n: int) -> None:
             ``numba.config.NUMBA_NUM_THREADS``.
 
     Raises:
-        ValueError: If *n* is less than 1 or exceeds the maximum.
+        ValueError: If *n* is less than 1 or exceeds the maximum, or if the
+            ``PANTR_NUM_THREADS`` environment variable is not a positive integer.
     """
     _set_num_threads_raw(n)
     _user_configured.set()

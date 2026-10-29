@@ -44,7 +44,8 @@ class NdArray {
   ///         rank-0 array holding one element, as in NumPy.
   ///
   /// Raises:
-  ///     capacity_error: The element count or its size in bytes does not fit in `std::size_t`.
+  ///     capacity_error: The size in bytes of the nonzero extents' product exceeds the largest
+  ///         `std::ptrdiff_t` (NumPy's bound, applied even when another extent is zero).
   explicit NdArray(std::vector<std::size_t> shape)
       : shape_(std::move(shape)),
         size_(checked_size(shape_)),
@@ -177,8 +178,9 @@ class NdArray {
 
   // NumPy's rule (PyArray_NewFromDescr): the item size times the product of the nonzero extents
   // must fit in a signed pointer difference, and a zero extent then makes the array empty. Taking
-  // the same rule means every shape an NdArray accepts can be handed to NumPy (into_buffer), and
-  // every shape NumPy refuses is refused here first, with a C++ error rather than at the boundary.
+  // the same size rule means no shape NdArray accepts fails NumPy's size check at the hand-off
+  // (into_buffer). NumPy's limit on the rank (64 dimensions in NumPy 2, 32 in NumPy 1) is not
+  // applied here; the binding layer owns that check.
   static std::size_t checked_size(const std::vector<std::size_t>& shape) {
     constexpr auto max_bytes =
         static_cast<std::size_t>((std::numeric_limits<std::ptrdiff_t>::max)());

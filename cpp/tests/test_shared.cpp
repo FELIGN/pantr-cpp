@@ -44,10 +44,14 @@ int fake_run(par::detail::Job* job, char* message, std::size_t size) noexcept {
 std::size_t* fake_thread_setting() noexcept { return &fake_setting; }
 bool* fake_thread_in_region() noexcept { return &fake_region; }
 
-constexpr par::SharedParallelism kFake{
-    par::kSharedParallelismAbi, static_cast<std::uint32_t>(sizeof(par::SharedParallelism)),
-    fake_max_threads,           fake_run,
-    fake_thread_setting,        fake_thread_in_region};
+constexpr par::SharedParallelism kFake{par::kSharedParallelismAbi,
+                                       static_cast<std::uint32_t>(sizeof(par::SharedParallelism)),
+                                       static_cast<std::uint32_t>(sizeof(par::detail::Job)),
+                                       static_cast<std::uint32_t>(alignof(par::detail::Job)),
+                                       fake_max_threads,
+                                       fake_run,
+                                       fake_thread_setting,
+                                       fake_thread_in_region};
 
 }  // namespace
 
@@ -60,6 +64,12 @@ TEST_CASE("shared: a null or mismatched table is refused and nothing is attached
   par::SharedParallelism other_size = kFake;
   other_size.size = 8;
   CHECK_THROWS_AS(par::attach_shared_parallelism(&other_size), pantr::state_error);
+  par::SharedParallelism other_job = kFake;
+  other_job.job_size += 8;  // a job laid out differently in the owner
+  CHECK_THROWS_AS(par::attach_shared_parallelism(&other_job), pantr::state_error);
+  par::SharedParallelism other_align = kFake;
+  other_align.job_align *= 2;
+  CHECK_THROWS_AS(par::attach_shared_parallelism(&other_align), pantr::state_error);
   CHECK_FALSE(par::routes_shared_parallelism());
 }
 

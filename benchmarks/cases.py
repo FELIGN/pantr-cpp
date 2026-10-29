@@ -18,6 +18,7 @@ from __future__ import annotations
 import importlib.util
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 from typing import Any
 
 import numpy as np
@@ -48,6 +49,11 @@ class Case:
 def _points(n: int) -> np.ndarray:
     rng = np.random.default_rng(1234)
     return rng.random(n)
+
+
+def _returning(fn: Callable[[], Any]) -> Callable[[], Any]:
+    """Return ``fn`` itself: a setup that has nothing to prepare."""
+    return fn
 
 
 def _has_extension() -> bool:
@@ -108,7 +114,7 @@ def _s1_cases() -> list[Case]:
                 "S1",
                 "tiny",
                 f"get_gauss_legendre_1d({n})",
-                lambda n=n: (lambda: quad.get_gauss_legendre_1d(n)),
+                partial(_returning, partial(quad.get_gauss_legendre_1d, n)),
             )
         )
     cases.append(
@@ -168,7 +174,7 @@ def _s1_cases() -> list[Case]:
                 "S1",
                 "tiny",
                 f"tolerance.{name}(np.float64)",
-                lambda fn=fn: (lambda: fn(np.float64)),
+                partial(_returning, partial(fn, np.float64)),
             )
         )
     return cases

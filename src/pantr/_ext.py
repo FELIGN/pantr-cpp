@@ -24,6 +24,7 @@ __all__ = [
     "EXPECTED_INTERFACE",
     "PROVIDER_INCLUDE_GLOB",
     "SOURCE_DIRS",
+    "SOURCE_FILES",
     "check_interface",
     "ext",
     "shared_parallelism_capsule",
@@ -34,8 +35,14 @@ __all__ = [
 EXPECTED_INTERFACE: Final[int] = 1
 """The ``interface_version`` this package expects of the compiled module."""
 
-SOURCE_DIRS: Final[tuple[str, ...]] = ("include", "bindings")
-"""Directories, relative to a source tree's root, whose files the module is built from."""
+SOURCE_DIRS: Final[tuple[str, ...]] = ("include", "bindings", "cmake")
+"""Directories, relative to a source tree's root, whose files the module is built from (cmake/
+carries the flags and the dependency pins)."""
+
+SOURCE_FILES: Final[tuple[str, ...]] = ("CMakeLists.txt",)
+"""Files, relative to a source tree's root, the module is built from. ``pyproject.toml`` is left
+out: it also holds what has nothing to do with the build (dependencies, tool settings), and the one
+build input in it, the nanobind pin, is checked by the build itself."""
 
 PROVIDER_INCLUDE_GLOB: Final[str] = "providers/*/include"
 """Provider header directories, relative to a source tree's root, also built into modules."""
@@ -108,19 +115,14 @@ def stale_sources(module_file: str | Path, root: Path) -> list[Path]:
         root (pathlib.Path): The source tree's root.
 
     Returns:
-        list[pathlib.Path]: Files under :data:`SOURCE_DIRS` and :data:`PROVIDER_INCLUDE_GLOB`
-        whose modification time is later than the module's, sorted.
+        list[pathlib.Path]: Files under :data:`SOURCE_DIRS` and :data:`PROVIDER_INCLUDE_GLOB`,
+        and :data:`SOURCE_FILES`, whose modification time is later than the module's, sorted.
     """
-    built = Path(module_file).stat().st_mtime
+    built = Path(module_file).stat().st_mtime_ns
     dirs = [root / d for d in SOURCE_DIRS] + sorted(root.glob(PROVIDER_INCLUDE_GLOB))
-    newer = [
-        path
-        for d in dirs
-        if d.is_dir()
-        for path in d.rglob("*")
-        if path.is_file() and path.stat().st_mtime > built
-    ]
-    return sorted(newer)
+    files = [path for d in dirs if d.is_dir() for path in d.rglob("*") if path.is_file()]
+    files += [root / f for f in SOURCE_FILES if (root / f).is_file()]
+    return sorted(path for path in files if path.stat().st_mtime_ns > built)
 
 
 def shared_parallelism_capsule() -> object:

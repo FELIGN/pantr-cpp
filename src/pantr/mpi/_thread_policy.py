@@ -6,7 +6,9 @@ compute threads -- heavy oversubscription. To prevent this, every MPI-engaging e
 point of :mod:`pantr.mpi` (:class:`~pantr.mpi.DistributedSpace`,
 :func:`~pantr.mpi.from_dolfinx`, and any future ones) applies a process-level default
 on first use: the Numba thread pool of this process is limited to **one thread per
-rank** (flat MPI).
+rank** (flat MPI). While the C++ port is under way the same setting also limits the
+compiled extension's pool (:mod:`pantr._parallel`), and a malformed
+``PANTR_NUM_THREADS`` makes applying it raise :class:`ValueError`.
 
 The default is sticky (applied at most once per process) and never overrides explicit
 user configuration; see :func:`_ensure_default_thread_policy`. The ``NUMBA_NUM_THREADS``

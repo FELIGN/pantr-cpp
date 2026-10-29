@@ -44,7 +44,7 @@ def _env(src: Path, threads: int) -> dict[str, str]:
 
 
 def _run(side: str, src: Path, threads: int, round_: int, args: argparse.Namespace) -> Path:
-    out = args.out_dir / "raw" / f"{side}.t{threads}.k{round_}.json"
+    out: Path = args.out_dir / "raw" / f"{side}.t{threads}.k{round_}.json"
     command = [
         "taskset",
         "-c",
@@ -82,11 +82,20 @@ def _summarize(records: dict[tuple[str, int], list[dict[str, Any]]]) -> dict[str
     return summary
 
 
-def _flags(summary: dict[str, Any], reference: str) -> None:
-    for entry in summary.values():
-        ref = entry["sides"].get(reference)
-        if ref is None:
-            continue
+def _flags(summary: dict[str, Any], reference: str, labels: list[str]) -> None:
+    """Flag every side above the reference's bound; a case some side lacks is an error.
+
+    Raises:
+        ValueError: The reference is not a side, or a case is missing from a side (it would
+            otherwise pass unflagged).
+    """
+    if reference not in labels:
+        raise ValueError(f"reference {reference!r} is not one of the sides {labels}")
+    for key, entry in summary.items():
+        missing = [lab for lab in labels if lab not in entry["sides"]]
+        if missing:
+            raise ValueError(f"case {key} was not measured on {missing}")
+        ref = entry["sides"][reference]
         bound = ref["statistic_ns"] + ref["range_ns"]
         for side, s in entry["sides"].items():
             if side != reference:
@@ -130,7 +139,8 @@ def main() -> int:
     """Run the interleaved protocol and write the summary.
 
     Returns:
-        int: 0, or 1 when a side was flagged (or the R6 trigger fired).
+        int: 0, or 1 when a side was flagged (or the R6 trigger fired). A failed measurement
+        raises instead (a traceback and exit status 1 from the interpreter).
     """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--out-dir", type=Path, required=True)
@@ -155,7 +165,7 @@ def main() -> int:
         print(f"round {round_ + 1}/{args.k} done", flush=True)
 
     summary = _summarize(records)
-    _flags(summary, args.reference)
+    _flags(summary, args.reference, [lab for lab, _ in sides])
     labels = [lab for lab, _ in sides]
     result: dict[str, Any] = {
         "protocol": {
@@ -181,6 +191,10 @@ def main() -> int:
     md = _markdown(summary, labels, args.reference)
     if args.r6:
         abi3, versioned = args.r6.split(",")
+        # The verdict means something only if the labels name what they claim to.
+        ext_of = {lab: result["sides"][lab]["extension"] for lab in (abi3, versioned)}
+        if ".abi3." not in ext_of[abi3] or ".abi3." in ext_of[versioned]:
+            raise ValueError(f"--r6 {args.r6}: the sides' modules are {ext_of}")
         result["r6"] = _r6(summary, args.reference, abi3, versioned)
         md += "\n| r6 case | abi3 > main stat + range | abi3 - versioned > main range | trigger |\n"
         md += "|---|---|---|---|\n"

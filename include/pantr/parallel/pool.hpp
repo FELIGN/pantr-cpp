@@ -82,55 +82,6 @@ inline thread_local bool tl_in_parallel_region = false;
 #endif
 }
 
-/// One parallel loop in flight: `n_chunks` chunks claimed through an atomic counter.
-///
-/// Lives on the calling thread's stack for the duration of `Pool::run`. Fields marked "pool mutex"
-/// are read and written only under the pool's mutex.
-///
-/// Attributes:
-///     n_chunks (std::size_t): Number of chunks.
-///     ctx (void*): The loop body, type-erased.
-///     run_chunk (void (*)(void*, std::size_t)): Runs chunk `k` of the body at `ctx`.
-///     max_workers (std::size_t): Pool workers allowed to join (the caller's setting minus one).
-///     next (std::atomic<std::size_t>): Next chunk to claim; values `>= n_chunks` mean none left.
-///     failed (std::atomic<bool>): Set by the first chunk that throws.
-///     error (std::exception_ptr): That chunk's exception, written once by the thread that set
-///         `failed`, read by the caller after the join.
-///     joined (std::size_t): Workers that have joined so far (pool mutex).
-///     active (std::size_t): Workers currently running chunks (pool mutex).
-struct Job {
-  std::size_t n_chunks;
-  void* ctx;
-  void (*run_chunk)(void*, std::size_t);
-  std::size_t max_workers;
-  std::atomic<std::size_t> next{0};
-  std::atomic<bool> failed{false};
-  std::exception_ptr error{};
-  std::size_t joined = 0;
-  std::size_t active = 0;
-
-  /// Claim and run chunks until none are left; after a failure, claim the rest without running.
-  void run_chunks() noexcept {
-    for (;;) {
-      const std::size_t k = next.fetch_add(1, std::memory_order_relaxed);
-      if (k >= n_chunks) {
-        return;
-      }
-      if (failed.load(std::memory_order_relaxed)) {
-        continue;  // a chunk failed: drain the counter, run nothing more
-      }
-      try {
-        run_chunk(ctx, k);
-      } catch (...) {
-        bool expected = false;
-        if (failed.compare_exchange_strong(expected, true, std::memory_order_relaxed)) {
-          error = std::current_exception();
-        }
-      }
-    }
-  }
-};
-
 /// Sets `tl_in_parallel_region` for a scope and restores the previous value.
 class RegionGuard {
  public:
@@ -222,7 +173,7 @@ class Pool {
   ///     job (detail::Job&): The loop; must outlive the call.
   ///
   /// Raises:
-  ///     std::system_error: Locking the pool's mutex failed.
+  ///     std::system_error: Locking the pool's mutex to post the job failed (nothing was posted).
   void execute(detail::Job& job) {
     const std::size_t wanted = (std::min)(job.max_workers, threads_.size());
     if (wanted > 0) {
@@ -244,12 +195,7 @@ class Pool {
       const detail::RegionGuard region;
       job.run_chunks();
     }
-    {
-      std::unique_lock<std::mutex> lock(mutex_);
-      // No chunk is left to claim, so no new worker may join; wait for the ones that did.
-      jobs_.erase(std::remove(jobs_.begin(), jobs_.end(), &job), jobs_.end());
-      done_cv_.wait(lock, [&job] { return job.active == 0; });
-    }
+    join(job);
   }
 
   /// Get the process pool, creating it on first use (and again in a forked child).
@@ -275,6 +221,16 @@ class Pool {
   static Pool& local_instance();
 
  private:
+  // Wait until no worker holds `job`. noexcept on purpose: once the job is posted, workers may hold
+  // it, so a failure here (locking the mutex) cannot be reported by unwinding the caller's stack,
+  // which owns the job; terminating is the only honest outcome.
+  void join(detail::Job& job) noexcept {
+    std::unique_lock<std::mutex> lock(mutex_);
+    // No chunk is left to claim, so no new worker may join; wait for the ones that did.
+    jobs_.erase(std::remove(jobs_.begin(), jobs_.end(), &job), jobs_.end());
+    done_cv_.wait(lock, [&job] { return job.active == 0; });
+  }
+
   void shutdown() noexcept {
     {
       const std::lock_guard<std::mutex> lock(mutex_);
@@ -487,6 +443,8 @@ inline int shared_failure(char* message, std::size_t size) noexcept {
   static constexpr SharedParallelism table{
       kSharedParallelismAbi,
       static_cast<std::uint32_t>(sizeof(SharedParallelism)),
+      static_cast<std::uint32_t>(sizeof(detail::Job)),
+      static_cast<std::uint32_t>(alignof(detail::Job)),
       [](std::size_t* out, char* message, std::size_t size) noexcept -> int {
         try {
           *out = detail::local_max_threads();

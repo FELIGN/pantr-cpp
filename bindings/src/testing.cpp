@@ -10,6 +10,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <string>
 
 namespace nb = nanobind;
@@ -41,6 +42,11 @@ TableOut probe_bernstein(std::int64_t degree, const PointsIn& pts) {
   }
   const auto p = static_cast<std::size_t>(degree);
   const std::size_t n = pts.shape(0);
+  constexpr std::size_t max_doubles = (std::numeric_limits<std::size_t>::max)() / sizeof(double);
+  if (p >= max_doubles || (n != 0 && p + 1 > max_doubles / n)) {
+    throw pantr::capacity_error("a table of " + std::to_string(n) + " points by degree " +
+                                std::to_string(degree) + " does not fit in memory");
+  }
   auto* data = new double[n * (p + 1)];
   nb::capsule owner(data, [](void* q) noexcept { delete[] static_cast<double*>(q); });
   for (std::size_t i = 0; i < n; ++i) {

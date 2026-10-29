@@ -12,11 +12,13 @@
 // differ.
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/string_view.h>
+#include <nanobind/stl/tuple.h>
 
 #include <cstdint>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 
 #if defined(__x86_64__) || defined(_M_X64)
 #define PANTR_CPU_X86_64 1
@@ -40,6 +42,38 @@ constexpr const char* kArch =
 #else
     "other";
 #endif
+
+constexpr bool bit(std::uint32_t reg, unsigned n) { return ((reg >> n) & 1U) != 0; }
+
+/// The levels a CPU and its OS support.
+struct Features {
+  bool v2 = false;  ///< CMPXCHG16B, LAHF/SAHF, POPCNT, SSE3, SSE4.1, SSE4.2, SSSE3.
+  bool v3 = false;  ///< v2 and AVX, AVX2, BMI1, BMI2, F16C, FMA, LZCNT, MOVBE, OS AVX state.
+  bool v4 = false;  ///< v3 and AVX512F/BW/CD/DQ/VL, OS opmask and ZMM state.
+};
+
+constexpr unsigned kOsxsaveBit = 27;  // CPUID.1:ECX
+
+/// Decide the levels from the registers that carry them: CPUID leaf 1 ECX, leaf 7 (subleaf 0) EBX,
+/// leaf 0x80000001 ECX, and XCR0 (ignored unless leaf 1 reports OSXSAVE). A pure function, so the
+/// fail-closed rules can be tested on register values no test machine has.
+constexpr Features decide(std::uint32_t l1ecx, std::uint32_t l7ebx, std::uint32_t e1ecx,
+                          std::uint64_t xcr) {
+  Features f;
+  f.v2 = bit(l1ecx, 0) && bit(l1ecx, 9) && bit(l1ecx, 13) && bit(l1ecx, 19) && bit(l1ecx, 20) &&
+         bit(l1ecx, 23) && bit(e1ecx, 0);
+  const bool osxsave = bit(l1ecx, kOsxsaveBit);
+  constexpr std::uint64_t kSseAvxState = 0x6;   // XMM, YMM upper halves
+  constexpr std::uint64_t kAvx512State = 0xE0;  // opmask, ZMM_Hi256, Hi16_ZMM
+  const bool os_avx = osxsave && (xcr & kSseAvxState) == kSseAvxState;
+  const bool os_avx512 = os_avx && (xcr & kAvx512State) == kAvx512State;
+  f.v3 = f.v2 && os_avx && bit(l1ecx, 28) /*AVX*/ && bit(l7ebx, 5) /*AVX2*/ &&
+         bit(l7ebx, 3) /*BMI1*/ && bit(l7ebx, 8) /*BMI2*/ && bit(l1ecx, 29) /*F16C*/ &&
+         bit(l1ecx, 12) /*FMA*/ && bit(e1ecx, 5) /*LZCNT*/ && bit(l1ecx, 22) /*MOVBE*/;
+  f.v4 = f.v3 && os_avx512 && bit(l7ebx, 16) /*AVX512F*/ && bit(l7ebx, 30) /*BW*/ &&
+         bit(l7ebx, 28) /*CD*/ && bit(l7ebx, 17) /*DQ*/ && bit(l7ebx, 31) /*VL*/;
+  return f;
+}
 
 #if defined(PANTR_CPU_X86_64)
 
@@ -78,44 +112,18 @@ std::uint64_t xcr0() {
 #endif
 }
 
-constexpr bool bit(std::uint32_t reg, unsigned n) { return ((reg >> n) & 1U) != 0; }
-
-/// Feature bits the levels need, read once.
-struct Features {
-  bool v2 = false;  ///< x86-64-v2: CMPXCHG16B, LAHF/SAHF, POPCNT, SSE3, SSE4.1, SSE4.2, SSSE3.
-  bool v3 =
-      false;  ///< v3 on top of v2: AVX, AVX2, BMI1, BMI2, F16C, FMA, LZCNT, MOVBE, OS AVX state.
-  bool v4 = false;  ///< v4 on top of v3: AVX512F/BW/CD/DQ/VL, OS opmask and ZMM state.
-};
-
 Features read_features() {
-  Features f;
   const std::uint32_t max_leaf = cpuid(0, 0).eax;
   const std::uint32_t max_ext = cpuid(0x80000000U, 0).eax;
   if (max_leaf < 1) {
-    return f;
+    return Features{};
   }
   const CpuidRegs l1 = cpuid(1, 0);
   const CpuidRegs l7 = max_leaf >= 7 ? cpuid(7, 0) : CpuidRegs{};
   const CpuidRegs e1 = max_ext >= 0x80000001U ? cpuid(0x80000001U, 0) : CpuidRegs{};
-
-  f.v2 = bit(l1.ecx, 0) && bit(l1.ecx, 9) && bit(l1.ecx, 13) && bit(l1.ecx, 19) &&
-         bit(l1.ecx, 20) && bit(l1.ecx, 23) && bit(e1.ecx, 0);
-
-  const bool osxsave = bit(l1.ecx, 27);
-  const std::uint64_t xcr = osxsave ? xcr0() : 0;
-  constexpr std::uint64_t kSseAvxState = 0x6;   // XMM, YMM upper halves
-  constexpr std::uint64_t kAvx512State = 0xE0;  // opmask, ZMM_Hi256, Hi16_ZMM
-  const bool os_avx = osxsave && (xcr & kSseAvxState) == kSseAvxState;
-  const bool os_avx512 = os_avx && (xcr & kAvx512State) == kAvx512State;
-
-  f.v3 = f.v2 && os_avx && bit(l1.ecx, 28) /*AVX*/ && bit(l7.ebx, 5) /*AVX2*/ &&
-         bit(l7.ebx, 3) /*BMI1*/ && bit(l7.ebx, 8) /*BMI2*/ && bit(l1.ecx, 29) /*F16C*/ &&
-         bit(l1.ecx, 12) /*FMA*/ && bit(e1.ecx, 5) /*LZCNT*/ && bit(l1.ecx, 22) /*MOVBE*/;
-
-  f.v4 = f.v3 && os_avx512 && bit(l7.ebx, 16) /*AVX512F*/ && bit(l7.ebx, 30) /*BW*/ &&
-         bit(l7.ebx, 28) /*CD*/ && bit(l7.ebx, 17) /*DQ*/ && bit(l7.ebx, 31) /*VL*/;
-  return f;
+  // XGETBV is legal only once OSXSAVE is confirmed.
+  const std::uint64_t xcr = bit(l1.ecx, kOsxsaveBit) ? xcr0() : 0;
+  return decide(l1.ecx, l7.ebx, e1.ecx, xcr);
 }
 
 #endif  // PANTR_CPU_X86_64
@@ -152,6 +160,14 @@ bool supports(std::string_view tag) {
 NB_MODULE(_pantr_cpu, m) {
   m.doc() = "Which x86-64 levels this CPU and its OS support (private: used by pantr._isa).";
   m.attr("arch") = kArch;
+  m.def(
+      "_levels_from_registers",
+      [](std::uint32_t l1ecx, std::uint32_t l7ebx, std::uint32_t e1ecx, std::uint64_t xcr) {
+        const Features f = decide(l1ecx, l7ebx, e1ecx, xcr);
+        return std::tuple<bool, bool, bool>(f.v2, f.v3, f.v4);
+      },
+      nb::arg("leaf1_ecx"), nb::arg("leaf7_ebx"), nb::arg("ext1_ecx"), nb::arg("xcr0"),
+      "Return (v2, v3, v4) as decided from these register values (for tests).");
   m.def("supports", &supports, nb::arg("tag"),
         "Return True if the CPU and its OS support the x86-64 level `tag` ('v2', 'v3', 'v4').");
 }
