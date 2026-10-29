@@ -733,3 +733,30 @@ TEST_CASE_TEMPLATE("bezier derivatives: an order far above the degree is zero, w
     CHECK(v == static_cast<T>(0));
   }
 }
+
+TEST_CASE_TEMPLATE("bezier derivatives: above the degree, a non-finite point gives NaN, not zero",
+                   T, float, double) {
+  const std::vector<T> c = cast_all<T>({1.0, 1.0, 1.0, 1.0});
+  const pb::Bezier<T> f = make_bezier<T>(c, {2, 2, 1});
+  const T nan = std::numeric_limits<T>::quiet_NaN();
+  const T inf = std::numeric_limits<T>::infinity();
+  const std::vector<T> pts = {
+      nan, static_cast<T>(0.5), static_cast<T>(0.25), static_cast<T>(0.5), static_cast<T>(0.25),
+      inf};
+  const std::vector<long long> orders = {2, 0};
+  const NdArray<T> d = pb::evaluate_derivatives<T>(f, view2<T>(pts, 3, 2), orders);
+  const T first = d.data()[0];
+  const T second = d.data()[1];
+  const T third = d.data()[2];
+  CHECK(std::isnan(first));
+  CHECK(second == static_cast<T>(0));
+  CHECK(std::isnan(third));
+  const std::vector<T> u = {nan, static_cast<T>(0.5)};
+  const std::vector<T> v = {static_cast<T>(0.5)};
+  const pantr::quad::PointsLattice<T> lattice({u, v});
+  const NdArray<T> dl = pb::evaluate_derivatives<T>(f, lattice, orders);
+  const T l0 = dl.data()[0];
+  const T l1 = dl.data()[1];
+  CHECK(std::isnan(l0));
+  CHECK(l1 == static_cast<T>(0));
+}

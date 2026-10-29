@@ -173,15 +173,24 @@
   their namespaces.
 - **`AABB`, `AffineTransform` and the `Bezier` value type run in pantr's C++ library**
   (`pantr.geometry`, `pantr.transform` and `pantr.bezier.Bezier` are thin wrappers over it;
-  names, signatures, defaults and messages are unchanged except as listed below). Results can
-  move in the last bits: Bézier contractions are summed point by point in C++ instead of by
+  names, signatures and defaults are unchanged, and messages too except as listed below).
+  Results can move in the last bits: Bézier contractions are summed point by point in C++ instead of by
   `einsum`/`tensordot` (on a lattice, in whichever order of directions writes fewer values),
   the 1D evaluation seeds its recurrence with an exact integer power instead of `pow`, a
   polynomial curve's derivative is evaluated on its hodograph (the forward differences of its
   control points, a Bézier of lower degree) instead of the derivative basis, which is several
   times faster, and affine maps and transforms are applied by plain loops instead of BLAS.
   Evaluation, and `AffineTransform.__call__` on many points, run on pantr's thread pool with the
-  GIL released (NumPy's `@` ran on BLAS's threads).
+  GIL released (NumPy's `@` ran on BLAS's threads). Where a result overflows, the plain loops can
+  leave NaN where BLAS left `inf` (or the reverse), and NumPy's `RuntimeWarning`s for overflow and
+  invalid values in these operations are no longer emitted. The `-0.0` against `+0.0` tie in
+  `AABB.union` and `intersect` may resolve to the other sign (the values compare equal).
+- A derivative of a polynomial `Bezier` above its degree in some direction is computed as the
+  exact zero it is, without the derivative table, at any order: an order of `2**31 - 1` or more is
+  refused as "derivative order N is too large" (`ValueError`), where the table used to be
+  allocated and fail with a `MemoryError` past memory. At a point with a NaN or infinite
+  coordinate it is NaN, which is what the previous release gave at a NaN point (at an infinite
+  one it gave a mix of `inf` and NaN).
 - **A `Bezier` is immutable**, as the C++ values are (they are shared rather than copied, which
   is what makes them cheap to pass and safe across threads): the constructor copies the control
   points, so a later write to the array it was given no longer changes the Bézier;
@@ -205,11 +214,20 @@
   pickled by the previous release still loads: its plain attributes rebuild the value.
 - `AABB.lo` and `hi`, `AffineTransform.matrix` and `offset`, `Bezier.control_points` and the
   Bézier results are NumPy arrays over C++ buffers that do not own their data
-  (`flags.owndata` is `False`).
+  (`flags.owndata` is `False`); the read-only ones cannot be made writeable
+  (`flags.writeable = True` raises `ValueError`, where `AABB.lo` and the matrix of an
+  `AffineTransform` used to allow it, being arrays the object owned). `Bezier.control_points` is a
+  cached property and `AABB` has an extra slot; assigning or deleting `control_points` is
+  refused as before.
 - `AffineTransform.inverse` refuses a matrix whose LU factorisation meets a NaN pivot
   ("Cannot invert a singular affine transformation."), as it refuses an exactly zero one;
   NumPy returned NaNs there or raised, depending on where the NaN sat. One rule for the C++
-  library, NumPy's for the zero pivot.
+  library, NumPy's for the zero pivot. Which numerically singular matrices meet an exactly zero
+  pivot also changes, since Eigen's elimination rounds differently from LAPACK's:
+  `[[1, 2, 3], [4, 5, 6], [7, 8, 9]]` is now inverted (to entries of order `1e15`, noise, as any
+  inverse of it is) where it was refused, and some other near-singular matrices are refused where
+  they were inverted. A matrix singular by structure (a zero row or column, equal rows) is refused
+  as before.
 - `AABB.transform` given an offset without `ndim` entries is a `ValueError` ("affine.offset must
   have shape ..."). NumPy broadcast a one-entry or 0-d offset to every axis and raised a
   broadcasting error for other lengths; the C++ library checks every input.
@@ -217,10 +235,20 @@
   `pantr.geometry`, `pantr.transform` and `Bezier`, may raise another exception or message than
   before, since the compiled binding converts an argument (an index, a float) before the checks
   run and most checks now run in C++: for example a `bool` direction is quoted as `1`, a
-  non-numeric `factor` or `angle` is a `TypeError` from the binding before any range check.
+  non-numeric `factor` or `angle` is a `TypeError` from the binding before any range check, an
+  integer outside the int64 range for a `direction`, `axis`, `ndim`, `n`, `dim`, `component` or
+  degree increment is a `TypeError` from the binding (it was a `ValueError` from the range
+  check), and a `center` of the wrong rank in the factories reports its ravelled shape.
+- **Under a tight address-space limit** (`ulimit -v`), the first parallel `Bezier.evaluate` or
+  `AffineTransform.__call__` can fail to start pool threads, as the tabulations can (above):
+  `RuntimeError` ("Resource temporarily unavailable") or `MemoryError` ("std::bad_alloc"), and
+  `pantr.set_num_threads(1)` runs it on the calling thread.
 - The private modules `pantr.bezier._bezier_core`, `_bezier_eval`, `_bezier_derivative`,
   `_bezier_compose`, `_bezier_collapse`, `_bezier_split`, `_bezier_slice` and `_bezier_restrict`,
-  and `_bezier_degree._degree_elevate_bezier`, are gone with the Numba kernels they held.
+  and `_bezier_degree._degree_elevate_bezier`, are gone with the Numba kernels they held, as are
+  the private helpers `pantr.geometry._BOUNDS_NDIM`, `_BOUNDS_AXIS_LEN` and `_require_same_ndim`,
+  `pantr.transform._apply_center` and `_with_optional_center`, and the attribute
+  `Bezier._control_points`, whose work is now done in C++.
 
 ### Fixed
 - `AABB` can be pickled and copied (`pickle`, `copy.copy`, `copy.deepcopy`); each raised

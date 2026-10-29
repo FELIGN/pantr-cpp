@@ -17,6 +17,7 @@
 #include "pantr/quad/points_lattice.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <limits>
 #include <span>
@@ -347,20 +348,17 @@ void evaluate_1d_into(const Bezier<T>& b, std::span<const T> pts, T* out) {
 /// Bezier whose control points are the `k`-th forward differences of the original's (the
 /// hodograph taken `k` times), so it is evaluated by the fused value kernel: `O(p)` per point
 /// instead of the `O(p^2)` derivative table, which the rational quotient rule still needs (it uses
-/// every lower order). Above the degree the derivative is exactly zero. The differences and the
-/// factor are formed in double and stored in `T` once, as the table's factor was.
+/// every lower order). The differences and the factor are formed in double and stored in `T` once,
+/// as the table's factor was.
 ///
 /// Note:
-///     Inputs are assumed to be correct (no validation performed).
+///     Inputs are assumed to be correct (no validation performed), `order <= degree` included
+///     (above the degree the caller writes `zero_derivative_into`'s result instead).
 template <StorageFloat T>
 void polynomial_derivative_1d_into(const Bezier<T>& b, std::span<const T> pts, std::size_t order,
                                    T* out) {
   const std::size_t p = b.degree(0);
   const std::size_t cp = b.cp_size();
-  if (order > p) {
-    std::fill(out, out + pts.size() * cp, static_cast<T>(0));
-    return;
-  }
   const std::span<const T> src = b.control_points();
   std::vector<double> diff(src.begin(), src.end());
   for (std::size_t k = 1; k <= order; ++k) {
@@ -381,6 +379,43 @@ void polynomial_derivative_1d_into(const Bezier<T>& b, std::span<const T> pts, s
   }
   evaluate_1d_kernel<T>(mdview<const T, 2>(hodo.data(), rows, cp), pts,
                         mdview<T, 2>(out, pts.size(), cp));
+}
+
+/// Write the derivative of an order above the degree of a polynomial Bezier: zero at a point whose
+/// coordinates are finite, NaN at one with a NaN or infinite coordinate (where the derivative
+/// cannot be evaluated, so the result says so rather than reading as an exact zero; the
+/// previous release's table gave NaN there too, from `0 * NaN` and `0 * inf`).
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed).
+template <StorageFloat T>
+void zero_derivative_into(const EvalPoints<T>& pts, std::size_t cp, T* out) {
+  using std::isfinite;
+  const std::size_t dim = pts.dirs.size();
+  std::vector<std::vector<bool>> finite(dim);
+  for (std::size_t d = 0; d < dim; ++d) {
+    finite[d].resize(pts.dirs[d].size());
+    for (std::size_t j = 0; j < pts.dirs[d].size(); ++j) {
+      finite[d][j] = isfinite(pts.dirs[d][j]);
+    }
+  }
+  std::vector<std::size_t> idx(dim, 0);
+  for (std::size_t j = 0; j < pts.count; ++j) {
+    bool ok = true;
+    for (std::size_t d = 0; d < dim; ++d) {
+      ok = ok && finite[d][pts.lattice ? idx[d] : j];
+    }
+    const T value = ok ? static_cast<T>(0) : std::numeric_limits<T>::quiet_NaN();
+    std::fill(out + j * cp, out + (j + 1) * cp, value);
+    if (pts.lattice) {
+      for (std::size_t d = dim; d-- > 0;) {
+        if (++idx[d] < pts.dirs[d].size()) {
+          break;
+        }
+        idx[d] = 0;
+      }
+    }
+  }
 }
 
 /// Advance a multi-index in lexicographic order (last component fastest) within `bounds`
@@ -488,7 +523,7 @@ void derivatives_into(const Bezier<T>& b, const EvalPoints<T>& pts,
     for (std::size_t d = 0; d < dim; ++d) {
       if (static_cast<std::size_t>(orders[d]) > b.degree(d)) {
         // Exactly zero, with no table built (an order of a billion would ask for gigabytes).
-        std::fill(out, out + count * cp, static_cast<T>(0));
+        zero_derivative_into<T>(pts, cp, out);
         return;
       }
     }
