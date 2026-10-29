@@ -9,9 +9,9 @@ import numpy.testing as nptest
 import numpy.typing as npt
 import pytest
 
+from pantr._testing import bernstein_interpolate as _bernstein_interpolate
+from pantr.basis import tabulate_bernstein_1d
 from pantr.bezier import fit_bezier, interpolate_bezier
-from pantr.bezier._bezier_interpolate import _bernstein_interpolate
-from pantr.bezier._bezier_utils import _tabulate_bernstein_1d_fast
 from pantr.quad import PointsLattice, get_modified_chebyshev_nodes_1d
 
 
@@ -37,7 +37,7 @@ def _eval_bernstein_on_modified_chebyshev_grid(
         if n == 1:
             continue
         nodes = get_modified_chebyshev_nodes_1d(n, np.float64)
-        bern = _tabulate_bernstein_1d_fast(n - 1, nodes, np.float64)
+        bern = tabulate_bernstein_1d(n - 1, nodes)
         result = np.tensordot(bern, result, axes=([1], [dim]))
         result = np.moveaxis(result, 0, dim)
     return np.asarray(result, dtype=np.float64)
@@ -46,9 +46,8 @@ def _eval_bernstein_on_modified_chebyshev_grid(
 class TestBernsteinInterpolateRoundTrip:
     """Round-trip tests for the N-D ``_bernstein_interpolate`` helper.
 
-    This private helper is consumed across the package boundary by a downstream
-    consumer, so it
-    needs its own coverage: build a known polynomial in Bernstein form, evaluate
+    The helper (now ``pantr._testing.bernstein_interpolate``, a route through
+    :func:`fit_bezier`) needs its own coverage: build a known polynomial in Bernstein form, evaluate
     it on the modified-Chebyshev grid, interpolate, and check the recovered
     coefficients reproduce the original polynomial.
     """

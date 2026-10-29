@@ -6,21 +6,15 @@ Bernstein Vandermonde system.
 
 The Bernstein Vandermonde matrix becomes increasingly ill-conditioned as the
 polynomial degree grows, making a direct solve numerically unstable.  To handle
-this, all solvers in this module use a **truncated SVD** pseudo-inverse:
-singular values smaller than ``tol * sigma_max`` are zeroed out, which
-regularises the inversion and yields robust results even at high degree.
+this, both functions use a **truncated SVD** pseudo-inverse: singular values
+smaller than ``tol * sigma_max`` are zeroed out, which regularises the inversion
+and yields robust results even at high degree.  The solve runs in pantr's C++
+library (``include/pantr/bezier/fit.hpp``); this module resolves the arguments.
 
 Both functions support **tensor-product** grids (represented as a
 :class:`~pantr.quad.PointsLattice` or a sequence of 1D node arrays) and
 **scattered** point sets (represented as a 2D array of shape
 ``(n_pts, dim)``).
-
-Supporting utilities (used internally and by the resultant pipeline):
-
-- :func:`_bernstein_vandermonde_svd` — SVD of the Bernstein Vandermonde
-  matrix at modified Chebyshev nodes.
-- :func:`_bernstein_interpolate` — tensor-product interpolation from node
-  values on a modified-Chebyshev grid to Bernstein coefficients.
 """
 
 from __future__ import annotations
@@ -31,96 +25,59 @@ from typing import TYPE_CHECKING, Any, Literal
 import numpy as np
 import numpy.typing as npt
 
-from .._interpolation_utils import resolve_svd_tolerance, split_components
+from .._ext import ext
 from ..quad import PointsLattice, get_modified_chebyshev_nodes_1d
-from ._bezier_utils import _tabulate_bernstein_1d_fast
 
 if TYPE_CHECKING:
     from . import Bezier
 
+_cpp: Any = ext.bezier
+"""The compiled Bezier fitting (private; untyped: one function per dtype)."""
 
-def _bernstein_vandermonde_svd(
-    n: int,
-    dtype: npt.DTypeLike = np.float64,
-) -> tuple[
-    npt.NDArray[np.floating[Any]],
-    npt.NDArray[np.floating[Any]],
-    npt.NDArray[np.floating[Any]],
-]:
-    """Compute the SVD of the Bernstein Vandermonde matrix at modified Chebyshev nodes.
 
-    The Vandermonde matrix ``V`` has entries ``V[i, j] = B_{j,n-1}(x_i)``
-    where ``x_i`` are the ``n`` modified Chebyshev-Lobatto nodes on ``[0, 1]``
-    and ``B_{j,n-1}`` is the ``j``-th Bernstein basis function of degree
-    ``n - 1``.  ``V`` is square (``n`` nodes, ``n`` coefficients), so its SVD
-    underlies the truncated pseudo-inverse used to invert the (ill-conditioned
-    at high degree) interpolation system.
+def _compute_dtype(dtype: np.dtype[Any]) -> np.dtype[np.float32] | np.dtype[np.float64]:
+    """Get the dtype a fit runs in: ``float32`` stays, every other real dtype is ``float64``.
 
     Args:
-        n (int): Number of nodes/coefficients (degree + 1). Must be >= 1.
-        dtype (npt.DTypeLike): Floating dtype. Defaults to ``float64``.
+        dtype (np.dtype[Any]): The values' (floating) dtype.
 
     Returns:
-        tuple[npt.NDArray, npt.NDArray, npt.NDArray]: ``(U, sigma, Vt)`` where
-        ``V = U @ diag(sigma) @ Vt``.
+        np.dtype[np.float32] | np.dtype[np.float64]: The compute dtype.
     """
-    nodes = get_modified_chebyshev_nodes_1d(max(n, 2), dtype)[:n]
-    V = _tabulate_bernstein_1d_fast(n - 1, nodes, dtype)
-    U, sigma, Vt = np.linalg.svd(V, full_matrices=False)
-    return U, sigma, Vt
+    if dtype == np.float32:
+        return np.dtype(np.float32)
+    return np.dtype(np.float64)
 
 
-def _bernstein_interpolate(
-    f: npt.NDArray[np.floating[Any]],
-    tol: float | None = None,
-) -> npt.NDArray[np.floating[Any]]:
-    r"""Interpolate tensor-product values at modified Chebyshev nodes to Bernstein coefficients.
-
-    Given values of a degree-``(n_0 - 1, ..., n_{N-1} - 1)`` polynomial sampled
-    on the tensor product of modified Chebyshev-Lobatto node sets, recover its
-    Bernstein coefficients.  Because the interpolation operator separates over a
-    tensor-product grid, the inverse is applied one axis at a time: along axis
-    ``k`` the values are mapped through the truncated-SVD pseudo-inverse of the
-    univariate Bernstein Vandermonde matrix ``V^{(k)}``.
-
-    For each axis with ``V = U \Sigma V^\top`` the pseudo-inverse is
-    :math:`V^{+} = V \Sigma^{+} U^\top`, where :math:`\Sigma^{+}` inverts only
-    the singular values above ``tol * sigma_max`` and zeroes the rest.  This
-    truncated SVD (standard regularised least squares; see Golub & Van Loan,
-    *Matrix Computations*) keeps the recovery stable even when ``V`` becomes
-    ill-conditioned at high degree.  Size-1 axes (degree 0) are passed through
-    unchanged.
+def _fit_tensor(
+    values: npt.NDArray[np.floating[Any]],
+    node_arrays: list[npt.NDArray[np.floating[Any]]],
+    degree_tuple: tuple[int, ...] | None,
+    tol: float | None,
+    dtype: np.dtype[np.float32] | np.dtype[np.float64],
+) -> Bezier:
+    """Fit Bernstein coefficients on a tensor-product grid (one pseudo-inverse per direction).
 
     Args:
-        f (npt.NDArray[np.floating[Any]]): Function values at the tensor
-            product of modified Chebyshev nodes.  Shape
-            ``(n_0, n_1, ..., n_{N-1})``.
-        tol (float | None): SVD truncation tolerance.  If *None*, uses a
-            default based on machine epsilon.
+        values (npt.NDArray[np.floating[Any]]): Shape ``n_pts`` (scalar) or ``(*n_pts, rank)``,
+            ``n_pts`` the node counts.
+        node_arrays (list[npt.NDArray[np.floating[Any]]]): One 1D node array per direction.
+        degree_tuple (tuple[int, ...] | None): Degree per direction, or *None* for
+            interpolation (``degree = n_pts - 1``).
+        tol (float | None): SVD truncation tolerance.
+        dtype (np.dtype): The dtype the fit runs in.
 
     Returns:
-        npt.NDArray[np.floating[Any]]: Bernstein coefficients with the same
-        shape as ``f``.
+        ~pantr.bezier.Bezier: A non-rational Bézier.
     """
-    dtype = f.dtype
-    actual_tol = resolve_svd_tolerance(dtype, tol)
+    from . import Bezier as BezierCls  # noqa: PLC0415
 
-    result = np.asarray(f, dtype=dtype)
-    for axis in range(result.ndim):
-        n = result.shape[axis]
-        if n == 1:
-            continue
-
-        U, sigma, Vt = _bernstein_vandermonde_svd(n, dtype)
-
-        # Truncated pseudo-inverse V^+ = V @ diag(sigma^+) @ U^T.
-        inv_sigma = np.where(sigma >= actual_tol * sigma[0], 1.0 / sigma, 0.0)
-        pinv = (Vt.T * inv_sigma[np.newaxis, :]) @ U.T
-
-        # Apply V^+ along `axis`; tensordot puts the new axis first, so move it back.
-        result = np.moveaxis(np.tensordot(pinv, result, axes=([1], [axis])), 0, axis)
-
-    return np.asarray(result, dtype=dtype)
+    stacked = values if values.ndim == len(node_arrays) + 1 else values[..., np.newaxis]
+    vals = np.ascontiguousarray(stacked, dtype=dtype)
+    nodes = [np.ascontiguousarray(a, dtype=dtype) for a in node_arrays]
+    fit = _cpp.fit_tensor_f32 if dtype == np.float32 else _cpp.fit_tensor
+    degrees = None if degree_tuple is None else list(degree_tuple)
+    return BezierCls._from_handle(fit(vals, nodes, degrees, tol))
 
 
 def _resolve_nodes(
@@ -201,146 +158,6 @@ def _resolve_nodes(
     return node_list_seq
 
 
-def _build_bernstein_pinv(
-    nodes: npt.NDArray[np.floating[Any]],
-    tol: float | None = None,
-    degree: int | None = None,
-) -> npt.NDArray[np.floating[Any]]:
-    """Build the Bernstein pseudo-inverse matrix for arbitrary 1D nodes.
-
-    Given a set of 1D interpolation nodes, constructs the matrix that maps
-    function values at those nodes to Bernstein coefficients via truncated SVD.
-
-    When ``degree`` is *None* or equals ``len(nodes) - 1``, the Vandermonde
-    matrix is square and the result is an exact interpolation matrix.  When
-    ``degree < len(nodes) - 1``, the Vandermonde is rectangular and the
-    pseudo-inverse yields a least-squares fit.
-
-    Args:
-        nodes (npt.NDArray[np.floating[Any]]): 1D interpolation nodes on
-            [0, 1], shape ``(n_pts,)``.
-        tol (float | None): SVD truncation tolerance. If *None*, uses
-            ``100 * eps``.
-        degree (int | None): Polynomial degree of the output Bernstein
-            representation.  If *None*, defaults to ``n_pts - 1`` (exact
-            interpolation).
-
-    Returns:
-        npt.NDArray[np.floating[Any]]: Pseudo-inverse matrix, shape
-        ``(degree + 1, n_pts)``.
-    """
-    n_pts = nodes.shape[0]
-    dtype = nodes.dtype
-    deg = n_pts - 1 if degree is None else degree
-
-    if n_pts == 1 and deg == 0:
-        return np.ones((1, 1), dtype=dtype)
-
-    V = _tabulate_bernstein_1d_fast(deg, nodes, dtype)
-    U, sigma, Vt = np.linalg.svd(V, full_matrices=False)
-
-    actual_tol = resolve_svd_tolerance(dtype, tol)
-    min_sigma = actual_tol * sigma[0]
-    inv_sigma = np.where(sigma >= min_sigma, 1.0 / sigma, 0.0)
-
-    pinv: npt.NDArray[np.floating[Any]] = (Vt.T * inv_sigma[np.newaxis, :]) @ U.T
-    return pinv
-
-
-def _build_nd_bernstein_vandermonde(
-    pts: npt.NDArray[np.floating[Any]],
-    degree_tuple: tuple[int, ...],
-) -> npt.NDArray[np.floating[Any]]:
-    """Build the full tensor-product Bernstein Vandermonde matrix at scattered points.
-
-    For ``N``-dimensional points with degrees ``(p_0, ..., p_{N-1})``, the
-    Vandermonde matrix has shape ``(n_pts, prod(p_d + 1))`` where each row
-    contains the products of univariate Bernstein basis values across all
-    directions.
-
-    Args:
-        pts (npt.NDArray[np.floating[Any]]): Evaluation points, shape
-            ``(n_pts,)`` for 1D or ``(n_pts, ndim)`` for N-D.
-        degree_tuple (tuple[int, ...]): Polynomial degree per parametric
-            direction.
-
-    Returns:
-        npt.NDArray[np.floating[Any]]: Vandermonde matrix, shape
-        ``(n_pts, prod(degree[d] + 1))``.
-    """
-    ndim = len(degree_tuple)
-    dtype = pts.dtype
-
-    pts_2d = pts[:, np.newaxis] if pts.ndim == 1 else pts
-    n_pts = pts_2d.shape[0]
-
-    # Evaluate univariate Bernstein bases per direction
-    basis_per_dir: list[npt.NDArray[np.floating[Any]]] = [
-        _tabulate_bernstein_1d_fast(degree_tuple[d], pts_2d[:, d], dtype) for d in range(ndim)
-    ]
-
-    # Build tensor-product Vandermonde via successive Kronecker-like expansion
-    V = basis_per_dir[0]
-    for d in range(1, ndim):
-        # V has shape (n_pts, cols_so_far), basis_per_dir[d] has shape (n_pts, n_d)
-        # Result: (n_pts, cols_so_far * n_d) via row-wise outer product
-        V = (V[:, :, np.newaxis] * basis_per_dir[d][:, np.newaxis, :]).reshape(n_pts, -1)
-
-    return V
-
-
-def _fit_from_scattered(
-    values: npt.NDArray[np.floating[Any]],
-    pts: npt.NDArray[np.floating[Any]],
-    degree_tuple: tuple[int, ...],
-    tol: float | None,
-) -> npt.NDArray[np.floating[Any]]:
-    """Fit Bernstein coefficients from scattered (non-tensor-product) point values.
-
-    Builds the full tensor-product Bernstein Vandermonde at the given points
-    and recovers the coefficients via truncated SVD pseudo-inverse.
-
-    Args:
-        values (npt.NDArray[np.floating[Any]]): Function values at scattered
-            points.  Shape ``(n_pts,)`` for scalar or ``(n_pts, rank)`` for
-            vector-valued.
-        pts (npt.NDArray[np.floating[Any]]): Evaluation points, shape
-            ``(n_pts,)`` for 1D or ``(n_pts, ndim)`` for N-D.
-        degree_tuple (tuple[int, ...]): Polynomial degree per parametric
-            direction.
-        tol (float | None): SVD truncation tolerance.
-
-    Returns:
-        npt.NDArray[np.floating[Any]]: Control points with shape
-        ``(*orders, rank)`` where ``orders[d] = degree[d] + 1``.
-    """
-    dtype = values.dtype
-    orders = tuple(d + 1 for d in degree_tuple)
-
-    V = _build_nd_bernstein_vandermonde(pts, degree_tuple)
-
-    # SVD pseudo-inverse with truncation
-    U, sigma, Vt = np.linalg.svd(V, full_matrices=False)
-    actual_tol = resolve_svd_tolerance(dtype, tol)
-    min_sigma = actual_tol * sigma[0]
-    inv_sigma = np.where(sigma >= min_sigma, 1.0 / sigma, 0.0)
-    pinv: npt.NDArray[np.floating[Any]] = (Vt.T * inv_sigma[np.newaxis, :]) @ U.T
-
-    # Solve for each component
-    is_vector = values.ndim == 2  # noqa: PLR2004
-    if is_vector:
-        rank = values.shape[1]
-        components: list[npt.NDArray[np.floating[Any]]] = []
-        for r in range(rank):
-            coeffs_flat = pinv @ values[:, r]
-            components.append(coeffs_flat.reshape(orders).astype(dtype))
-        return np.stack(components, axis=-1)
-
-    coeffs_flat = pinv @ values
-    ctrl = coeffs_flat.reshape(orders).astype(dtype)
-    return ctrl[..., np.newaxis]
-
-
 def _validate_n_pts(
     n_pts: int | Sequence[int],
 ) -> tuple[int, ...]:
@@ -393,56 +210,6 @@ def _validate_degree(
                 f"(need at least degree + 1 sample points)."
             )
     return deg_tuple
-
-
-def _fit_from_values(
-    components: list[npt.NDArray[np.floating[Any]]],
-    node_arrays: list[npt.NDArray[np.floating[Any]]],
-    degree_tuple: tuple[int, ...] | None,
-    tol: float | None,
-) -> npt.NDArray[np.floating[Any]]:
-    """Fit Bernstein coefficients from per-component value arrays.
-
-    This is the shared core for both :func:`interpolate_bezier` and
-    :func:`fit_bezier`.
-
-    Args:
-        components (list[npt.NDArray[np.floating[Any]]]): Per-component value
-            arrays, each with shape ``(*n_pts_per_dir)``.
-        node_arrays (list[npt.NDArray[np.floating[Any]]]): One 1D node array
-            per parametric direction.
-        degree_tuple (tuple[int, ...] | None): Degree per direction, or *None*
-            for exact interpolation (``degree = n_pts - 1``).
-        tol (float | None): SVD truncation tolerance.
-
-    Returns:
-        npt.NDArray[np.floating[Any]]: Control points with shape
-        ``(*orders, rank)`` where ``orders[d] = degree[d] + 1``.
-    """
-    ndim = len(node_arrays)
-
-    # Build pseudo-inverse matrices per direction
-    pinvs = [
-        _build_bernstein_pinv(
-            node_arrays[d],
-            tol,
-            degree_tuple[d] if degree_tuple is not None else None,
-        )
-        for d in range(ndim)
-    ]
-
-    # Interpolate each component to Bernstein coefficients
-    ctrl_components: list[npt.NDArray[np.floating[Any]]] = []
-    for comp_values in components:
-        result = comp_values.copy()
-        for dim in range(ndim):
-            if result.shape[dim] == 1 and pinvs[dim].shape == (1, 1):
-                continue
-            result = np.tensordot(pinvs[dim], result, axes=([1], [dim]))
-            result = np.moveaxis(result, 0, dim)
-        ctrl_components.append(result)
-
-    return np.stack(ctrl_components, axis=-1)
 
 
 def interpolate_bezier(
@@ -511,8 +278,6 @@ def interpolate_bezier(
         >>> b.degree
         (4,)
     """
-    from . import Bezier as BezierCls  # noqa: PLC0415
-
     n_pts_tuple = _validate_n_pts(n_pts)
     degree_tuple = _validate_degree(degree, n_pts_tuple)
 
@@ -544,9 +309,10 @@ def interpolate_bezier(
             f"Function returned shape {raw.shape}, expected ({n_total},) or ({n_total}, rank)."
         )
 
-    components = split_components(values, n_pts_tuple)
-    ctrl = _fit_from_values(components, node_arrays, degree_tuple, tol)
-    return BezierCls(ctrl, is_rational=False)
+    # The nodes are float64, and a pseudo-inverse built on them promotes the values: the fit
+    # runs in float64 unless no direction needs one (every direction a single point).
+    dtype = _compute_dtype(raw.dtype) if all(n == 1 for n in n_pts_tuple) else np.dtype(np.float64)
+    return _fit_tensor(values, node_arrays, degree_tuple, tol, dtype)
 
 
 def _resolve_nodes_from_user(
@@ -724,8 +490,17 @@ def fit_bezier(  # noqa: PLR0912
                 f"(vector), got {values_arr.ndim}D."
             )
 
-        ctrl = _fit_from_scattered(values_arr, pts, degree_tuple, tol)
-        return BezierCls(ctrl, is_rational=False)
+        compute = _compute_dtype(dtype_obj)
+        vals2d = values_arr if values_arr.ndim == 2 else values_arr[:, np.newaxis]  # noqa: PLR2004
+        fit = _cpp.fit_scattered_f32 if compute == np.float32 else _cpp.fit_scattered
+        return BezierCls._from_handle(
+            fit(
+                np.ascontiguousarray(vals2d, dtype=compute),
+                np.ascontiguousarray(pts, dtype=compute),
+                list(degree_tuple),
+                tol,
+            )
+        )
 
     # --- Tensor-product path ---
     # Determine parametric dimension from nodes
@@ -751,6 +526,4 @@ def fit_bezier(  # noqa: PLR0912
 
     degree_tuple_tp = _validate_degree(degree, n_pts_tuple)
     node_arrays = _resolve_nodes_from_user(nodes, n_pts_tuple, dtype_obj)
-    components = split_components(values_arr, n_pts_tuple)
-    ctrl = _fit_from_values(components, node_arrays, degree_tuple_tp, tol)
-    return BezierCls(ctrl, is_rational=False)
+    return _fit_tensor(values_arr, node_arrays, degree_tuple_tp, tol, _compute_dtype(dtype_obj))

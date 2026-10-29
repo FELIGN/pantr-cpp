@@ -13,11 +13,6 @@ from numpy import typing as npt
 from .._ext import ext
 from ..basis._basis_utils import _validate_out_array
 from ..quad import PointsLattice
-from ._bezier_degree import (
-    _degree_reduce_bezier,
-    _degree_reduction_l2_error,
-    _minimize_degree_bezier,
-)
 
 if TYPE_CHECKING:
     from ..bspline import Bspline
@@ -557,7 +552,8 @@ class Bezier:
             ValueError: If the object is rational and the reduction drives a
                 control weight to zero or below.
         """
-        return _degree_reduce_bezier(self, self._checked_decrements(degree_decrements))
+        decrements = list(self._checked_decrements(degree_decrements))
+        return Bezier._from_handle(_cpp.reduce_degree(self._h, decrements))
 
     def degree_reduction_error(self, degree_decrements: int | Sequence[int]) -> float:
         r"""Compute the :math:`L^2` error that :meth:`reduce_degree` would introduce.
@@ -596,8 +592,8 @@ class Bezier:
             >>> round(bezier.degree_reduction_error(1), 6)
             0.138013
         """
-        decrements = self._checked_decrements(degree_decrements)
-        return _degree_reduction_l2_error(self, decrements)
+        decrements = list(self._checked_decrements(degree_decrements))
+        return float(_cpp.degree_reduction_error(self._h, decrements))
 
     def _checked_decrements(self, degree_decrements: int | Sequence[int]) -> tuple[int, ...]:
         """Normalise and validate a degree-decrement argument.
@@ -669,6 +665,10 @@ class Bezier:
             Bezier: A new Bézier with the lowest degree that preserves
             accuracy.  If no reduction is possible, returns a copy.
 
+        Raises:
+            ValueError: If a direction's degree exceeds 61, the largest for which the
+                binomial coefficients of the round trip are exact.
+
         Example:
             >>> import numpy as np
             >>> b = Bezier(np.array([3.0, 3.0, 3.0, 1.0]).reshape(4, 1))
@@ -676,7 +676,7 @@ class Bezier:
             (3,)
             >>> b_min = b.minimize_degree()
         """
-        return _minimize_degree_bezier(self, tol)
+        return Bezier._from_handle(_cpp.minimize_degree(self._h, tol))
 
     # ------------------------------------------------------------------
     # Multiply

@@ -7,12 +7,13 @@ wrap their outputs back into a new B-spline.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import numpy.typing as npt
 
 from .._array_utils import _flatten_along_axis, _unflatten_along_axis
+from .._ext import ext
 from ._bspline_degree_core import (
     _check_bincoeff_envelope,
     _check_clamped_knots,
@@ -24,6 +25,9 @@ from ._bspline_knot_removal import _remove_knot_bspline_1d_impl
 from ._bspline_knots import _get_unique_knots_and_multiplicity_impl
 from ._bspline_space_1d import BsplineSpace1D
 from ._bspline_space_nd import BsplineSpace
+
+_kernels: Any = ext._kernels
+"""The ported kernels (interim surface, untyped): the Bezier reduction operator."""
 
 if TYPE_CHECKING:
     from . import Bspline
@@ -190,6 +194,55 @@ def _coarsen_knots_after_reduction(  # noqa: PLR0913
     return knots, ctrl
 
 
+def _refuse_a_reduction_that_inverts_a_weight(
+    ctrl: npt.NDArray[np.floating[Any]], *, is_rational: bool, remedy: str
+) -> None:
+    """Raise if a rational reduction produced a control weight that is not positive.
+
+    The endpoint-interpolating reduction operator is **not** a convex combination --
+    the interpolating reduction operator at degree 3 has minimum entry ``-0.25`` --
+    and it is applied to every homogeneous column, the weight column included. A weight
+    driven through zero is not an approximation error: the denominator can vanish on the
+    domain and the mapping acquires a pole, so what comes back is not a NURBS at all.
+
+    The test is on the **control** weights rather than on samples of ``w(t)``, and that
+    is conservative in the right direction: strict positivity of the control weights
+    implies strict positivity of ``w`` by positivity of the basis, so nothing with a pole
+    is ever accepted. It can refuse a net whose ``w`` happens to stay positive despite a
+    negative control weight, and that is the intended contract -- the strictly-positive
+    weight convention is a statement about the representation, which the rest of the
+    library already requires of knot removal, ``locate`` and ``find_roots``.
+
+    The remedy is the caller's to supply, because the two callers have different ones:
+    :meth:`~pantr.bezier.Bezier.minimize_degree` exists on a Bezier, and
+    :class:`~pantr.bspline.Bspline` has no such method, so a shared message naming it
+    would send a B-spline caller to an ``AttributeError``.
+
+    Args:
+        ctrl (npt.NDArray[np.floating[Any]]): Reduced control points, the last column the
+            weights.
+        is_rational (bool): Whether that last column is a weight column. A non-rational
+            reduction has no weight to invert and is not checked.
+        remedy (str): One sentence naming what this caller's type can do instead. Must be
+            true of that type.
+
+    Raises:
+        ValueError: If any weight of a rational result is not strictly positive.
+    """
+    if not is_rational:
+        return
+    weights = np.asarray(ctrl, dtype=np.float64)[..., -1]
+    smallest = float(weights.min())
+    if smallest > 0.0:
+        return
+    raise ValueError(
+        f"Degree reduction drove a control weight to {smallest:.3e}, which is not "
+        "strictly positive, so the reduced rational spline is not a valid NURBS: its "
+        "denominator can vanish on the domain. The reduction operator is not a convex "
+        f"combination and acts on the weight column too. {remedy}"
+    )
+
+
 def _degree_reduce_bspline(bspline: Bspline, degree_decrements: tuple[int, ...]) -> Bspline:
     """Reduce the degree of a B-spline.
 
@@ -206,13 +259,6 @@ def _degree_reduce_bspline(bspline: Bspline, degree_decrements: tuple[int, ...])
     Returns:
         Bspline: New B-spline with reduced degrees.
     """
-    # Deferred to break the import cycle: pantr.bezier._bezier_degree imports
-    # _check_bincoeff_envelope from this package's Layer 3.
-    from ..bezier._bezier_degree import (  # noqa: PLC0415
-        _interpolating_reduction_operator,
-        _refuse_a_reduction_that_inverts_a_weight,
-    )
-
     dim = bspline.dim
     ctrl = bspline.control_points
 
@@ -242,7 +288,7 @@ def _degree_reduce_bspline(bspline: Bspline, degree_decrements: tuple[int, ...])
                 interior_mults = np.empty(0, dtype=orig_mults.dtype)
 
             pts_2d, trailing_shape = _flatten_along_axis(ctrl, i)
-            operator = _interpolating_reduction_operator(space_1d.degree, dec)
+            operator = _kernels.interpolating_reduction_operator(space_1d.degree, dec)
 
             if is_periodic:
                 m_bdy = int(orig_mults[0])

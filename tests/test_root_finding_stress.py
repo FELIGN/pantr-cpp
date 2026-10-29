@@ -19,10 +19,11 @@ import numpy as np
 import pytest
 from numpy import typing as npt
 
+from pantr._testing import clip_roots_core as _clip_roots_core
+from pantr._testing import de_casteljau_eval_scalar as _de_casteljau_eval_scalar
+from pantr._testing import dedup_roots as _dedup_roots
+from pantr._testing import yuksel_roots as _yuksel_roots
 from pantr.bezier import Bezier, find_roots
-from pantr.bezier._clipping_core import _clip_roots_core, _dedup_roots
-from pantr.bezier._root_finding_core import _de_casteljau_eval_scalar
-from pantr.bezier._yuksel_core import _yuksel_roots
 
 _ROOT_TOL: float = 1e-6
 """Maximum parameter-space discrepancy between matched roots."""

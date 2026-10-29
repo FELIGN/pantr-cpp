@@ -1,8 +1,12 @@
-"""Layer 2 implementation for Bernstein polynomial root finding.
+"""Layer 2 of Bernstein root finding: validation, the active provider, and warnings.
 
-Handles input validation, tolerance resolution, algorithm dispatch, and output
-formatting. Delegates all computation to Layer 3 Numba kernels in
-:mod:`_yuksel_core`, :mod:`_clipping_core`, and :mod:`_batch_core`.
+Validates the Béziers, extracts their scalar coefficients, resolves the tolerance and calls the
+active root provider (:func:`~pantr.bezier.get_root_provider`): pantr's own (``"builtin"``, the
+compiled ``pantr._pantr.roots``) or BeRF-FR's (``"berf"``, the ``pantr_berf`` package). A provider
+is a module with the functions ``find_roots``, ``find_roots_batch``, ``find_monotone_root`` and
+``find_monotone_root_batch`` (each with an ``_f32`` twin for ``float32`` coefficients), taking
+C-contiguous coefficient arrays and returning arrays; a result that does not account for the
+whole interval comes with a completeness code, which becomes a :class:`RuntimeWarning` here.
 
 This module is not part of the public API. Users should call the functions
 exported from :mod:`pantr.bezier`.
@@ -10,71 +14,223 @@ exported from :mod:`pantr.bezier`.
 
 from __future__ import annotations
 
+import importlib
+import os
+import types
+import warnings
 from collections.abc import Sequence
+from typing import Any, Final
 
 import numpy as np
 from numpy import typing as npt
 
-from pantr._numba_compat import wait_for_jit_warmup
-from pantr.bezier._bezier import Bezier
-from pantr.bezier._clipping_core import _clip_roots_core, _dedup_roots
-from pantr.bezier._yuksel_core import (
-    _solve_monotone_root_kernel,
-    _yuksel_roots,
-)
-from pantr.tolerance import get_strict
+from .._ext import ext
+from ..tolerance import get_strict
+from ._bezier import Bezier
 
-_CLIP_MIN_DEGREE: int = 6
-"""Minimum polynomial degree for which Bezier clipping is considered.
+_BUILTIN: Final[str] = "builtin"
+"""Name of pantr's own root provider."""
 
-For degree <= 5 the Yuksel derivative chain is at most 4 levels deep and has
-negligible rounding accumulation, while its per-call overhead is lower than
-clipping's convex hull construction and subdivision.
+_BERF: Final[str] = "berf"
+"""Name of the BeRF-FR root provider (the ``pantr-berf`` package)."""
 
-Duplicated in ``_batch_core.py`` (Numba kernels cannot import Python-level
-module constants at call time) -- keep in sync.
-"""
+_PROVIDERS: Final[tuple[str, ...]] = (_BUILTIN, _BERF)
+"""The provider names :func:`set_root_provider` accepts."""
 
-_CLIP_COEFF_RANGE_LIMIT: float = 1e8
-"""Maximum coefficient dynamic range for which Bezier clipping is used.
+ROOT_PROVIDER_ENV: Final[str] = "PANTR_ROOT_PROVIDER"
+"""Environment variable naming the initial root provider, read on first use."""
 
-Empirically determined via a 27 000-trial sweep comparing clipping against
-Yuksel across coefficient ranges from 1e0 to 1e20.
+_BERF_MODULE: Final[str] = "pantr_berf"
+"""Module that provides the ``"berf"`` root provider."""
 
-Duplicated in ``_batch_core.py`` -- keep in sync.
-"""
+_COMPLETE: Final[int] = int(ext.roots.COMPLETE)
+"""Completeness code of a result that accounts for all of ``[0, 1]``."""
 
-_SUPPORTED_DTYPES = (np.float32, np.float64)
-"""Floating-point dtypes accepted by the root-finding API."""
+_active: str | None = None
+"""The active provider's name, or ``None`` until first use resolves it."""
+
+
+def _load_berf() -> types.ModuleType:
+    """Import the BeRF-FR provider module.
+
+    Returns:
+        types.ModuleType: The ``pantr_berf`` module.
+
+    Raises:
+        ImportError: If ``pantr-berf`` is not installed.
+    """
+    try:
+        return importlib.import_module(_BERF_MODULE)
+    except ImportError as exc:
+        msg = (
+            "The 'berf' root provider needs the pantr-berf package "
+            '(pip install "pantr[berf]"), which could not be imported.'
+        )
+        raise ImportError(msg) from exc
+
+
+def _check_name(name: object) -> str:
+    """Validate a provider name.
+
+    Args:
+        name (object): The name to check.
+
+    Returns:
+        str: The name.
+
+    Raises:
+        TypeError: If ``name`` is not a string.
+        ValueError: If ``name`` is not a known provider.
+    """
+    if not isinstance(name, str):
+        msg = f"A root provider name must be a str, got {type(name).__name__}"
+        raise TypeError(msg)
+    if name not in _PROVIDERS:
+        msg = f"Unknown root provider {name!r}; expected one of 'builtin', 'berf'"
+        raise ValueError(msg)
+    return name
+
+
+def set_root_provider(name: str) -> None:
+    """Select the provider that :func:`find_roots` and :func:`find_monotone_root` use.
+
+    The choice is process-wide. Its initial value comes from the ``PANTR_ROOT_PROVIDER``
+    environment variable, read on first use; without it, ``"berf"`` when the ``pantr-berf``
+    package is installed, else ``"builtin"``.
+
+    Args:
+        name (str): ``"builtin"`` (pantr's own: Yuksel's algorithm and Bézier clipping) or
+            ``"berf"`` (BeRF-FR, from the ``pantr-berf`` package).
+
+    Raises:
+        TypeError: If ``name`` is not a string.
+        ValueError: If ``name`` is not a known provider.
+        ImportError: If ``name`` is ``"berf"`` and ``pantr-berf`` is not installed.
+
+    Example:
+        >>> from pantr.bezier import get_root_provider, set_root_provider
+        >>> previous = get_root_provider()
+        >>> set_root_provider("builtin")
+        >>> get_root_provider()
+        'builtin'
+        >>> set_root_provider(previous)
+    """
+    global _active  # noqa: PLW0603
+    checked = _check_name(name)
+    if checked == _BERF:
+        _load_berf()
+    _active = checked
+
+
+def _default_provider() -> str:
+    """Resolve the initial provider: the environment variable, else the installed default.
+
+    Returns:
+        str: The provider name.
+
+    Raises:
+        ValueError: If ``PANTR_ROOT_PROVIDER`` names no provider.
+        ImportError: If it names ``"berf"`` and ``pantr-berf`` is not installed.
+    """
+    requested = os.environ.get(ROOT_PROVIDER_ENV, "")
+    if requested:
+        if requested not in _PROVIDERS:
+            msg = (
+                f"{ROOT_PROVIDER_ENV}={requested!r} names no root provider; "
+                "expected one of 'builtin', 'berf'"
+            )
+            raise ValueError(msg)
+        if requested == _BERF:
+            _load_berf()
+        return requested
+    try:
+        importlib.import_module(_BERF_MODULE)
+    except ImportError:
+        return _BUILTIN
+    return _BERF
+
+
+def get_root_provider() -> str:
+    """Get the name of the active root provider.
+
+    Returns:
+        str: ``"builtin"`` or ``"berf"``.
+
+    Raises:
+        ValueError: If no provider was set and ``PANTR_ROOT_PROVIDER`` names no provider.
+        ImportError: If no provider was set, ``PANTR_ROOT_PROVIDER`` is ``"berf"``, and
+            ``pantr-berf`` is not installed.
+    """
+    global _active  # noqa: PLW0603
+    if _active is None:
+        _active = _default_provider()
+    return _active
+
+
+def _provider() -> Any:  # noqa: ANN401
+    """Get the active provider's module (untyped: a compiled module or ``pantr_berf``).
+
+    Returns:
+        Any: The module.
+    """
+    if get_root_provider() == _BERF:
+        return _load_berf()
+    return ext.roots
+
+
+def _function(name: str, dtype: np.dtype[Any]) -> Any:  # noqa: ANN401
+    """Get a provider function for a coefficient dtype.
+
+    Args:
+        name (str): The function's name.
+        dtype (np.dtype[Any]): ``float32`` or ``float64``.
+
+    Returns:
+        Any: The function.
+    """
+    return getattr(_provider(), name + ("_f32" if dtype == np.float32 else ""))
+
+
+def _warn_incomplete(n_incomplete: int, n_total: int) -> None:
+    """Warn that some results do not account for the whole interval.
+
+    Args:
+        n_incomplete (int): Polynomials whose result has a gap.
+        n_total (int): Polynomials solved.
+    """
+    warnings.warn(
+        f"{n_incomplete} of {n_total} polynomials exhausted the root finder's subdivision "
+        "budget on part of [0, 1] before narrowing it to tol; a root there is reported only "
+        "if its residual allows, so the result may be missing a root or be less accurate than "
+        "tol asks for",
+        RuntimeWarning,
+        stacklevel=4,
+    )
 
 
 def _extract_coeff(bezier: Bezier) -> npt.NDArray[np.float32 | np.float64]:
-    """Extract a 1-D coefficient array from a scalar Bezier curve.
+    """Extract the 1-D coefficient array of a scalar Bézier curve.
 
-    For non-rational Beziers, returns ``control_points[:, 0]``. For rational
-    Beziers, returns the first homogeneous component (numerator ``x * w``),
-    whose roots coincide with those of the rational function ``x`` since
-    weights are positive.
+    For a rational Bézier this is the first homogeneous component (the numerator ``x * w``),
+    whose roots are those of ``x`` where the weights are positive.
 
     Args:
-        bezier (Bezier): A validated 1-D scalar Bezier curve.
+        bezier (Bezier): A validated 1-D scalar Bézier curve.
 
     Returns:
-        npt.NDArray[np.float32 | np.float64]: Contiguous 1-D coefficient
-            array of length ``degree + 1``.
+        npt.NDArray[np.float32 | np.float64]: Contiguous, length ``degree + 1``.
     """
-    coeff = bezier.control_points[:, 0]
-    return np.ascontiguousarray(coeff)
+    return np.ascontiguousarray(bezier.control_points[:, 0])
 
 
 def _validate_bezier_for_roots(bezier: object) -> Bezier:
-    """Validate that an object is a scalar 1-D Bezier suitable for root finding.
+    """Validate that an object is a scalar 1-D Bézier.
 
     Args:
         bezier (object): Input to validate.
 
     Returns:
-        Bezier: The validated Bezier.
+        Bezier: The validated Bézier.
 
     Raises:
         TypeError: If ``bezier`` is not a :class:`Bezier`.
@@ -95,23 +251,18 @@ def _validate_bezier_for_roots(bezier: object) -> Bezier:
 def _extract_batch_coeffs(
     beziers: Sequence[Bezier],
 ) -> npt.NDArray[np.float32 | np.float64]:
-    """Validate a sequence of Beziers and assemble a 2-D coefficient array.
-
-    All Beziers must be 1-D, scalar, and have the same degree. The returned
-    array has shape ``(n_polys, degree + 1)`` with coefficients copied from
-    each Bezier's control points.
+    """Validate a sequence of Béziers and stack their coefficients.
 
     Args:
-        beziers (Sequence[Bezier]): Sequence of Bezier curves.
+        beziers (Sequence[Bezier]): Béziers of one degree.
 
     Returns:
-        npt.NDArray[np.float32 | np.float64]: Contiguous 2-D coefficient
-            array of shape ``(n_polys, degree + 1)``.
+        npt.NDArray[np.float32 | np.float64]: ``(n_polys, degree + 1)``, the first Bézier's dtype
+        (``(0, 1)`` ``float64`` for an empty sequence).
 
     Raises:
         TypeError: If any element is not a :class:`Bezier`.
-        ValueError: If any Bezier has ``dim != 1`` or ``rank != 1``, or if
-            degrees are not uniform.
+        ValueError: If any Bézier has ``dim != 1`` or ``rank != 1``, or the degrees differ.
     """
     n_polys = len(beziers)
     if n_polys == 0:
@@ -119,11 +270,8 @@ def _extract_batch_coeffs(
 
     first = _validate_bezier_for_roots(beziers[0])
     degree = first.degree[0]
-    dtype = first.dtype
-
-    coeffs = np.empty((n_polys, degree + 1), dtype=dtype)
+    coeffs = np.empty((n_polys, degree + 1), dtype=first.dtype)
     coeffs[0] = _extract_coeff(first)
-
     for i in range(1, n_polys):
         bez = _validate_bezier_for_roots(beziers[i])
         if bez.degree[0] != degree:
@@ -133,209 +281,75 @@ def _extract_batch_coeffs(
             )
             raise ValueError(msg)
         coeffs[i] = _extract_coeff(bez)
-
     return coeffs
 
 
-def _resolve_tol(
-    coeff: npt.NDArray[np.float32 | np.float64],
-    tol: float | None,
-) -> float:
-    """Resolve tolerance from user input or dtype default.
+def _resolve_tol(dtype: np.dtype[Any], tol: float | None) -> float:
+    """Resolve the tolerance: the user's, or ``get_strict`` of the coefficients' dtype.
 
     Args:
-        coeff (npt.NDArray[np.float32 | np.float64]): Coefficient array
-            (used for dtype).
-        tol (float | None): User-provided tolerance, or ``None`` for default.
+        dtype (np.dtype[Any]): The coefficients' dtype.
+        tol (float | None): The user's tolerance, or ``None``.
 
     Returns:
-        float: Resolved tolerance value.
+        float: The tolerance.
 
     Raises:
         ValueError: If ``tol`` is not positive.
     """
     if tol is None:
-        return get_strict(coeff.dtype)
+        return get_strict(dtype)
     if tol <= 0.0:
         msg = f"tol must be positive, got {tol}"
         raise ValueError(msg)
     return tol
 
 
-def _validate_coeff_array(
-    coeff: npt.NDArray[np.float32 | np.float64],
-    *,
-    ndim: int,
-    name: str,
-) -> npt.NDArray[np.float32 | np.float64]:
-    """Validate a coefficient array of given rank and return it C-contiguous.
-
-    Args:
-        coeff (npt.NDArray[np.float32 | np.float64]): Bernstein coefficient
-            array (scalar 1-D or batch 2-D).
-        ndim (int): Required number of dimensions (1 or 2).
-        name (str): Argument name to use in error messages.
-
-    Returns:
-        npt.NDArray[np.float32 | np.float64]: Contiguous ``ndim``-D array.
-
-    Raises:
-        TypeError: If ``coeff`` is not a float32/float64 ndarray.
-        ValueError: If the array has the wrong rank or is empty along the
-            last axis. For a 1-D array this is equivalent to checking
-            ``size < 1`` because the ``ndim`` check is applied first; for a
-            2-D array it checks that the coefficient (degree + 1) axis is
-            non-empty.
-    """
-    if not isinstance(coeff, np.ndarray) or coeff.dtype not in _SUPPORTED_DTYPES:
-        dtype = getattr(coeff, "dtype", "N/A")
-        msg = (
-            f"{name} must be a float32 or float64 ndarray, "
-            f"got {type(coeff).__name__} with dtype {dtype}"
-        )
-        raise TypeError(msg)
-    if coeff.ndim != ndim:
-        msg = f"{name} must be {ndim}-D, got shape {coeff.shape}"
-        raise ValueError(msg)
-    if coeff.shape[-1] < 1:
-        suffix = "element" if ndim == 1 else "column (degree + 1)"
-        msg = f"{name} must have at least 1 {suffix}"
-        raise ValueError(msg)
-    return np.ascontiguousarray(coeff)
-
-
-def _dispatch_single(  # noqa: PLR0911
-    coeff: npt.NDArray[np.float32 | np.float64],
-    param_tol: float,
-    geom_tol: float,
-) -> npt.NDArray[np.float64]:
-    """Find roots of a single Bernstein polynomial with auto-dispatch.
-
-    Args:
-        coeff (npt.NDArray[np.float32 | np.float64]): Validated 1-D
-            coefficient array.
-        param_tol (float): Parametric tolerance.
-        geom_tol (float): Geometric tolerance.
-
-    Returns:
-        npt.NDArray[np.float64]: Sorted array of roots in [0, 1].
-    """
-    n = len(coeff) - 1
-    if n < 1:
-        return np.empty(0, dtype=np.float64)
-
-    # All-zero polynomial: every point is a root -- return empty.
-    if np.all(np.abs(coeff) <= geom_tol):
-        return np.empty(0, dtype=np.float64)
-
-    # Low degree: Yuksel is cheaper and equally robust.
-    if n < _CLIP_MIN_DEGREE:
-        roots_arr, n_roots = _yuksel_roots(coeff, param_tol)
-        if n_roots == 0:
-            return np.empty(0, dtype=np.float64)
-        result = np.sort(roots_arr[:n_roots])
-        return result
-
-    # High degree: check coefficient dynamic range.
-    abs_coeff = np.abs(coeff)
-    c_max = float(abs_coeff.max())
-    nonzero = abs_coeff[abs_coeff > 0.0]
-    c_min = float(nonzero.min()) if nonzero.size > 0 else 0.0
-    coeff_range = c_max / c_min if c_min > 0.0 else float("inf")
-
-    if coeff_range <= _CLIP_COEFF_RANGE_LIMIT:
-        # Well-conditioned: use Bezier clipping.
-        raw_roots, n_roots = _clip_roots_core(coeff, param_tol, geom_tol)
-        return _dedup_roots(raw_roots, n_roots, coeff, param_tol, geom_tol)
-
-    # Extreme range: fall back to Yuksel.
-    roots_arr, n_roots = _yuksel_roots(coeff, param_tol)
-    if n_roots == 0:
-        return np.empty(0, dtype=np.float64)
-    return np.sort(roots_arr[:n_roots])
-
-
-def _find_roots_impl(
-    bezier: Bezier,
-    *,
-    tol: float | None = None,
-) -> npt.NDArray[np.float64]:
-    """L2 implementation for :func:`pantr.bezier.find_roots`."""
-    _validate_bezier_for_roots(bezier)
-    coeff = _extract_coeff(bezier)
-    wait_for_jit_warmup()
-    arr = _validate_coeff_array(coeff, ndim=1, name="coeff")
-    resolved_tol = _resolve_tol(arr, tol)
-    return _dispatch_single(arr, resolved_tol, resolved_tol)
+def _find_roots_impl(bezier: Bezier, *, tol: float | None = None) -> npt.NDArray[np.float64]:
+    """L2 implementation of :func:`pantr.bezier.find_roots` for one Bézier."""
+    coeff = _extract_coeff(_validate_bezier_for_roots(bezier))
+    resolved = float(_resolve_tol(coeff.dtype, tol))
+    roots, completeness = _function("find_roots", coeff.dtype)(coeff, resolved, resolved)
+    if completeness != _COMPLETE:
+        _warn_incomplete(1, 1)
+    result: npt.NDArray[np.float64] = roots
+    return result
 
 
 def _find_roots_batch_impl(
-    beziers: Sequence[Bezier],
-    *,
-    tol: float | None = None,
+    beziers: Sequence[Bezier], *, tol: float | None = None
 ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.intp]]:
-    """L2 implementation for :func:`pantr.bezier.find_roots`."""
-    from pantr.bezier._batch_core import (  # noqa: PLC0415
-        _find_roots_batch_core,
-    )
-
+    """L2 implementation of :func:`pantr.bezier.find_roots` for a sequence."""
     coeffs = _extract_batch_coeffs(beziers)
-    wait_for_jit_warmup()
-    arr = _validate_coeff_array(coeffs, ndim=2, name="coeffs")
-
-    n_polys = arr.shape[0]
-    degree = arr.shape[1] - 1
-
+    n_polys, n_coeff = coeffs.shape
     if n_polys == 0:
-        return np.empty((0, max(degree, 1)), dtype=np.float64), np.empty(0, dtype=np.intp)
-
-    resolved_tol = _resolve_tol(arr[0], tol)
-
-    out_roots = np.full((n_polys, max(degree, 1)), np.nan, dtype=np.float64)
-    out_counts = np.zeros(n_polys, dtype=np.intp)
-
-    if degree >= 1:
-        _find_roots_batch_core(arr, resolved_tol, resolved_tol, out_roots, out_counts)
-
-    return out_roots, out_counts
+        return np.empty((0, max(n_coeff - 1, 1)), dtype=np.float64), np.empty(0, dtype=np.intp)
+    resolved = float(_resolve_tol(coeffs.dtype, tol))
+    roots, counts, completeness = _function("find_roots_batch", coeffs.dtype)(
+        coeffs, resolved, resolved
+    )
+    n_incomplete = int(np.count_nonzero(completeness != _COMPLETE))
+    if n_incomplete:
+        _warn_incomplete(n_incomplete, n_polys)
+    return roots, np.asarray(counts, dtype=np.intp)
 
 
-def _solve_monotone_root_impl(
-    bezier: Bezier,
-    *,
-    tol: float | None = None,
-) -> float:
-    """L2 implementation for :func:`pantr.bezier.find_monotone_root`."""
-    _validate_bezier_for_roots(bezier)
-    coeff = _extract_coeff(bezier)
-    wait_for_jit_warmup()
-    arr = _validate_coeff_array(coeff, ndim=1, name="coeff")
-    resolved_tol = _resolve_tol(arr, tol)
-    return float(_solve_monotone_root_kernel(arr, resolved_tol))
+def _solve_monotone_root_impl(bezier: Bezier, *, tol: float | None = None) -> float:
+    """L2 implementation of :func:`pantr.bezier.find_monotone_root` for one Bézier."""
+    coeff = _extract_coeff(_validate_bezier_for_roots(bezier))
+    resolved = float(_resolve_tol(coeff.dtype, tol))
+    return float(_function("find_monotone_root", coeff.dtype)(coeff, resolved))
 
 
 def _solve_monotone_root_batch_impl(
-    beziers: Sequence[Bezier],
-    *,
-    tol: float | None = None,
+    beziers: Sequence[Bezier], *, tol: float | None = None
 ) -> npt.NDArray[np.float64]:
-    """L2 implementation for :func:`pantr.bezier.find_monotone_root`."""
-    from pantr.bezier._batch_core import (  # noqa: PLC0415
-        _solve_monotone_root_batch_core,
-    )
-
+    """L2 implementation of :func:`pantr.bezier.find_monotone_root` for a sequence."""
     coeffs = _extract_batch_coeffs(beziers)
-    wait_for_jit_warmup()
-    arr = _validate_coeff_array(coeffs, ndim=2, name="coeffs")
-
-    n_polys = arr.shape[0]
-
-    if n_polys == 0:
+    if coeffs.shape[0] == 0:
         return np.empty(0, dtype=np.float64)
-
-    resolved_tol = _resolve_tol(arr[0], tol)
-    out_roots = np.full(n_polys, np.nan, dtype=np.float64)
-
-    _solve_monotone_root_batch_core(arr, resolved_tol, out_roots)
-
-    return out_roots
+    resolved = float(_resolve_tol(coeffs.dtype, tol))
+    result: npt.NDArray[np.float64] = _function("find_monotone_root_batch", coeffs.dtype)(
+        coeffs, resolved
+    )
+    return result

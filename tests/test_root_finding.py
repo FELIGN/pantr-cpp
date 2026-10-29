@@ -15,30 +15,53 @@ import numpy as np
 from numpy import typing as npt
 from numpy.testing import assert_allclose
 
+from pantr._testing import (
+    clip_hull_to_zero as _clip_hull_to_zero,
+)
+from pantr._testing import (
+    clip_roots_core as _clip_roots_core,
+)
+from pantr._testing import (
+    count_sign_changes as _count_sign_changes,
+)
+from pantr._testing import (
+    de_casteljau_eval_and_deriv_scalar as _de_casteljau_eval_and_deriv_scalar,
+)
+from pantr._testing import (
+    de_casteljau_eval_scalar as _de_casteljau_eval_scalar,
+)
+from pantr._testing import (
+    dedup_roots as _dedup_roots,
+)
+from pantr._testing import (
+    find_roots_detailed,
+    find_roots_detailed_f32,
+)
+from pantr._testing import (
+    have_opposite_signs as _have_opposite_signs,
+)
+from pantr._testing import (
+    have_same_sign as _have_same_sign,
+)
+from pantr._testing import (
+    newton_polish_scalar as _newton_polish_scalar,
+)
+from pantr._testing import (
+    solve_monotone_root_kernel as _solve_monotone_root_kernel,
+)
+from pantr._testing import (
+    spans_zero as _spans_zero,
+)
+from pantr._testing import (
+    subdivide_scalar as _subdivide_scalar,
+)
+from pantr._testing import (
+    yuksel_roots as _yuksel_roots,
+)
 from pantr.bezier import (
     Bezier,
     find_monotone_root,
     find_roots,
-)
-from pantr.bezier._clipping_core import (
-    _clip_roots_core,
-    _dedup_roots,
-)
-from pantr.bezier._find_roots import _validate_coeff_array
-from pantr.bezier._root_finding_core import (
-    _clip_hull_to_zero,
-    _count_sign_changes,
-    _de_casteljau_eval_and_deriv_scalar,
-    _de_casteljau_eval_scalar,
-    _have_opposite_signs,
-    _have_same_sign,
-    _newton_polish_scalar,
-    _spans_zero,
-    _subdivide_scalar,
-)
-from pantr.bezier._yuksel_core import (
-    _solve_monotone_root_kernel,
-    _yuksel_roots,
 )
 
 
@@ -592,54 +615,32 @@ class TestSolveMonotoneRootBatch(unittest.TestCase):
         self.assertEqual(roots.shape, (0,))
 
 
-class TestValidateCoeffArray(unittest.TestCase):
-    """Tests for :func:`_validate_coeff_array` internal helper."""
+class TestProviderValidation(unittest.TestCase):
+    """The compiled provider validates its coefficients and tolerances itself.
 
-    def test_empty_1d_raises(self) -> None:
-        """Empty 1-D array (size 0) raises ValueError."""
-        with self.assertRaises(ValueError):
-            _validate_coeff_array(np.empty(0, dtype=np.float64), ndim=1, name="coeff")
+    Replaces the tests of the Python helper ``_validate_coeff_array``, deleted with the Numba
+    kernels it guarded: the provider's C++ entry points now refuse what it refused, whatever
+    the caller.
+    """
 
-    def test_empty_last_axis_2d_raises(self) -> None:
-        """2-D array with zero columns raises ValueError."""
-        with self.assertRaises(ValueError):
-            _validate_coeff_array(np.empty((3, 0), dtype=np.float64), ndim=2, name="coeffs")
+    def test_empty_coefficients_raise(self) -> None:
+        """No coefficient raises ValueError naming the argument."""
+        with self.assertRaisesRegex(ValueError, "coeff must have at least 1 element"):
+            find_roots_detailed(np.empty(0, dtype=np.float64), 1e-12, 1e-12)
 
-    def test_wrong_ndim_raises(self) -> None:
-        """Array with wrong number of dimensions raises ValueError."""
-        with self.assertRaises(ValueError):
-            _validate_coeff_array(np.ones((2, 3), dtype=np.float64), ndim=1, name="coeff")
-
-    def test_wrong_dtype_raises(self) -> None:
-        """Integer array raises TypeError."""
-        with self.assertRaises(TypeError):
-            _validate_coeff_array(np.array([1, 2], dtype=np.int32), ndim=1, name="coeff")
-
-    def test_name_in_error_message(self) -> None:
-        """The ``name`` argument appears in error messages."""
-        with self.assertRaises(ValueError) as ctx:
-            _validate_coeff_array(np.empty(0, dtype=np.float64), ndim=1, name="my_arg")
-        self.assertIn("my_arg", str(ctx.exception))
-
-    def test_valid_1d_returns_contiguous(self) -> None:
-        """Valid 1-D input is returned C-contiguous."""
-        arr = np.array([1.0, -1.0], dtype=np.float64)
-        result = _validate_coeff_array(arr, ndim=1, name="coeff")
-        self.assertTrue(result.flags.c_contiguous)
-        np.testing.assert_array_equal(result, arr)
-
-    def test_valid_2d_returns_contiguous(self) -> None:
-        """Valid 2-D input is returned C-contiguous."""
-        arr = np.array([[1.0, -1.0], [0.5, -0.5]], dtype=np.float64)
-        result = _validate_coeff_array(arr, ndim=2, name="coeffs")
-        self.assertTrue(result.flags.c_contiguous)
-        np.testing.assert_array_equal(result, arr)
+    def test_non_positive_tolerance_raises(self) -> None:
+        """A zero or negative tolerance raises ValueError."""
+        for tol in (0.0, -1.0):
+            with self.assertRaisesRegex(ValueError, "param_tol must be positive"):
+                find_roots_detailed(np.array([1.0, -1.0]), tol, 1e-12)
+            with self.assertRaisesRegex(ValueError, "value_tol must be positive"):
+                find_roots_detailed(np.array([1.0, -1.0]), 1e-12, tol)
 
     def test_float32_accepted(self) -> None:
-        """float32 arrays are accepted."""
-        arr = np.array([1.0, -1.0], dtype=np.float32)
-        result = _validate_coeff_array(arr, ndim=1, name="coeff")
-        self.assertEqual(result.dtype, np.float32)
+        """float32 coefficients are accepted and give float64 roots."""
+        roots = find_roots_detailed_f32(np.array([1.0, -1.0], dtype=np.float32), 1e-6, 1e-6)[0]
+        self.assertEqual(roots.dtype, np.float64)
+        np.testing.assert_allclose(roots, [0.5])
 
 
 class TestSignTestUnderflow(unittest.TestCase):
@@ -748,7 +749,7 @@ class TestBoundaryEpsScaleInvariance(unittest.TestCase):
 class TestSignPredicateEquivalence(unittest.TestCase):
     """The sign predicates are exactly the product forms they replace.
 
-    The three predicates in :mod:`pantr.bezier._root_finding_core` exist to
+    The three predicates of the root provider (``include/pantr/roots/detail/scalar.hpp``) exist to
     remove a product from a sign test, and substituting them is only sound if
     they agree with the product everywhere the product is right. That is a claim
     about IEEE 754 semantics, so it is checked exhaustively over a matrix of

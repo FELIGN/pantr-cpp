@@ -97,17 +97,6 @@ if not TYPE_CHECKING:
 
             _bspline_blossom_core._warmup_numba_functions()
             _bspline_roots_core._warmup_numba_functions()
-            from .bezier import (  # noqa: PLC0415
-                _batch_core,
-                _clipping_core,
-                _root_finding_core,
-                _yuksel_core,
-            )
-
-            _root_finding_core._warmup_numba_functions()
-            _yuksel_core._warmup_numba_functions()
-            _clipping_core._warmup_numba_functions()
-            _batch_core._warmup_numba_functions()
             logger.debug("Finished Numba JIT warmup.")
         except Exception as exc:
             # During process teardown (e.g. short scripts), background Numba caching

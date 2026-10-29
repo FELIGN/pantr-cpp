@@ -3,7 +3,7 @@
 Elevation follows The NURBS Book (Piegl & Tiller, Algorithm A5.9) / MATLAB
 NURBS Toolbox layer.  Reduction decomposes the spline into Bézier segments and
 applies a precomputed reduction operator to each; the operator itself is
-assembled in :mod:`pantr.bezier._bezier_degree`.
+assembled in pantr's C++ library (``include/pantr/bezier/reduce.hpp``).
 
 Note:
     Inputs are assumed to be correct (no validation performed).
@@ -412,16 +412,15 @@ def _apply_reduction_operator(
     r"""Apply a degree-reduction operator to one set of Bézier control points.
 
     Computes :math:`\hat q = R\, c` for the dense operator ``R`` assembled by
-    :func:`~pantr.bezier._bezier_degree._interpolating_reduction_operator` (or
-    its unconstrained sibling), accumulating in ``float64`` regardless of the
+    ``pantr::bezier::interpolating_reduction_operator`` in C++ (reached through
+    ``pantr._pantr._kernels``), accumulating in ``float64`` regardless of the
     control-point dtype and rounding once on the write.
 
     Rows of ``R`` that pin an endpoint are unit vectors, so the corresponding
     output values reproduce their inputs bit for bit.
 
-    This kernel lives here rather than in ``pantr.bezier`` because
-    ``_bezier_degree`` already imports ``_check_bincoeff_envelope`` from this module;
-    the reverse import would close a cycle.
+    The B-spline reduction is its last caller; Bézier reduction applies the same operator in
+    C++ (``include/pantr/bezier/reduce.hpp``).
 
     Args:
         operator (npt.NDArray[np.float64]): Reduction operator of shape
@@ -431,8 +430,7 @@ def _apply_reduction_operator(
 
     Note:
         Inputs are assumed to be correct (no validation performed).
-        For general use, call :func:`_degree_reduce_bspline` or
-        :func:`~pantr.bezier._bezier_degree._degree_reduce_bezier` instead.
+        For general use, call :func:`_degree_reduce_bspline` instead.
     """
     n_out = operator.shape[0]
     n_in = operator.shape[1]

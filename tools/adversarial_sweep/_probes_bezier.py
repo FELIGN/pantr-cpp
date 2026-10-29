@@ -8,14 +8,13 @@ control-point clouds (``1e6 + O(1)``), which is the one that catches a tolerance
 derived from a coordinate's own magnitude rather than from the control polygon's
 diagonal -- such a tolerance is not translation invariant.
 
-Two Numba/NumPy kernels are probed directly rather than only through the public
-``Bezier`` surface, because they are imported by a private, non-public consumer
-and are the sharpest boundscheck targets in the package:
+Two internals are probed directly rather than only through the public
+``Bezier`` surface, because they are the sharpest bounds targets in the package:
 
-- ``pantr.bezier._root_finding_core._de_casteljau_eval_scalar`` -- a
-  ``nopython=True`` kernel with *no* input validation whatsoever.
-- ``pantr.bezier._bezier_interpolate._bernstein_interpolate`` -- a pure-NumPy
-  Layer 2 helper (truncated-SVD pseudo-inverse), also unvalidated.
+- ``pantr._testing.de_casteljau_eval_scalar`` -- the root provider's C++ de
+  Casteljau kernel, with *no* input validation whatsoever.
+- ``pantr._testing.bernstein_interpolate`` -- the truncated-SVD fit on the
+  modified-Chebyshev grid (a route through ``fit_bezier``).
 
 Every invariant here is a genuinely claimed property quoted from the docstrings
 (degree elevation is exact, degree reduction reproduces the endpoints bit for
@@ -34,6 +33,8 @@ from typing import TYPE_CHECKING, Any, Final
 import numpy as np
 import numpy.typing as npt
 
+from pantr._testing import bernstein_interpolate as _bernstein_interpolate
+from pantr._testing import de_casteljau_eval_scalar as _de_casteljau_eval_scalar
 from pantr.bezier import (
     Bezier,
     create_from_bspline,
@@ -42,8 +43,6 @@ from pantr.bezier import (
     fit_bezier,
     interpolate_bezier,
 )
-from pantr.bezier._bezier_interpolate import _bernstein_interpolate
-from pantr.bezier._root_finding_core import _de_casteljau_eval_scalar
 from pantr.bspline import Bspline, BsplineSpace, BsplineSpace1D
 from pantr.quad import PointsLattice
 from pantr.tolerance import get_default, get_machine_epsilon
@@ -2718,7 +2717,7 @@ def _de_casteljau_kernel_cases(profile: Profile) -> Iterator[Case]:
 def _bernstein_interpolate_kernel_cases(profile: Profile) -> Iterator[Case]:
     """Yield direct probes of ``_bernstein_interpolate``.
 
-    This Layer 2 helper performs no input validation either; it is exercised
+    This helper validates only through ``fit_bezier``; it is exercised
     here with the shapes and value families the module docstring flags.
 
     Args:

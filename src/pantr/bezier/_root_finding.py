@@ -6,6 +6,7 @@ validation and delegates to Layer 2 implementations in :mod:`_find_roots`.
 
 - :func:`find_roots` -- find all roots (single or batch, auto-dispatch).
 - :func:`find_monotone_root` -- fast solver for monotone Beziers (single or batch).
+- :func:`set_root_provider`, :func:`get_root_provider` -- which provider solves them.
 """
 
 from __future__ import annotations
@@ -21,7 +22,16 @@ from pantr.bezier._find_roots import (
     _find_roots_impl,
     _solve_monotone_root_batch_impl,
     _solve_monotone_root_impl,
+    get_root_provider,
+    set_root_provider,
 )
+
+__all__ = [
+    "find_monotone_root",
+    "find_roots",
+    "get_root_provider",
+    "set_root_provider",
+]
 
 if TYPE_CHECKING:
     from pantr.bezier._bezier import Bezier
@@ -84,11 +94,17 @@ def find_roots(
             is not positive. In batch mode, also raised if degrees are not
             uniform.
 
+    Warns:
+        RuntimeWarning: If the root finder gave up on part of [0, 1] before narrowing it
+            to ``tol`` (Bezier clipping's depth cap), so that the result may miss a root
+            there or be less accurate than ``tol`` asks for.
+
     Note:
-        In batch mode, a simpler fixed-threshold dedup (no derivative-aware
-        merge radius) is used compared to single mode. In rare edge cases
-        involving near-duplicate roots, the two modes may report different
-        root counts.
+        The roots come from the active provider (:func:`get_root_provider`). With the
+        built-in one, batch mode merges near-duplicate roots on every path, while single
+        mode merges them only on the clipping path (degree 6 and above with a coefficient
+        range up to ``1e8``); in rare edge cases involving near-duplicate roots, the two
+        modes may report different root counts.
 
     Example:
         >>> import numpy as np

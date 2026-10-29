@@ -10,18 +10,15 @@ import numpy.typing as npt
 import pytest
 
 from pantr._numba_compat import wait_for_jit_warmup
+from pantr._testing import elevation_matrix as _elevation_matrix_exact
+from pantr._testing import interpolating_reduction_operator as _interpolating_reduction_operator
+from pantr._testing import l2_reduction_operator as _l2_reduction_operator
+from pantr._testing import projected_quadrature_size as _projected_quadrature_size
+from pantr._testing import projected_relative_deviation as _projected_relative_deviation
+from pantr._testing import sample_projected as _sample_projected
+from pantr._testing import squared_l2_norm as _squared_l2_norm
+from pantr._testing import tensor_gauss_weights as _tensor_gauss_weights
 from pantr.bezier import Bezier
-from pantr.bezier._bezier_degree import (
-    _degree_reduce_bezier,
-    _elevation_matrix_exact,
-    _interpolating_reduction_operator,
-    _l2_reduction_operator,
-    _projected_quadrature_size,
-    _projected_relative_deviation,
-    _sample_projected,
-    _squared_l2_norm,
-    _tensor_gauss_weights,
-)
 from pantr.bspline import (
     Bspline,
     BsplineSpace,
@@ -232,11 +229,12 @@ class TestReductionOperator:
 
     @pytest.mark.parametrize("degree,decrement", [(1, 1), (4, 1), (7, 3), (12, 2)])
     def test_operator_is_shared_and_read_only(self, degree: int, decrement: int) -> None:
-        """Repeated calls hand back the same immutable array."""
+        """Repeated calls hand back read-only views of the same immutable array."""
         first = _interpolating_reduction_operator(degree, decrement)
         second = _interpolating_reduction_operator(degree, decrement)
 
-        assert first is second
+        # The operator lives in the C++ process table; each call is a new view of it.
+        assert np.shares_memory(first, second)
         assert not first.flags.writeable
         assert first.shape == (degree - decrement + 1, degree + 1)
 
@@ -781,11 +779,11 @@ class TestBezierMinimizeDegreeRational:
 
         The integrand is rational, so the rule is not exact and the measure is an
         estimate; this pins how good an estimate.  See
-        :func:`~pantr.bezier._bezier_degree._projected_quadrature_size`.
+        ``pantr._testing.projected_quadrature_size``.
         """
         source = Bezier(np.array(_NUDGED_WEIGHT_NETS[1.0e6, 1.0e-3]), is_rational=True)
         num_nodes = tuple(_projected_quadrature_size(p) for p in source.degree)
-        trial = _degree_reduce_bezier(source, (1,)).elevate_degree((1,)).control_points
+        trial = source.reduce_degree((1,)).elevate_degree((1,)).control_points
         estimate = _projected_relative_deviation(
             _sample_projected(source.control_points, num_nodes),
             _sample_projected(trial, num_nodes),

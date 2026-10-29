@@ -56,7 +56,7 @@ _INSERTIONS_BASE: int = 64
 A zero of multiplicity greater than one is approached linearly, and the observed
 ratio is one half (measured on an exact double zero), so exhausting the 53-bit
 significand takes ``log2(1 / eps) = 53`` insertions. Rounded up to 64, matching
-``_MAX_NEWTON_ITER`` in ``pantr.bezier._yuksel_core``, which bounds the same
+``max_newton_iter`` in ``include/pantr/roots/detail/yuksel.hpp``, which bounds the same
 bisection-grade phase for the Bernstein solver.
 """
 
@@ -84,7 +84,7 @@ _ZERO_TOL_SAFETY: float = 4.0
 """Safety factor on the evaluation-error bound used as the residual threshold.
 
 Matches the factor applied to the de Casteljau bound in
-``pantr.bezier._clipping_core``; de Boor's algorithm combines the same
+``include/pantr/roots/detail/clipping.hpp``; de Boor's algorithm combines the same
 ``degree + 1`` coefficients through the same number of convex-combination
 levels, so the bound has the same shape.
 """

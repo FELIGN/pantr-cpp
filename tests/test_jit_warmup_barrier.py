@@ -127,9 +127,8 @@ class _BarrierCase(NamedTuple):
 
 _CASES: tuple[_BarrierCase, ...] = (
     # -- pantr.bezier ------------------------------------------------------
-    # The Bezier evaluation, slicing, splitting, restriction and composition kernels moved to
-    # C++ (whose pool is safe against concurrent callers), so they carry no barrier and have no
-    # case here; neither does `_bezier_utils._tabulate_bernstein_1d_fast`.
+    # Every Bezier kernel, root finding included, moved to C++ (whose pool is safe against
+    # concurrent callers), so pantr.bezier carries no barrier and has no case here.
     # -- pantr.grid --------------------------------------------------------
     _BarrierCase(
         "_tensor_product_grid.TensorProductGrid.locate_many",
