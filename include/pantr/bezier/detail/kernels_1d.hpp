@@ -312,23 +312,38 @@ void split_1d_kernel(mdview<const T, 2> ctrl, double value, mdview<T, 2> out_lef
   const double one_minus_u = 1.0 - u;
   const double pd = static_cast<double>(p);
   const double ops = 1.5 * pd * (pd + 1.0) + 3.0 * (pd + 1.0);
+  // A chunk of columns runs its passes together: the workspace is `(p + 1, w)` with the columns
+  // contiguous, so each step of a pass is a loop over `w` columns that vectorises (one column at
+  // a time it would read `ctrl` with a stride of `n_cols`). Every column sees the same operations
+  // in the same order as on its own.
   parallel::parallel_for(n_cols, parallel::WorkEstimate{ops},
                          [&](std::size_t begin, std::size_t end) {
-                           std::vector<T> d(p + 1);
-                           for (std::size_t c = begin; c < end; ++c) {
-                             for (std::size_t i = 0; i <= p; ++i) {
-                               d[i] = ctrl(i, c);
+                           const std::size_t w = end - begin;
+                           std::vector<T> d((p + 1) * w);
+                           for (std::size_t i = 0; i <= p; ++i) {
+                             for (std::size_t c = 0; c < w; ++c) {
+                               d[i * w + c] = ctrl(i, begin + c);
                              }
-                             out_left(0, c) = d[0];
-                             for (std::size_t r = 1; r <= p; ++r) {
-                               for (std::size_t i = 0; i + r <= p; ++i) {
-                                 d[i] = static_cast<T>(one_minus_u * static_cast<double>(d[i]) +
-                                                       u * static_cast<double>(d[i + 1]));
+                           }
+                           for (std::size_t c = 0; c < w; ++c) {
+                             out_left(0, begin + c) = d[c];
+                           }
+                           for (std::size_t r = 1; r <= p; ++r) {
+                             for (std::size_t i = 0; i + r <= p; ++i) {
+                               T* di = d.data() + i * w;
+                               const T* dn = di + w;
+                               for (std::size_t c = 0; c < w; ++c) {
+                                 di[c] = static_cast<T>(one_minus_u * static_cast<double>(di[c]) +
+                                                        u * static_cast<double>(dn[c]));
                                }
-                               out_left(r, c) = d[0];
                              }
-                             for (std::size_t i = 0; i <= p; ++i) {
-                               out_right(i, c) = d[i];
+                             for (std::size_t c = 0; c < w; ++c) {
+                               out_left(r, begin + c) = d[c];
+                             }
+                           }
+                           for (std::size_t i = 0; i <= p; ++i) {
+                             for (std::size_t c = 0; c < w; ++c) {
+                               out_right(i, begin + c) = d[i * w + c];
                              }
                            }
                          });
