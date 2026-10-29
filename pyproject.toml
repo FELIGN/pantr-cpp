@@ -115,9 +115,6 @@ metadata.version.regex = '^__version__[^=]*=\s*"(?P<value>[^"]+)"'
 # side asks for Python's SABIModule component when PANTR_STABLE_ABI is ON).
 wheel.py-api = "cp312"
 wheel.packages = ["src/pantr"]
-# `make ext` installs development builds into src/pantr; the wheel takes the modules this build
-# installs, never those.
-wheel.exclude = ["pantr/_pantr*.so", "pantr/_pantr*.pyd"]
 # Only the extension modules: pantr's headers and CMake package install from a CMake build, and the
 # test-only modules (component `testing`) never ship.
 install.components = ["python"]
