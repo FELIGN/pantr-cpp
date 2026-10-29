@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Literal, overload
 
@@ -46,15 +47,14 @@ class Bezier:
         _is_rational (bool): Whether the Bézier is rational (last control
             point coordinate is a homogeneous weight).
         _dtype (np.dtype): ``float32`` or ``float64``.
-        _cp (npt.NDArray[np.float32 | np.float64] | None): The read-only control
-            point view, read from ``_h`` on first use.
+    The read-only control point view is read from ``_h`` on first use and kept
+    in the instance (``control_points``, a cached property).
     """
 
     _h: Any
     _shape: tuple[int, ...]
     _is_rational: bool
     _dtype: np.dtype[np.float32] | np.dtype[np.float64]
-    _cp: npt.NDArray[np.float32 | np.float64] | None
 
     def __init__(
         self,
@@ -79,7 +79,12 @@ class Bezier:
             TypeError: If the control points are complex.
         """
         cp = _as_control_points(control_points)
-        self._set_handle(_class_for(cp.dtype)(cp, bool(is_rational)), cp.shape, cp.dtype)
+        rational = bool(is_rational)
+        f32 = cp.dtype is _F32 or (cp.dtype is not _F64 and cp.dtype == _F32)
+        self._h = (_cpp.BezierF32 if f32 else _cpp.BezierF64)(cp, rational)
+        self._shape = cp.shape
+        self._is_rational = rational
+        self._dtype = _F32 if f32 else _F64
 
     def _set_handle(
         self,
@@ -101,7 +106,8 @@ class Bezier:
             self._dtype = _F32 if isinstance(h, _cpp.BezierF32) else _F64
         else:
             self._dtype = _F32 if dtype == _F32 else _F64
-        self._cp = None
+        # Drop the control points `functools.cached_property` stored for the previous value.
+        self.__dict__.pop("control_points", None)
 
     @classmethod
     def _from_handle(cls, h: Any) -> Bezier:  # noqa: ANN401
@@ -184,7 +190,7 @@ class Bezier:
         """
         return tuple(s - 1 for s in self._shape[:-1])
 
-    @property
+    @functools.cached_property
     def control_points(self) -> npt.NDArray[np.float32 | np.float64]:
         """Get the control points of the Bézier.
 
@@ -194,10 +200,7 @@ class Bezier:
             immutable value, which keeps the values it showed when it was read
             even after an in-place operation on this object.
         """
-        cp = self._cp
-        if cp is None:
-            cp = self._h.control_points
-            self._cp = cp
+        cp: npt.NDArray[np.float32 | np.float64] = self._h.control_points
         return cp
 
     @property
@@ -1259,6 +1262,9 @@ def _as_control_points(control_points: npt.ArrayLike) -> npt.NDArray[np.float32 
         TypeError: If the input is complex.
     """
     cp = np.asarray(control_points)
+    dtype = cp.dtype
+    if (dtype is _F64 or dtype is _F32) and cp.ndim >= 2 and cp.flags.c_contiguous:  # noqa: PLR2004
+        return cp  # the common case, already normalised
     if cp.ndim < 1:
         raise ValueError("Control points must be at least 1D.")
     if cp.ndim == 1:
