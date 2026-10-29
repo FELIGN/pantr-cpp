@@ -790,8 +790,10 @@ trap).
 ### 9.4 Stage-0 abi3 measurement (R6)
 
 Three builds of a stage-0 `_pantr` exposing a handful of S1 functions: abi3 `NB_STATIC`, version-specific `NB_STATIC`,
-and main's Numba path, on the `tiny` cases (one point, one tiny array, a property read). If abi3's per-call cost puts
-any `tiny` case over main's statistic, stop and return to the maintainer with split mode (R6).
+and main's Numba path, on the `tiny` cases (one point, one tiny array, a property read). The trigger is the plan's
+(P0b, DR-3): stop and return to the maintainer with split mode (R6) if, on any `tiny` case, the abi3 build exceeds main's
+statistic plus main's range **and** exceeds the version-specific build by more than main's range. The second
+condition isolates the stable ABI's cost from the wrapper's, which split mode would not remove.
 
 ## 10. Stages
 

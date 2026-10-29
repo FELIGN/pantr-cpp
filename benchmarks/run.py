@@ -108,9 +108,17 @@ def main() -> int:
     parser.add_argument("--filter", default=".", help="regex on case names")
     parser.add_argument("--repeats", type=int, default=30)
     parser.add_argument("--min-time", type=float, default=0.002, help="seconds per repeat")
+    parser.add_argument(
+        "--expect-src", type=Path, default=None, help="refuse to run unless pantr is under it"
+    )
     args = parser.parse_args()
 
     import pantr  # noqa: PLC0415
+
+    if args.expect_src is not None and not Path(pantr.__file__).resolve().is_relative_to(
+        args.expect_src.resolve()
+    ):
+        raise SystemExit(f"pantr resolves to {pantr.__file__}, not under {args.expect_src}")
 
     try:
         from pantr._numba_compat import wait_for_jit_warmup  # noqa: PLC0415
@@ -146,7 +154,8 @@ def main() -> int:
 
     tree = Path(pantr.__file__).resolve().parents[2]
     record = {
-        "pantr_file": str(Path(pantr.__file__).resolve()),
+        # Relative to the measured tree: an absolute path would name this machine and session.
+        "pantr_file": str(Path(pantr.__file__).resolve().relative_to(tree)),
         "commit": _git_commit(tree),
         "extension": isa,
         "threads": args.threads,

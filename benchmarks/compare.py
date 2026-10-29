@@ -59,11 +59,24 @@ def _run(side: str, src: Path, threads: int, round_: int, args: argparse.Namespa
         args.filter,
         "--repeats",
         str(args.repeats),
+        "--expect-src",
+        str(src),
     ]
     subprocess.run(command, env=_env(src, threads), check=True)
-    record = json.loads(out.read_text())
-    if not Path(record["pantr_file"]).is_relative_to(src):
-        raise RuntimeError(f"side {side} imported {record['pantr_file']}, not under {src}")
+    return out
+
+
+def _scrub_argv(argv: list[str], sides: list[tuple[str, Path]]) -> list[str]:
+    """Return ``argv`` with each side's path and the script's own made machine-independent."""
+    out = ["benchmarks/compare.py"]
+    for arg in argv[1:]:
+        scrubbed = arg
+        for label, src in sides:
+            if "=" in arg and Path(arg.split("=", 1)[1]).resolve() == src:
+                scrubbed = f"{label}=<{label} src>"
+        if Path(scrubbed).is_absolute():
+            scrubbed = "<absolute path>"
+        out.append(scrubbed)
     return out
 
 
@@ -174,11 +187,11 @@ def main() -> int:
             "threads": args.threads,
             "cpus": args.cpus,
             "reference": args.reference,
-            "argv": sys.argv,
+            # Each side's path replaced by its label: a local path names this machine and session.
+            "argv": _scrub_argv(sys.argv, sides),
         },
         "sides": {
             lab: {
-                "src": str(src),
                 "commit": records[(lab, args.threads[0])][0]["commit"],
                 "extension": records[(lab, args.threads[0])][0]["extension"],
             }
