@@ -1,27 +1,19 @@
 """1D basis function evaluation implementations.
 
-This module provides wrapper functions for evaluating various 1D basis functions
-(Bernstein, cardinal B-spline, Lagrange, Legendre) with input validation and
-output array management.
+This module provides the Layer 2 wrappers for evaluating the 1D basis functions
+(Bernstein, cardinal B-spline, Lagrange, Legendre): point normalization and
+``out=`` handling here, the computation (and its validation) in the C++ library
+through ``pantr._pantr.basis``.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Final, cast
 
 import numpy as np
 import numpy.typing as npt
 
-from .._numba_compat import wait_for_jit_warmup
-from ._basis_core import (
-    _PARALLEL_MIN_NUM_PTS,
-    _tabulate_Bernstein_basis_1D_core,
-    _tabulate_Bernstein_basis_1D_serial_core,
-    _tabulate_cardinal_Bspline_basis_1D_core,
-    _tabulate_Legendre_basis_1D_core,
-)
-from ._basis_lagrange import _tabulate_lagrange_basis_1D_core
+from .._ext import ext
 from ._basis_utils import (
     _allocate_or_validate_out,
     _compute_final_output_shape_1D,
@@ -32,39 +24,38 @@ from ._basis_utils import (
 if TYPE_CHECKING:
     from . import LagrangeVariant
 
-
-_BasisCoreFunc = Callable[
-    [np.int32, npt.NDArray[np.float32 | np.float64], npt.NDArray[np.float32 | np.float64]],
-    None,
-]
-"""Signature of a 1D basis tabulation core kernel: ``(degree, pts, out) -> None``."""
+_BERNSTEIN: Final[int] = 0
+"""Wire value of the Bernstein family in ``pantr._pantr.basis``."""
+_CARDINAL_BSPLINE: Final[int] = 1
+"""Wire value of the cardinal B-spline family in ``pantr._pantr.basis``."""
+_LEGENDRE: Final[int] = 2
+"""Wire value of the shifted Legendre family in ``pantr._pantr.basis``."""
+_LAGRANGE: Final[int] = 3
+"""Wire value of the Lagrange family in ``pantr._pantr.basis``."""
 
 
 def _tabulate_basis_1D_impl_helper(
+    family: int,
     n: int,
     t: npt.ArrayLike,
-    core_func: _BasisCoreFunc,
     out: npt.NDArray[np.float32 | np.float64] | None = None,
-    core_func_serial: _BasisCoreFunc | None = None,
+    variant: int = 0,
 ) -> npt.NDArray[np.float32 | np.float64]:
     """Common implementation for tabulating 1D basis functions.
 
-    Handles input normalization, output allocation/validation, and dtype dispatching
-    for calling the appropriate core function.
+    Normalizes the points, validates or allocates ``out`` and has the C++ library
+    tabulate into a C-contiguous buffer.
 
     Args:
+        family (int): The basis family's wire value (``_BERNSTEIN``, ...).
         n (int): Degree of the basis polynomials. Must be non-negative.
         t (npt.ArrayLike): Evaluation points. Can be a scalar, list, or numpy array.
             Types different from float32 or float64 are automatically converted to float64.
-        core_func (_BasisCoreFunc): Parallel core function; used for batches of
-            ``_PARALLEL_MIN_NUM_PTS`` points or more. Must accept
-            (np.int32, npt.NDArray[float32/float64], npt.NDArray[float32/float64]) -> None.
         out (npt.NDArray[np.float32 | np.float64] | None): Optional output array
             where the result will be stored. If None, a new array is allocated.
             Must have the correct shape and dtype if provided. Defaults to None.
-        core_func_serial (_BasisCoreFunc | None): Optional serial twin of ``core_func``,
-            used for batches smaller than ``_PARALLEL_MIN_NUM_PTS`` to avoid the
-            parallel launch overhead. Defaults to None (always use ``core_func``).
+        variant (int): The Lagrange node family's wire value; read for the Lagrange family only.
+            Defaults to 0.
 
     Returns:
         npt.NDArray[np.float32 | np.float64]: Evaluated basis functions, with the same shape
@@ -75,13 +66,6 @@ def _tabulate_basis_1D_impl_helper(
         ValueError: If degree is negative, or if `out` is provided and has incorrect
             shape or dtype.
     """
-    # Ensure background JIT compilation is complete before calling Numba
-    # kernels that use parallel=True (avoids concurrent-compilation crash).
-    wait_for_jit_warmup()
-
-    if n < 0:
-        raise ValueError("degree must be non-negative")
-
     # Get input shape before normalization (handle scalars and lists)
     if isinstance(t, np.ndarray):
         input_shape = t.shape
@@ -90,26 +74,26 @@ def _tabulate_basis_1D_impl_helper(
     else:  # scalar
         input_shape = ()
 
-    t = _normalize_points_1D(t)
-    num_pts = t.shape[0]
-    n_basis = n + 1
+    pts = np.ascontiguousarray(_normalize_points_1D(t))
+    if out is None or n < 0:
+        # A negative degree is refused by the C++ call, before any output is looked at.
+        # The binding is overloaded on the dtype; ``pts`` is either, so it is passed untyped.
+        result = cast(
+            npt.NDArray[np.float32 | np.float64],
+            ext.basis.tabulate_1d(family, n, variant, cast(Any, pts), None),
+        )
+        return result.reshape(_compute_final_output_shape_1D(input_shape, n + 1))
 
-    # Determine expected shapes
-    expected_normalized_shape = (num_pts, n_basis)
-    expected_final_shape = _compute_final_output_shape_1D(input_shape, n_basis)
-
-    out = _allocate_or_validate_out(out, expected_final_shape, t.dtype)
-
-    B_normalized, copy_back = _reshaped_out(out, expected_normalized_shape)
-
-    if core_func_serial is not None and num_pts < _PARALLEL_MIN_NUM_PTS:
-        core_func_serial(np.int32(n), t, B_normalized)
-    else:
-        core_func(np.int32(n), t, B_normalized)
-
+    expected_final_shape = _compute_final_output_shape_1D(input_shape, n + 1)
+    out = _allocate_or_validate_out(out, expected_final_shape, pts.dtype)
+    buffer, copy_back = _reshaped_out(out, (pts.shape[0], n + 1))
+    # The C++ call writes C-contiguous memory; a strided view gets a temporary, copied in after.
+    target = buffer if buffer.flags.c_contiguous else np.empty(buffer.shape, buffer.dtype)
+    ext.basis.tabulate_1d(family, n, variant, cast(Any, pts), cast(Any, target))
+    if target is not buffer:
+        buffer[...] = target
     if copy_back:
-        out[...] = B_normalized.reshape(out.shape)
-
+        out[...] = buffer.reshape(out.shape)
     return out
 
 
@@ -145,13 +129,7 @@ def _tabulate_Bernstein_basis_1D_impl(
         ... )
         True
     """
-    return _tabulate_basis_1D_impl_helper(
-        n,
-        t,
-        _tabulate_Bernstein_basis_1D_core,
-        out,
-        core_func_serial=_tabulate_Bernstein_basis_1D_serial_core,
-    )
+    return _tabulate_basis_1D_impl_helper(_BERNSTEIN, n, t, out)
 
 
 def _tabulate_cardinal_Bspline_basis_1D_impl(
@@ -199,7 +177,7 @@ def _tabulate_cardinal_Bspline_basis_1D_impl(
         >>> np.allclose(vals, [[0.5, 0.5, 0.0], [0.125, 0.75, 0.125], [0.0, 0.5, 0.5]])
         True
     """
-    return _tabulate_basis_1D_impl_helper(n, t, _tabulate_cardinal_Bspline_basis_1D_core, out)
+    return _tabulate_basis_1D_impl_helper(_CARDINAL_BSPLINE, n, t, out)
 
 
 def _tabulate_Lagrange_basis_1D_impl(
@@ -216,8 +194,9 @@ def _tabulate_Lagrange_basis_1D_impl(
     \]
     where \( x_i \) are the points at which the basis is evaluated.
 
-    The variant determines the points at which the basis is evaluated.
-    central cardinal B-spline basis.
+    The variant determines the points at which the basis is evaluated. Computed by the
+    barycentric formula in double precision, a point within ``16 * eps`` of a node getting that
+    node's Kronecker row exactly.
 
     Args:
         n (int): Degree of the B-spline basis. Must be non-negative.
@@ -234,19 +213,13 @@ def _tabulate_Lagrange_basis_1D_impl(
         If `out` was provided, returns the same array.
 
     Raises:
-        ValueError: If provided degree is negative, or if `out` is provided and has incorrect
-            shape or dtype.
+        ValueError: If provided degree is negative, if `out` is provided and has incorrect
+            shape or dtype, or if `variant` is not a :class:`LagrangeVariant` value.
     """
-    # Lazy import to avoid circular dependency
+    # Lazy import: the enum's module imports this one.
+    from ._basis_tabulate import _variant_code  # noqa: PLC0415
 
-    def core_func(
-        n_int32: np.int32,
-        t_array: npt.NDArray[np.float32 | np.float64],
-        out_array: npt.NDArray[np.float32 | np.float64],
-    ) -> None:
-        return _tabulate_lagrange_basis_1D_core(int(n_int32), variant, t_array, out_array)
-
-    return _tabulate_basis_1D_impl_helper(n, t, core_func, out)
+    return _tabulate_basis_1D_impl_helper(_LAGRANGE, n, t, out, _variant_code(variant))
 
 
 def _tabulate_Legendre_basis_1D_impl(
@@ -271,7 +244,7 @@ def _tabulate_Legendre_basis_1D_impl(
         ValueError: If degree is negative, or if `out` is provided and has incorrect
             shape or dtype.
     """
-    return _tabulate_basis_1D_impl_helper(n, t, _tabulate_Legendre_basis_1D_core, out)
+    return _tabulate_basis_1D_impl_helper(_LEGENDRE, n, t, out)
 
 
 __all__ = [

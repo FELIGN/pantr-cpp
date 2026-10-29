@@ -6,18 +6,14 @@ using the BasisFuncs algorithm (Piegl & Tiller) and Bernstein-like evaluation.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import numpy.typing as npt
 
+from .._ext import ext
 from .._numba_compat import nb_jit, nb_prange, wait_for_jit_warmup
 from ..basis._basis_1D import _tabulate_Bernstein_basis_1D_impl
-from ..basis._basis_core import (
-    _PARALLEL_MIN_NUM_PTS,
-    _tabulate_Bernstein_basis_deriv_1D_core,
-    _tabulate_Bernstein_basis_deriv_1D_serial_core,
-)
 from ..basis._basis_utils import (
     _compute_final_output_shape_1D,
     _compute_final_output_shape_1D_deriv,
@@ -31,8 +27,22 @@ from ._bspline_knots import (
     _is_in_domain_impl,
 )
 
+_kernels: Any = ext._kernels
+"""The ported Bernstein kernels (interim surface, untyped: overloaded on the dtype)."""
+
 if TYPE_CHECKING:
     from ._bspline_space_1d import BsplineSpace1D
+
+
+_PARALLEL_MIN_NUM_PTS = 4096
+"""Minimum number of evaluation points for which this module's ``parallel=True`` kernels pay off.
+
+Below this threshold the fork/join overhead of a parallel Numba kernel launch
+(hundreds of microseconds) dwarfs the per-point work (tens of nanoseconds), so
+the Layer-2 tabulation helpers dispatch to the serial twin kernels instead. It
+goes with these Numba kernels when they are ported; the C++ kernels decide from
+the work per point (``include/pantr/parallel/work_model.hpp``).
+"""
 
 
 @nb_jit(
@@ -679,12 +689,9 @@ def _tabulate_Bspline_basis_Bernstein_like_deriv_1D(
     k0, k1 = spline.domain
     pts_normalized = (pts - k0) / (k1 - k0)  # map to [0, 1]
 
-    deriv_core = (
-        _tabulate_Bernstein_basis_deriv_1D_core
-        if pts_normalized.shape[0] >= _PARALLEL_MIN_NUM_PTS
-        else _tabulate_Bernstein_basis_deriv_1D_serial_core
+    _kernels.tabulate_bernstein_derivatives_1d(
+        int(spline.degree), pts_normalized, n_deriv, out_deriv
     )
-    deriv_core(np.int32(spline.degree), pts_normalized, n_deriv, out_deriv)
 
     # Chain-rule: d^k/dx^k f(x) = d^k/ds^k f(s) * (ds/dx)^k = d^k/ds^k f(s) * (1/(k1-k0))^k
     inv_span: float = 1.0 / float(k1 - k0)
@@ -986,12 +993,6 @@ def _warmup_numba_functions() -> None:
         pts_dummy,
         deriv_dummy,
         first_basis_dummy,
-    )
-
-    # Warmup Bernstein derivative core (Bézier fast path) with float64
-    pts_norm_dummy = pts_dummy  # knots_dummy already has [0,1] domain
-    _tabulate_Bernstein_basis_deriv_1D_core(
-        np.int32(degree_dummy), pts_norm_dummy, n_deriv_dummy, deriv_dummy
     )
 
 

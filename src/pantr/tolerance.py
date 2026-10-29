@@ -62,6 +62,8 @@ from typing import Any, Final, TypedDict
 import numpy as np
 from numpy import typing as npt
 
+from ._ext import ext
+
 
 @cache
 def _ensure_float_dtype_by_name(name: str) -> np.dtype[np.floating[Any]]:
@@ -100,8 +102,8 @@ def _ensure_float_dtype(dtype: npt.DTypeLike) -> np.dtype[np.floating[Any]]:
     return _ensure_float_dtype_by_name(dtype_obj.name)
 
 
-_STRICT_EPS_FACTOR: Final[float] = 4.0
-"""Machine epsilons a :func:`get_strict` comparison allows for.
+_STRICT_EPS_FACTOR: Final[float] = ext.tolerance.strict_eps_factor
+"""Machine epsilons a :func:`get_strict` comparison allows for (4, owned by the C++ library).
 
 A handful of roundings and nothing more. Four is the count for the shape this tier
 is meant for: a value reached by one convex combination -- a subtract, a multiply
@@ -110,8 +112,8 @@ which is the fourth. (The comparison itself is exact in IEEE-754 and costs
 nothing.) Four is also already a power of two, so nothing is rounded up here.
 """
 
-_DEFAULT_EPS_FACTOR: Final[float] = 64.0
-"""Machine epsilons a :func:`get_default` comparison allows for.
+_DEFAULT_EPS_FACTOR: Final[float] = ext.tolerance.default_eps_factor
+"""Machine epsilons a :func:`get_default` comparison allows for (64, owned by the C++ library).
 
 A short algorithm -- on the order of 16 operations, whose worst-case accumulation
 is ``16 * eps`` -- plus build slack: an FMA contraction, a different vector width
@@ -120,8 +122,8 @@ Four times the accumulation bound covers that, and 64 is the power of two it
 lands on.
 """
 
-_CONSERVATIVE_EPS_FACTOR: Final[float] = 4096.0
-"""Machine epsilons a :func:`get_conservative` comparison allows for.
+_CONSERVATIVE_EPS_FACTOR: Final[float] = ext.tolerance.conservative_eps_factor
+"""Machine epsilons a :func:`get_conservative` comparison allows for (4096, owned by C++).
 
 A long accumulation, or a problem whose condition number reaches about 1e3: the
 error is then ``cond * eps`` rather than an operation count times ``eps``, and
@@ -145,6 +147,38 @@ preset.
 """
 
 
+_EPS_BY_DTYPE_LIKE: dict[Any, float] = {}
+"""Machine epsilon per dtype-like argument already seen, so a repeated call skips ``np.finfo``.
+
+Keyed on the caller's own argument (``np.float64``, ``"float64"``, a ``np.dtype``); only
+arguments naming one of the four supported formats are stored, so the table stays as small as the
+set of spellings a program uses.
+"""
+
+
+def _machine_epsilon(dtype: npt.DTypeLike) -> float:
+    """Get a supported dtype's machine epsilon, from the table when the argument was seen before.
+
+    Args:
+        dtype (npt.DTypeLike): NumPy floating-point data type.
+
+    Returns:
+        float: ``np.finfo(dtype).eps``.
+
+    Raises:
+        ValueError: If dtype is not a supported floating-point type.
+    """
+    try:
+        return _EPS_BY_DTYPE_LIKE[dtype]
+    except (KeyError, TypeError):  # not seen yet, or not hashable (then never stored)
+        pass
+    eps = float(np.finfo(_ensure_float_dtype(dtype)).eps)
+    # Every dtype-like naming a supported format is hashable (a type, a string, a np.dtype); an
+    # unhashable one (a structured-dtype spec) was refused just above.
+    _EPS_BY_DTYPE_LIKE[dtype] = eps
+    return eps
+
+
 def _relative_tolerance(dtype: npt.DTypeLike, eps_factor: float) -> float:
     """Scale a dimensionless safety factor by a dtype's machine epsilon.
 
@@ -158,7 +192,7 @@ def _relative_tolerance(dtype: npt.DTypeLike, eps_factor: float) -> float:
     Raises:
         ValueError: If dtype is not a supported floating-point type.
     """
-    return eps_factor * float(np.finfo(_ensure_float_dtype(dtype)).eps)
+    return eps_factor * _machine_epsilon(dtype)
 
 
 def get_default(dtype: npt.DTypeLike) -> float:
@@ -255,9 +289,7 @@ def get_machine_epsilon(dtype: npt.DTypeLike) -> float:
     Raises:
         ValueError: If dtype is not a supported floating-point type.
     """
-    _ensure_float_dtype(dtype)
-
-    return float(np.finfo(_ensure_float_dtype(dtype)).eps)
+    return _machine_epsilon(dtype)
 
 
 class ToleranceInfo(TypedDict):

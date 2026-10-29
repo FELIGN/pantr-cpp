@@ -1,17 +1,19 @@
 """Shared Layer 2 helpers for the ``bezier`` package.
 
-Utilities that allocate output arrays and invoke Layer 3 Bernstein kernels.
+Utilities that allocate output arrays and invoke the C++ Bernstein kernel.
 These helpers are private and not part of the public API.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from .._numba_compat import wait_for_jit_warmup
-from ..basis._basis_core import _tabulate_Bernstein_basis_1D_core
+from .._ext import ext
+
+_kernels: Any = ext._kernels
+"""The ported Bernstein kernels (interim surface, untyped: overloaded on the dtype)."""
 
 if TYPE_CHECKING:
     import numpy.typing as npt
@@ -24,11 +26,10 @@ def _tabulate_bernstein_1d_fast(
 ) -> npt.NDArray[np.float32 | np.float64]:
     """Allocate an output array and evaluate the Bernstein basis of given degree.
 
-    Thin Layer 2 wrapper around the Layer 3 kernel
-    :func:`_tabulate_Bernstein_basis_1D_core`. Inputs are assumed already
-    validated: ``degree >= 0``, ``pts`` is 1-D, and ``pts.dtype`` matches
-    ``dtype`` exactly. Passing a mismatched dtype produces undefined behaviour
-    inside the Numba kernel.
+    Thin Layer 2 wrapper around the C++ Bernstein kernel (``pantr._pantr._kernels``).
+    Inputs are assumed already validated: ``degree >= 0``, ``pts`` is 1-D, and
+    ``pts.dtype`` matches ``dtype`` exactly (a mismatch is refused by the binding with a
+    ``TypeError``).
 
     Args:
         degree (int): Polynomial degree.
@@ -40,16 +41,6 @@ def _tabulate_bernstein_1d_fast(
         npt.NDArray[np.float32 | np.float64]: Basis values of shape
         ``(n_pts, degree + 1)``.
     """
-    # `__init__.py` compiles the kernels on a background thread, and numba's default
-    # workqueue layer is not safe against a concurrent `parallel=True` call from another
-    # thread: the process *aborts* rather than raising. This helper is the funnel for the
-    # Bernstein path in `pantr.bezier`, so the barrier here also covers `interpolate_bezier`
-    # and `fit_bezier`, which reach no other `parallel=True` kernel. It does *not* cover the
-    # barriers in `_bezier_eval`: their `dim == 1` branches reach `_evaluate_bezier_1d_core`
-    # and `_evaluate_bezier_deriv_1d_core`, which never come through here, so all three are
-    # needed.
-    wait_for_jit_warmup()
-
     basis = np.empty((pts.shape[0], degree + 1), dtype=dtype)
-    _tabulate_Bernstein_basis_1D_core(np.int32(degree), pts, basis)
+    _kernels.tabulate_bernstein_1d(degree, pts, basis)
     return basis

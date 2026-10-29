@@ -27,9 +27,9 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
-from pantr.basis._basis_core import _PARALLEL_MIN_NUM_PTS
-from pantr.bezier import Bezier, fit_bezier
+from pantr.bezier import Bezier
 from pantr.bspline import Bspline, BsplineSpace, BsplineSpace1D
+from pantr.bspline._bspline_basis_core import _PARALLEL_MIN_NUM_PTS
 from pantr.grid import hierarchical_grid, uniform_grid
 
 # ---------------------------------------------------------------------------
@@ -127,14 +127,9 @@ class _BarrierCase(NamedTuple):
 
 _CASES: tuple[_BarrierCase, ...] = (
     # -- pantr.bezier ------------------------------------------------------
-    _BarrierCase(
-        "_bezier_utils._tabulate_bernstein_1d_fast",
-        "pantr.bezier._bezier_utils",
-        "_tabulate_Bernstein_basis_1D_core",
-        # Driven through `fit_bezier` rather than `interpolate_bezier`: the scattered path
-        # builds its Vandermonde uncached, so the helper is reached whatever ran before.
-        lambda: fit_bezier(np.zeros(4), np.array([[0.1], [0.4], [0.6], [0.9]]), degree=1, tol=None),
-    ),
+    # `_bezier_utils._tabulate_bernstein_1d_fast` and `_bezier_collapse._collapse_along_axis`
+    # reach no Numba kernel since the Bernstein tabulation moved to C++ (whose pool is safe
+    # against concurrent callers), so they carry no barrier and have no case here.
     _BarrierCase(
         "_bezier_eval._evaluate_bezier",
         "pantr.bezier._bezier_eval",
@@ -170,12 +165,6 @@ _CASES: tuple[_BarrierCase, ...] = (
         "pantr.bezier._bezier_compose",
         "_scalar_bernstein_product_1d_core",
         lambda: _bezier_1d().compose(Bezier(np.array([[0.2], [0.8]]))),
-    ),
-    _BarrierCase(
-        "_bezier_collapse._collapse_along_axis",
-        "pantr.bezier._bezier_collapse",
-        "_tabulate_Bernstein_basis_1D_core",
-        lambda: _bezier_2d().collapse_along_axis(0, [0.5]),
     ),
     # -- pantr.grid --------------------------------------------------------
     _BarrierCase(

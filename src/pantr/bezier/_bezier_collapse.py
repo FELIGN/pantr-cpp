@@ -11,13 +11,15 @@ basis vectors using :func:`numpy.tensordot`.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import numpy.typing as npt
 
-from .._numba_compat import wait_for_jit_warmup
-from ..basis._basis_core import _tabulate_Bernstein_basis_1D_core
+from .._ext import ext
+
+_kernels: Any = ext._kernels
+"""The ported Bernstein kernels (interim surface, untyped: overloaded on the dtype)."""
 
 if TYPE_CHECKING:
     from . import Bezier
@@ -58,10 +60,6 @@ def _collapse_along_axis(
         ValueError: If ``values`` does not have length ``dim - 1``.
         ValueError: If any value is outside ``[0, 1]``.
     """
-    # Ensure the background JIT warmup has finished before calling Numba kernels that use
-    # parallel=True: numba's workqueue layer aborts the process rather than raising.
-    wait_for_jit_warmup()
-
     from . import Bezier as BezierCls  # noqa: PLC0415
 
     dim = bezier.dim
@@ -90,7 +88,7 @@ def _collapse_along_axis(
         # Evaluate Bernstein basis at the single parameter value.
         pts_d = np.array([values_arr[val_idx]])
         basis_d = np.empty((1, degrees[d] + 1), dtype=dtype)
-        _tabulate_Bernstein_basis_1D_core(np.int32(degrees[d]), pts_d, basis_d)
+        _kernels.tabulate_bernstein_1d(degrees[d], pts_d, basis_d)
         basis_1d: npt.NDArray[np.float32 | np.float64] = basis_d[0]
 
         # Contract along direction d.

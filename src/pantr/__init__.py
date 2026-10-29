@@ -87,12 +87,6 @@ if not TYPE_CHECKING:
                 _bspline_knots,
             )
 
-            # _basis_core kernels use parallel=True. Numba's default threading
-            # layer (workqueue) is not safe for concurrent parallel calls from
-            # multiple Python threads.  Compiling them here (from a background
-            # thread) while the main thread may also call them leads to a crash.
-            # Instead they compile lazily on first user call (always from the
-            # main / caller thread) and are cached to disk by Numba's cache=True.
             _bspline_basis_core._warmup_numba_functions()
             _bspline_eval._warmup_numba_functions()
             _bspline_extraction._warmup_numba_functions()

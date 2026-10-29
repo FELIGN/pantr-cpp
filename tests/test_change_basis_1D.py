@@ -1,12 +1,13 @@
 """Tests for change_basis_1D module."""
 
-import functools
 from collections.abc import Callable
+from fractions import Fraction
 
 import numpy as np
 import numpy.typing as npt
 import pytest
 
+from pantr import _testing
 from pantr.basis import (
     LagrangeVariant,
     tabulate_bernstein_1d,
@@ -19,7 +20,6 @@ from pantr.change_basis import (
     _cached_cardinal_to_legendre_matrix,
     _cached_lagrange_to_bernstein_matrix,
     _cached_legendre_to_cardinal_matrix,
-    _compute_change_basis_1D,
     compute_bernstein_to_cardinal_1d,
     compute_bernstein_to_lagrange_1d,
     compute_cardinal_dual_legendre_coeffs_1d,
@@ -750,153 +750,132 @@ class TestCardinalToBernsteinBasisOperator:
 
 
 class TestCreateChangeBasis:
-    """Test the _create_change_basis private function."""
+    """Tests for the generic Gram projection behind the builders.
+
+    The projection takes the two bases as families (``pantr._testing.gram_projection``): the
+    C++ library runs it, and no Python callable crosses into it. The output dtype is chosen by
+    the instantiation, and ``out=`` belongs to the public builders, tested through one of them.
+    """
 
     def test_invalid_n_quad_pts_error(self) -> None:
-        """Test that non-positive n_quad_pts raises ValueError."""
-        degree = 2
+        """A quadrature of fewer than one point is refused."""
+        for n_quad_pts in (0, -1):
+            with pytest.raises(ValueError, match="Number of quadrature points must be positive"):
+                _testing.gram_projection(
+                    _testing.BERNSTEIN, _testing.CARDINAL_BSPLINE, 2, n_quad_pts
+                )
 
-        def bernstein(
-            pts: npt.NDArray[np.float32 | np.float64],
-        ) -> npt.NDArray[np.float32 | np.float64]:
-            return tabulate_bernstein_1d(degree, pts)
+    def test_float32_and_float64_instantiations(self) -> None:
+        """Each instantiation returns its own dtype."""
+        args = (_testing.BERNSTEIN, _testing.CARDINAL_BSPLINE, 2, 3)
+        assert _testing.gram_projection_f32(*args).dtype == np.float32
+        assert _testing.gram_projection(*args).dtype == np.float64
 
-        def cardinal(
-            pts: npt.NDArray[np.float32 | np.float64],
-        ) -> npt.NDArray[np.float32 | np.float64]:
-            return tabulate_cardinal_bspline_1d(degree, pts)
+    @pytest.mark.parametrize("degree", range(6))
+    def test_more_quadrature_points_change_nothing(self, degree: int) -> None:
+        """``degree + 1`` Gauss points are already exact for every product formed.
 
-        with pytest.raises(ValueError, match="Number of quadrature points must be positive"):
-            _compute_change_basis_1D(bernstein, cardinal, n_quad_pts=0)
-
-        with pytest.raises(ValueError, match="Number of quadrature points must be positive"):
-            _compute_change_basis_1D(bernstein, cardinal, n_quad_pts=-1)
-
-    def test_invalid_dtype_error(self) -> None:
-        """Test that invalid dtype raises ValueError."""
-        degree = 2
-
-        def bernstein(
-            pts: npt.NDArray[np.float32 | np.float64],
-        ) -> npt.NDArray[np.float32 | np.float64]:
-            return tabulate_bernstein_1d(degree, pts)
-
-        def cardinal(
-            pts: npt.NDArray[np.float32 | np.float64],
-        ) -> npt.NDArray[np.float32 | np.float64]:
-            return tabulate_cardinal_bspline_1d(degree, pts)
-
-        with pytest.raises(ValueError, match="dtype must be float32 or float64"):
-            _compute_change_basis_1D(bernstein, cardinal, n_quad_pts=3, dtype=np.int32)
-
-        with pytest.raises(ValueError, match="dtype must be float32 or float64"):
-            _compute_change_basis_1D(bernstein, cardinal, n_quad_pts=3, dtype=np.float16)
-
-    def test_string_dtype_accepted(self) -> None:
-        """String dtype aliases are accepted via np.dtype() normalisation."""
-        degree = 2
-        result32 = _compute_change_basis_1D(
-            functools.partial(tabulate_bernstein_1d, degree),
-            functools.partial(tabulate_cardinal_bspline_1d, degree),
-            n_quad_pts=degree + 1,
-            dtype="float32",
+        Adding points therefore moves the result by rounding only: the projection solves with
+        the Bernstein Gram matrix, so the agreement is bounded by its conditioning.
+        """
+        exact = _testing.gram_projection(
+            _testing.BERNSTEIN, _testing.CARDINAL_BSPLINE, degree, degree + 1
         )
-        assert result32.dtype == np.float32
-        result64 = _compute_change_basis_1D(
-            functools.partial(tabulate_bernstein_1d, degree),
-            functools.partial(tabulate_cardinal_bspline_1d, degree),
-            n_quad_pts=degree + 1,
-            dtype="float64",
+        more = _testing.gram_projection(
+            _testing.BERNSTEIN, _testing.CARDINAL_BSPLINE, degree, degree + 4
         )
-        assert result64.dtype == np.float64
+        np.testing.assert_allclose(
+            more, exact, rtol=0, atol=_conditioning_atol(_gram_bernstein(degree))
+        )
 
     def test_out_parameter(self) -> None:
-        """Test that out parameter works correctly for _compute_change_basis_1D."""
+        """``out=`` is filled and returned, in either dtype (through a public builder)."""
         degree = 2
-
-        def bernstein(
-            pts: npt.NDArray[np.float32 | np.float64],
-        ) -> npt.NDArray[np.float32 | np.float64]:
-            return tabulate_bernstein_1d(degree, pts)
-
-        def cardinal(
-            pts: npt.NDArray[np.float32 | np.float64],
-        ) -> npt.NDArray[np.float32 | np.float64]:
-            return tabulate_cardinal_bspline_1d(degree, pts)
-
-        # Test with None (default)
-        result1 = _compute_change_basis_1D(bernstein, cardinal, n_quad_pts=degree + 1)
+        result1 = compute_bernstein_to_cardinal_1d(degree)
         assert result1.shape == (degree + 1, degree + 1)
         assert result1.dtype == np.float64
 
-        # Test with provided out array (correct shape and dtype)
         out = np.empty((degree + 1, degree + 1), dtype=np.float64)
-        result2 = _compute_change_basis_1D(bernstein, cardinal, n_quad_pts=degree + 1, out=out)
+        result2 = compute_bernstein_to_cardinal_1d(degree, out=out)
         assert result2 is out
         np.testing.assert_array_almost_equal(result1, result2)
 
-        # Test with float32
         out_f32 = np.empty((degree + 1, degree + 1), dtype=np.float32)
-        result3 = _compute_change_basis_1D(
-            bernstein, cardinal, n_quad_pts=degree + 1, dtype=np.float32, out=out_f32
-        )
+        result3 = compute_bernstein_to_cardinal_1d(degree, dtype=np.float32, out=out_f32)
         assert result3 is out_f32
         assert result3.dtype == np.float32
 
     def test_out_parameter_validation(self) -> None:
-        """Test that out parameter validation works correctly for _compute_change_basis_1D."""
+        """A wrong ``out`` is refused with the shared messages (through a public builder)."""
         degree = 2
-
-        def bernstein(
-            pts: npt.NDArray[np.float32 | np.float64],
-        ) -> npt.NDArray[np.float32 | np.float64]:
-            return tabulate_bernstein_1d(degree, pts)
-
-        def cardinal(
-            pts: npt.NDArray[np.float32 | np.float64],
-        ) -> npt.NDArray[np.float32 | np.float64]:
-            return tabulate_cardinal_bspline_1d(degree, pts)
-
-        # Wrong shape
-        out_wrong_shape = np.empty((degree + 2, degree + 1), dtype=np.float64)
         with pytest.raises(ValueError, match="Output array has shape"):
-            _compute_change_basis_1D(
-                bernstein, cardinal, n_quad_pts=degree + 1, out=out_wrong_shape
+            compute_bernstein_to_cardinal_1d(
+                degree, out=np.empty((degree + 2, degree + 1), dtype=np.float64)
             )
-
-        # Wrong dtype
-        out_wrong_dtype = np.empty((degree + 1, degree + 1), dtype=np.float32)
         with pytest.raises(ValueError, match="Output array has dtype"):
-            _compute_change_basis_1D(
-                bernstein, cardinal, n_quad_pts=degree + 1, out=out_wrong_dtype
+            compute_bernstein_to_cardinal_1d(
+                degree, out=np.empty((degree + 1, degree + 1), dtype=np.float32)
             )
-
-        # Not writeable
         out_readonly = np.empty((degree + 1, degree + 1), dtype=np.float64)
         out_readonly.setflags(write=False)
         with pytest.raises(ValueError, match="Output array is not writeable"):
-            _compute_change_basis_1D(bernstein, cardinal, n_quad_pts=degree + 1, out=out_readonly)
+            compute_bernstein_to_cardinal_1d(degree, out=out_readonly)
+
+
+def _gram_bernstein(degree: int) -> npt.NDArray[np.float64]:
+    """Build the Bernstein Gram matrix on [0, 1] from its closed form, exactly then rounded.
+
+    ``int_0^1 B_i B_j = C(p, i) C(p, j) / ((2p + 1) C(2p, i + j))``.
+
+    Args:
+        degree (int): The degree ``p``.
+
+    Returns:
+        npt.NDArray[np.float64]: The ``(p + 1, p + 1)`` Gram matrix.
+    """
+    from math import comb  # noqa: PLC0415
+
+    p = degree
+    return np.array(
+        [
+            [
+                float(Fraction(comb(p, i) * comb(p, j), (2 * p + 1) * comb(2 * p, i + j)))
+                for j in range(p + 1)
+            ]
+            for i in range(p + 1)
+        ]
+    )
 
 
 class TestCachedChangeBasisMatrices:
-    """Tests for the LRU-cached change-of-basis helpers."""
+    """Tests for the process-table change-of-basis helpers.
 
-    def test_lagrange_cached_values_match_uncached(self) -> None:
-        """Cached matrix must be numerically identical to the uncached reference."""
-        degree = 3
-        variant = LagrangeVariant.GAUSS_LOBATTO_LEGENDRE
-        dtype = np.dtype(np.float64)
-        expected = compute_lagrange_to_bernstein_1d(degree, variant, dtype)
-        cached = _cached_lagrange_to_bernstein_matrix(degree, variant, dtype)
+    The tables are the C++ library's (``pantr::change_basis::cached``); their identity under
+    concurrent first use and their bound are tested there (``cpp/tests/test_change_basis.cpp``).
+    Here: the values against matrices derived in exact arithmetic, read-only views, and one
+    shared matrix per key.
+    """
+
+    def test_lagrange_cached_values_match_exact(self) -> None:
+        """Degree 2 on the equispaced nodes {0, 1/2, 1}: ``C[i, k] = B_i(x_k)``, exact in binary."""
+        cached = _cached_lagrange_to_bernstein_matrix(
+            2, LagrangeVariant.EQUISPACES, np.dtype(np.float64)
+        )
+        expected = np.array([[1.0, 0.25, 0.0], [0.0, 0.5, 0.0], [0.0, 0.25, 1.0]])
         np.testing.assert_array_equal(cached, expected)
 
-    def test_cardinal_cached_values_match_uncached(self) -> None:
-        """Cached matrix must be numerically identical to the uncached reference."""
-        degree = 3
-        dtype = np.dtype(np.float64)
-        expected = compute_cardinal_to_bernstein_1d(degree, dtype)
-        cached = _cached_cardinal_to_bernstein_matrix(degree, dtype)
-        np.testing.assert_array_equal(cached, expected)
+    def test_cardinal_cached_values_match_exact(self) -> None:
+        """Degree 2: the inverse of the hand-derived Bernstein-to-cardinal matrix.
+
+        Cardinal quadratics in Bernstein form are ``N0 = b0/2``, ``N1 = (b0 + 2 b1 + b2)/2``,
+        ``N2 = b2/2``, whose inverse is ``[[2, 0, 0], [-1, 1, -1], [0, 0, 2]]``. The table's
+        matrix comes from a Gram solve and an LU inverse, so it agrees to the conditioning
+        bound of that inverse.
+        """
+        cached = _cached_cardinal_to_bernstein_matrix(2, np.dtype(np.float64))
+        expected = np.array([[2.0, 0.0, 0.0], [-1.0, 1.0, -1.0], [0.0, 0.0, 2.0]])
+        forward = np.array([[0.5, 0.0, 0.0], [0.5, 1.0, 0.5], [0.0, 0.0, 0.5]])
+        np.testing.assert_allclose(cached, expected, rtol=0, atol=_conditioning_atol(forward))
 
     def test_lagrange_cached_array_is_readonly(self) -> None:
         """The cached array must be read-only to prevent mutation of the shared copy."""
@@ -916,34 +895,42 @@ class TestCachedChangeBasisMatrices:
         with pytest.raises((ValueError, TypeError)):
             mat[0, 0] = 0.0
 
-    def test_lagrange_cache_returns_same_object(self) -> None:
-        """Repeated calls with identical arguments must return the exact same object."""
+    def test_lagrange_cache_returns_one_matrix(self) -> None:
+        """Repeated calls with identical arguments must view the same matrix."""
         degree = 2
         variant = LagrangeVariant.EQUISPACES
         dtype = np.dtype(np.float64)
         mat1 = _cached_lagrange_to_bernstein_matrix(degree, variant, dtype)
         mat2 = _cached_lagrange_to_bernstein_matrix(degree, variant, dtype)
-        assert mat1 is mat2
+        assert np.shares_memory(mat1, mat2)
+        other = _cached_lagrange_to_bernstein_matrix(degree, LagrangeVariant.GAUSS_LEGENDRE, dtype)
+        assert not np.shares_memory(mat1, other)
 
-    def test_cardinal_cache_returns_same_object(self) -> None:
-        """Repeated calls with identical arguments must return the exact same object."""
+    def test_cardinal_cache_returns_one_matrix(self) -> None:
+        """Repeated calls with identical arguments must view the same matrix."""
         degree = 3
         dtype = np.dtype(np.float64)
         mat1 = _cached_cardinal_to_bernstein_matrix(degree, dtype)
         mat2 = _cached_cardinal_to_bernstein_matrix(degree, dtype)
-        assert mat1 is mat2
+        assert np.shares_memory(mat1, mat2)
 
-    def test_lagrange_cache_is_bounded(self) -> None:
-        """The Lagrange cache must have a finite maxsize."""
-        info = _cached_lagrange_to_bernstein_matrix.cache_info()
-        assert info.maxsize is not None
-        assert info.maxsize > 0
+    def test_cache_is_bounded(self) -> None:
+        """Past the tables' degree bound a matrix is computed per call and not kept."""
+        _testing.change_basis_cache_clear()
+        past = _testing.CHANGE_BASIS_CACHE_MAX_DEGREE + 1
+        first = _cached_legendre_to_cardinal_matrix(past, np.dtype(np.float64))
+        again = _cached_legendre_to_cardinal_matrix(past, np.dtype(np.float64))
+        assert not np.shares_memory(first, again)
+        assert _testing.change_basis_cache_size() == 0
+        _cached_legendre_to_cardinal_matrix(3, np.dtype(np.float64))
+        assert _testing.change_basis_cache_size() == 1
 
-    def test_cardinal_cache_is_bounded(self) -> None:
-        """The cardinal cache must have a finite maxsize."""
-        info = _cached_cardinal_to_bernstein_matrix.cache_info()
-        assert info.maxsize is not None
-        assert info.maxsize > 0
+    def test_a_view_outlives_a_cleared_table(self) -> None:
+        """A matrix handed out stays valid after the table drops it."""
+        mat = _cached_cardinal_to_bernstein_matrix(4, np.dtype(np.float64))
+        expected = mat.copy()
+        _testing.change_basis_cache_clear()
+        np.testing.assert_array_equal(mat, expected)
 
 
 class TestMonomialToBernsteinBasisOperator:
@@ -1203,10 +1190,8 @@ class TestLegendreCardinalBasisOperators:
         An independent construction of the same matrix: going Legendre to Bernstein
         to cardinal must land where going Legendre to cardinal directly does.
         """
-        legendre_to_bernstein = _compute_change_basis_1D(
-            new_basis_eval=functools.partial(tabulate_legendre_1d, degree),
-            old_basis_eval=functools.partial(tabulate_bernstein_1d, degree),
-            n_quad_pts=degree + 1,
+        legendre_to_bernstein = _testing.gram_projection(
+            _testing.LEGENDRE, _testing.BERNSTEIN, degree, degree + 1
         )
 
         np.testing.assert_allclose(
@@ -1276,7 +1261,7 @@ class TestLegendreCardinalBasisOperators:
             (_cached_cardinal_to_legendre_matrix, compute_cardinal_to_legendre_1d),
         ):
             first = cached(3, np.dtype(np.float64))
-            assert first is cached(3, np.dtype(np.float64))
+            assert np.shares_memory(first, cached(3, np.dtype(np.float64)))
             assert not first.flags.writeable
             np.testing.assert_array_equal(first, builder(3))
             with pytest.raises(ValueError):

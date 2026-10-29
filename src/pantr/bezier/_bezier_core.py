@@ -22,7 +22,8 @@ _MIRROR_THRESHOLD = 0.5
 """Midpoint used to pick the Bernstein ratio-recurrence branch in `_evaluate_bezier_1d_core`.
 
 Bounds the recurrence seed (``(1-u)^p`` or ``u^p``) below by ``0.5^p``, so it
-never underflows regardless of degree. Matches ``_basis_core._MIRROR_THRESHOLD``.
+never underflows regardless of degree. The C++ Bernstein tabulation
+(``include/pantr/basis/bernstein.hpp``) mirrors at the same midpoint.
 """
 
 
@@ -43,7 +44,8 @@ def _evaluate_bezier_1d_core(  # noqa: PLR0912
     ratio recurrence and immediately multiplied with the corresponding control
     points, avoiding allocation of a full ``(n_pts, p+1)`` basis matrix.
 
-    As in :func:`_bernstein_point` (``_basis_core.py``), the recurrence is run
+    As in the C++ Bernstein tabulation (``include/pantr/basis/bernstein.hpp``), the
+    recurrence is run
     from whichever endpoint keeps its seed term bounded away from underflow,
     using the symmetry ``B_i,p(u) = B_{p-i},p(1-u)``:
 

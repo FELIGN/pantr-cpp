@@ -1,6 +1,8 @@
 """Regression tests for Bernstein ratio-recurrence underflow near u=1 (issue #258).
 
-The O(p) ratio recurrence in ``_bernstein_point`` and the fused kernel
+The O(p) ratio recurrence of the C++ Bernstein tabulation
+(``include/pantr/basis/bernstein.hpp``, reached here through ``pantr._testing``)
+and the fused kernel
 ``_evaluate_bezier_1d_core`` now branches on ``u > 0.5`` and runs from
 whichever endpoint keeps the seed term (``(1-u)^p`` or ``u^p``) bounded below
 by ``0.5^p``, using the symmetry ``B_i,p(u) = B_{p-i},p(1-u)``. Before the
@@ -19,7 +21,7 @@ This module covers:
     - Symmetry between the forward branch (evaluated at ``u <= 0.5``) and the
       mirrored branch (evaluated at ``1-u > 0.5``).
     - Consistency between the 0th row of the derivative kernel
-      (``_bernstein_derivs_point``, an unaffected O(p^2) ``ndu``-table
+      (``bernstein_derivatives_point``, an unaffected O(p^2) ``ndu``-table
       recurrence) and the fixed value kernel.
     - An end-to-end guard for the fused Bezier-evaluation kernel
       (``_evaluate_bezier_1d_core``) against de Casteljau evaluation.
@@ -27,26 +29,21 @@ This module covers:
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import Any
 
 import numpy as np
 import numpy.typing as npt
 import pytest
 
+from pantr import _testing
 from pantr._numba_compat import wait_for_jit_warmup
-from pantr.basis._basis_core import (
-    _MAX_SAFE_DEGREE_NO_MIRROR_FLOAT32,
-    _MAX_SAFE_DEGREE_NO_MIRROR_FLOAT64,
-    _bernstein_derivs_point,
-    _bernstein_point,
-    _bernstein_point_no_mirror,
-    _tabulate_Bernstein_basis_1D_core,
-    _tabulate_Bernstein_basis_1D_serial_core,
-)
+from pantr.basis import tabulate_bernstein_1d
 from pantr.bezier._bezier_core import _evaluate_bezier_1d_core, _slice_bezier_1d_core
 
-# This module calls parallel=True Numba kernels directly (bypassing the
+_MAX_SAFE_DEGREE_NO_MIRROR_FLOAT64 = _testing.BERNSTEIN_MAX_UNMIRRORED_DEGREE_FLOAT64
+_MAX_SAFE_DEGREE_NO_MIRROR_FLOAT32 = _testing.BERNSTEIN_MAX_UNMIRRORED_DEGREE_FLOAT32
+
+# This module calls parallel=True Numba kernels (the fused Bezier ones) directly (bypassing the
 # public API) very early in the test session. Numba's default threading
 # layer cannot safely compile the same kernel concurrently from two threads,
 # so wait for pantr's background warmup thread to finish first — otherwise it
@@ -73,17 +70,29 @@ gives mypy a single concrete overload instead of the ambiguous ``np.void``
 fallback that ``np.dtype(some_DTypeLike).type(...)`` resolves to.
 """
 
-_TabulateFn = Callable[
-    [np.int32, npt.NDArray[np.floating[Any]], npt.NDArray[np.floating[Any]]], None
-]
-"""Shared signature of `_tabulate_Bernstein_basis_1D_core` and its serial twin."""
-
 
 def _eval_bernstein_row(n: int, u: float, dtype: _Float32Or64) -> npt.NDArray[np.floating[Any]]:
-    """Evaluate the Layer-3 kernel `_bernstein_point` at one point."""
-    out_row = np.empty(n + 1, dtype=dtype)
-    _bernstein_point(np.int32(n), dtype(u), out_row)
-    return out_row
+    """Evaluate the mirrored ratio recurrence at one point, in ``dtype``."""
+    row = (
+        _testing.bernstein_row_mirrored_f32
+        if dtype is np.float32
+        else _testing.bernstein_row_mirrored
+    )
+    result: npt.NDArray[np.floating[Any]] = row(n, float(dtype(u)))
+    return result
+
+
+def _eval_unmirrored_row(
+    n: int, u: float, dtype: _Float32Or64 = np.float64
+) -> npt.NDArray[np.floating[Any]]:
+    """Evaluate the plain forward (unmirrored) recurrence at one point, in ``dtype``."""
+    row = (
+        _testing.bernstein_row_unmirrored_f32
+        if dtype is np.float32
+        else _testing.bernstein_row_unmirrored
+    )
+    result: npt.NDArray[np.floating[Any]] = row(n, float(dtype(u)))
+    return result
 
 
 def _all_bernstein_reference(
@@ -195,12 +204,10 @@ class TestDerivativeConsistency:
     @pytest.mark.parametrize("u", _U64, ids=lambda u: f"{u:.17g}")
     @pytest.mark.parametrize("degree", DEGREES)
     def test_row0_matches_value_kernel(self, degree: int, u: float) -> None:
-        """Row 0 of `_bernstein_derivs_point` (ndu table) matches `_bernstein_point`."""
+        """Row 0 of the derivative kernel (ndu table) matches the ratio recurrence."""
         row = _eval_bernstein_row(degree, u, np.float64)
 
-        n_deriv = 2
-        out_pt = np.empty((n_deriv + 1, degree + 1), dtype=np.float64)
-        _bernstein_derivs_point(np.int32(degree), np.float64(u), n_deriv, out_pt)
+        out_pt = _testing.bernstein_derivatives_point(degree, u, 2)
 
         np.testing.assert_allclose(out_pt[0, :], row, rtol=1e-13, atol=1e-13)
 
@@ -261,17 +268,16 @@ class TestBernsteinPointNoMirror:
     def test_bitwise_identical_where_both_take_the_same_code_path(
         self, degree: int, u: float
     ) -> None:
-        """`_bernstein_point_no_mirror` is bit-identical to `_bernstein_point`.
+        """The unmirrored recurrence is bit-identical to the mirrored recurrence.
 
-        Only where they run the *textually identical* code: `_bernstein_point`
+        Only where they run the *textually identical* code: the mirrored recurrence
         takes its own forward branch (unbranched, matching
-        `_bernstein_point_no_mirror` line for line) for ``u <= 0.5``, and both
+        the unmirrored recurrence line for line) for ``u <= 0.5``, and both
         functions special-case ``u == 1.0`` identically. This is the
         "byte-for-byte-unbranched fast path" contract from
-        `_bernstein_point_no_mirror`'s docstring.
+        ``bernstein_row_unmirrored`` in ``include/pantr/basis/bernstein.hpp``.
         """
-        out_no_mirror = np.empty(degree + 1, dtype=np.float64)
-        _bernstein_point_no_mirror(np.int32(degree), np.float64(u), out_no_mirror)
+        out_no_mirror = _eval_unmirrored_row(degree, u)
 
         out_mirrored = _eval_bernstein_row(degree, u, np.float64)
 
@@ -284,16 +290,15 @@ class TestBernsteinPointNoMirror:
     ) -> None:
         """For ``u > 0.5`` (excluding 1.0) the two paths take different code.
 
-        `_bernstein_point` mirrors (forward recurrence on ``1-u`` then
-        reversed) while `_bernstein_point_no_mirror` always runs forward on
+        the mirrored recurrence mirrors (forward recurrence on ``1-u`` then
+        reversed) while the unmirrored recurrence always runs forward on
         ``u`` directly. Both are mathematically correct at these safe
         degrees, but accumulate the same value through different sequences
         of floating-point operations, so they are compared within a few ULPs
         rather than bit-for-bit (same rationale as
         `TestForwardMirroredSymmetry`).
         """
-        out_no_mirror = np.empty(degree + 1, dtype=np.float64)
-        _bernstein_point_no_mirror(np.int32(degree), np.float64(u), out_no_mirror)
+        out_no_mirror = _eval_unmirrored_row(degree, u)
 
         out_mirrored = _eval_bernstein_row(degree, u, np.float64)
 
@@ -310,16 +315,14 @@ class TestBernsteinPointNoMirror:
         """
         degree = _MAX_SAFE_DEGREE_NO_MIRROR_FLOAT64
         u = np.nextafter(1.0, 0.0)
-        out_row = np.empty(degree + 1, dtype=np.float64)
-        _bernstein_point_no_mirror(np.int32(degree), u, out_row)
+        out_row = _eval_unmirrored_row(degree, float(u))
         assert abs(float(out_row.sum()) - 1.0) <= 8 * degree * _EPS64
 
     def test_partition_of_unity_at_max_safe_degree_float32(self) -> None:
         """Float32 analogue of `test_partition_of_unity_at_max_safe_degree`."""
         degree = _MAX_SAFE_DEGREE_NO_MIRROR_FLOAT32
         u = np.nextafter(np.float32(1.0), np.float32(0.0))
-        out_row = np.empty(degree + 1, dtype=np.float32)
-        _bernstein_point_no_mirror(np.int32(degree), u, out_row)
+        out_row = _eval_unmirrored_row(degree, float(u), np.float32)
         assert abs(float(out_row.sum()) - 1.0) <= 8 * degree * _EPS32
 
 
@@ -345,14 +348,8 @@ class TestDegreeGateDispatch:
             ),
         ],
     )
-    @pytest.mark.parametrize(
-        "tabulate_fn",
-        [_tabulate_Bernstein_basis_1D_core, _tabulate_Bernstein_basis_1D_serial_core],
-        ids=["parallel", "serial"],
-    )
     def test_partition_of_unity_across_the_boundary(
         self,
-        tabulate_fn: _TabulateFn,
         dtype: _Float32Or64,
         max_safe_degree: int,
         eps: float,
@@ -364,15 +361,13 @@ class TestDegreeGateDispatch:
         path; degree ``max_safe_degree + 1`` is the first degree where the
         fast path would fail, so it must take the mirrored path instead —
         this is the regression guard that the dispatch boundary itself
-        doesn't reintroduce issue #258 right where it matters. Runs both the
-        parallel (`_tabulate_Bernstein_basis_1D_core`) and serial
-        (`_tabulate_Bernstein_basis_1D_serial_core`) twins, since the dispatch
-        logic is duplicated between them.
+        doesn't reintroduce issue #258 right where it matters. Runs through the
+        public tabulation, whose one kernel holds the dispatch (the serial and
+        parallel paths run the same chunks).
         """
         t: npt.NDArray[np.floating[Any]] = np.array([worst_case_u], dtype=dtype)
         for degree in (max_safe_degree, max_safe_degree + 1):
-            out: npt.NDArray[np.floating[Any]] = np.empty((1, degree + 1), dtype=dtype)
-            tabulate_fn(np.int32(degree), t, out)
+            out = tabulate_bernstein_1d(degree, t)
             total = float(out[0].sum())
             assert abs(total - 1.0) <= 8 * degree * eps, (
                 f"degree={degree} (max_safe_degree={max_safe_degree}) sum={total}"

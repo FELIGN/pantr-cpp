@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 import numpy as np
 import numpy.typing as npt
 import pytest
 
-from pantr.basis._basis_core import (
-    _tabulate_Bernstein_basis_1D_core,
-    _tabulate_Bernstein_basis_deriv_1D_core,
-)
+from pantr import _testing
+from pantr.basis import tabulate_bernstein_1d
 from pantr.bspline import BsplineSpace1D
 from pantr.bspline._bspline_basis_core import (
     _compute_basis_deriv_nurbs_book_impl,
@@ -380,7 +380,7 @@ class TestMathematicalPropertiesDeriv:
 
 
 # ---------------------------------------------------------------------------
-# Bézier fast path: _tabulate_Bernstein_basis_deriv_1D_core
+# Bézier fast path: the C++ Bernstein derivative tabulation
 # and _tabulate_Bspline_basis_Bernstein_like_deriv_1D
 # ---------------------------------------------------------------------------
 
@@ -394,8 +394,12 @@ class TestBernsteinDerivCore:
         t: npt.NDArray[np.float32 | np.float64],
         n_deriv: int,
     ) -> npt.NDArray[np.float32 | np.float64]:
-        out = np.empty((t.size, n_deriv + 1, n + 1), dtype=t.dtype)
-        _tabulate_Bernstein_basis_deriv_1D_core(np.int32(n), t, n_deriv, out)
+        tabulate = (
+            _testing.tabulate_bernstein_derivatives_1d_f32
+            if t.dtype == np.float32
+            else _testing.tabulate_bernstein_derivatives_1d
+        )
+        out: npt.NDArray[np.float32 | np.float64] = tabulate(n, cast(Any, t), n_deriv)
         return out
 
     def test_0th_matches_bernstein_basis(self) -> None:
@@ -404,8 +408,7 @@ class TestBernsteinDerivCore:
         n = 3
         out_deriv = self._call(n, t, n_deriv=2)
 
-        ref = np.empty((t.size, n + 1), dtype=np.float64)
-        _tabulate_Bernstein_basis_1D_core(np.int32(n), t, ref)
+        ref = tabulate_bernstein_1d(n, t)
 
         np.testing.assert_array_almost_equal(out_deriv[:, 0, :], ref)
 

@@ -34,6 +34,38 @@ def _validate_float_dtype(dtype: npt.DTypeLike) -> None:
         raise ValueError("dtype must be float32 or float64")
 
 
+_IS_FLOAT32_BY_DTYPE_LIKE: dict[object, bool] = {}
+"""Whether each dtype-like argument already validated names ``float32`` (else ``float64``).
+
+Keyed on the caller's own argument, so a repeated call skips ``np.dtype``; only valid arguments are
+stored, which keeps the table as small as the set of spellings a program uses.
+"""
+
+
+def _is_float32(dtype: npt.DTypeLike) -> bool:
+    """Validate ``dtype`` as :func:`_validate_float_dtype` does and say whether it is ``float32``.
+
+    This is how a wrapper picks the ``float`` or the ``double`` instantiation of a C++ function.
+
+    Args:
+        dtype (npt.DTypeLike): The dtype to validate.
+
+    Returns:
+        bool: ``True`` for ``float32``, ``False`` for ``float64``.
+
+    Raises:
+        ValueError: If the dtype does not resolve to ``np.float32`` or ``np.float64``.
+    """
+    try:
+        return _IS_FLOAT32_BY_DTYPE_LIKE[dtype]
+    except (KeyError, TypeError):  # not seen yet, or unhashable (then invalid, refused below)
+        pass
+    _validate_float_dtype(dtype)
+    is_f32 = bool(np.dtype(dtype).type is np.float32)
+    _IS_FLOAT32_BY_DTYPE_LIKE[dtype] = is_f32
+    return is_f32
+
+
 def _flatten_along_axis(
     arr: npt.NDArray[np.float32 | np.float64],
     axis: int,

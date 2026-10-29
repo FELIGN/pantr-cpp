@@ -8,9 +8,9 @@ Sizes: ``tiny`` is one point or one object (the per-call overhead regime), ``med
 ``large`` 1e6 points for the 1D tabulations and a 512 x 512 lattice for the ND ones.
 
 The ``r6`` group is the stage-0 stable-ABI check (section 9.4): the per-call cost of the compiled
-binding on ``tiny`` inputs. On a tree with the extension it times ``pantr._pantr._testing``'s
-probes through one-line Python wrappers, the shape of a ported function; on ``main``, which has no
-extension, the same case times the public operation of that shape (named in each case's ``what``).
+binding on ``tiny`` inputs. Since the quadrature/basis stage it times the same public operations on
+every tree (each case's ``what``), which are wrappers over the compiled module on the port branch;
+the stage-0 measurement timed one-line wrappers over probes of the module that no longer exist.
 """
 
 from __future__ import annotations
@@ -54,10 +54,6 @@ def _points(n: int) -> np.ndarray:
 def _returning(fn: Callable[[], Any]) -> Callable[[], Any]:
     """Return ``fn`` itself: a setup that has nothing to prepare."""
     return fn
-
-
-def _has_extension() -> bool:
-    return importlib.util.find_spec("pantr._ext") is not None
 
 
 def _s1_cases() -> list[Case]:
@@ -127,10 +123,20 @@ def _s1_cases() -> list[Case]:
         )
     )
 
-    def first_call(fn: Callable[[], object], caches: list[Any]) -> Callable[[], object]:
+    def first_call(fn: Callable[[], object]) -> Callable[[], object]:
+        # Empty the change-of-basis caches before each call: main's functools caches, or the C++
+        # process tables on the port branch. The public builder timed is uncached on both, so
+        # this pins that no cache an earlier call filled can serve it.
+        if importlib.util.find_spec("pantr._testing") is not None:
+            from pantr import _testing  # noqa: PLC0415
+
+            clear: Callable[[], object] = _testing.change_basis_cache_clear
+        else:
+            # main's lru_cache wrapper (its attribute is unknown to this tree's types).
+            clear = getattr(cb._cached_lagrange_to_bernstein_matrix, "cache_clear")  # noqa: B009
+
         def call() -> object:
-            for c in caches:
-                c.cache_clear()
+            clear()
             return fn()
 
         return call
@@ -151,10 +157,7 @@ def _s1_cases() -> list[Case]:
             "S1",
             "tiny",
             "compute_lagrange_to_bernstein_1d(5), cache cleared before each call",
-            lambda: first_call(
-                lambda: cb.compute_lagrange_to_bernstein_1d(5),
-                [cb._cached_lagrange_to_bernstein_matrix],
-            ),
+            lambda: first_call(lambda: cb.compute_lagrange_to_bernstein_1d(5)),
         )
     )
     cases.append(
@@ -189,56 +192,6 @@ def _r6_cases() -> list[Case]:
 
     point = np.array([0.3])
     eight = _points(8)
-    if _has_extension():
-        from pantr._ext import ext  # noqa: PLC0415
-
-        probes = ext._testing
-
-        def scalar(x: float) -> float:
-            return probes.probe_scalar(x)
-
-        def array(degree: int, pts: np.ndarray) -> np.ndarray:
-            return probes.probe_bernstein(degree, pts)
-
-        class Wrapped:
-            def __init__(self) -> None:
-                self._h = probes.ProbeObject(3)
-
-            @property
-            def degree(self) -> int:
-                return self._h.degree
-
-        obj: Any = Wrapped()
-        return [
-            Case(
-                "r6.scalar.tiny",
-                "r6",
-                "tiny",
-                "probe_scalar(0.5) through a wrapper",
-                lambda: (lambda: scalar(0.5)),
-            ),
-            Case(
-                "r6.one_point.tiny",
-                "r6",
-                "tiny",
-                "probe_bernstein(3, 1 point) through a wrapper",
-                lambda: (lambda: array(3, point)),
-            ),
-            Case(
-                "r6.tiny_array.tiny",
-                "r6",
-                "tiny",
-                "probe_bernstein(3, 8 points) through a wrapper",
-                lambda: (lambda: array(3, eight)),
-            ),
-            Case(
-                "r6.property.tiny",
-                "r6",
-                "tiny",
-                "wrapper property over a bound property",
-                lambda: (lambda: obj.degree),
-            ),
-        ]
     lattice = quad.PointsLattice([eight, eight])
     return [
         Case(

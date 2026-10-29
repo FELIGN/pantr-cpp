@@ -14,57 +14,55 @@ This module provides:
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Final, Literal, cast
 
 import numpy as np
 import numpy.typing as npt
-from numpy.polynomial import chebyshev, legendre
 
-from ._array_utils import _validate_float_dtype
-from .tolerance import get_machine_epsilon
+from ._array_utils import _is_float32
+from ._ext import ext
 
 if TYPE_CHECKING:
+    from ._pantr.quad import PointsLatticeF32, PointsLatticeF64
+    from ._pantr.quad import QuadratureRule as _QuadratureRuleHandle
     from .basis import LagrangeVariant
 
+_Rule1D = tuple[npt.NDArray[np.float32 | np.float64], npt.NDArray[np.float32 | np.float64]]
+"""A 1D rule as returned to the caller: ``(nodes, weights)``."""
 
-def _scale_and_cast_nodes_and_weights(
-    nodes: npt.NDArray[np.float64], weights: npt.NDArray[np.float64], dtype: npt.DTypeLike
-) -> tuple[npt.NDArray[np.float32 | np.float64], npt.NDArray[np.float32 | np.float64]]:
-    """Scale and cast nodes and weights to the given dtype.
+_RuleFn = Callable[[int], _Rule1D]
+"""A C++ rule builder: ``n_pts -> (nodes, weights)``, validating ``n_pts``."""
 
-    The nodes and weights are scaled from the interval [-1, 1] to the interval [0, 1]
-    and then cast to the given dtype.
+_RULES: Final[dict[str, tuple[_RuleFn, _RuleFn]]] = {
+    name: (getattr(ext.quad, name), getattr(ext.quad, f"{name}_f32"))
+    for name in (
+        "trapezoidal_1d",
+        "gauss_legendre_1d",
+        "gauss_lobatto_legendre_1d",
+        "chebyshev_gauss_1st_kind_1d",
+        "chebyshev_gauss_2nd_kind_1d",
+        "tanh_sinh_1d",
+    )
+}
+"""The C++ rule builders by name, as ``(double, float)`` instantiations."""
+
+
+def _rule(name: str, n_pts: int, dtype: npt.DTypeLike) -> _Rule1D:
+    """Build a 1D rule in the C++ library, in the instantiation ``dtype`` selects.
 
     Args:
-        nodes (npt.NDArray[np.float64]): The nodes.
-        weights (npt.NDArray[np.float64]): The weights.
-        dtype (npt.DTypeLike): The dtype of the nodes and weights.
+        name (str): The rule's name in :data:`_RULES`.
+        n_pts (int): Number of points; the C++ builder refuses one below the rule's minimum.
+        dtype (npt.DTypeLike): ``float32`` or ``float64``.
 
     Returns:
-        tuple[npt.NDArray[np.float32 | np.float64], npt.NDArray[np.float32 | np.float64]]:
-            The scaled and cast nodes and weights.
-    """
-    nodes = ((nodes + 1.0) * 0.5).astype(dtype)
-    weights = (weights * 0.5).astype(dtype)
-    return nodes, weights
-
-
-def _validate_n_pts_and_dtype(n_pts: int, dtype: npt.DTypeLike, min_pts: int = 1) -> None:
-    """Validate the number of points and dtype.
-
-    Args:
-        n_pts (int): The number of points. Must be at least ``min_pts``.
-        dtype (npt.DTypeLike): The dtype of the nodes. Must be float32 or float64.
-        min_pts (int): Minimum required number of points. Defaults to 1.
+        _Rule1D: ``(nodes, weights)`` on ``[0, 1]``.
 
     Raises:
-        ValueError: If ``n_pts`` is less than ``min_pts`` or dtype is not
-            float32 or float64.
+        ValueError: If ``dtype`` is not float32 or float64, or ``n_pts`` is below the minimum.
     """
-    if n_pts < min_pts:
-        raise ValueError(f"n_pts must be at least {min_pts}")
-
-    _validate_float_dtype(dtype)
+    f64, f32 = _RULES[name]
+    return f32(n_pts) if _is_float32(dtype) else f64(n_pts)
 
 
 def get_trapezoidal_1d(
@@ -86,18 +84,7 @@ def get_trapezoidal_1d(
     Raises:
         ValueError: If n_pts is less than 1 or dtype is not float32 or float64.
     """
-    _validate_n_pts_and_dtype(n_pts, dtype)
-
-    if n_pts == 1:
-        return np.array([0.5], dtype=dtype), np.array([1.0], dtype=dtype)
-
-    nodes = np.linspace(0, 1, n_pts, dtype=dtype)
-
-    h = 1.0 / float(n_pts - 1)
-    weights = np.full(n_pts, h, dtype=dtype)
-    weights[0] = weights[-1] = 0.5 * h
-
-    return nodes, weights
+    return _rule("trapezoidal_1d", n_pts, dtype)
 
 
 def get_gauss_legendre_1d(
@@ -117,15 +104,7 @@ def get_gauss_legendre_1d(
     Raises:
         ValueError: If n_pts is less than 1 or dtype is not float32 or float64.
     """
-    _validate_n_pts_and_dtype(n_pts, dtype)
-
-    leggauss_t = cast(
-        Callable[[int], tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]],
-        legendre.leggauss,
-    )
-    nodes, weights = leggauss_t(n_pts)
-
-    return _scale_and_cast_nodes_and_weights(nodes, weights, dtype)
+    return _rule("gauss_legendre_1d", n_pts, dtype)
 
 
 def get_gauss_lobatto_legendre_1d(
@@ -145,22 +124,7 @@ def get_gauss_lobatto_legendre_1d(
     Raises:
         ValueError: If n_pts is less than 2 or dtype is not float32 or float64.
     """
-    _validate_n_pts_and_dtype(n_pts, dtype, min_pts=2)
-
-    # Degree N = n_pts - 1 Legendre polynomial P_N
-    # GLL nodes are [-1, roots of P_N'(x), 1] on [-1, 1]
-    N = n_pts - 1
-    basis_t = cast(Callable[[int], Any], legendre.Legendre.basis)
-    P_N = basis_t(N)
-    P_prime = P_N.deriv()
-    interior_nodes = cast(npt.NDArray[np.float64], P_prime.roots())
-    nodes = np.concatenate((np.array([-1.0]), interior_nodes, np.array([1.0])))
-
-    # Weights on [-1, 1]: w_i = 2 / (N (N+1) [P_N(x_i)]^2)
-    P_vals = cast(npt.NDArray[np.float64], P_N(nodes))
-    weights = 2.0 / (float(N) * float(N + 1)) / (P_vals * P_vals)
-
-    return _scale_and_cast_nodes_and_weights(nodes, weights, dtype)
+    return _rule("gauss_lobatto_legendre_1d", n_pts, dtype)
 
 
 def get_chebyshev_gauss_1st_kind_1d(
@@ -182,13 +146,7 @@ def get_chebyshev_gauss_1st_kind_1d(
     Raises:
         ValueError: If n_pts is less than 1 or dtype is not float32 or float64.
     """
-    _validate_n_pts_and_dtype(n_pts, dtype)
-
-    cheb1_t = cast(Callable[[int], npt.NDArray[np.float64]], chebyshev.chebpts1)
-    nodes = cheb1_t(n_pts)
-    weights = np.full(n_pts, np.pi / float(n_pts))
-
-    return _scale_and_cast_nodes_and_weights(nodes, weights, dtype)
+    return _rule("chebyshev_gauss_1st_kind_1d", n_pts, dtype)
 
 
 def get_modified_chebyshev_nodes_1d(
@@ -215,12 +173,9 @@ def get_modified_chebyshev_nodes_1d(
     Raises:
         ValueError: If *n_pts* < 2 or *dtype* is not float32 or float64.
     """
-    _validate_n_pts_and_dtype(n_pts, dtype, min_pts=2)
-
-    dtype_obj = np.dtype(dtype)
-    i = np.arange(n_pts, dtype=dtype_obj)
-    nodes: npt.NDArray[np.float32 | np.float64] = 0.5 - 0.5 * np.cos(np.pi * i / (n_pts - 1))
-    return nodes
+    if _is_float32(dtype):
+        return ext.quad.modified_chebyshev_nodes_1d_f32(n_pts)
+    return ext.quad.modified_chebyshev_nodes_1d(n_pts)
 
 
 def get_chebyshev_gauss_2nd_kind_1d(
@@ -248,176 +203,7 @@ def get_chebyshev_gauss_2nd_kind_1d(
     Raises:
         ValueError: If n_pts is less than 2 or dtype is not float32 or float64.
     """
-    _validate_n_pts_and_dtype(n_pts, dtype, min_pts=2)
-
-    angles = np.arange(1, n_pts + 1, dtype=np.float64) * np.pi / float(n_pts + 1)
-    # Ascending Gauss-Chebyshev-U nodes on [-1, 1]; the weight formula is
-    # symmetric under k -> n_pts + 1 - k, so the pairing stays exact.
-    nodes = -np.cos(angles)
-    weights = np.pi / float(n_pts + 1) * np.sin(angles) ** 2
-
-    return _scale_and_cast_nodes_and_weights(nodes, weights, dtype)
-
-
-# Step-size tuning constant for the double-exponential rule.  Fixing the
-# truncation point so the smallest retained node sits a constant number of decay
-# e-folds from the endpoint turns the equation for the step ``h`` into a
-# ``u * exp(u)`` form whose root is the Lambert W function (see
-# `_generate_tanh_sinh`).  The value resolves the endpoint cluster within the
-# float64 range and keeps the rule numerically interchangeable across releases.
-_TANH_SINH_DECAY_FACTOR: float = 0.6
-"""Decay-rate factor selecting the uniform step ``h`` in transform space."""
-
-
-def _tanh_sinh_min_gap(dtype: npt.DTypeLike) -> float:
-    """Get the smallest endpoint gap ``1 - |x|`` a tanh-sinh node may carry on [-1, 1].
-
-    A double-exponential rule is what it is because no node ever reaches an
-    endpoint; that is what makes an endpoint singularity integrable, and it is
-    the property :func:`get_tanh_sinh_1d` advertises.  The gap falls
-    double-exponentially along the transform axis, so the rule has to stop
-    somewhere, and the place to stop is where the gap stops being representable
-    *in the frame the rule is returned in*.
-
-    :func:`get_tanh_sinh_1d` maps ``[-1, 1]`` onto ``[0, 1]`` by ``(x + 1) / 2``
-    and casts to *dtype*, so the node near the right end is reached as
-    ``((1 - gap) + 1) / 2``, and it is that whole expression, not any one step of
-    it, that has to land strictly below ``1``.  Two of the three steps round.
-    Writing ``u = eps / 2`` for the spacing just below ``1``:
-
-    * ``1 - gap`` rounds to ``1 - u`` while ``gap < 1.5 u``, and to ``1 - 2u``
-      from there on;
-    * ``+ 1`` maps ``1 - u`` to ``2 - u``, the midpoint of ``[2 - 2u, 2]``, which
-      ties to even and so becomes ``2``; it maps ``1 - 2u`` to ``2 - 2u`` exactly;
-    * the halving is exact.
-
-    So the node collapses onto ``1`` exactly when ``gap < 1.5 u = 0.75 eps``, and
-    returning ``eps`` clears that by one representable step of ``gap``, a factor
-    ``4 / 3``.  Bisecting on ``gap`` puts the crossing at ``0.75 eps`` to fifty
-    digits in ``float64`` and in ``float32`` alike, the argument being about the
-    binade boundary at ``1`` and not about the width of the format.
-
-    Note that reasoning about a single step gives the wrong answer here: ``2 -
-    gap`` alone survives down to ``gap > eps / 2``, a factor 1.5 below the true
-    threshold, because it ignores the rounding of ``1 - gap`` that precedes it.
-
-    Truncating there costs nothing.  With ``gap = 1 - tanh(omega)`` one has
-    ``cosh(omega)**-2 = gap * (2 - gap)``, so the discarded weight is
-    ``w = (pi / 2) * cosh(t) * gap * (2 - gap) <= pi * cosh(t) * gap``.  In
-    float64 the threshold puts ``omega`` at ``18.4`` and ``cosh(t)`` at ``11.8``,
-    giving ``w <= 8.3e-15`` against a weight sum of ``2`` (largest measured over
-    ``n`` from 2 to 400: ``8.19e-15``).  That is below the rounding of the sum
-    the weight would have joined, and the rescaling in
-    :func:`_generate_tanh_sinh` restores that sum.
-
-    What this bound does *not* claim is that the returned nodes are all distinct.
-    Two consecutive samples can both clear the threshold and still round onto one
-    representable coordinate, first at ``n_pts = 544`` in ``float64`` and
-    ``n_pts = 324`` in ``float32``, both at ``1 - eps``.  That is the format
-    running out of coordinates rather than a node reaching the endpoint, and the
-    two weights, ``2.9e-16`` together at ``n_pts = 544``, land where they belong.
-
-    Args:
-        dtype (npt.DTypeLike): Floating-point dtype the rule will be returned in.
-
-    Returns:
-        float: The smallest admissible gap, one machine epsilon of *dtype*.
-    """
-    return get_machine_epsilon(dtype)
-
-
-def _generate_tanh_sinh(
-    n: int, dtype: npt.DTypeLike = np.float64
-) -> tuple[npt.NDArray[np.float64], int]:
-    r"""Generate tanh-sinh quadrature nodes and weights on [-1, 1].
-
-    Builds an *n*-point double-exponential (tanh-sinh) scheme.  Under the
-    change of variables :math:`x(t) = \tanh\!\big(\tfrac{\pi}{2}\sinh t\big)`
-    the integral over ``[-1, 1]`` becomes an integral over ``t in R`` of an
-    integrand that decays double-exponentially, so the trapezoidal rule with
-    uniform step *h* converges rapidly.  The Jacobian gives the weight
-    :math:`w(t) = \tfrac{\pi}{2}\,\cosh t \,/\, \cosh^2\!\big(\tfrac{\pi}{2}
-    \sinh t\big)`.  Nodes are generated symmetrically about ``t = 0`` (with a
-    central node at the origin for odd *n*); the step *h* is chosen from the
-    truncation balance solved via the Lambert W function (see
-    :data:`_TANH_SINH_DECAY_FACTOR`).
-
-    Generation stops at the last node whose distance to the endpoint is still
-    representable once the rule is mapped onto ``[0, 1]`` in *dtype* (see
-    :func:`_tanh_sinh_min_gap`), so the effective number of nodes *m* may be less
-    than *n* and no node ever sits on an endpoint.  The weights are finally
-    rescaled onto the measure ``2`` of ``[-1, 1]``, up to the rounding of their
-    own sum.
-
-    Args:
-        n (int): Requested number of quadrature points (must be >= 1).
-        dtype (npt.DTypeLike): Floating-point dtype the rule will be returned in.
-            It sets the truncation point and nothing else; the returned data is
-            float64 either way.  Defaults to ``np.float64``.
-
-    Returns:
-        tuple[npt.NDArray[np.float64], int]: A pair ``(data, m)`` where
-        *data* has shape ``(m, 2)`` with columns ``[node, weight]`` on
-        ``[-1, 1]``, and *m* is the effective node count.
-
-    Note:
-        Nodes and weights follow the double-exponential formulas of Takahasi &
-        Mori (1974), *Publ. RIMS, Kyoto Univ.* 9(3), 721-741; the step-size root
-        is evaluated with :func:`scipy.special.lambertw`.
-    """
-    if n == 1:
-        return np.array([[0.0, 2.0]]), 1
-
-    from scipy.special import lambertw  # noqa: PLC0415
-
-    half_pi = 0.5 * np.pi
-    # Uniform step in transform space; the argument of W follows from the
-    # large-argument truncation balance described in _TANH_SINH_DECAY_FACTOR.
-    decay_arg = 2.0 * _TANH_SINH_DECAY_FACTOR * half_pi * (n - 1)
-    h = 2.0 * float(lambertw(decay_arg).real) / n
-
-    min_gap = _tanh_sinh_min_gap(dtype)
-    buf = np.empty((n, 2), dtype=np.float64)  # worst case: n nodes
-    count = 0
-
-    odd = bool(n % 2)
-    if odd:
-        # Central node at t = 0: x = 0, w = (pi / 2) * cosh(0) / cosh(0)^2.
-        buf[count] = [0.0, half_pi]
-        count += 1
-
-    for i in range(n // 2):
-        # Odd n samples t = h, 2h, ...; even n offsets by half a step.
-        t = (i + 1) * h if odd else (i + 0.5) * h
-        omega = half_pi * np.sinh(t)
-        w = half_pi * np.cosh(t) / np.cosh(omega) ** 2
-        # gap = 1 - tanh(omega), the node's distance from the +1 endpoint,
-        # via the algebraically equal form 2 / (1 + e^{2 omega}).  This keeps
-        # gap a small but nonzero float right up to the resolution limit,
-        # whereas 1 - np.tanh(omega) saturates to 0 a step too early and would
-        # truncate the rule prematurely.
-        gap = 2.0 / (1.0 + np.exp(2.0 * omega))
-
-        # gap decreases monotonically in t, so the first node whose distance to
-        # the endpoint no longer survives the mapping onto [0, 1] ends the rule.
-        if gap < min_gap:
-            break
-
-        # Symmetric pair at -(1 - gap) and +(1 - gap); writing both from
-        # gap keeps the coordinates exact negatives of each other.
-        buf[count] = [-(1.0 - gap), w]
-        count += 1
-        buf[count] = [1.0 - gap, w]
-        count += 1
-
-    data = buf[:count].copy()
-
-    # Rescale the weights onto the measure 2 of [-1, 1].  The sum of the rescaled
-    # weights is 2 only up to the rounding of that sum: dividing by a computed sum
-    # cannot make a floating-point sum exact.
-    data[:, 1] *= 2.0 / np.sum(data[:, 1])
-
-    return data, count
+    return _rule("chebyshev_gauss_2nd_kind_1d", n_pts, dtype)
 
 
 def get_tanh_sinh_1d(
@@ -469,30 +255,27 @@ def get_tanh_sinh_1d(
         >>> bool(abs(weights.sum() - 1.0) < 1e-14)
         True
     """
-    _validate_n_pts_and_dtype(n_pts, dtype)
-
-    data, _ = _generate_tanh_sinh(n_pts, dtype)
-    return _scale_and_cast_nodes_and_weights(data[:, 0], data[:, 1], dtype)
+    return _rule("tanh_sinh_1d", n_pts, dtype)
 
 
-def _frozen_copy(
-    pts: npt.NDArray[np.float32 | np.float64],
-) -> npt.NDArray[np.float32 | np.float64]:
-    """Take a read-only, C-contiguous copy of one direction's coordinates.
+def _as_coordinates(pts: npt.ArrayLike) -> npt.NDArray[np.float32 | np.float64]:
+    """Turn one direction's coordinates into the array the C++ lattice copies.
 
-    The dimensionality is preserved, so a 0-D or 2-D input is still there for the
-    lattice's own validation to reject.
+    ``float32`` and ``float64`` keep their dtype; any other dtype is converted to ``float64``,
+    the lattice being a C++ value of one of those two types. The dimensionality is preserved, so
+    a 0-D or 2-D input is still there for the lattice's validation to reject.
 
     Args:
-        pts (npt.NDArray[np.float32 | np.float64]): The caller's coordinate array.
+        pts (npt.ArrayLike): The caller's coordinates.
 
     Returns:
-        npt.NDArray[np.float32 | np.float64]: A copy the caller cannot reach and
-            nobody can write to.
+        npt.NDArray[np.float32 | np.float64]: A C-contiguous array (a view of the caller's when it
+        already is one; the C++ lattice copies it).
     """
-    frozen = np.array(pts, order="C", copy=True)
-    frozen.flags.writeable = False
-    return frozen
+    arr = np.asarray(pts)
+    if arr.dtype.type not in (np.float32, np.float64):
+        arr = arr.astype(np.float64)
+    return np.ascontiguousarray(arr)
 
 
 class PointsLattice:
@@ -502,16 +285,16 @@ class PointsLattice:
     helpers for constructing the full set of grid points or querying grid
     metadata.
 
-    Immutable once constructed: each coordinate array is copied on the way in
-    and the stored copies are read-only, so what ``_validate_pts_per_dir``
-    checked at construction stays true for the object's whole life. The arrays are
-    read-only, so the first evaluation on a lattice may compile a Numba kernel
-    specialization for read-only input.
+    Immutable once constructed: the coordinates are copied into a C++ value on the way in, and
+    the arrays this object exposes are read-only views of that value, so what was validated at
+    construction stays true for the object's whole life. Coordinates of a dtype other than
+    ``float32`` and ``float64`` are stored as ``float64``.
 
     Attributes:
+        _h (object): The C++ lattice (``PointsLatticeF64`` or ``PointsLatticeF32``).
         _pts_per_dir (tuple[npt.NDArray[np.float32 | np.float64], ...]): One
-            1D coordinate array per spatial dimension. All arrays share the same
-            dtype.
+            read-only 1D coordinate array per spatial dimension, views of ``_h``. All arrays share
+            the same dtype.
     """
 
     def __init__(self, pts_per_dir: Iterable[npt.NDArray[np.float32 | np.float64]]) -> None:
@@ -522,36 +305,60 @@ class PointsLattice:
                 All points must have the same dtype.
 
         Raises:
-            ValueError: If the dimension is less than 1 or the points have different dtypes.
+            ValueError: If the dimension is less than 1, the points have different dtypes, an
+                array is not 1D, or an array is empty.
         """
-        # Snapshot, then freeze, in that order. ``tuple()`` copies the container
-        # and not the arrays, so without the copy the caller keeps a live handle
-        # on the lattice's coordinates, and without the freeze so does anyone
-        # who reads :attr:`pts_per_dir`. Validation below would then describe a
-        # state the object need not still be in: ``arr.shape = (n, 1)`` reshapes
-        # in place and breaks the 1-D invariant with no error raised.
-        self._pts_per_dir: tuple[npt.NDArray[np.float32 | np.float64], ...] = tuple(
-            _frozen_copy(pts) for pts in pts_per_dir
-        )
-        self._validate_pts_per_dir()
-
-    def _validate_pts_per_dir(self) -> None:
-        """Validate the per-direction coordinate arrays.
-
-        Raises:
-            ValueError: If the number of dimensions is less than 1, if arrays
-                have differing dtypes, if any array is not 1D, or if any array
-                is empty.
-        """
-        if self.dim < 1:
+        raw = tuple(np.asarray(pts) for pts in pts_per_dir)
+        if len(raw) < 1:
             raise ValueError("Points lattice must have at least 1 dimension")
-        if not all(pts.dtype == self.dtype for pts in self._pts_per_dir):
+        if not all(pts.dtype == raw[0].dtype for pts in raw):
             raise ValueError("All points must have the same dtype")
-        for pts in self._pts_per_dir:
-            if pts.ndim != 1:
-                raise ValueError("All points must be 1D")
-            if pts.shape[0] == 0:
-                raise ValueError("All points must have at least 1 point")
+        if any(pts.ndim != 1 for pts in raw):
+            raise ValueError("All points must be 1D")
+        coords = [_as_coordinates(pts) for pts in raw]
+        lattice_cls = (
+            ext.quad.PointsLatticeF32
+            if coords[0].dtype.type is np.float32
+            else ext.quad.PointsLatticeF64
+        )
+        # The class is chosen by dtype above; the list's static type spans both.
+        self._set_handle(lattice_cls(cast(Any, coords)))
+
+    def _set_handle(self, handle: PointsLatticeF64 | PointsLatticeF32) -> None:
+        """Hold a C++ lattice and the read-only views of its coordinates.
+
+        Args:
+            handle (PointsLatticeF64 | PointsLatticeF32): The C++ lattice.
+        """
+        self._h = handle
+        # Views of the C++ value, taken once: the value is immutable, so they never go stale, and
+        # reading them is as cheap as reading a Python attribute.
+        self._pts_per_dir: tuple[npt.NDArray[np.float32 | np.float64], ...] = tuple(
+            handle.pts(d) for d in range(handle.dim)
+        )
+
+    @classmethod
+    def _from_handle(cls, handle: PointsLatticeF64 | PointsLatticeF32) -> PointsLattice:
+        """Wrap a C++ lattice built by the library (no copy, no revalidation).
+
+        Args:
+            handle (PointsLatticeF64 | PointsLatticeF32): The C++ lattice.
+
+        Returns:
+            PointsLattice: The wrapper.
+        """
+        lattice = cls.__new__(cls)
+        lattice._set_handle(handle)
+        return lattice
+
+    def __reduce__(self) -> tuple[type[PointsLattice], tuple[tuple[npt.NDArray[Any], ...]]]:
+        """Pickle (and copy) through the constructor, from the coordinates.
+
+        Returns:
+            tuple[type[PointsLattice], tuple[tuple[npt.NDArray[Any], ...]]]: The class and its
+            constructor argument.
+        """
+        return (PointsLattice, (self._pts_per_dir,))
 
     @property
     def dim(self) -> int:
@@ -580,12 +387,10 @@ class PointsLattice:
             tuple[npt.NDArray[np.float32 | np.float64], ...]: One 1D coordinate
             array for each spatial dimension, read-only.
         """
-        # Fresh read-only views rather than the stored arrays themselves, because
-        # ``writeable = False`` stops writes to the data and not changes to the
-        # metadata: ``arr.shape = (n, 1)`` reshapes a read-only array in place and
-        # would leave the lattice holding a 2-D array while :attr:`dim` still
-        # reported 1. A view carries its own shape, so that lands on the caller's
-        # copy and not on ours.
+        # Fresh views rather than the held ones, because ``writeable = False`` stops writes to
+        # the data and not changes to the metadata: ``arr.shape = (n, 1)`` reshapes a read-only
+        # array in place and would leave the lattice holding a 2-D array while :attr:`dim` still
+        # reported 1. A view carries its own shape, so that lands on the caller's copy.
         return tuple(pts.view() for pts in self._pts_per_dir)
 
     def get_all_points(
@@ -601,19 +406,8 @@ class PointsLattice:
             npt.NDArray[np.float32 | np.float64]: The dim-dimensional points
                 in the lattice. It has shape: (n_pts, dim).
         """
-        tp_coords = np.meshgrid(*self._pts_per_dir, indexing="ij")
-        if order == "C":  # Last index varies fastest
-            return cast(
-                npt.NDArray[np.float32 | np.float64],
-                np.array(tp_coords).reshape(self.dim, -1).T,  # (n_pts, dim)
-            )
-        # order == "F": first index varies fastest.  meshgrid(indexing="xy") only
-        # swaps the first two axes, so a Fortran-order ravel of each "ij"
-        # coordinate grid is required for dim >= 3.
-        return cast(
-            npt.NDArray[np.float32 | np.float64],
-            np.stack([c.ravel(order="F") for c in tp_coords], axis=-1),  # (n_pts, dim)
-        )
+        result: npt.NDArray[np.float32 | np.float64] = self._h.all_points(0 if order == "C" else 1)
+        return result
 
 
 def create_lagrange_points_lattice(
@@ -639,18 +433,20 @@ def create_lagrange_points_lattice(
         Lagrange nodes for the given variant and point counts.
 
     Raises:
-        ValueError: If any value in ``n_pts_per_dir`` is less than 1.
+        ValueError: If any value in ``n_pts_per_dir`` is less than 1, ``dtype`` is not float32
+            or float64, or ``lagrange_variant`` is not a :class:`~pantr.basis.LagrangeVariant`
+            value.
     """
-    # Lazy import to avoid circular dependency
-    from .basis._basis_lagrange import _get_lagrange_points  # noqa: PLC0415
+    # Lazy import: pantr.basis imports this module.
+    from .basis._basis_tabulate import _variant_code  # noqa: PLC0415
 
-    if any(n_pts < 1 for n_pts in n_pts_per_dir):
-        raise ValueError("All number of points must be at least 1")
-
-    pts_per_dir = tuple(
-        _get_lagrange_points(lagrange_variant, n_pts, dtype) for n_pts in n_pts_per_dir
+    counts = [int(n) for n in n_pts_per_dir]
+    build = (
+        ext.quad.lagrange_points_lattice_f32
+        if _is_float32(dtype)
+        else ext.quad.lagrange_points_lattice
     )
-    return PointsLattice(pts_per_dir)
+    return PointsLattice._from_handle(build(_variant_code(lagrange_variant), counts))
 
 
 class QuadratureRule:
@@ -663,12 +459,11 @@ class QuadratureRule:
     weights summing to ``1``, the measure of the unit cube, so the rule
     integrates the constant ``1`` to within the rounding of that sum and not
     exactly: a ``ndim``-fold product of rounded 1D weights, summed over
-    ``num_points`` terms, cannot land on ``1.0`` bitwise. Measured over Gauss-
-    Legendre rules of 1 to 40 points per direction, the largest ``|sum - 1|`` is
-    2 ulp in 1D, 3 ulp in 2D and 4 ulp in 3D. The stored arrays are read-only.
+    ``num_points`` terms, cannot land on ``1.0`` bitwise. The stored arrays are read-only views of
+    a C++ value.
     """
 
-    __slots__ = ("_ndim", "_num_points", "_points", "_weights")
+    __slots__ = ("_h", "_ndim", "_num_points", "_points", "_weights")
 
     def __init__(self, points: npt.ArrayLike, weights: npt.ArrayLike) -> None:
         """Build and validate a quadrature rule on the unit cube.
@@ -683,32 +478,46 @@ class QuadratureRule:
                 lengths disagree, either is empty, any value is non-finite, or any
                 point lies outside ``[0, 1]``.
         """
-        pts = np.array(points, dtype=np.float64)
-        wts = np.array(weights, dtype=np.float64)
-        if pts.ndim != 2:  # noqa: PLR2004
-            raise ValueError(f"points must be 2D (num_points, ndim); got shape {pts.shape}.")
-        if wts.ndim != 1:
-            raise ValueError(f"weights must be 1D (num_points,); got shape {wts.shape}.")
-        if pts.shape[0] == 0 or pts.shape[1] == 0:
-            raise ValueError(f"points must be non-empty; got shape {pts.shape}.")
-        if wts.shape[0] != pts.shape[0]:
-            raise ValueError(
-                f"weights length {wts.shape[0]} must match the number of points {pts.shape[0]}."
-            )
-        if not np.all(np.isfinite(pts)):
-            raise ValueError("points must contain only finite values.")
-        if not np.all(np.isfinite(wts)):
-            raise ValueError("weights must contain only finite values.")
-        if np.any(pts < 0.0) or np.any(pts > 1.0):
-            raise ValueError("points must lie in the unit cube [0, 1]^ndim.")
-        pts = np.ascontiguousarray(pts)
-        wts = np.ascontiguousarray(wts)
-        pts.flags.writeable = False
-        wts.flags.writeable = False
-        self._points = pts
-        self._weights = wts
-        self._ndim = int(pts.shape[1])
-        self._num_points = int(pts.shape[0])
+        pts = np.ascontiguousarray(points, dtype=np.float64)
+        wts = np.ascontiguousarray(weights, dtype=np.float64)
+        self._set_handle(ext.quad.QuadratureRule(pts, wts))
+
+    def _set_handle(self, handle: _QuadratureRuleHandle) -> None:
+        """Hold a C++ rule and cache what its properties return (it is immutable).
+
+        Args:
+            handle (_QuadratureRuleHandle): A C++ ``QuadratureRule``.
+        """
+        self._h = handle
+        self._ndim = int(handle.ndim)
+        self._num_points = int(handle.num_points)
+        self._points: npt.NDArray[np.float64] = handle.points
+        self._weights: npt.NDArray[np.float64] = handle.weights
+
+    @classmethod
+    def _from_handle(cls, handle: _QuadratureRuleHandle) -> QuadratureRule:
+        """Wrap a C++ rule built by the library (no copy, no revalidation).
+
+        Args:
+            handle (_QuadratureRuleHandle): A C++ ``QuadratureRule``.
+
+        Returns:
+            QuadratureRule: The wrapper.
+        """
+        rule = cls.__new__(cls)
+        rule._set_handle(handle)
+        return rule
+
+    def __reduce__(
+        self,
+    ) -> tuple[type[QuadratureRule], tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]]:
+        """Pickle (and copy) through the constructor, from the points and weights.
+
+        Returns:
+            tuple[type[QuadratureRule], tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]]:
+            The class and its constructor arguments.
+        """
+        return (QuadratureRule, (self._points, self._weights))
 
     @property
     def ndim(self) -> int:
@@ -783,30 +592,14 @@ def tensor_product_quadrature(
             pair of non-empty 1D arrays, or (via :class:`QuadratureRule`) any
             node lies outside ``[0, 1]``.
     """
-    if len(rules) == 0:
-        raise ValueError("tensor_product_quadrature: rules must have at least one axis.")
-    nodes_per_axis: list[npt.NDArray[np.float64]] = []
-    weights_per_axis: list[npt.NDArray[np.float64]] = []
-    for d, pair in enumerate(rules):
-        nodes_d = np.asarray(pair[0], dtype=np.float64)
-        weights_d = np.asarray(pair[1], dtype=np.float64)
-        if nodes_d.ndim != 1 or weights_d.ndim != 1:
-            raise ValueError(
-                f"tensor_product_quadrature: axis {d} nodes and weights must be 1D; "
-                f"got shapes {nodes_d.shape} and {weights_d.shape}."
-            )
-        if nodes_d.shape[0] == 0 or nodes_d.shape != weights_d.shape:
-            raise ValueError(
-                f"tensor_product_quadrature: axis {d} needs matching non-empty "
-                f"(nodes, weights); got shapes {nodes_d.shape} and {weights_d.shape}."
-            )
-        nodes_per_axis.append(nodes_d)
-        weights_per_axis.append(weights_d)
-    node_mesh = np.meshgrid(*nodes_per_axis, indexing="ij")
-    weight_mesh = np.meshgrid(*weights_per_axis, indexing="ij")
-    points = np.stack([m.ravel() for m in node_mesh], axis=1)
-    weights = np.prod(np.stack([w.ravel() for w in weight_mesh], axis=0), axis=0)
-    return QuadratureRule(points, weights)
+    pairs = [
+        (
+            np.ascontiguousarray(pair[0], dtype=np.float64),
+            np.ascontiguousarray(pair[1], dtype=np.float64),
+        )
+        for pair in rules
+    ]
+    return QuadratureRule._from_handle(ext.quad.tensor_product_quadrature(pairs))
 
 
 def gauss_legendre_quadrature(ndim: int, npts: int | Sequence[int]) -> QuadratureRule:
@@ -831,20 +624,8 @@ def gauss_legendre_quadrature(ndim: int, npts: int | Sequence[int]) -> Quadratur
         Nodes and weights follow the classical Gauss-Legendre construction
         :cite:p:`golub1969gauss`.
     """
-    if ndim < 1:
-        raise ValueError(f"gauss_legendre_quadrature: ndim must be >= 1; got {ndim}.")
-    npts_tuple = (int(npts),) * ndim if isinstance(npts, int) else tuple(int(n) for n in npts)
-    if len(npts_tuple) != ndim:
-        raise ValueError(
-            f"gauss_legendre_quadrature: npts must be a scalar or a length-{ndim} sequence; "
-            f"got length {len(npts_tuple)}."
-        )
-    if any(n < 1 for n in npts_tuple):
-        raise ValueError(
-            f"gauss_legendre_quadrature: every npts entry must be >= 1; got {npts_tuple!r}."
-        )
-    rules = [get_gauss_legendre_1d(n, dtype=np.float64) for n in npts_tuple]
-    return tensor_product_quadrature(rules)
+    counts = [int(npts)] * ndim if isinstance(npts, int) else [int(n) for n in npts]
+    return QuadratureRule._from_handle(ext.quad.gauss_legendre_quadrature(ndim, counts))
 
 
 __all__ = [

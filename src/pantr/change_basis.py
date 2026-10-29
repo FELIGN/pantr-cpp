@@ -69,27 +69,18 @@ derivation independent of the code it grades. It runs as a test,
 asserted.
 """
 
-import functools
-from collections.abc import Callable, Mapping
-from math import comb
+from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Final, NamedTuple
 
 import numpy as np
 import numpy.typing as npt
 
-from .basis import (
-    LagrangeVariant,
-    tabulate_bernstein_1d,
-    tabulate_cardinal_bspline_1d,
-    tabulate_legendre_1d,
-)
-from .basis._basis_lagrange import _get_lagrange_points
-from .basis._basis_utils import (
-    _allocate_or_validate_out,
-    _validate_float_dtype,
-)
-from .quad import get_gauss_legendre_1d
+from ._array_utils import _is_float32
+from ._ext import ext
+from .basis import LagrangeVariant
+from .basis._basis_tabulate import _variant_code
+from .basis._basis_utils import _allocate_or_validate_out
 
 
 class _DegreeLimit(NamedTuple):
@@ -104,7 +95,9 @@ class _DegreeLimit(NamedTuple):
     float64: int
 
 
-_CARDINAL_TO_BERNSTEIN_MAX_DEGREE: Final = _DegreeLimit(float32=8, float64=14)
+_CARDINAL_TO_BERNSTEIN_MAX_DEGREE: Final = _DegreeLimit(
+    *ext.change_basis.cardinal_to_bernstein_max_degree()
+)
 r"""Supported degrees of :func:`compute_cardinal_to_bernstein_1d`.
 
 Governing matrix: ``A``, the Bernstein-to-cardinal matrix this builder inverts.
@@ -125,7 +118,9 @@ here (at degree 11 in float64 it stands at ``9.2`` while the returned matrix is 
 ``3e-4``), so enforcing it would refuse results with four good digits.
 """
 
-_BERNSTEIN_TO_CARDINAL_MAX_DEGREE: Final = _DegreeLimit(float32=12, float64=26)
+_BERNSTEIN_TO_CARDINAL_MAX_DEGREE: Final = _DegreeLimit(
+    *ext.change_basis.bernstein_to_cardinal_max_degree()
+)
 r"""Supported degrees of :func:`compute_bernstein_to_cardinal_1d`.
 
 Governing matrix: the Bernstein Gram matrix :math:`G_{\mathrm{bern}}` this builder's
@@ -138,7 +133,9 @@ criterion here; it does not set the limit, and no limit in this module is set by
 quantity.
 """
 
-_CARDINAL_TO_LEGENDRE_MAX_DEGREE: Final = _DegreeLimit(float32=6, float64=12)
+_CARDINAL_TO_LEGENDRE_MAX_DEGREE: Final = _DegreeLimit(
+    *ext.change_basis.cardinal_to_legendre_max_degree()
+)
 r"""Supported degrees of the cardinal-to-Legendre direction.
 
 Shared by :func:`compute_cardinal_to_legendre_1d` and
@@ -153,11 +150,10 @@ solvability criterion bounds the accuracy too, and no separate accuracy statemen
 
 _BERNSTEIN_TO_LAGRANGE_MAX_DEGREE: Final[Mapping[LagrangeVariant, _DegreeLimit]] = MappingProxyType(
     {
-        LagrangeVariant.EQUISPACES: _DegreeLimit(float32=17, float64=37),
-        LagrangeVariant.GAUSS_LEGENDRE: _DegreeLimit(float32=22, float64=51),
-        LagrangeVariant.GAUSS_LOBATTO_LEGENDRE: _DegreeLimit(float32=23, float64=52),
-        LagrangeVariant.CHEBYSHEV_1ST: _DegreeLimit(float32=23, float64=52),
-        LagrangeVariant.CHEBYSHEV_2ND: _DegreeLimit(float32=23, float64=52),
+        variant: _DegreeLimit(
+            *ext.change_basis.bernstein_to_lagrange_max_degree(_variant_code(variant))
+        )
+        for variant in LagrangeVariant
     }
 )
 r"""Supported degrees of :func:`compute_bernstein_to_lagrange_1d`, per node family.
@@ -177,72 +173,83 @@ matrix pantr actually forms rather than an idealized one.
 """
 
 
-def _validate_degree_in_domain(
-    degree: int,
-    dtype: npt.DTypeLike,
-    max_degree: _DegreeLimit,
-    builder: str,
-) -> None:
-    """Refuse a ``(degree, dtype)`` pair outside a builder's supported domain.
-
-    See the module docstring for what sets the boundary. This is a pure precondition:
-    inside the domain it does nothing at all, so it cannot perturb a returned matrix. It runs
-    *before* the output array is allocated, so a degree far outside the domain is refused with
-    this message rather than by whatever the allocation of a huge array would raise.
-
-    Args:
-        degree (int): Polynomial degree the caller asked for.
-        dtype (npt.DTypeLike): Output dtype; validated here, since this runs before the
-            output array exists.
-        max_degree (_DegreeLimit): Largest supported degree per format.
-        builder (str): Name of the calling builder, quoted in the message so the caller is
-            told which function refused rather than only that some matrix was singular.
-
-    Raises:
-        ValueError: If ``dtype`` is not float32/float64, or ``degree`` exceeds what that
-            dtype supports.
-    """
-    _validate_float_dtype(dtype)
-    resolved = np.dtype(dtype)
-    limit = max_degree.float32 if resolved == np.float32 else max_degree.float64
-    if degree <= limit:
-        return
-    raise ValueError(
-        f"{builder}: degree {degree} is outside the supported domain for {resolved.name} "
-        f"(supported: degree <= {max_degree.float32} in float32, "
-        f"degree <= {max_degree.float64} in float64). Past that degree the matrix this "
-        f"builder solves with is singular to working precision, so the error bound on the "
-        f"result reaches 100% and guarantees no correct digit; see the pantr.change_basis "
-        f"module docstring for the derivation."
-    )
+_LAGRANGE_TO_BERNSTEIN: Final[int] = 0
+"""Wire value of the Lagrange-to-Bernstein builder and process table."""
+_BERNSTEIN_TO_LAGRANGE: Final[int] = 1
+"""Wire value of the Bernstein-to-Lagrange builder and process table."""
+_BERNSTEIN_TO_CARDINAL: Final[int] = 2
+"""Wire value of the Bernstein-to-cardinal builder and process table."""
+_CARDINAL_TO_BERNSTEIN: Final[int] = 3
+"""Wire value of the cardinal-to-Bernstein builder and process table."""
+_LEGENDRE_TO_CARDINAL: Final[int] = 4
+"""Wire value of the Legendre-to-cardinal builder and process table."""
+_CARDINAL_TO_LEGENDRE: Final[int] = 5
+"""Wire value of the cardinal-to-Legendre builder and process table."""
+_CARDINAL_DUAL_LEGENDRE: Final[int] = 6
+"""Wire value of the cardinal-dual Legendre builder."""
+_MONOMIAL_TO_BERNSTEIN: Final[int] = 7
+"""Wire value of the monomial-to-Bernstein builder."""
 
 
-def _prepare_square_out(
+def _build(
+    builder: int,
     degree: int,
     dtype: npt.DTypeLike,
     out: npt.NDArray[np.float32 | np.float64] | None,
+    variant: int = 0,
 ) -> npt.NDArray[np.float32 | np.float64]:
-    """Validate ``dtype`` and allocate/validate a ``(degree+1, degree+1)`` matrix.
+    """Build a change-of-basis matrix in the C++ library, into ``out`` when given.
 
-    Shared prologue for the ``compute_*_1d`` change-of-basis builders, which all
-    return a square ``(degree+1, degree+1)`` matrix in a validated float dtype.
+    The C++ builder validates the degree and the ``(degree, dtype)`` domain and computes; only
+    then is ``out`` validated and written, so a refused call leaves it untouched.
 
     Args:
-        degree (int): Polynomial degree; the matrix is ``(degree+1, degree+1)``.
+        builder (int): The builder's wire value.
+        degree (int): Polynomial degree.
         dtype (npt.DTypeLike): Output dtype; must be ``float32`` or ``float64``.
-        out (npt.NDArray[np.float32 | np.float64] | None): Caller-provided output
-            array to validate, or ``None`` to allocate a fresh one.
+        out (npt.NDArray[np.float32 | np.float64] | None): Caller-provided output array to
+            validate and fill, or ``None`` to return a fresh one.
+        variant (int): The Lagrange node family's wire value, for the Lagrange builders.
+            Defaults to 0.
 
     Returns:
-        npt.NDArray[np.float32 | np.float64]: The validated or freshly allocated
-        ``(degree+1, degree+1)`` matrix.
+        npt.NDArray[np.float32 | np.float64]: The ``(degree+1, degree+1)`` matrix, ``out`` itself
+        when given.
 
     Raises:
-        ValueError: If ``dtype`` is not float32/float64, or ``out`` has the wrong
-            shape, dtype, or is not writeable.
+        ValueError: If ``dtype`` is not float32/float64, the C++ builder refuses the degree, or
+            ``out`` has the wrong shape, dtype, or is not writeable.
     """
-    _validate_float_dtype(dtype)
-    return _allocate_or_validate_out(out, (degree + 1, degree + 1), dtype)
+    build = ext.change_basis.build_f32 if _is_float32(dtype) else ext.change_basis.build
+    result: npt.NDArray[np.float32 | np.float64] = build(builder, degree, variant)
+    if out is None:
+        return result
+    out = _allocate_or_validate_out(out, (degree + 1, degree + 1), dtype)
+    out[...] = result
+    return out
+
+
+def _cached(
+    kind: int, degree: int, dtype: npt.DTypeLike, variant: int = 0
+) -> npt.NDArray[np.float32 | np.float64]:
+    """Get a change-of-basis matrix from the C++ library's process table.
+
+    Args:
+        kind (int): The table's wire value.
+        degree (int): Polynomial degree.
+        dtype (npt.DTypeLike): ``float32`` or ``float64``.
+        variant (int): The Lagrange node family's wire value, for the Lagrange tables.
+            Defaults to 0.
+
+    Returns:
+        npt.NDArray[np.float32 | np.float64]: A read-only view of the shared matrix.
+
+    Raises:
+        ValueError: As the matching builder.
+    """
+    table = ext.change_basis.cached_f32 if _is_float32(dtype) else ext.change_basis.cached
+    matrix: npt.NDArray[np.float32 | np.float64] = table(kind, degree, variant)
+    return matrix
 
 
 def compute_lagrange_to_bernstein_1d(
@@ -282,13 +289,7 @@ def compute_lagrange_to_bernstein_1d(
         ValueError: If degree is lower than 1, dtype is not float32 or float64, or if `out` is
             provided and has incorrect shape or dtype.
     """
-    if degree < 1:
-        raise ValueError("Degree must at least 1")
-    out = _prepare_square_out(degree, dtype, out)
-
-    points = _get_lagrange_points(lagrange_variant, degree + 1, dtype)
-    tabulate_bernstein_1d(degree, points, out=out.T)
-    return out
+    return _build(_LAGRANGE_TO_BERNSTEIN, degree, dtype, out, _variant_code(lagrange_variant))
 
 
 def compute_bernstein_to_lagrange_1d(
@@ -360,96 +361,7 @@ def compute_bernstein_to_lagrange_1d(
             still accurate; see the module docstring for the derivation, and the
             ``Warning:`` above for the accuracy attained inside it.
     """
-    if degree < 1:
-        raise ValueError("Degree must at least 1")
-    # `LagrangeVariant(...)` rather than a bare lookup: an unrecognized variant would
-    # otherwise leave this function through `KeyError`, which is exactly the kind of
-    # undocumented exception type the domain exists to stop escaping.
-    variant = LagrangeVariant(lagrange_variant)
-    _validate_degree_in_domain(
-        degree,
-        dtype,
-        _BERNSTEIN_TO_LAGRANGE_MAX_DEGREE[variant],
-        f"compute_bernstein_to_lagrange_1d with {variant.name} nodes",
-    )
-    out = _prepare_square_out(degree, dtype, out)
-
-    forward = compute_lagrange_to_bernstein_1d(degree, lagrange_variant, dtype)
-    out[:] = np.linalg.solve(forward, np.eye(degree + 1, dtype=out.dtype))
-    return out
-
-
-def _compute_change_basis_1D(
-    new_basis_eval: Callable[
-        [npt.NDArray[np.float32 | np.float64]], npt.NDArray[np.float32 | np.float64]
-    ],
-    old_basis_eval: Callable[
-        [npt.NDArray[np.float32 | np.float64]], npt.NDArray[np.float32 | np.float64]
-    ],
-    n_quad_pts: int,
-    dtype: npt.DTypeLike = np.float64,
-    out: npt.NDArray[np.float32 | np.float64] | None = None,
-) -> npt.NDArray[np.float32 | np.float64]:
-    """Create a change of basis operator using numerical quadrature.
-
-    This function computes the transformation matrix M that satisfies:
-        old_basis(x) = M @ new_basis(x)
-
-    That is, row ``i`` of ``M`` holds the coefficients of the ``i``-th *old* basis
-    function expanded in the *new* basis. Note the direction: the public
-    ``compute_A_to_B_1d`` wrappers document ``M @ [A values] = [B values]`` and
-    therefore pass ``new_basis_eval=A``, ``old_basis_eval=B``.
-
-    The matrix is computed by solving the system C = G M^T where:
-    - G is the Gram matrix of the new basis
-    - C is the mixed inner product matrix between new and old bases
-
-    Args:
-        new_basis_eval (callable): Function that evaluates the new basis at points.
-        old_basis_eval (callable): Function that evaluates the old basis at points.
-        n_quad_pts (int): Number of quadrature points for numerical integration.
-            Must be positive.
-        dtype (npt.DTypeLike): Floating point type for the output matrix.
-            Defaults to np.float64.
-        out (npt.NDArray[np.float32 | np.float64] | None): Optional output array
-            where the result will be stored. If None, a new array is allocated.
-            Must have the correct shape and dtype matching the `dtype` parameter
-            if provided. The shape is determined by the number of basis functions
-            in the old and new bases. This follows NumPy's style for output arrays.
-            Defaults to None.
-
-    Returns:
-        npt.NDArray[np.float32 | np.float64]: Change of basis transformation matrix.
-            If `out` was provided, returns the same array.
-
-    Raises:
-        ValueError: If number of quadrature points is not positive, dtype is not float32 or
-            float64, or if `out` is provided and has incorrect shape or dtype.
-    """
-    if n_quad_pts < 1:
-        raise ValueError("Number of quadrature points must be positive.")
-    _validate_float_dtype(dtype)
-
-    # 1. Get Gauss-Legendre quadrature points and weights for the inner product on [0, 1]
-    points, weights = get_gauss_legendre_1d(n_quad_pts, dtype)
-
-    # 2. Pre-evaluate all basis functions at all quadrature points for efficiency
-    new_basis = new_basis_eval(points)
-    old_basis = old_basis_eval(points)
-
-    out = _allocate_or_validate_out(out, (old_basis.shape[1], new_basis.shape[1]), dtype)
-
-    # 3. Compute the Gram matrix G for the new basis B: G_kj = <b_k, b_j>
-    # The inner product <f, g> is approximated by sum(w_m * f(x_m) * g(x_m))
-    weights_diag = np.diag(weights)
-    G = new_basis.T @ weights_diag @ new_basis
-
-    # 4. Compute the mixed inner product matrix C: C_ki = <b_k, a_i>
-    C = new_basis.T @ weights_diag @ old_basis
-
-    # 5. Solve the system C = G M^T for M^T, which means M = (G^-1 C)^T
-    out[:] = np.linalg.solve(G, C).T
-    return out
+    return _build(_BERNSTEIN_TO_LAGRANGE, degree, dtype, out, _variant_code(lagrange_variant))
 
 
 def compute_bernstein_to_cardinal_1d(
@@ -506,23 +418,7 @@ def compute_bernstein_to_cardinal_1d(
             still accurate; see the module docstring for the derivation, and the
             ``Warning:`` above for the accuracy attained inside it.
     """
-    if degree < 0:
-        raise ValueError("Degree must be non-negative")
-    _validate_degree_in_domain(
-        degree,
-        dtype,
-        _BERNSTEIN_TO_CARDINAL_MAX_DEGREE,
-        "compute_bernstein_to_cardinal_1d",
-    )
-    out = _prepare_square_out(degree, dtype, out)
-
-    return _compute_change_basis_1D(
-        new_basis_eval=functools.partial(tabulate_bernstein_1d, degree),
-        old_basis_eval=functools.partial(tabulate_cardinal_bspline_1d, degree),
-        n_quad_pts=degree + 1,
-        dtype=dtype,
-        out=out,
-    )
+    return _build(_BERNSTEIN_TO_CARDINAL, degree, dtype, out)
 
 
 def compute_cardinal_to_bernstein_1d(
@@ -609,19 +505,7 @@ def compute_cardinal_to_bernstein_1d(
         >>> np.allclose(A @ B, np.eye(4), atol=1e-13)
         True
     """
-    if degree < 0:
-        raise ValueError("Degree must be non-negative")
-    _validate_degree_in_domain(
-        degree,
-        dtype,
-        _CARDINAL_TO_BERNSTEIN_MAX_DEGREE,
-        "compute_cardinal_to_bernstein_1d",
-    )
-    out = _prepare_square_out(degree, dtype, out)
-
-    forward = compute_bernstein_to_cardinal_1d(degree, dtype)
-    out[:] = np.linalg.solve(forward, np.eye(degree + 1, dtype=out.dtype))
-    return out
+    return _build(_CARDINAL_TO_BERNSTEIN, degree, dtype, out)
 
 
 def compute_legendre_to_cardinal_1d(
@@ -674,17 +558,7 @@ def compute_legendre_to_cardinal_1d(
         >>> np.allclose(A, [[0.5, -0.28867513], [0.5, 0.28867513]])
         True
     """
-    if degree < 0:
-        raise ValueError("Degree must be non-negative")
-    out = _prepare_square_out(degree, dtype, out)
-
-    return _compute_change_basis_1D(
-        new_basis_eval=functools.partial(tabulate_legendre_1d, degree),
-        old_basis_eval=functools.partial(tabulate_cardinal_bspline_1d, degree),
-        n_quad_pts=degree + 1,
-        dtype=dtype,
-        out=out,
-    )
+    return _build(_LEGENDRE_TO_CARDINAL, degree, dtype, out)
 
 
 def compute_cardinal_to_legendre_1d(
@@ -757,19 +631,7 @@ def compute_cardinal_to_legendre_1d(
         >>> np.allclose(A @ W, np.eye(4), atol=1e-13)
         True
     """
-    if degree < 0:
-        raise ValueError("Degree must be non-negative")
-    _validate_degree_in_domain(
-        degree,
-        dtype,
-        _CARDINAL_TO_LEGENDRE_MAX_DEGREE,
-        "compute_cardinal_to_legendre_1d",
-    )
-    out = _prepare_square_out(degree, dtype, out)
-
-    forward = compute_legendre_to_cardinal_1d(degree, dtype)
-    out[:] = np.linalg.solve(forward, np.eye(degree + 1, dtype=out.dtype))
-    return out
+    return _build(_CARDINAL_TO_LEGENDRE, degree, dtype, out)
 
 
 def compute_cardinal_dual_legendre_coeffs_1d(
@@ -841,18 +703,7 @@ def compute_cardinal_dual_legendre_coeffs_1d(
         >>> np.allclose(D, W.T)
         True
     """
-    if degree < 0:
-        raise ValueError("Degree must be non-negative")
-    _validate_degree_in_domain(
-        degree,
-        dtype,
-        _CARDINAL_TO_LEGENDRE_MAX_DEGREE,
-        "compute_cardinal_dual_legendre_coeffs_1d",
-    )
-    out = _prepare_square_out(degree, dtype, out)
-
-    out[:] = compute_cardinal_to_legendre_1d(degree, dtype).T
-    return out
+    return _build(_CARDINAL_DUAL_LEGENDRE, degree, dtype, out)
 
 
 def compute_monomial_to_bernstein_1d(
@@ -893,19 +744,9 @@ def compute_monomial_to_bernstein_1d(
         ValueError: If degree is negative, dtype is not float32 or float64, or if `out`
             is provided and has incorrect shape or dtype.
     """
-    if degree < 0:
-        raise ValueError("Degree must be non-negative")
-    out = _prepare_square_out(degree, dtype, out)
-    out[:] = 0
-
-    for i in range(degree + 1):
-        for j in range(i + 1):
-            out[i, j] = comb(i, j) / comb(degree, j)
-
-    return out
+    return _build(_MONOMIAL_TO_BERNSTEIN, degree, dtype, out)
 
 
-@functools.lru_cache(maxsize=64)
 def _cached_lagrange_to_bernstein_matrix(
     degree: int,
     lagrange_variant: LagrangeVariant,
@@ -918,7 +759,9 @@ def _cached_lagrange_to_bernstein_matrix(
     the extraction-operator routines.  Because the matrix depends only on
     ``(degree, lagrange_variant, dtype)`` — never on the knot vector — it is
     safe to share a single immutable copy across all calls with matching
-    arguments.
+    arguments. The copy lives in the C++ library's process table
+    (``pantr::change_basis::cached``, degrees up to 64); repeated calls return read-only
+    views of that one matrix, which share memory without being the same Python object.
 
     The returned array has ``writeable=False`` to guard the cached copy against
     accidental in-place mutation.  NumPy's ``matmul`` and ``@`` operator accept
@@ -934,12 +777,9 @@ def _cached_lagrange_to_bernstein_matrix(
         npt.NDArray[np.float32 | np.float64]: Read-only ``(degree+1, degree+1)``
             transformation matrix such that ``C @ lagrange_values = bernstein_values``.
     """
-    mat = compute_lagrange_to_bernstein_1d(degree, lagrange_variant, dtype)
-    mat.flags.writeable = False
-    return mat
+    return _cached(_LAGRANGE_TO_BERNSTEIN, degree, dtype, _variant_code(lagrange_variant))
 
 
-@functools.lru_cache(maxsize=64)
 def _cached_cardinal_to_bernstein_matrix(
     degree: int,
     dtype: np.dtype[np.float32 | np.float64],
@@ -950,7 +790,10 @@ def _cached_cardinal_to_bernstein_matrix(
     :func:`compute_cardinal_to_bernstein_1d` used internally by
     the extraction-operator routines.  Because the matrix depends only on
     ``(degree, dtype)`` — never on the knot vector — it is safe to share a
-    single immutable copy across all calls with matching arguments.
+    single immutable copy across all calls with matching arguments. The copy lives in the
+    C++ library's process table (``pantr::change_basis::cached``, degrees up to 64); repeated
+    calls return read-only views of that one matrix, which share memory without being the
+    same Python object.
 
     The returned array has ``writeable=False`` to guard the cached copy against
     accidental in-place mutation.  NumPy's ``matmul`` and ``@`` operator accept
@@ -965,12 +808,9 @@ def _cached_cardinal_to_bernstein_matrix(
         npt.NDArray[np.float32 | np.float64]: Read-only ``(degree+1, degree+1)``
             transformation matrix such that ``C @ cardinal_values = bernstein_values``.
     """
-    mat = compute_cardinal_to_bernstein_1d(degree, dtype)
-    mat.flags.writeable = False
-    return mat
+    return _cached(_CARDINAL_TO_BERNSTEIN, degree, dtype)
 
 
-@functools.lru_cache(maxsize=64)
 def _cached_legendre_to_cardinal_matrix(
     degree: int,
     dtype: np.dtype[np.float32 | np.float64],
@@ -980,7 +820,10 @@ def _cached_legendre_to_cardinal_matrix(
     This is the hot-path counterpart of
     :func:`compute_legendre_to_cardinal_1d`.  Because the matrix depends only on
     ``(degree, dtype)`` — never on the knot vector — it is safe to share a
-    single immutable copy across all calls with matching arguments.
+    single immutable copy across all calls with matching arguments. The copy lives in the
+    C++ library's process table (``pantr::change_basis::cached``, degrees up to 64); repeated
+    calls return read-only views of that one matrix, which share memory without being the
+    same Python object.
 
     The returned array has ``writeable=False`` to guard the cached copy against
     accidental in-place mutation.  NumPy's ``matmul`` and ``@`` operator accept
@@ -995,12 +838,9 @@ def _cached_legendre_to_cardinal_matrix(
         npt.NDArray[np.float32 | np.float64]: Read-only ``(degree+1, degree+1)``
             transformation matrix such that ``A @ legendre_values = cardinal_values``.
     """
-    mat = compute_legendre_to_cardinal_1d(degree, dtype)
-    mat.flags.writeable = False
-    return mat
+    return _cached(_LEGENDRE_TO_CARDINAL, degree, dtype)
 
 
-@functools.lru_cache(maxsize=64)
 def _cached_cardinal_to_legendre_matrix(
     degree: int,
     dtype: np.dtype[np.float32 | np.float64],
@@ -1010,7 +850,10 @@ def _cached_cardinal_to_legendre_matrix(
     This is the hot-path counterpart of
     :func:`compute_cardinal_to_legendre_1d`.  Because the matrix depends only on
     ``(degree, dtype)`` — never on the knot vector — it is safe to share a
-    single immutable copy across all calls with matching arguments.
+    single immutable copy across all calls with matching arguments. The copy lives in the
+    C++ library's process table (``pantr::change_basis::cached``, degrees up to 64); repeated
+    calls return read-only views of that one matrix, which share memory without being the
+    same Python object.
 
     The returned array has ``writeable=False`` to guard the cached copy against
     accidental in-place mutation.  NumPy's ``matmul`` and ``@`` operator accept
@@ -1025,9 +868,7 @@ def _cached_cardinal_to_legendre_matrix(
         npt.NDArray[np.float32 | np.float64]: Read-only ``(degree+1, degree+1)``
             transformation matrix such that ``W @ cardinal_values = legendre_values``.
     """
-    mat = compute_cardinal_to_legendre_1d(degree, dtype)
-    mat.flags.writeable = False
-    return mat
+    return _cached(_CARDINAL_TO_LEGENDRE, degree, dtype)
 
 
 __all__ = [

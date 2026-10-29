@@ -7,18 +7,12 @@ import numpy.typing as npt
 import pytest
 
 import pantr
+from pantr import _testing
 from pantr.basis import (
     LagrangeVariant,
     tabulate_bernstein_1d,
     tabulate_cardinal_bspline_1d,
     tabulate_lagrange_1d,
-)
-from pantr.basis._basis_core import (
-    _PARALLEL_MIN_NUM_PTS,
-    _tabulate_Bernstein_basis_1D_core,
-    _tabulate_Bernstein_basis_1D_serial_core,
-    _tabulate_Bernstein_basis_deriv_1D_core,
-    _tabulate_Bernstein_basis_deriv_1D_serial_core,
 )
 from pantr.bspline import (
     BsplineSpace1D,
@@ -27,6 +21,7 @@ from pantr.bspline import (
     create_uniform_periodic_knots,
 )
 from pantr.bspline._bspline_basis_core import (
+    _PARALLEL_MIN_NUM_PTS,
     _compute_basis_deriv_nurbs_book_impl,
     _compute_basis_deriv_nurbs_book_serial_impl,
     _compute_basis_nurbs_book_impl,
@@ -2554,36 +2549,42 @@ class TestKnotPredicateCaching:
 
 
 class TestBernsteinSerialParallelTwins:
-    """Bernstein serial twin cores must match the parallel cores exactly."""
+    """Bernstein tabulation must not depend on the thread count (M7).
 
-    @pytest.mark.parametrize("num_pts", [1, 3, 100, 5000])
+    The Numba serial twins are gone with their kernels: the C++ kernel runs the same chunks on
+    one thread or many, each point computed whole by one thread with no reduction across
+    points. Compared within one rounding of each value rather than bitwise, bit-identity not
+    being a criterion on floating point.
+    """
+
+    @pytest.mark.parametrize("num_pts", [1, 3, 100, 5000, 200_000])
     @pytest.mark.parametrize("degree", [0, 1, 2, 4])
     def test_values_match(self, num_pts: int, degree: int) -> None:
-        """Serial and parallel Bernstein value cores agree bitwise (incl. t=1)."""
+        """One thread and every thread agree (incl. t=1), across the serial threshold."""
         rng = np.random.default_rng(19)
         t = rng.random(num_pts)
         t[0] = 1.0  # exercise the t == 1 special case
 
-        out_par = np.empty((num_pts, degree + 1), dtype=np.float64)
-        _tabulate_Bernstein_basis_1D_core(np.int32(degree), t, out_par)
-        out_ser = np.empty((num_pts, degree + 1), dtype=np.float64)
-        _tabulate_Bernstein_basis_1D_serial_core(np.int32(degree), t, out_ser)
-        np.testing.assert_array_equal(out_ser, out_par)
+        with pantr.num_threads(1):
+            out_one = tabulate_bernstein_1d(degree, t)
+        out_many = tabulate_bernstein_1d(degree, t)
+        eps = float(np.finfo(np.float64).eps)
+        np.testing.assert_allclose(out_one, out_many, rtol=eps, atol=0.0)
 
-    @pytest.mark.parametrize("num_pts", [1, 3, 100, 5000])
+    @pytest.mark.parametrize("num_pts", [1, 3, 100, 5000, 60_000])
     @pytest.mark.parametrize("degree", [0, 2, 3])
     def test_derivs_match(self, num_pts: int, degree: int) -> None:
-        """Serial and parallel Bernstein derivative cores agree bitwise."""
+        """One thread and every thread agree on the derivative tabulation."""
         rng = np.random.default_rng(23)
         t = rng.random(num_pts)
         t[-1] = 1.0
         n_deriv = degree + 1
 
-        out_par = np.empty((num_pts, n_deriv + 1, degree + 1), dtype=np.float64)
-        _tabulate_Bernstein_basis_deriv_1D_core(np.int32(degree), t, n_deriv, out_par)
-        out_ser = np.empty((num_pts, n_deriv + 1, degree + 1), dtype=np.float64)
-        _tabulate_Bernstein_basis_deriv_1D_serial_core(np.int32(degree), t, n_deriv, out_ser)
-        np.testing.assert_array_equal(out_ser, out_par)
+        with pantr.num_threads(1):
+            out_one = _testing.tabulate_bernstein_derivatives_1d(degree, t, n_deriv)
+        out_many = _testing.tabulate_bernstein_derivatives_1d(degree, t, n_deriv)
+        eps = float(np.finfo(np.float64).eps)
+        np.testing.assert_allclose(out_one, out_many, rtol=eps, atol=0.0)
 
     def test_bezier_like_layer2_dispatch_consistent(self) -> None:
         """Layer-2 results on a Bézier-like space agree below and above the threshold."""

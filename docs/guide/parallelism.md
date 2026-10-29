@@ -16,9 +16,7 @@ The following operations are parallelized over **evaluation points**:
 | B-spline basis derivatives (DerBasisFuncs) | `_compute_basis_deriv_nurbs_book_impl` | points |
 | B-spline evaluation (basis + combine) | `_evaluate_Bspline_basis_combine_1D` | points |
 | B-spline derivative evaluation | `_evaluate_Bspline_basis_combine_*_deriv_1D` | points |
-| Bernstein basis evaluation | `_tabulate_Bernstein_basis_1D_core` | points |
-| Legendre basis evaluation | `_tabulate_Legendre_basis_1D_core` | points |
-| Cardinal B-spline basis evaluation | `_tabulate_cardinal_Bspline_basis_1D_core` | points |
+| Bernstein, cardinal B-spline, Legendre and Lagrange basis evaluation (1D and tensor product) | C++ (`include/pantr/basis/`), on pantr's own thread pool | points |
 | Bezier evaluation and derivatives | `_evaluate_bezier_1d_core` | points |
 | Bezier split / slice / restrict | `_split_bezier_1d_core` | control point columns |
 | Bezier extraction (`to_beziers`) | `_apply_bezier_extraction_1d_core` | elements |

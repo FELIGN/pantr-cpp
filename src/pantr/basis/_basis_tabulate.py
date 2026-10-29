@@ -8,20 +8,23 @@ and delegates to Layer 2 implementations.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from enum import StrEnum
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Final, Literal
 
 import numpy as np
 import numpy.typing as npt
 
 from ._basis_1D import (
+    _BERNSTEIN,
+    _CARDINAL_BSPLINE,
+    _LAGRANGE,
     _tabulate_Bernstein_basis_1D_impl,
     _tabulate_cardinal_Bspline_basis_1D_impl,
     _tabulate_Lagrange_basis_1D_impl,
     _tabulate_Legendre_basis_1D_impl,
 )
-from ._basis_multidim import _compute_basis_1D_combinator_matrix
+from ._basis_multidim import _tabulate_tensor
 
 if TYPE_CHECKING:
     from ..quad import PointsLattice
@@ -40,6 +43,35 @@ class LagrangeVariant(StrEnum):
     """Chebyshev 1st kind points (x = [pi*(k + 0.5)/npts for k in range(npts)])."""
     CHEBYSHEV_2ND = "chebyshev_2nd"
     """Chebyshev 2nd kind points (x = [pi*k/(npts - 1) for k in range(npts)])."""
+
+
+_VARIANT_CODES: Final[dict[str, int]] = {
+    LagrangeVariant.EQUISPACES: 0,
+    LagrangeVariant.GAUSS_LEGENDRE: 1,
+    LagrangeVariant.GAUSS_LOBATTO_LEGENDRE: 2,
+    LagrangeVariant.CHEBYSHEV_1ST: 3,
+    LagrangeVariant.CHEBYSHEV_2ND: 4,
+}
+"""Wire value of each variant in the C++ library (``pantr::basis::LagrangeVariant``)."""
+
+
+def _variant_code(variant: LagrangeVariant | str) -> int:
+    """Get the C++ wire value of a Lagrange variant, given as the enum or its string value.
+
+    Args:
+        variant (LagrangeVariant | str): The variant.
+
+    Returns:
+        int: The wire value.
+
+    Raises:
+        ValueError: If ``variant`` is not a :class:`LagrangeVariant` value.
+    """
+    code = _VARIANT_CODES.get(variant)
+    if code is None:
+        # LagrangeVariant(...) raises the ValueError for an unknown value.
+        return _VARIANT_CODES[LagrangeVariant(variant)]
+    return code
 
 
 def tabulate_bernstein_1d(
@@ -262,11 +294,7 @@ def tabulate_bernstein(
             shape or dtype.
     """
     degrees = _validate_degrees(degrees)
-    evaluators_1D = cast(
-        tuple[Callable[[npt.ArrayLike], npt.NDArray[np.float32 | np.float64]]],
-        tuple(lambda pts, d=degree: tabulate_bernstein_1d(d, pts) for degree in degrees),
-    )
-    return _compute_basis_1D_combinator_matrix(evaluators_1D, pts, funcs_order, out)
+    return _tabulate_tensor(_BERNSTEIN, degrees, 0, pts, funcs_order, out)
 
 
 def tabulate_cardinal_bspline(
@@ -305,11 +333,7 @@ def tabulate_cardinal_bspline(
             shape or dtype.
     """
     degrees = _validate_degrees(degrees)
-    evaluators_1D = cast(
-        tuple[Callable[[npt.ArrayLike], npt.NDArray[np.float32 | np.float64]]],
-        tuple(lambda pts, d=degree: tabulate_cardinal_bspline_1d(d, pts) for degree in degrees),
-    )
-    return _compute_basis_1D_combinator_matrix(evaluators_1D, pts, funcs_order, out)
+    return _tabulate_tensor(_CARDINAL_BSPLINE, degrees, 0, pts, funcs_order, out)
 
 
 def tabulate_lagrange(
@@ -350,8 +374,4 @@ def tabulate_lagrange(
             shape or dtype.
     """
     degrees = _validate_degrees(degrees)
-    evaluators_1D = cast(
-        tuple[Callable[[npt.ArrayLike], npt.NDArray[np.float32 | np.float64]]],
-        tuple(lambda pts, d=degree: tabulate_lagrange_1d(d, variant, pts) for degree in degrees),
-    )
-    return _compute_basis_1D_combinator_matrix(evaluators_1D, pts, funcs_order, out)
+    return _tabulate_tensor(_LAGRANGE, degrees, _variant_code(variant), pts, funcs_order, out)

@@ -31,10 +31,13 @@ import numpy as np
 import numpy.typing as npt
 
 from .._array_utils import _flatten_along_axis, _unflatten_along_axis
-from ..basis._basis_core import _tabulate_Bernstein_basis_1D_serial_core
+from .._ext import ext
 from ..bspline._bspline_degree_core import _apply_reduction_operator, _check_bincoeff_envelope
 from ..quad import get_gauss_legendre_1d
 from ._bezier_core import _degree_elevate_bezier_1d_core
+
+_kernels: Any = ext._kernels
+"""The ported Bernstein kernels (interim surface, untyped: overloaded on the dtype)."""
 
 if TYPE_CHECKING:
     from . import Bezier
@@ -629,7 +632,7 @@ def _bernstein_collocation_1d(degree: int, num_nodes: int) -> npt.NDArray[np.flo
     """
     nodes = np.ascontiguousarray(get_gauss_legendre_1d(num_nodes, np.float64)[0], np.float64)
     basis = np.empty((num_nodes, degree + 1), dtype=np.float64)
-    _tabulate_Bernstein_basis_1D_serial_core(np.int32(degree), nodes, basis)
+    _kernels.tabulate_bernstein_1d(degree, nodes, basis)
     basis.flags.writeable = False
     return basis
 

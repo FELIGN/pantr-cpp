@@ -10,15 +10,19 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import numpy.typing as npt
 
+from .._ext import ext
 from .._numba_compat import wait_for_jit_warmup
 from ..basis._basis_utils import _validate_out_array
 from ._bezier_core import _evaluate_bezier_1d_core, _evaluate_bezier_deriv_1d_core
 from ._bezier_utils import _tabulate_bernstein_1d_fast
+
+_kernels: Any = ext._kernels
+"""The ported Bernstein kernels (interim surface, untyped: overloaded on the dtype)."""
 
 if TYPE_CHECKING:
     from ..quad import PointsLattice
@@ -574,10 +578,6 @@ def _evaluate_bezier_deriv_nd_non_rational(  # noqa: PLR0913
     Returns:
         npt.NDArray[np.float32 | np.float64]: Partial derivative values.
     """
-    from ..basis._basis_core import (  # noqa: PLC0415
-        _tabulate_Bernstein_basis_deriv_1D_core,
-    )
-
     # Evaluate derivative bases per direction
     bases: list[npt.NDArray[np.float32 | np.float64]] = []
     for d in range(dim):
@@ -591,7 +591,7 @@ def _evaluate_bezier_deriv_nd_non_rational(  # noqa: PLR0913
         else:
             # Derivative basis
             deriv_all_d = np.empty((n_pts_d, order_d + 1, p_d + 1), dtype=dtype)
-            _tabulate_Bernstein_basis_deriv_1D_core(np.int32(p_d), pts_d, order_d, deriv_all_d)
+            _kernels.tabulate_bernstein_derivatives_1d(p_d, pts_d, order_d, deriv_all_d)
             basis_d = deriv_all_d[:, order_d, :]
         bases.append(basis_d)
 
@@ -651,10 +651,6 @@ def _evaluate_bezier_deriv_nd_rational(  # noqa: PLR0913, PLR0912
     """
     import itertools  # noqa: PLC0415
 
-    from ..basis._basis_core import (  # noqa: PLC0415
-        _tabulate_Bernstein_basis_deriv_1D_core,
-    )
-
     cp_size = ctrl.shape[-1]
     rank = cp_size - 1
 
@@ -670,7 +666,7 @@ def _evaluate_bezier_deriv_nd_rational(  # noqa: PLR0913, PLR0912
             all_bases.append([_tabulate_bernstein_1d_fast(p_d, pts_d, dtype)])
         else:
             deriv_all_d = np.empty((n_pts_d, max_order_d + 1, p_d + 1), dtype=dtype)
-            _tabulate_Bernstein_basis_deriv_1D_core(np.int32(p_d), pts_d, max_order_d, deriv_all_d)
+            _kernels.tabulate_bernstein_derivatives_1d(p_d, pts_d, max_order_d, deriv_all_d)
             all_bases.append([deriv_all_d[:, k, :] for k in range(max_order_d + 1)])
 
     # Compute all homogeneous partial derivatives
