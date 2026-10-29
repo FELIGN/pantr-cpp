@@ -283,51 +283,75 @@
   fitting (`interpolate_bezier`, `fit_bezier`) and root finding (`find_roots`,
   `find_monotone_root`) run in pantr's C++ library**; `pantr.bezier` is now a thin wrapper
   over it, with the names, signatures and defaults it had. The reduction operators are
-  assembled in exact rationals as before (now Boost.Multiprecision) and are the same bits, and
-  `reduce_degree`, `minimize_degree` and the roots of both root finders reproduce the previous
-  release's values bit for bit on `float32` and `float64` (measured over random and special-value
-  inputs, outside the depth-cap case below). `degree_reduction_error` sums its Gram contraction in
-  another order, so it moves within that contraction's rounding, which grows with the degree (from
-  the last bits at low degree to several percent near degree 30, as large as the previous release's
-  own error there); its docstring no longer calls the value exact. `minimize_degree` on non-finite
-  control points no longer emits NumPy's `RuntimeWarning`s (the result is the same). The fits' singular value decomposition is Eigen's instead of LAPACK's, so a
-  fit moves within the bound the Vandermonde matrix's conditioning gives (a few units in the last
-  place for a well-conditioned grid; more for clustered nodes, especially in `float32`). Batch
-  root finding runs on pantr's thread pool with the GIL released.
+  assembled in exact rationals as before (now Boost.Multiprecision) and are the same bits.
+  `reduce_degree` and `find_monotone_root` reproduce the previous release's values bit for bit
+  on `float32` and `float64`, and so does `find_roots` except where Bezier clipping used to drop
+  roots (under "Fixed") and in the depth-cap case below (measured over random, constructed and
+  special-value inputs). `degree_reduction_error` sums its Gram contraction in another order and
+  moves within that contraction's rounding, which grows with the degree: from the last bits at
+  low degree, to about `1e-7` relative at degree 20, to tens of percent near degree 30, where the
+  previous release's own value was as far from the exact one; its docstring no longer calls the
+  value exact. `minimize_degree` rests its decisions on the same contraction: it makes the
+  previous release's decisions up to degree about 23, and above that its final degree can differ
+  (neither is reliably the exact greedy answer there). `degree_reduction_error` and
+  `minimize_degree` no longer emit NumPy's `RuntimeWarning`s (invalid value, overflow) on
+  non-finite or overflowing control points; the results are the same. The fits' singular value
+  decomposition is Eigen's instead of LAPACK's, so a fit moves within the bound the Vandermonde
+  matrix's conditioning gives (a few units in the last place on a small well-conditioned grid,
+  growing with the node count and the conditioning). Batch root finding runs on pantr's thread
+  pool with the GIL released. Like the other C++ results, the arrays `find_roots` and
+  `find_monotone_root` return do not own their data (`ndarray.resize` refuses them).
 - **`find_roots` warns when Bézier clipping gives up on part of `[0, 1]`** (`RuntimeWarning`,
   "... exhausted the root finder's subdivision budget ..."). Clipping abandons an interval that
-  is still wider than `tol` after 64 levels of subdivision; it used to do so silently. A `tol`
-  smaller than the spacing of doubles at a root reaches that depth (no interval can narrow to
-  it), as can, in principle, a run of clips that each remove little. In that case the candidate
-  list is no longer cut at `3 * degree + 4` entries, so a returned root can move by a unit in the
-  last place; elsewhere the roots are the same as before.
-- **`fit_bezier` and `interpolate_bezier` with `float16` or `longdouble` values compute in
-  `float64`** (nodes included) and return a `float64` Bézier, as `Bezier` itself now stores those
-  dtypes (above). `fit_bezier` failed in the previous release's Numba basis kernel
-  (`NotImplementedError` for `float16`, a Numba `TypingError` for `longdouble`) whenever a
-  direction had more than one node, and returned the values' dtype with one node per direction.
-  `interpolate_bezier` returned `longdouble` for `longdouble` values, and `float16` for `float16`
-  values with one node per direction; it now returns `float64` in both cases.
-- **`find_roots` and `find_monotone_root` accept a Bézier built from `float16`, `longdouble` or
-  boolean control points**, which `Bezier` now stores as `float64`; the previous release raised
-  `TypeError` ("... must be a float32 or float64 ndarray ...").
-- **A NaN or infinite node in `fit_bezier`** (or a scattered point) raises `ValueError` ("SVD did
-  not converge"), as before, but no longer `numpy.linalg.LinAlgError` (a `ValueError`
-  subclass), since the decomposition is no longer NumPy's.
+  is still wider than `tol` after 64 levels of subdivision; it used to do so silently. It is
+  rare: it needs a polynomial whose clips are exact (such as a straight line written at a higher
+  degree) and a `tol` below the spacing of doubles at its root, so that no interval can narrow to
+  `tol`; whether a run of clips that each remove little can reach it as well is not established.
+  A root found there can differ from the previous release's by a unit in the last place.
+- **`fit_bezier` and `interpolate_bezier` with `float16`, `longdouble` or byte-swapped values
+  compute in `float64`** (nodes included) and return a `float64` Bézier, as `Bezier` itself now
+  stores those dtypes (above). `fit_bezier` failed in the previous release's Numba basis kernel
+  (`NotImplementedError` for `float16`, a Numba `TypingError` for `longdouble` and byte-swapped
+  arrays) whenever a direction had more than one node, and returned the values' dtype with one
+  node per direction. `interpolate_bezier` returned `longdouble` for `longdouble` values, and the
+  values' dtype with one node per direction; it now returns `float64` in both cases.
+- **`reduce_degree`, `degree_reduction_error`, `minimize_degree`, `find_roots` and
+  `find_monotone_root` accept a Bézier built from `float16`, `longdouble`, boolean or
+  byte-swapped control points**, which `Bezier` now stores as `float64` (or native `float32`);
+  the previous release failed in its kernels (`NotImplementedError`, a Numba `TypingError`, a
+  NumPy boolean `TypeError`), and root finding raised `TypeError` ("... must be a float32 or
+  float64 ndarray ...").
+- **A NaN or infinite node in `fit_bezier` or `interpolate_bezier`** (or a scattered point), in a
+  direction with more than one node, raises `ValueError` ("SVD did not converge"), as before, but
+  no longer `numpy.linalg.LinAlgError` (a `ValueError` subclass), since the decomposition is no
+  longer NumPy's.
 - **A negative `degree` for scattered `fit_bezier` nodes** is a `ValueError` ("degree must be
   non-negative"); the previous release raised `IndexError` for `-1` and NumPy's "negative
-  dimensions are not allowed" below it. An empty sequence of node arrays is a `ValueError`
-  ("fit_tensor: values need ... one node array ... per direction"); the previous release returned
-  a Bézier.
+  dimensions are not allowed" below it. An empty sequence of node arrays with scalar values is a
+  `ValueError` ("fit_tensor: values need ... one node array ... per direction"); the previous
+  release returned a Bézier. An empty node array is a `ValueError` ("bernstein_pinv needs 0 <=
+  degree < len(nodes) ..."); it was an `IndexError`.
+- **Inputs outside the annotated types** of `fit_bezier`, `interpolate_bezier`, `minimize_degree`,
+  `find_roots` and `find_monotone_root`, as for `Bezier` above, can be accepted where they were
+  refused or refused with another exception and message, since the binding converts `tol` to a
+  `double`: a NumPy `float16`, `longdouble` or `bool` scalar, a 0-d array, a `Fraction` or a
+  `Decimal` `tol` is accepted (the previous release failed in Numba for several of them), and a
+  one-element array, a list or a string is a `TypeError` from the binding.
 - The private modules `pantr.bezier._bezier_degree`, `_bezier_utils`, `_root_finding_core`,
   `_yuksel_core`, `_clipping_core` and `_batch_core`, and the helpers
   `_bezier_interpolate._bernstein_interpolate`, `_bernstein_vandermonde_svd`,
   `_build_bernstein_pinv`, `_build_nd_bernstein_vandermonde`, `_fit_from_scattered`,
-  `_fit_from_values` and `_find_roots._validate_coeff_array`, are gone with the Numba kernels and
-  NumPy code they held, whose work is now done in C++. The B-spline reduction's weight check
-  moved to `pantr.bspline._bspline_degree`.
+  `_fit_from_values`, `_find_roots._validate_coeff_array`, `_dispatch_single`,
+  `_CLIP_MIN_DEGREE`, `_CLIP_COEFF_RANGE_LIMIT` and `_SUPPORTED_DTYPES`, are gone with the Numba
+  kernels and NumPy code they held, whose work is now done in C++. The B-spline reduction's
+  weight check moved to `pantr.bspline._bspline_degree`.
 
 ### Fixed
+- **`find_roots` no longer loses roots that Bezier clipping found.** Clipping collected its
+  candidates in a fixed buffer of `3 * degree + 4` entries and silently dropped any past it, which
+  polynomials with many exact, evenly spaced roots fill: at degree 7 with roots `1/8, ..., 7/8`,
+  the previous release returned six of the seven (the same at degrees 11, 15, 23, 31 and for
+  other dyadic families). The candidate list now grows.
 - `AABB` can be pickled and copied (`pickle`, `copy.copy`, `copy.deepcopy`); each raised
   `AttributeError` from the immutability guard, which refused the state the default protocol
   restores.

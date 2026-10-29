@@ -35,17 +35,20 @@ pantr's own provider is the previous release's algorithms, ported operation by o
 Yuksel's monotone decomposition below degree 6 or past a coefficient range of `1e8`, Bezier
 clipping otherwise, and the derivative-aware merge of clipping's candidates. Its roots are the
 previous release's bit for bit on both dtypes (work arrays keep the storage type, and no product
-is contracted into an `fma`, since the branches are sign tests a last bit can flip).
+is contracted into an `fma`, since the branches are sign tests a last bit can flip), except where
+the previous release's candidate buffer overflowed and dropped roots, and in the depth-cap case.
 
 - Every root is `computed`; no multiplicity is claimed (`-1`).
 - Completeness is `complete` unless clipping gave up on an interval at its depth cap (64): that
   interval is then listed and the result is `gap_localized`. The Python wrapper turns it into a
-  `RuntimeWarning` (QB7). A tolerance below the spacing of doubles at a root reaches the cap,
-  since no interval can then narrow to it. `gap_unlocalized` is never produced.
+  `RuntimeWarning` (QB7). A polynomial whose clips are exact (a line written at a higher degree)
+  with a tolerance below the spacing of doubles at its root reaches the cap, since no interval can
+  then narrow to it. `gap_unlocalized` is never produced.
 - The Newton/bisection hybrid's iteration cap (64) is not a completeness gap: it keeps a bracket
   that holds the root and returns its midpoint, so only width is lost, never the root.
 - The Numba kernel's fixed buffers are gone: a work stack of 256 (it could not bind, a depth-first
-  stack holding at most `depth + 2` entries) and a candidate buffer of `3n + 4` (it now grows).
+  stack holding at most `depth + 2` entries) and a candidate buffer of `3n + 4`, which did bind
+  (polynomials with many exact, evenly spaced roots filled it, and roots were lost) and now grows.
 - The single and batch dispatches keep the previous release's two differences: the batch merges
   Yuksel's roots too, and its all-zero test passes a NaN coefficient.
 
