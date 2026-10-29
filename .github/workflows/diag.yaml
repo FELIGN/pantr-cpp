@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        case: [eigen-lu-avx512-O2, eigen-lu-avx512-Od, eigen-lu-avx2-O2, eigen-nolu-avx512-O2, eigen-lu-avx512-O2-dontvec, eigen-lu-avx512-O2-Ob1]
+        case: [eigen-lu-avx512-O2-undef, ext-v4-change_basis-dontvec]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
@@ -30,7 +30,7 @@ jobs:
             -DPython_EXECUTABLE="$(python -c 'import sys; print(sys.executable)')" \
             -DPANTR_BUILD_PYTHON=ON -DPANTR_BUILD_TESTS=OFF -DPANTR_INSTALL=OFF \
             -DPANTR_NATIVE_ARCH=OFF -DPANTR_MULTI_ISA=ON -DPANTR_BUILD_PYTHON_TEST_MODULES=ON \
-            -DPANTR_WARNINGS_AS_ERRORS=ON
+            -DPANTR_WARNINGS_AS_ERRORS=ON ${{ matrix.case == 'ext-v4-change_basis-dontvec' && '-DCMAKE_CXX_FLAGS=-DEIGEN_DONT_VECTORIZE' || '' }}
       - name: Run the case (25 min cap)
         shell: bash
         run: |
@@ -46,6 +46,8 @@ jobs:
             eigen-nolu-avx512-O2) cmd=(cl -nologo -c -std:c++20 -EHsc -O2 -arch:AVX512 -Bt+ -DPROBE_NO_LU "-I$E" diag/probe.cpp) ;;
             eigen-lu-avx512-O2-dontvec) cmd=(cl -nologo -c -std:c++20 -EHsc -O2 -arch:AVX512 -Bt+ -DEIGEN_DONT_VECTORIZE "-I$E" diag/probe.cpp) ;;
             eigen-lu-avx512-O2-Ob1) cmd=(cl -nologo -c -std:c++20 -EHsc -O2 -Ob1 -arch:AVX512 -Bt+ "-I$E" diag/probe.cpp) ;;
+            eigen-lu-avx512-O2-undef) cmd=(cl -nologo -c -std:c++20 -EHsc -O2 -arch:AVX512 -Bt+ -U__AVX512F__ -U__AVX512CD__ -U__AVX512BW__ -U__AVX512DQ__ -U__AVX512VL__ "-I$E" diag/probe.cpp) ;;
+            ext-v4-change_basis-dontvec) cmd=(ninja -C build/msvc-ext -v bindings/CMakeFiles/_pantr_v4.dir/src/change_basis.cpp.obj) ;;
           esac
           t0=$(date +%s)
           timeout 1500 "${cmd[@]}"
