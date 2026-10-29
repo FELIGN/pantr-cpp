@@ -289,6 +289,23 @@ void slice_1d_kernel(mdview<const T, 2> ctrl, double value, std::span<T> out) {
                          });
 }
 
+/// One step of a de Casteljau pass over `w` contiguous columns: `a[c] = (1 - u) a[c] + u b[c]`,
+/// in double, stored in `T`.
+///
+/// A `noexcept` function of its own so that GCC vectorises it: written inside a body that may
+/// throw (a `parallel_for` chunk), GCC 14 with `-ffp-contract=on` treats the contracted `fma` as a
+/// statement that can throw and leaves the loop scalar (measured several times slower). The
+/// arithmetic is the same either way.
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed).
+template <StorageFloat T>
+void lerp_rows(T* a, const T* b, std::size_t w, double one_minus_u, double u) noexcept {
+  for (std::size_t c = 0; c < w; ++c) {
+    a[c] = static_cast<T>(one_minus_u * static_cast<double>(a[c]) + u * static_cast<double>(b[c]));
+  }
+}
+
 /// Split a 1D Bezier at a parameter value by one forward de Casteljau pass per column.
 ///
 /// After level `r` the workspace holds `[d_0^r, d_1^(r-1), ..., d_p^0]`: its first entry is the
@@ -333,11 +350,7 @@ void split_1d_kernel(mdview<const T, 2> ctrl, double value, mdview<T, 2> out_lef
                            for (std::size_t r = 1; r <= p; ++r) {
                              for (std::size_t i = 0; i + r <= p; ++i) {
                                T* di = d.data() + i * w;
-                               const T* dn = di + w;
-                               for (std::size_t c = 0; c < w; ++c) {
-                                 di[c] = static_cast<T>(one_minus_u * static_cast<double>(di[c]) +
-                                                        u * static_cast<double>(dn[c]));
-                               }
+                               lerp_rows<T>(di, di + w, w, one_minus_u, u);
                              }
                              for (std::size_t c = 0; c < w; ++c) {
                                out_left(r, begin + c) = d[c];

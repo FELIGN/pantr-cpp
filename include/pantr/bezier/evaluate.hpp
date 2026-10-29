@@ -175,6 +175,29 @@ void contract_points(std::span<const T> ctrl, std::span<const std::size_t> shape
       });
 }
 
+/// `row = sum_k coeff[k] src[k * inner : (k + 1) * inner]`, summed over `k` in ascending order.
+///
+/// A `noexcept` function of its own so that GCC vectorises it: written inside a body that may
+/// throw (a `parallel_for` chunk), GCC 14 with `-ffp-contract=on` treats the contracted `fma` as a
+/// statement that can throw and leaves the loop scalar. The arithmetic is the same either way.
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed).
+template <StorageFloat T>
+void combine_rows(T* row, const T* coeff, const T* src, std::size_t n, std::size_t inner) noexcept {
+  const T c0 = coeff[0];
+  for (std::size_t i = 0; i < inner; ++i) {
+    row[i] = c0 * src[i];
+  }
+  for (std::size_t k = 1; k < n; ++k) {
+    const T ck = coeff[k];
+    const T* sk = src + k * inner;
+    for (std::size_t i = 0; i < inner; ++i) {
+      row[i] = row[i] + ck * sk[i];
+    }
+  }
+}
+
 /// One mode product of `contract_lattice`: `out(o, a, :) = sum_k basis(a, k) src(o, k, :)` for
 /// `o < outer`, `a < m`, over rows of `inner` contiguous values; each row is one parallel item and
 /// each output value the sum over `k` in ascending order.
@@ -194,17 +217,7 @@ void lattice_stage(const T* src, BasisRef<T> basis, std::size_t outer, std::size
                              T* row = out + r * inner;
                              const T* base = src + o * n * inner;
                              const T* coeff = basis.data + a * basis.row_stride;
-                             const T c0 = coeff[0];
-                             for (std::size_t i = 0; i < inner; ++i) {
-                               row[i] = c0 * base[i];
-                             }
-                             for (std::size_t k = 1; k < n; ++k) {
-                               const T ck = coeff[k];
-                               const T* sk = base + k * inner;
-                               for (std::size_t i = 0; i < inner; ++i) {
-                                 row[i] = row[i] + ck * sk[i];
-                               }
-                             }
+                             combine_rows<T>(row, coeff, base, n, inner);
                              if (++a == m) {
                                a = 0;
                                ++o;
