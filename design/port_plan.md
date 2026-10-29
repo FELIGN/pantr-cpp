@@ -193,7 +193,7 @@ Boost.Multiprecision for exact rationals. · QB10 new public API set_root_provid
 - Di5 **Deviates from R0's letter** ("Kokkos only where `<mdspan>` is missing"): a configure-time
   probe of `<mdspan>` sets `PANTR_USE_STD_MDSPAN` on the exported target, so every TU of a program
   sees one type (a header `__has_include` test would give two types in a program mixing C++20 and
-  C++23 TUs, an ODR violation, §2.6). Same intent, decided at configure time.
+  C++23 TUs, an ODR violation, §2.6). Same intent, decided at configure time. Retired by DR-21.
 - Di6 Development builds install the extension into src/pantr with `make ext`; no editable install.
 
 ## Changelog entries expected (AC9), each with its reason
@@ -272,3 +272,20 @@ kernels, precompiled instantiation, musllinux, Windows pantr-mpi, speed-ups beyo
   push trigger so that first push runs full CI.
 - DR-19 (mechanical) "pantr._parallel on C++" moves from P0a to P0b: it needs the
   extension module, which P0b's packaging builds. P0a's pool is C++-only, tested with ctest + TSan.
+- DR-20 (design) One pool and one per-thread parallelism setting per process across every pantr
+  extension module: `_pantr` owns them and exports an accessor table by capsule; `_pantr_mpi` and
+  `_pantr_berf_*` route the pool, the thread settings and the in-region flag through it. A plain C++
+  consumer (one binary) is unaffected. Why: per-module inline variables give each module its own
+  pool, which oversubscribes the affinity mask R0 sizes from and makes set_num_threads module-local.
+  Ruled out: GNU unique symbols (ELF/GCC only); per-module pools. Built in P0b
+  (`include/pantr/parallel/shared.hpp`), tested with a test-only second extension
+  (design/threading.md).
+- DR-21 (mechanical) Kokkos mdspan 0.6.0 only for the port; `PANTR_USE_STD_MDSPAN=ON` is a configure
+  error (std::mdspan has no operator()); Di5 is retired, the `<mdspan>` probe stays informational.
+  Revisit in the Later list.
+- DR-22 (mechanical) Dependencies install bundled under include/pantr/third_party/ (no
+  find_dependency); `PANTR_USE_SYSTEM_DEPS` dropped (offline builds via FETCHCONTENT_SOURCE_DIR_*);
+  Boost.Config (BSL-1.0, boost-1.90.0) added to the dependency list (Boost.Multiprecision
+  standalone requires it). Design sections 1.3, 1.4, 1.5 and 11 amended in P0b.
+- DR-23 (mechanical) C++ doc comments follow the project CLAUDE.md's Google style, not a generic
+  Doxygen guide (the project's declared convention wins).

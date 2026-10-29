@@ -64,7 +64,7 @@ cmake/
   PantrCompilerProbes.cmake     # feature probes (concepts, FP to_chars, <mdspan>), never version tests (one exception, 1.3)
   PantrFlags.cmake              # pantr::cxx_warnings (not exported), contraction, native arch
   PantrInstall.cmake            # install(EXPORT), config, version file
-  pantrConfig.cmake.in          # find_dependency(Threads/Eigen3/Spectra/mdspan); components: mpi, berf, metis
+  pantrConfig.cmake.in          # find_dependency(Threads); bundled header deps (DR-22); components: mpi, mpi-capsule, berf, metis
 include/pantr/                  # THE public C++ API, header-only (pantr::pantr)
   pantr.hpp                     # umbrella, never includes mpi.h
   version.hpp  config.hpp       # config.hpp: #error on __FAST_MATH__ / __FINITE_MATH_ONLY__
@@ -119,14 +119,14 @@ path in the build tree and in the install tree is the same string.
 
 | Option | Default | Effect and reason |
 |---|---|---|
-| `PANTR_FP_CONTRACT` | ON | `-ffp-contract=on` (`/fp:contract`) on `pantr::pantr`, inherited by consumers. On GCC < 14, where `on` behaves as `fast` (lesson 1, row "Never -ffast-math"), set `-ffp-contract=off` instead and say so in a configure message. This is the one version test: contraction semantics cannot be probed by compiling a snippet. |
+| `PANTR_FP_CONTRACT` | ON | `-ffp-contract=on` (`/fp:contract`) on `pantr::pantr`, inherited by consumers. Before GCC 14, `on` behaves as `off` (the GCC 13.3 manual), so no contraction happens there, and a configure message says so (DR-16). This is the one version test: contraction semantics cannot be probed by compiling a snippet. |
 | `PANTR_NATIVE_ARCH` | ON | `-march=native` for the consumer, as ruled; decided in `pantrConfig.cmake` from the consumer's own setting, never frozen into the export (DR-9) (chosen by the maintainer after the portability warning). Forced OFF in every wheel build and every CI leg that targets a named ISA. |
 | `PANTR_FORCE_SCALAR` | OFF | defines `PANTR_SIMD_FORCE_SCALAR`. |
-| `PANTR_USE_STD_MDSPAN` | OFF | see 2.6; picks `std::mdspan` for every consumer TU uniformly. Not supported in stage 0 (`design/mdspan_identity.md`). |
+| `PANTR_USE_STD_MDSPAN` | OFF | ON is a configure error: `std::mdspan` has no `operator()`, so the port uses Kokkos mdspan 0.6.0 only (DR-21, 2.6); the `<mdspan>` probe stays informational. |
 | `PANTR_WITH_BERF` / `PANTR_WITH_METIS` | OFF | build, test and export the provider target. Never changes a core header. |
 | `PANTR_BUILD_TESTS` / `PANTR_BUILD_PYTHON` / `PANTR_BUILD_PYTHON_MPI` / `PANTR_BUILD_BENCHMARKS` | ON (top level) / OFF / OFF / OFF | as named. |
 | `PANTR_MULTI_ISA` | OFF | the per-ISA module variants (wheels). Fatal with `PANTR_NATIVE_ARCH=ON`. |
-| `PANTR_USE_SYSTEM_DEPS` | OFF | `find_package` instead of FetchContent; OFF by default because `FIND_PACKAGE_ARGS` once picked a system Eigen of another major version silently (lesson 2). |
+| `PANTR_BUILD_PYTHON` / `PANTR_STABLE_ABI` / `PANTR_BUILD_PYTHON_TEST_MODULES` | OFF / ON / OFF | the extension modules (`bindings/`); built for the stable ABI unless OFF (the version-specific build exists to measure the difference, 9.4); the test-only twin modules (DR-20's test), installed in the `testing` component that no wheel installs. |
 | `PANTR_WARNINGS_AS_ERRORS` | OFF (ON in CI) | on `pantr_cxx_warnings` only. |
 | `PANTR_INSTALL` | ON | install headers, export, config; the bundled third-party headers under `include/pantr/third_party/` when fetched. |
 
@@ -136,10 +136,11 @@ cannot do for a header-only library (*state the floating point flags*).
 
 ### 1.4 Dependencies (FetchContent, full SHA, `SYSTEM`, `EXCLUDE_FROM_ALL`)
 
-Eigen (5.0.1 by default if Spectra's contract tests pass against it in stage 0, which a single verification probe
-suggests; else 3.4.1), Spectra 1.2.0 (or the first master SHA after its 2025-08-26 fix for an initial vector in the null space, if its diff
-is relevant once read in stage 6), Kokkos mdspan (mdspan-0.6.0), Boost.Multiprecision standalone (exact rationals, 2.8), doctest (tests), nanobind (exact pin,
-build-system), BeRF-FR (pinned SHA, `PANTR_WITH_BERF` only). Offline: `FETCHCONTENT_SOURCE_DIR_<DEP>` and
+Eigen 5.0.1 (chosen in stage 0: Spectra's contract tests pass against it), Spectra 1.2.0 (or the first master SHA
+after its 2025-08-26 fix for an initial vector in the null space, if its diff is relevant once read in stage 6), Kokkos
+mdspan (mdspan-0.6.0), Boost.Multiprecision standalone with Boost.Config (both boost-1.90.0; exact rationals, 2.8),
+doctest (tests), nanobind (exact pin, build-system), BeRF-FR (pinned SHA, `PANTR_WITH_BERF` only). The header-only
+ones are populated without `add_subdirectory` and installed bundled (DR-22). Offline: `FETCHCONTENT_SOURCE_DIR_<DEP>` and
 `FETCHCONTENT_FULLY_DISCONNECTED`; `-DCMAKE_POLICY_VERSION_MINIMUM=3.5` for CMake 4 against old dependency floors
 (lesson 2). Licences: section 11.
 
@@ -147,9 +148,10 @@ build-system), BeRF-FR (pinned SHA, `PANTR_WITH_BERF` only). Offline: `FETCHCONT
 
 `install(TARGETS pantr EXPORT pantrTargets)`, `install(DIRECTORY include/pantr)`,
 `install(EXPORT pantrTargets NAMESPACE pantr:: DESTINATION lib/cmake/pantr)`, `pantrConfigVersion.cmake` with
-`SameMinorVersion` (lesson 2). `pantrConfig.cmake` does `find_dependency(Threads)` (headers use `std::mutex`),
-`find_dependency(Eigen3)`, `find_dependency(Spectra)`, `find_dependency(mdspan)` (unless `PANTR_USE_STD_MDSPAN`),
-and per component `find_dependency(MPI COMPONENTS CXX)` (`mpi`), `find_dependency(berf)` (`berf`). When the build
+`SameMinorVersion` (lesson 2). `pantrConfig.cmake` does `find_dependency(Threads)` (headers use `std::mutex`) and
+per component `find_dependency(MPI COMPONENTS CXX)` (`mpi`), `find_dependency(berf)` (`berf`). The header-only
+dependencies have no `find_dependency`: they install bundled under `include/pantr/third_party/` (DR-22), and there is
+no `PANTR_USE_SYSTEM_DEPS` (offline builds use `FETCHCONTENT_SOURCE_DIR_<DEP>`). When the build
 fetched the dependencies, `PANTR_INSTALL` also installs their headers and config files under the same prefix, so
 `cmake --install` of pantr alone yields a prefix a consumer can use with no other package (AC4). The contraction flag
 is in the exported target; the warnings target is not.
@@ -203,8 +205,9 @@ TUs compiled for different ISAs (function multiversioning) cannot hit an ODR lay
 ### 1.9 Python build and the development loop
 
 `pyproject.toml`: `build-backend = scikit_build_core.build`, `requires = ["scikit-build-core==<pin>", "nanobind==<pin>"]`,
-`wheel.py-api = "cp312"`, `install.strip = false` and `NOMINSIZE` (the `-Os`-after-`-O3` trap, a silent factor of
-about three, lesson 2), `build-dir = "build/skbuild/{wheel_tag}"`, `cmake.define.PANTR_NATIVE_ARCH = "OFF"`,
+`wheel.py-api = "cp312"`, `install.strip = false`, and `NOMINSIZE NOSTRIP` on every module (the `-Os`-after-`-O3`
+trap, a silent factor of about three, lesson 2; nanobind also links release modules with `-s` unless `NOSTRIP`),
+`install.components = ["python"]` (the test-only modules are in `testing`), `build-dir = "build/skbuild/{wheel_tag}"`, `cmake.define.PANTR_NATIVE_ARCH = "OFF"`,
 `requires-python >= 3.12`, `numpy` and `scipy` runtime, Numba and threadpoolctl removed in the last stage.
 
 Development uses **no editable install**: `make ext` configures `build/dev` and installs the modules into `src/pantr/`
@@ -213,7 +216,10 @@ shadowing trap (lesson 2) cannot occur. Two guards make a stale module loud inst
 `_pantr.interface_version` must equal `pantr._ext.EXPECTED_INTERFACE` (bumped with any binding change), and the test
 session's `conftest.py` fails when the module is older than any file under `include/`, `bindings/` or
 `providers/*/include`. CI builds the same way, and a separate wheel job tests the installed wheel with
-`-o pythonpath=`. `make stubs` regenerates `src/pantr/_pantr.pyi` with `nanobind.stubgen`; the committed stub is what
+`-o pythonpath=` and `PANTR_TEST_INSTALLED=1` (`tools/wheel_test.py`; `conftest.py` then refuses a `pantr` that
+resolves to the checkout). `make ext` touches the installed modules, since a source edit that changes no object must
+still clear the staleness check. `make stubs` regenerates the stub package `src/pantr/_pantr/` (`__init__.pyi`,
+`_testing.pyi`: the module has a submodule) and `src/pantr/_pantr_cpu.pyi` with `nanobind.stubgen`; the committed stub is what
 mypy reads, and the tests job fails on a stub diff.
 
 ## 2. Core types
@@ -299,7 +305,9 @@ an AC1 change and is listed.
 
 C++20 has no `std::mdspan`; GCC 14.4's libstdc++ provides none even in C++23 mode, and Clang 18 on libstdc++ none
 either (V1); libc++ has one. `pantr::mdspan` is
-**Kokkos mdspan unless `PANTR_USE_STD_MDSPAN=ON`**, a compile definition set on the INTERFACE target so every consumer
+**Kokkos mdspan 0.6.0** (DR-21: `PANTR_USE_STD_MDSPAN=ON` is a configure error, because `std::mdspan` has no
+`operator()` and pantr indexes with it; what follows is the reason the choice is made once per program rather than per
+TU, and stands if `std::mdspan` is ever admitted), a compile definition set on the INTERFACE target so every consumer
 TU agrees. The ruling says "Kokkos only where `<mdspan>` is missing"; implemented literally as an `#if __has_include`
 in a header, the alias would name two different types in a program that mixes C++20 and C++23 TUs (an ODR violation
 in every signature that mentions it). The CMake option keeps the ruling's intent (std where the project opts in) with
@@ -342,6 +350,8 @@ exhaustion becomes a status the caller receives, never a plausible value:
   futex wake-and-join. Those two constants are order-of-magnitude OS and cache facts, recorded as **admitted
   heuristics** at their definition with that reasoning (*a multiplier is a tolerance*), never fitted on one
   particular many-core machine. This replaces `_PARALLEL_MIN_NUM_PTS = 4096` and the serial-twin kernels.
+- One pool and one per-thread setting per **process**, across extension modules: `_pantr` owns them and every other
+  pantr module attaches its table at import (DR-20, `design/threading.md`).
 - The GIL is released around any call that reaches the pool, and only then (same work model).
 - MPI: `MPI_THREAD_FUNNELED` is sufficient because collectives are only called by the calling thread, outside
   `parallel_for`; `pantr::mpi` checks `MPI_Query_thread() >= FUNNELED` at entry and says that the caller must be the
@@ -762,9 +772,10 @@ Per operation, sizes `tiny` (one point or one object, the per-call overhead regi
 
 In-repo `benchmarks/` (no new dependency): each case is a named callable plus setup; a runner measures with
 `time.perf_counter_ns` in auto-ranged loops, writes JSON with commit, machine, env, ISA rung, thread settings.
-Protocol: K = 5 independent processes, each R = 30 repeats after warm-up (Numba compiled and cached before timing);
-per process the median; **branch statistic = median of the 5 process medians; spread = max minus min of main's 5
-process medians**. AC6 holds per operation when `branch <= main + spread_main`. Between-process spread is the honest
+Protocol (DR-3): main and the branch measured in the same session, interleaved process by process, K = 10 processes
+each, each R = 30 repeats after warm-up (Numba compiled and cached before timing); per process the median; **branch
+statistic = median of the 10 process medians; spread = max minus min of main's 10 process medians**; a flag counts
+only when a fresh interleaved re-run flags it again. AC6 holds per operation when `branch <= main + spread_main`. Between-process spread is the honest
 noise floor (*establish the baseline spread first*: environment changes reorder variants).
 
 ### 9.3 Baseline capture
@@ -835,7 +846,8 @@ last. Tests touched per stage are the files importing that stage's modules.
 | Eigen 5.0.1 (or 3.4.1) | dense LA | MPL-2.0 (`EIGEN_MPL2_ONLY` defined) | compiled into extensions; headers bundled by `cmake --install` |
 | Spectra 1.2.0 | sparse Lanczos | MPL-2.0 | as Eigen |
 | Kokkos mdspan 0.6.0 | `mdspan` in C++20 | Apache-2.0 WITH LLVM-exception | as Eigen |
-| Boost.Multiprecision 4.1+ standalone (`BOOST_MP_STANDALONE`, with its bundled Boost.Config) | exact rationals | BSL-1.0 | as Eigen |
+| Boost.Multiprecision from Boost 1.90.0, standalone (`BOOST_MP_STANDALONE`) | exact rationals | BSL-1.0 | as Eigen |
+| Boost.Config from Boost 1.90.0 (DR-22: standalone Boost.Multiprecision refuses to compile without it) | configuration headers | BSL-1.0 | as Eigen |
 | nanobind (exact pin) | binding | BSD-3-Clause | statically in each extension |
 | scikit-build-core | build backend | Apache-2.0 | build only |
 | doctest 2.5.3 | C++ tests | MIT | tests only |

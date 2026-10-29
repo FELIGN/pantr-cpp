@@ -43,12 +43,20 @@ the Python suite stay the oracle across thread counts. Architecture: `design/por
 
 ## Consequences
 
-- **One pool per copy of the inline variables, not per process.** The pool, its holder and the
-  thread-local setting are inline variables of header-only code. Shared objects that each include
-  the headers and keep their symbols local (hidden visibility, or `dlopen` with `RTLD_LOCAL` on
-  toolchains without GNU unique symbols) each get their own pool and their own setting. Several
-  extension modules in one process must therefore route parallel work through one of them; how is
-  decided with the packaging (stage 0, second half).
+- **One pool per process, by ownership.** The pool, its holder, the capacity cache and the
+  per-thread settings are inline variables of header-only code, so shared objects that each include
+  the headers and keep their symbols local (every Python extension module: hidden visibility, and
+  separate DLLs on Windows) would each get their own pool and setting. pantr's `_pantr` owns them
+  and exports a table of functions over them (`pantr/parallel/shared.hpp`) in a capsule; every
+  other pantr module (`_pantr_mpi`, `_pantr_berf`) attaches that table when imported, after which
+  its `parallel_for`, `max_threads` and thread settings act on the owner's pool, and its own
+  `Pool::instance()` refuses. The table's functions are `noexcept` and report failure by status and
+  message, since an exception thrown in one module may not match a handler in another, and its
+  layout carries a version so modules from different headers refuse to share. A program that never
+  attaches, every plain C++ consumer, is unchanged. Rejected: GNU unique symbols (ELF and GCC only)
+  and per-module pools (oversubscription past the affinity mask, and a thread count set through
+  one module that another never sees). Tested with a test-only second extension
+  (`tests/test_shared_parallelism.py`) and a C++ test against a recording fake owner.
 - The Numba warmup barrier and the serial-twin kernels have no C++ counterpart: concurrent callers
   are safe by construction, and the serial path is the parallel path's chunks run in order.
 - Thread-count invariance is tested on integers (chunk boundaries, exactly) and on values within a
