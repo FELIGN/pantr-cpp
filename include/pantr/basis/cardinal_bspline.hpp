@@ -16,6 +16,13 @@ namespace pantr::basis {
 
 namespace detail {
 
+/// Operations one point of the cardinal B-spline tabulation costs: the Cox-de Boor triangle,
+/// about four per entry of `(degree + 1)^2`.
+inline double cardinal_bspline_ops_per_point(int degree) {
+  const double ord = static_cast<double>(degree) + 1.0;
+  return 4.0 * ord * ord;
+}
+
 /// Write the cardinal B-spline values of degree `degree` at every point into `out`.
 ///
 /// The `degree + 1` B-splines nonzero on the central unit span `[0, 1]` of the uniform knot
@@ -29,8 +36,8 @@ template <StorageFloat T>
 void tabulate_cardinal_bspline_1d_kernel(int degree, std::span<const T> pts, mdview<T, 2> out) {
   T* data = out.data_handle();
   const std::size_t stride = static_cast<std::size_t>(degree) + 1;
-  const double ops = 4.0 * static_cast<double>(stride * stride);
-  detail::for_each_point(pts.size(), ops, [&](std::size_t j) {
+  const double ops = cardinal_bspline_ops_per_point(degree);
+  detail::for_each_point(pts.size(), ops, sizeof(T) * stride, [&](std::size_t j) {
     T* row = data + j * stride;
     row[0] = static_cast<T>(1);
     const double one_minus_u = 1.0 - static_cast<double>(pts[j]);
@@ -80,7 +87,7 @@ void tabulate_cardinal_bspline_1d(int degree, std::span<const T> pts, mdview<T, 
 template <StorageFloat T>
 [[nodiscard]] NdArray<T> tabulate_cardinal_bspline_1d(int degree, std::span<const T> pts) {
   detail::check_degree(degree);
-  NdArray<T> out({pts.size(), static_cast<std::size_t>(degree) + 1});
+  NdArray<T> out({pts.size(), static_cast<std::size_t>(degree) + 1}, for_overwrite);
   detail::tabulate_cardinal_bspline_1d_kernel<T>(degree, pts, out.template view<2>());
   return out;
 }

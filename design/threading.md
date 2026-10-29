@@ -21,12 +21,14 @@ the Python suite stay the oracle across thread counts. Architecture: `design/por
   threads, the caller included.
 - **Chunking depends on the problem only.** Chunks are `[k * grain, min(n, (k + 1) * grain))`. The
   grain comes from a per-item work estimate (`WorkEstimate`, elementary operations derived from the
-  algorithm), `grain = max(1, ceil(chunk_ops / ops_per_item))`, and a loop below `parallel_min_ops`
-  total operations runs serially, on the same chunks. No parallel loop reduces across chunks, so a
+  algorithm), `grain = max(1, ceil(chunk_ops / ops_per_item))`, raised for a loop that states the
+  bytes each item writes to `ceil(chunk_bytes / bytes_per_item)` so a cheap, memory-bound item still
+  gets a chunk that streams enough to amortize its claim, and a loop below `parallel_min_ops` total
+  operations runs serially, on the same chunks. No parallel loop reduces across chunks, so a
   result does not depend on the thread count. A future reduction must fix its chunk order.
 - **The constants are admitted heuristics**, reasoned from orders of magnitude (an atomic claim on a
   contended cache line against the work of a chunk; a futex wake-and-join against the work of a
-  job) and stated at their definition in `work_model.hpp`. They are never fitted on a particular
+  job; an L2-sized stream against a chunk's start-up) and stated at their definition in `work_model.hpp`. They are never fitted on a particular
   machine, where a threshold measured on many cores would be wrong on a laptop.
 - **Exceptions**: the first exception a chunk throws is captured, the chunks not yet started are
   skipped, and it is rethrown on the caller after the join.

@@ -41,6 +41,14 @@ inline constexpr double chunk_ops = 16384.0;
 /// particular machine.
 inline constexpr double parallel_min_ops = 131072.0;
 
+/// Bytes of output a chunk of a memory-bound loop should write. An admitted heuristic, not a
+/// measurement: a loop whose items cost a few operations each is limited by memory traffic, not by
+/// `chunk_ops`, and a chunk sized by its operations alone then streams only a few kilobytes, too
+/// little to amortize a claim and the hardware prefetchers' ramp-up on a new stream. 2^18 bytes is
+/// the order of a core's L2 cache, the scale at which a streaming chunk's start-up is a small
+/// fraction of it. Never tuned on a particular machine.
+inline constexpr double chunk_bytes = 262144.0;
+
 namespace detail {
 
 inline void check_work(WorkEstimate w) {
@@ -70,6 +78,29 @@ inline void check_work(WorkEstimate w) {
   detail::check_work(w);
   // ops_per_item >= 1 bounds the quotient by chunk_ops, and a positive quotient's ceiling is >= 1.
   return static_cast<std::size_t>(std::ceil(chunk_ops / w.ops_per_item));
+}
+
+/// Chunk size for a loop whose items each cost `w` and write `bytes_per_item` bytes of output:
+/// the larger of `grain_for(w)` and `ceil(chunk_bytes / bytes_per_item)`, so a cheap item writing
+/// little still gets a chunk that streams `chunk_bytes`.
+///
+/// Args:
+///     w (WorkEstimate): Work per item.
+///     bytes_per_item (std::size_t): Bytes of output one item writes; 0 adds no bound.
+///
+/// Returns:
+///     std::size_t: Items per chunk, at least 1.
+///
+/// Raises:
+///     value_error: `w.ops_per_item` is not a finite number >= 1.
+[[nodiscard]] inline std::size_t grain_for(WorkEstimate w, std::size_t bytes_per_item) {
+  const std::size_t by_ops = grain_for(w);
+  if (bytes_per_item == 0) {
+    return by_ops;
+  }
+  const auto by_bytes =
+      static_cast<std::size_t>(std::ceil(chunk_bytes / static_cast<double>(bytes_per_item)));
+  return by_ops > by_bytes ? by_ops : by_bytes;
 }
 
 /// Decide whether a loop of `n` items costing `w` each is worth running in parallel.

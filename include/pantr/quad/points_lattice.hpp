@@ -111,7 +111,7 @@ class PointsLattice {
   [[nodiscard]] NdArray<T> all_points(Order order) const {
     const std::size_t dimension = dim();
     const std::size_t n = num_points();
-    NdArray<T> out({n, dimension});
+    NdArray<T> out({n, dimension}, for_overwrite);
     T* data = out.data();
     std::vector<std::size_t> idx(dimension, 0);
     for (std::size_t p = 0; p < n; ++p) {

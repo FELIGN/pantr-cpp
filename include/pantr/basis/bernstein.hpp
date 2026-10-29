@@ -34,6 +34,22 @@ constexpr int max_unmirrored_degree() {
                                  : bernstein_max_unmirrored_degree_float;
 }
 
+/// `x^n` for `n >= 0` by binary powering: about `2 log2(n)` multiplications, each rounded once,
+/// where `std::pow` is a libm call costing several times the rest of a low-degree row. The seed
+/// of the recurrences is in `[0, 1]`, so no intermediate overflows; the result is within
+/// `2 log2(n)` roundings of `x^n`.
+inline double int_power(double x, int n) {
+  double result = 1.0;
+  double base = x;
+  for (unsigned e = static_cast<unsigned>(n); e != 0; e >>= 1U) {
+    if ((e & 1U) != 0) {
+      result *= base;
+    }
+    base *= base;
+  }
+  return result;
+}
+
 /// Bernstein values of degree `n >= 1` at `u` by the O(n) ratio recurrence, run from the
 /// endpoint that keeps the seed `>= 0.5^n`: forward from 0 for
 /// `u <= 0.5`, else forward on `1 - u` (seed `u^n`) and the row reversed, by the symmetry
@@ -52,7 +68,7 @@ void bernstein_row_mirrored(int n, T u, T* row) {
   const bool mirror = ud > 0.5;
   const double seed_base = mirror ? ud : one_minus_u;
   const double ratio = mirror ? one_minus_u / ud : ud / one_minus_u;
-  row[0] = static_cast<T>(std::pow(seed_base, static_cast<double>(n)));
+  row[0] = static_cast<T>(int_power(seed_base, n));
   for (int i = 1; i <= n; ++i) {
     const double const_factor = (n - i + 1.0) / i;
     row[i] = static_cast<T>(static_cast<double>(row[i - 1]) * const_factor * ratio);
@@ -82,12 +98,25 @@ void bernstein_row_unmirrored(int n, T u, T* row) {
   }
   const auto ud = static_cast<double>(u);
   const double one_minus_u = 1.0 - ud;
-  row[0] = static_cast<T>(std::pow(one_minus_u, static_cast<double>(n)));
+  row[0] = static_cast<T>(int_power(one_minus_u, n));
   const double ratio = ud / one_minus_u;
   for (int i = 1; i <= n; ++i) {
     const double const_factor = (n - i + 1.0) / i;
     row[i] = static_cast<T>(static_cast<double>(row[i - 1]) * const_factor * ratio);
   }
+}
+
+/// Operations one point of the Bernstein tabulation costs: about four per value of the ratio
+/// recurrence (two multiplications, a quotient and a store).
+inline double bernstein_ops_per_point(int degree) {
+  return 4.0 * (static_cast<double>(degree) + 1.0);
+}
+
+/// Operations one point of the Bernstein derivative tabulation costs: the `(n + 1)^2` table and
+/// `(n_deriv + 1)` rows of `O(n + 1)` work over `n + 1` functions.
+inline double bernstein_derivatives_ops_per_point(int degree, int n_deriv) {
+  const double ord = static_cast<double>(degree) + 1.0;
+  return ord * ord * (static_cast<double>(n_deriv) + 2.0);
 }
 
 /// Write the Bernstein values of degree `degree` at every point into `out` (`(n, degree + 1)`).
@@ -99,15 +128,16 @@ template <StorageFloat T>
 void tabulate_bernstein_1d_kernel(int degree, std::span<const T> pts, mdview<T, 2> out) {
   T* data = out.data_handle();
   const std::size_t stride = static_cast<std::size_t>(degree) + 1;
-  const double ops = 4.0 * static_cast<double>(stride);
+  const double ops = bernstein_ops_per_point(degree);
   if (degree == 0) {
-    detail::for_each_point(pts.size(), 1.0, [&](std::size_t j) { data[j] = static_cast<T>(1); });
+    detail::for_each_point(pts.size(), 1.0, sizeof(T),
+                           [&](std::size_t j) { data[j] = static_cast<T>(1); });
   } else if (degree <= max_unmirrored_degree<T>()) {
-    detail::for_each_point(pts.size(), ops, [&](std::size_t j) {
+    detail::for_each_point(pts.size(), ops, sizeof(T) * stride, [&](std::size_t j) {
       bernstein_row_unmirrored<T>(degree, pts[j], data + j * stride);
     });
   } else {
-    detail::for_each_point(pts.size(), ops, [&](std::size_t j) {
+    detail::for_each_point(pts.size(), ops, sizeof(T) * stride, [&](std::size_t j) {
       bernstein_row_mirrored<T>(degree, pts[j], data + j * stride);
     });
   }
@@ -228,8 +258,8 @@ void tabulate_bernstein_derivatives_1d_kernel(int degree, std::span<const T> pts
   const auto nd1 = static_cast<std::size_t>(n_deriv) + 1;
   const std::size_t block = nd1 * ord;
   T* data = out.data_handle();
-  const double ops = static_cast<double>(ord * ord + nd1 * ord * ord);
-  parallel::parallel_for(pts.size(), parallel::WorkEstimate{ops},
+  const double ops = bernstein_derivatives_ops_per_point(degree, n_deriv);
+  detail::for_each_chunk(pts.size(), ops, sizeof(T) * block,
                          [&](std::size_t begin, std::size_t end) {
                            std::vector<T> ndu(ord * ord);
                            std::vector<T> a(2 * nd1);
@@ -276,7 +306,7 @@ void tabulate_bernstein_1d(int degree, std::span<const T> pts, mdview<T, 2> out)
 template <StorageFloat T>
 [[nodiscard]] NdArray<T> tabulate_bernstein_1d(int degree, std::span<const T> pts) {
   detail::check_degree(degree);
-  NdArray<T> out({pts.size(), static_cast<std::size_t>(degree) + 1});
+  NdArray<T> out({pts.size(), static_cast<std::size_t>(degree) + 1}, for_overwrite);
   detail::tabulate_bernstein_1d_kernel<T>(degree, pts, out.template view<2>());
   return out;
 }

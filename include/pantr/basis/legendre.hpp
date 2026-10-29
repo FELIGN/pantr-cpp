@@ -18,6 +18,12 @@ namespace pantr::basis {
 
 namespace detail {
 
+/// Operations one point of the Legendre tabulation costs: about four per value of the
+/// three-term recurrence.
+inline double legendre_ops_per_point(int degree) {
+  return 4.0 * (static_cast<double>(degree) + 1.0);
+}
+
 /// Write the orthonormal shifted Legendre values of degree `degree` at every point into `out`.
 ///
 /// `p_0 = 1`, `p_1 = sqrt(3) (2x - 1)`, and for `i >= 2`
@@ -33,7 +39,8 @@ void tabulate_legendre_1d_kernel(int degree, std::span<const T> pts, mdview<T, 2
   T* data = out.data_handle();
   const std::size_t stride = static_cast<std::size_t>(degree) + 1;
   if (degree == 0) {
-    detail::for_each_point(pts.size(), 1.0, [&](std::size_t j) { data[j] = static_cast<T>(1); });
+    detail::for_each_point(pts.size(), 1.0, sizeof(T),
+                           [&](std::size_t j) { data[j] = static_cast<T>(1); });
     return;
   }
   std::vector<double> a(stride, 0.0), b(stride, 0.0);
@@ -46,16 +53,17 @@ void tabulate_legendre_1d_kernel(int degree, std::span<const T> pts, mdview<T, 2
     b[static_cast<std::size_t>(i)] = ((id - 1.0) / id) * (s_p1 / s_m3);
   }
   const double sqrt3 = std::sqrt(3.0);
-  detail::for_each_point(pts.size(), 4.0 * static_cast<double>(stride), [&](std::size_t j) {
-    T* row = data + j * stride;
-    const double x = 2.0 * static_cast<double>(pts[j]) - 1.0;
-    row[0] = static_cast<T>(1);
-    row[1] = static_cast<T>(sqrt3 * x);
-    for (std::size_t i = 2; i < stride; ++i) {
-      row[i] = static_cast<T>(a[i] * x * static_cast<double>(row[i - 1]) -
-                              b[i] * static_cast<double>(row[i - 2]));
-    }
-  });
+  detail::for_each_point(pts.size(), legendre_ops_per_point(degree), sizeof(T) * stride,
+                         [&](std::size_t j) {
+                           T* row = data + j * stride;
+                           const double x = 2.0 * static_cast<double>(pts[j]) - 1.0;
+                           row[0] = static_cast<T>(1);
+                           row[1] = static_cast<T>(sqrt3 * x);
+                           for (std::size_t i = 2; i < stride; ++i) {
+                             row[i] = static_cast<T>(a[i] * x * static_cast<double>(row[i - 1]) -
+                                                     b[i] * static_cast<double>(row[i - 2]));
+                           }
+                         });
 }
 
 }  // namespace detail
@@ -88,7 +96,7 @@ void tabulate_legendre_1d(int degree, std::span<const T> pts, mdview<T, 2> out) 
 template <StorageFloat T>
 [[nodiscard]] NdArray<T> tabulate_legendre_1d(int degree, std::span<const T> pts) {
   detail::check_degree(degree);
-  NdArray<T> out({pts.size(), static_cast<std::size_t>(degree) + 1});
+  NdArray<T> out({pts.size(), static_cast<std::size_t>(degree) + 1}, for_overwrite);
   detail::tabulate_legendre_1d_kernel<T>(degree, pts, out.template view<2>());
   return out;
 }

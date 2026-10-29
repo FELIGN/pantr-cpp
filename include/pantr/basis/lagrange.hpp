@@ -70,6 +70,12 @@ inline std::vector<double> barycentric_weights(const std::vector<double>& x) {
   return w;
 }
 
+/// Operations one point of the Lagrange tabulation costs: per node a snap test, two differences
+/// and three quotients, about six.
+inline double lagrange_ops_per_point(int degree) {
+  return 6.0 * (static_cast<double>(degree) + 1.0);
+}
+
 /// Write the Lagrange basis of degree `degree` on the nodes of `variant` at every point into
 /// `out`, column `i` for the `i`-th node as `lagrange_points` returns them.
 ///
@@ -87,7 +93,8 @@ void tabulate_lagrange_1d_kernel(int degree, LagrangeVariant variant, std::span<
   T* data = out.data_handle();
   const std::size_t m = static_cast<std::size_t>(degree) + 1;
   if (degree == 0) {
-    detail::for_each_point(pts.size(), 1.0, [&](std::size_t j) { data[j] = static_cast<T>(1); });
+    detail::for_each_point(pts.size(), 1.0, sizeof(T),
+                           [&](std::size_t j) { data[j] = static_cast<T>(1); });
     return;
   }
   // lagrange_points returns every family's nodes ascending (a C++ test holds each family to it),
@@ -101,29 +108,31 @@ void tabulate_lagrange_1d_kernel(int degree, LagrangeVariant variant, std::span<
   const std::vector<double> w = barycentric_weights(x);
   const T snap = static_cast<T>(lagrange_node_snap_eps_factor *
                                 static_cast<double>(tolerance::machine_epsilon<T>()));
-  detail::for_each_point(pts.size(), 6.0 * static_cast<double>(m), [&](std::size_t j) {
-    T* row = data + j * m;
-    const T tj = pts[j];
-    for (std::size_t k = 0; k < m; ++k) {
-      using std::abs;
-      if (abs(tj - nt[k]) <= snap) {
-        for (std::size_t i = 0; i < m; ++i) {
-          row[i] = static_cast<T>(0);
-        }
-        row[k] = static_cast<T>(1);
-        return;
-      }
-    }
-    // No node within the snap distance in T, so no difference below is zero in double.
-    const auto t = static_cast<double>(tj);
-    double den = 0.0;
-    for (std::size_t k = 0; k < m; ++k) {
-      den += w[k] / (t - x[k]);
-    }
-    for (std::size_t k = 0; k < m; ++k) {
-      row[k] = static_cast<T>((w[k] / (t - x[k])) / den);
-    }
-  });
+  detail::for_each_point(pts.size(), lagrange_ops_per_point(degree), sizeof(T) * m,
+                         [&](std::size_t j) {
+                           T* row = data + j * m;
+                           const T tj = pts[j];
+                           for (std::size_t k = 0; k < m; ++k) {
+                             using std::abs;
+                             if (abs(tj - nt[k]) <= snap) {
+                               for (std::size_t i = 0; i < m; ++i) {
+                                 row[i] = static_cast<T>(0);
+                               }
+                               row[k] = static_cast<T>(1);
+                               return;
+                             }
+                           }
+                           // No node within the snap distance in T, so no difference below is zero
+                           // in double.
+                           const auto t = static_cast<double>(tj);
+                           double den = 0.0;
+                           for (std::size_t k = 0; k < m; ++k) {
+                             den += w[k] / (t - x[k]);
+                           }
+                           for (std::size_t k = 0; k < m; ++k) {
+                             row[k] = static_cast<T>((w[k] / (t - x[k])) / den);
+                           }
+                         });
 }
 
 }  // namespace detail
@@ -160,7 +169,7 @@ template <StorageFloat T>
 [[nodiscard]] NdArray<T> tabulate_lagrange_1d(int degree, LagrangeVariant variant,
                                               std::span<const T> pts) {
   detail::check_degree(degree);
-  NdArray<T> out({pts.size(), static_cast<std::size_t>(degree) + 1});
+  NdArray<T> out({pts.size(), static_cast<std::size_t>(degree) + 1}, for_overwrite);
   detail::tabulate_lagrange_1d_kernel<T>(degree, variant, pts, out.template view<2>());
   return out;
 }

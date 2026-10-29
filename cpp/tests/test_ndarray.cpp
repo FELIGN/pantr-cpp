@@ -107,3 +107,15 @@ TEST_CASE("NdArray: an empty shape NumPy would refuse is refused (into_buffer ha
   CHECK_THROWS_AS(pantr::NdArray<double>({std::size_t{1} << 31, std::size_t{1} << 31, 0}),
                   pantr::capacity_error);
 }
+
+TEST_CASE("NdArray: the for_overwrite constructor sizes like the zeroing one") {
+  pantr::NdArray<double> a({3, 4}, pantr::for_overwrite);
+  CHECK(a.size() == 12);
+  CHECK(a.rank() == 2);
+  for (double& v : a.flat()) {
+    v = 1.5;  // written before any read, as its contract asks
+  }
+  CHECK(a.view<2>()(2, 3) == 1.5);
+  CHECK_THROWS_AS((pantr::NdArray<double>({std::size_t{1} << 62, 8}, pantr::for_overwrite)),
+                  pantr::capacity_error);
+}

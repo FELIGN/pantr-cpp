@@ -38,3 +38,13 @@ TEST_CASE("work model: an estimate below one operation, or not finite, is a valu
   CHECK_THROWS_WITH(static_cast<void>(grain_for(WorkEstimate{0.5})),
                     "ops_per_item must be a finite number >= 1, got 0.5");
 }
+
+TEST_CASE("work model: a memory-bound item's chunk streams at least chunk_bytes") {
+  using pantr::parallel::chunk_bytes;
+  // 16 ops and 32 bytes per item: by operations alone 1024 items (32 KiB), by bytes 8192.
+  CHECK(grain_for(WorkEstimate{16.0}, 32) == static_cast<std::size_t>(chunk_bytes / 32.0));
+  // A compute-bound item keeps its operation-derived chunk.
+  CHECK(grain_for(WorkEstimate{chunk_ops}, 1) == static_cast<std::size_t>(chunk_bytes));
+  CHECK(grain_for(WorkEstimate{1.0}, 1 << 20) == static_cast<std::size_t>(chunk_ops));
+  CHECK(grain_for(WorkEstimate{3.0}, 0) == grain_for(WorkEstimate{3.0}));
+}

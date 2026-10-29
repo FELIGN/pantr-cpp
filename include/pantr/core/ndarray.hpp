@@ -24,6 +24,14 @@
 
 namespace pantr {
 
+/// Tag selecting `NdArray`'s constructor that leaves the elements uninitialized.
+struct for_overwrite_t {
+  explicit for_overwrite_t() = default;
+};
+
+/// The `for_overwrite_t` tag value.
+inline constexpr for_overwrite_t for_overwrite{};
+
 /// Multiply extents, refusing a product `std::size_t` cannot hold.
 ///
 /// Args:
@@ -72,6 +80,23 @@ class NdArray {
       : shape_(std::move(shape)),
         size_(checked_size(shape_)),
         data_(std::make_shared<T[]>(size_)) {}
+
+  /// Allocate an array of the given shape without initializing its elements.
+  ///
+  /// For an array the caller overwrites entirely before reading it (a kernel's output): it skips
+  /// a single-threaded pass over memory that the kernel's own, possibly parallel, writes would
+  /// repeat, and leaves the first touch of each page to the thread that writes it.
+  ///
+  /// Args:
+  ///     shape (std::vector<std::size_t>): Extents, outermost first.
+  ///     tag (for_overwrite_t): Selects this constructor.
+  ///
+  /// Raises:
+  ///     capacity_error: As the zero-initializing constructor.
+  NdArray(std::vector<std::size_t> shape, for_overwrite_t /*tag*/)
+      : shape_(std::move(shape)),
+        size_(checked_size(shape_)),
+        data_(std::shared_ptr<T[]>(new T[size_])) {}
 
   NdArray(const NdArray& other)
       : shape_(other.shape_), size_(other.size_), data_(std::make_shared<T[]>(other.size_)) {

@@ -45,6 +45,29 @@ enum class Family : int {
   return static_cast<Family>(value);
 }
 
+/// Operations one point of a family's 1D tabulation costs, as its kernel estimates it (the
+/// parallel decision, which the Python binding also reads to release the GIL only then).
+///
+/// Args:
+///     family (Family): The basis family.
+///     degree (int): Degree, `>= 0`.
+///
+/// Returns:
+///     double: The estimate, at least 1.
+[[nodiscard]] inline double ops_per_point(Family family, int degree) {
+  switch (family) {
+    case Family::bernstein:
+      return detail::bernstein_ops_per_point(degree);
+    case Family::cardinal_bspline:
+      return detail::cardinal_bspline_ops_per_point(degree);
+    case Family::legendre:
+      return detail::legendre_ops_per_point(degree);
+    case Family::lagrange:
+      return detail::lagrange_ops_per_point(degree);
+  }
+  throw value_error("unknown basis family");
+}
+
 /// Evaluate a one-dimensional basis of a family at `pts` into `out`.
 ///
 /// Args:
@@ -138,14 +161,14 @@ void tabulate_tensor(Family family, std::span<const int> degrees, LagrangeVarian
     const std::span<const T> pts = lattice.pts(d);
     n_pts[d] = pts.size();
     n_fun[d] = static_cast<std::size_t>(degrees[d]) + 1;
-    tables.emplace_back(std::vector<std::size_t>{n_pts[d], n_fun[d]});
+    tables.emplace_back(std::vector<std::size_t>{n_pts[d], n_fun[d]}, for_overwrite);
     tabulate_1d<T>(family, degrees[d], variant, pts, tables.back().template view<2>());
   }
   const std::size_t total_pts = checked_product(n_pts);
   const std::size_t total_fun = checked_product(n_fun);
   detail::check_out<T, 2>(out, {total_pts, total_fun});
   T* data = out.data_handle();
-  parallel::parallel_for(total_pts, parallel::WorkEstimate{2.0 * static_cast<double>(total_fun)},
+  detail::for_each_chunk(total_pts, 2.0 * static_cast<double>(total_fun), sizeof(T) * total_fun,
                          [&](std::size_t begin, std::size_t end) {
                            std::vector<T> scratch(total_fun);
                            std::vector<const T*> rows(dim);
@@ -200,14 +223,14 @@ void tabulate_tensor(Family family, std::span<const int> degrees, LagrangeVarian
       column[p] = pts(p, d);
     }
     n_fun[d] = static_cast<std::size_t>(degrees[d]) + 1;
-    tables.emplace_back(std::vector<std::size_t>{n, n_fun[d]});
+    tables.emplace_back(std::vector<std::size_t>{n, n_fun[d]}, for_overwrite);
     tabulate_1d<T>(family, degrees[d], variant, std::span<const T>(column),
                    tables.back().template view<2>());
   }
   const std::size_t total_fun = checked_product(n_fun);
   detail::check_out<T, 2>(out, {n, total_fun});
   T* data = out.data_handle();
-  parallel::parallel_for(n, parallel::WorkEstimate{2.0 * static_cast<double>(total_fun)},
+  detail::for_each_chunk(n, 2.0 * static_cast<double>(total_fun), sizeof(T) * total_fun,
                          [&](std::size_t begin, std::size_t end) {
                            std::vector<T> scratch(total_fun);
                            std::vector<const T*> rows(dim);
