@@ -190,8 +190,10 @@
   exact zero it is, without the derivative table, at any order: an order of `2**31 - 1` or more is
   refused as "derivative order N is too large" (`ValueError`), where the table used to be
   allocated and fail with a `MemoryError` past memory. At a point with a NaN or infinite
-  coordinate it is NaN, which is what the previous release gave at a NaN point (at an infinite
-  one it gave a mix of `inf` and NaN).
+  coordinate it is NaN; the previous release gave NaN only when such a coordinate lay in a
+  direction whose derivative order was below its degree, and zero otherwise.
+- At a point with an infinite coordinate, derivatives within the degree can be NaN where the
+  previous release gave `inf` or `-inf` (or the reverse), since the evaluation order differs.
 - **A `Bezier` is immutable**, as the C++ values are (they are shared rather than copied, which
   is what makes them cheap to pass and safe across threads): the constructor copies the control
   points, so a later write to the array it was given no longer changes the Bézier;
@@ -227,8 +229,10 @@
   pivot also changes, since Eigen's elimination rounds differently from LAPACK's:
   `[[1, 2, 3], [4, 5, 6], [7, 8, 9]]` is now inverted (to entries of order `1e15`, noise, as any
   inverse of it is) where it was refused, and some other near-singular matrices are refused where
-  they were inverted. A matrix singular by structure (a zero row or column, equal rows) is refused
-  as before.
+  they were inverted. A matrix with a zero row or a zero column is refused as before. A matrix
+  with equal rows is now always refused; the previous release inverted some of them to noise,
+  depending on BLAS rounding. Results can move in the last bits for a well-conditioned matrix;
+  for an ill-conditioned one they move within the bound the condition number gives.
 - `AABB.transform` given an offset without `ndim` entries is a `ValueError` ("affine.offset must
   have shape ..."). NumPy broadcast a one-entry or 0-d offset to every axis and raised a
   broadcasting error for other lengths; the C++ library checks every input.
@@ -239,7 +243,15 @@
   non-numeric `factor` or `angle` is a `TypeError` from the binding before any range check, an
   integer outside the int64 range for a `direction`, `axis`, `ndim`, `n`, `dim`, `component` or
   degree increment is a `TypeError` from the binding (it was a `ValueError` from the range
-  check), and a `center` of the wrong rank in the factories reports its ravelled shape.
+  check), and a `center` of the wrong rank in the factories reports its ravelled shape. A `bool`
+  given for an integer is the integer it is (`True` is `1`) everywhere: `AABB.empty(True)`,
+  `AABB.unbounded(True)`, `AffineTransform.identity(True)` and `Bezier.permute_directions` with
+  `bool` entries are accepted where they were a `TypeError`; `AffineTransform.shear` with a `bool`
+  direction shears along that axis (the previous release used it as a mask);
+  `Bezier.evaluate_derivatives(points, True)` is the first derivative (the previous release
+  returned another shape) and a list of `bool` orders is accepted where it raised. NumPy scalars of
+  another precision are converted to the Bézier's dtype before use: `restrict` with `np.float32`
+  bounds on a `float64` Bézier computes in `float64` (it computed in `float32`).
 - **Under a tight address-space limit** (`ulimit -v`), the first parallel `Bezier.evaluate` or
   `AffineTransform.__call__` can fail to start pool threads, as the tabulations can (above):
   `RuntimeError` ("Resource temporarily unavailable") or `MemoryError` ("std::bad_alloc"), and
@@ -248,8 +260,12 @@
   `_bezier_compose`, `_bezier_collapse`, `_bezier_split`, `_bezier_slice` and `_bezier_restrict`,
   and `_bezier_degree._degree_elevate_bezier`, are gone with the Numba kernels they held, as are
   the private helpers `pantr.geometry._BOUNDS_NDIM`, `_BOUNDS_AXIS_LEN` and `_require_same_ndim`,
-  `pantr.transform._apply_center` and `_with_optional_center`, and the attribute
-  `Bezier._control_points`, whose work is now done in C++.
+  `pantr.transform._apply_center` and `_with_optional_center`, the helpers
+  `pantr.bezier._bezier_product._multiply_bezier`, `_multiply_nonrational`, `_multiply_rational`,
+  `_ensure_rational_ctrl` and `_append_unit_weight_column`,
+  `_bezier_utils._tabulate_Bernstein_basis_1D_core`,
+  `_bezier_degree._degree_elevate_bezier_1d_core` and `_tabulate_Bernstein_basis_1D_serial_core`,
+  and the attribute `Bezier._control_points`, whose work is now done in C++.
 
 ### Fixed
 - `AABB` can be pickled and copied (`pickle`, `copy.copy`, `copy.deepcopy`); each raised
