@@ -36,6 +36,13 @@ _RESIDUAL_TOL: float = 1e-6
 # =====================================================================
 
 
+def _scalar_bernstein_product(
+    a: npt.NDArray[np.float64], b: npt.NDArray[np.float64]
+) -> npt.NDArray[np.float64]:
+    """Bernstein coefficients of the product of two scalar polynomials (`Bezier.multiply`)."""
+    return np.asarray(Bezier(a).multiply(Bezier(b)).control_points[:, 0], dtype=np.float64)
+
+
 def _make_random_coeff(
     rng: np.random.Generator,
     degree: int,
@@ -87,21 +94,17 @@ def _make_double_root_coeff(
     if degree < 2:
         return _make_random_coeff(rng, degree)
 
-    from pantr.bezier._bezier_core import (  # noqa: PLC0415
-        _scalar_bernstein_product_1d_core,
-    )
-
     # (t - r) in Bernstein form: [-r, 1-r]
     r = rng.uniform(0.2, 0.8)
     linear = np.array([-r, 1.0 - r], dtype=np.float64)
     # Square it via Bernstein product
-    squared = _scalar_bernstein_product_1d_core(linear, linear)
+    squared = _scalar_bernstein_product(linear, linear)
 
     # Multiply by a random cofactor to reach target degree
     remaining = degree - 2
     if remaining > 0:
         cofactor = rng.uniform(0.5, 2.0, remaining + 1).astype(np.float64)
-        result = _scalar_bernstein_product_1d_core(squared, cofactor)
+        result = _scalar_bernstein_product(squared, cofactor)
     else:
         result = squared
 

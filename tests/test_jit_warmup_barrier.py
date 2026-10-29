@@ -127,45 +127,9 @@ class _BarrierCase(NamedTuple):
 
 _CASES: tuple[_BarrierCase, ...] = (
     # -- pantr.bezier ------------------------------------------------------
-    # `_bezier_utils._tabulate_bernstein_1d_fast` and `_bezier_collapse._collapse_along_axis`
-    # reach no Numba kernel since the Bernstein tabulation moved to C++ (whose pool is safe
-    # against concurrent callers), so they carry no barrier and have no case here.
-    _BarrierCase(
-        "_bezier_eval._evaluate_bezier",
-        "pantr.bezier._bezier_eval",
-        "_evaluate_bezier_1d",
-        lambda: _bezier_1d().evaluate(_PTS),
-    ),
-    _BarrierCase(
-        "_bezier_eval._evaluate_bezier_deriv",
-        "pantr.bezier._bezier_eval",
-        "_evaluate_bezier_deriv_1d",
-        lambda: _bezier_1d().evaluate_derivatives(_PTS, [1]),
-    ),
-    _BarrierCase(
-        "_bezier_slice._slice_bezier",
-        "pantr.bezier._bezier_slice",
-        "_slice_bezier_1d_core",
-        lambda: _bezier_2d().slice(0, 0.5),
-    ),
-    _BarrierCase(
-        "_bezier_split._split_bezier",
-        "pantr.bezier._bezier_split",
-        "_split_bezier_1d_core",
-        lambda: _bezier_2d().split(0, 0.5),
-    ),
-    _BarrierCase(
-        "_bezier_restrict._restrict_bezier",
-        "pantr.bezier._bezier_restrict",
-        "_restrict_bezier_1d_core",
-        lambda: _bezier_2d().restrict([(0.25, 0.75), None]),
-    ),
-    _BarrierCase(
-        "_bezier_compose._compose_bezier",
-        "pantr.bezier._bezier_compose",
-        "_scalar_bernstein_product_1d_core",
-        lambda: _bezier_1d().compose(Bezier(np.array([[0.2], [0.8]]))),
-    ),
+    # The Bezier evaluation, slicing, splitting, restriction and composition kernels moved to
+    # C++ (whose pool is safe against concurrent callers), so they carry no barrier and have no
+    # case here; neither does `_bezier_utils._tabulate_bernstein_1d_fast`.
     # -- pantr.grid --------------------------------------------------------
     _BarrierCase(
         "_tensor_product_grid.TensorProductGrid.locate_many",

@@ -2,8 +2,7 @@
 
 The O(p) ratio recurrence of the C++ Bernstein tabulation
 (``include/pantr/basis/bernstein.hpp``, reached here through ``pantr._testing``)
-and the fused kernel
-``_evaluate_bezier_1d_core`` now branches on ``u > 0.5`` and runs from
+and the fused kernel behind ``Bezier.evaluate`` (1D) now branch on ``u > 0.5`` and run from
 whichever endpoint keeps the seed term (``(1-u)^p`` or ``u^p``) bounded below
 by ``0.5^p``, using the symmetry ``B_i,p(u) = B_{p-i},p(1-u)``. Before the
 fix, the forward-only recurrence seeded from ``(1-u)^p`` underflowed to exact
@@ -24,7 +23,7 @@ This module covers:
       (``bernstein_derivatives_point``, an unaffected O(p^2) ``ndu``-table
       recurrence) and the fixed value kernel.
     - An end-to-end guard for the fused Bezier-evaluation kernel
-      (``_evaluate_bezier_1d_core``) against de Casteljau evaluation.
+      (behind ``Bezier.evaluate``) against de Casteljau evaluation.
 """
 
 from __future__ import annotations
@@ -38,7 +37,7 @@ import pytest
 from pantr import _testing
 from pantr._numba_compat import wait_for_jit_warmup
 from pantr.basis import tabulate_bernstein_1d
-from pantr.bezier._bezier_core import _evaluate_bezier_1d_core, _slice_bezier_1d_core
+from pantr.bezier import Bezier
 
 _MAX_SAFE_DEGREE_NO_MIRROR_FLOAT64 = _testing.BERNSTEIN_MAX_UNMIRRORED_DEGREE_FLOAT64
 _MAX_SAFE_DEGREE_NO_MIRROR_FLOAT32 = _testing.BERNSTEIN_MAX_UNMIRRORED_DEGREE_FLOAT32
@@ -213,12 +212,12 @@ class TestDerivativeConsistency:
 
 
 class TestFusedBezierKernel:
-    """End-to-end guard for the fused evaluation kernel `_evaluate_bezier_1d_core`."""
+    """End-to-end guard for the fused 1D evaluation kernel behind `Bezier.evaluate`."""
 
     def test_degree_30_near_u1_matches_de_casteljau(self) -> None:
         """Random-control-point degree-30 Bezier at u=1-1e-16 matches de Casteljau.
 
-        `_slice_bezier_1d_core` is a stable de Casteljau triangular reduction
+        `Bezier.slice` of a curve is a stable de Casteljau triangular reduction
         (no ratio recurrence, hence no underflow risk) used here as the
         reference for the fused kernel under test.
         """
@@ -228,18 +227,17 @@ class TestFusedBezierKernel:
         rng = np.random.default_rng(42)
         ctrl = rng.normal(size=(degree + 1, rank))
 
-        out_fused = np.empty((1, rank), dtype=np.float64)
-        _evaluate_bezier_1d_core(ctrl, np.array([u]), out_fused)
-
-        out_ref = np.empty(rank, dtype=np.float64)
-        _slice_bezier_1d_core(ctrl, u, out_ref)
+        curve = Bezier(ctrl)
+        out_fused = curve.evaluate(np.array([u]))
+        out_ref = curve.slice(0, u)
+        assert isinstance(out_ref, np.ndarray)  # a curve slices to its point
 
         np.testing.assert_allclose(out_fused[0], out_ref, rtol=1e-10, atol=1e-10)
 
     def test_batch_of_mixed_points_matches_de_casteljau(self) -> None:
         """A single batched call mixing both branches matches de Casteljau per point.
 
-        `_evaluate_bezier_1d_core` is a ``parallel=True``/``prange`` kernel: a
+        The fused kernel runs its points in parallel chunks: a
         batch with more than one point, spanning the forward branch, the
         mirrored branch, and the shared boundary, guards against any
         cross-iteration state-sharing bug the branch could introduce (each
@@ -251,12 +249,12 @@ class TestFusedBezierKernel:
         rng = np.random.default_rng(7)
         ctrl = rng.normal(size=(degree + 1, rank))
 
-        out_fused = np.empty((pts.size, rank), dtype=np.float64)
-        _evaluate_bezier_1d_core(ctrl, pts, out_fused)
+        curve = Bezier(ctrl)
+        out_fused = curve.evaluate(pts)
 
         for k, u in enumerate(pts):
-            out_ref = np.empty(rank, dtype=np.float64)
-            _slice_bezier_1d_core(ctrl, float(u), out_ref)
+            out_ref = curve.slice(0, float(u))
+            assert isinstance(out_ref, np.ndarray)  # a curve slices to its point
             np.testing.assert_allclose(out_fused[k], out_ref, rtol=1e-10, atol=1e-10)
 
 

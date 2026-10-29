@@ -12,7 +12,6 @@ import pytest
 from pantr._numba_compat import wait_for_jit_warmup
 from pantr.bezier import Bezier
 from pantr.bezier._bezier_degree import (
-    _degree_elevate_bezier,
     _degree_reduce_bezier,
     _elevation_matrix_exact,
     _interpolating_reduction_operator,
@@ -786,7 +785,7 @@ class TestBezierMinimizeDegreeRational:
         """
         source = Bezier(np.array(_NUDGED_WEIGHT_NETS[1.0e6, 1.0e-3]), is_rational=True)
         num_nodes = tuple(_projected_quadrature_size(p) for p in source.degree)
-        trial = _degree_elevate_bezier(_degree_reduce_bezier(source, (1,)), (1,)).control_points
+        trial = _degree_reduce_bezier(source, (1,)).elevate_degree((1,)).control_points
         estimate = _projected_relative_deviation(
             _sample_projected(source.control_points, num_nodes),
             _sample_projected(trial, num_nodes),
