@@ -105,3 +105,7 @@ if(PANTR_BUILD_TESTS)
   enable_testing()
   add_subdirectory(cpp/tests)
 endif()
+
+if(PANTR_BUILD_PYTHON)
+  add_subdirectory(bindings)
+endif()

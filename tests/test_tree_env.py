@@ -13,7 +13,18 @@ from pathlib import Path
 
 import pytest
 
-from tests._tree_env import TREE_SRC, check_pantr_from_tree, pantr_origin, subprocess_env
+from tests._tree_env import (
+    TESTING_INSTALLED,
+    TREE_SRC,
+    check_extension_from_tree,
+    check_pantr_from_tree,
+    pantr_origin,
+    subprocess_env,
+)
+
+pytestmark = pytest.mark.skipif(
+    TESTING_INSTALLED, reason="tests this tree's own resolution; the run tests an installed pantr"
+)
 
 
 def test_session_imports_this_tree() -> None:
@@ -23,6 +34,11 @@ def test_session_imports_this_tree() -> None:
 
     assert Path(pantr.__file__).resolve().is_relative_to(TREE_SRC)
     assert pantr_origin() == Path(pantr.__file__).resolve()
+
+
+def test_session_loads_this_trees_extension() -> None:
+    """The compiled extension the session uses is the one ``make ext`` built into this tree."""
+    assert check_extension_from_tree().is_relative_to(TREE_SRC)
 
 
 def test_subprocess_env_points_a_child_at_this_tree() -> None:

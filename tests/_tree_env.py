@@ -23,6 +23,9 @@ from typing import Final
 TREE_SRC: Final[Path] = Path(__file__).resolve().parents[1] / "src"
 """Absolute path of this checkout's ``src`` directory."""
 
+TESTING_INSTALLED: Final[bool] = os.environ.get("PANTR_TEST_INSTALLED", "") == "1"
+"""Whether the suite tests the installed ``pantr`` (a wheel) rather than this tree's."""
+
 
 def subprocess_env(base: Mapping[str, str] | None = None) -> dict[str, str]:
     """Return an environment whose ``PYTHONPATH`` starts with this tree's ``src``, absolute.
@@ -31,9 +34,13 @@ def subprocess_env(base: Mapping[str, str] | None = None) -> dict[str, str]:
         base (Mapping[str, str] | None): Environment to extend. Defaults to ``os.environ``.
 
     Returns:
-        dict[str, str]: A copy of ``base`` with ``TREE_SRC`` prepended to ``PYTHONPATH``.
+        dict[str, str]: A copy of ``base`` with ``TREE_SRC`` prepended to ``PYTHONPATH``; when
+        testing the installed package (``PANTR_TEST_INSTALLED=1``), an unchanged copy, so a child
+        imports the same installed ``pantr``.
     """
     env = dict(os.environ if base is None else base)
+    if TESTING_INSTALLED:
+        return env
     inherited = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = f"{TREE_SRC}{os.pathsep}{inherited}" if inherited else str(TREE_SRC)
     return env
@@ -66,10 +73,29 @@ def check_pantr_from_tree() -> None:
         raise RuntimeError(f"pantr resolves to {origin}, outside this tree's {TREE_SRC}")
 
 
+def check_extension_from_tree() -> Path:
+    """Import ``pantr`` and raise unless its compiled extension is this tree's build.
+
+    Returns:
+        pathlib.Path: The loaded ``_pantr`` module file.
+
+    Raises:
+        RuntimeError: The extension loaded from outside this tree's ``src``.
+        ImportError: No usable extension (not built: run ``make ext``).
+    """
+    from pantr._ext import ext  # noqa: PLC0415
+
+    module_file = Path(ext.__file__).resolve()
+    if not module_file.is_relative_to(TREE_SRC):
+        raise RuntimeError(f"pantr's extension loads from {module_file}, outside {TREE_SRC}")
+    return module_file
+
+
 if __name__ == "__main__":
     try:
         check_pantr_from_tree()
-    except (RuntimeError, ModuleNotFoundError) as exc:
+        extension = check_extension_from_tree()
+    except (RuntimeError, ImportError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
-    print(f"pantr resolves to {pantr_origin()}")
+    print(f"pantr resolves to {pantr_origin()}, its extension to {extension}")

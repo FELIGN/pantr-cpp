@@ -48,6 +48,15 @@
   were exposed.
 
 ### Changed
+- **pantr needs Python 3.12 or later.** pantr is becoming a C++ library with a compiled
+  Python extension, built for CPython's stable ABI so that one wheel per platform serves
+  every Python from 3.12 on; the binding library's stable-ABI support starts at 3.12.
+  Python 3.11 is no longer supported.
+- **pantr is built with scikit-build-core and ships compiled extension modules.** A source
+  install needs a C++20 compiler and CMake 3.28 or later. In a source checkout, `make ext`
+  builds the extension into `src/pantr` (there is no editable install), and importing pantr
+  fails with a message saying so when the module is missing or was built from other
+  bindings.
 - `PointsLattice` copies the arrays it is given and freezes the copies, so a later change
   to the caller's arrays no longer alters the lattice. Its arrays are read-only, and
   `pts_per_dir` returns fresh read-only views on each access. Code that wrote through

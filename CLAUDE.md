@@ -14,6 +14,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 All of these assume the `pantr-cpp` env, i.e. prefix with `conda run -n pantr-cpp`.
 
 ```bash
+make ext                                                    # build the extension into src/pantr (needed before any pytest)
+make stubs                                                  # regenerate the committed extension stubs after a binding change
 make pre-pull-request                                       # the full check suite CI runs
 pytest                                                      # run tests (JIT enabled, no coverage)
 make doctest                                                # run the docstring examples under src/pantr
@@ -41,6 +43,10 @@ cmake --preset gcc-release && cmake --build --preset gcc-release && ctest --pres
 ```
 
 > The presets share fetched dependency sources in `build/_deps`, so configure one preset at a time.
+> `make ext` (build dir `build/dev`) builds what a wheel ships: abi3 modules for every ISA rung,
+> plus the test-only twin modules. `PANTR_ISA=generic|v3|v4` picks one rung and raises if it is
+> missing. Importing two rungs in one process registers their classes twice: test a rung in a
+> subprocess. A source edit after the last `make ext` stops the test session at start (conftest).
 > The `pantr-cpp` env's Clang has no sanitizer runtime (conda's `compiler-rt` is not installed), so
 > the `clang-asan-ubsan` and `clang-tsan` presets fail to link locally; the GCC ones work.
 
@@ -57,7 +63,7 @@ cmake --preset gcc-release && cmake --build --preset gcc-release && ctest --pres
 
 The local suite passing is necessary but not sufficient. Known traps:
 
-- **mypy runs on a Python matrix (3.11, 3.13, 3.14)** while the installed *numpy stub* version is
+- **mypy runs on a Python matrix (3.12, 3.13, 3.14)** while the installed *numpy stub* version is
   whatever is local. Be defensive with numpy typing: never a bare `np.ndarray`, and wrap the result
   of `np.einsum` / `np.tensordot` with `np.asarray(..., dtype=np.float64)` where the dtype matters —
   those return `Any` in some stub versions and the annotation silently degrades.
@@ -169,7 +175,7 @@ own CI cannot see breakage there.
 
 ## Architecture
 
-**PaNTr** is a polynomial and NURBS toolkit for geometric modeling and numerical analysis (Python 3.11–3.14).
+**PaNTr** is a polynomial and NURBS toolkit for geometric modeling and numerical analysis (Python 3.12–3.14).
 
 ### Layers
 
@@ -222,7 +228,7 @@ Public functions and Layer 2 helpers accept an optional `out` argument for the r
 ## Code conventions
 
 - Strict mypy (`strict=True`); all public and private functions must be fully typed
-- Ruff with Google-style docstrings, line length 100, target Python 3.11
+- Ruff with Google-style docstrings, line length 100, target Python 3.12
 - Warnings are treated as errors in pytest
 - Layer 3 kernels run under Numba `nopython=True`: only use NumPy operations supported in that mode; unsupported calls cause a hard compile error or silent object-mode fallback
 

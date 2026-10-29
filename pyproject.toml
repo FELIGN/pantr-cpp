@@ -1,12 +1,15 @@
 [build-system]
-requires = ["hatchling>=1.27"]
-build-backend = "hatchling.build"
+# Both pinned exactly. nanobind's pin is the one every pantr extension module builds against
+# (_pantr here; _pantr_mpi and _pantr_berf in their own distributions): modules that exchange
+# nanobind objects must share its ABI, and bindings/CMakeLists.txt refuses any other version.
+requires = ["scikit-build-core==1.1.1", "nanobind==3.1.0"]
+build-backend = "scikit_build_core.build"
 
 [project]
 name = "pantr"
 description = "Polynomial And NURBS Toolkit"
 readme = "README.md"
-requires-python = ">=3.11, <3.15"
+requires-python = ">=3.12, <3.15"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Pablo Antolin", email = "pablo.antolin@epfl.ch" }]
@@ -29,14 +32,14 @@ classifiers = [
   "Programming Language :: Python",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
-  "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
   "Topic :: Scientific/Engineering",
 ]
 # Always-on runtime dependencies. Optional features (MPI, METIS partitioning,
-# visualization) live in `[project.optional-dependencies]` and are opt-in.
+# visualization) live in `[project.optional-dependencies]` and are opt-in. Numba and
+# threadpoolctl stay until the last stage of the C++ port removes the last kernel using them.
 dependencies = [
   "numpy>=1.26,<3",
   "scipy>=1.15,<2",  # 1.15 added BarycentricInterpolator's `rng`, which Lagrange tabulation needs to be reproducible
@@ -101,16 +104,40 @@ Documentation = "https://pantr.readthedocs.io"
 Source = "https://github.com/FELIGN/pantr"
 Issues = "https://github.com/FELIGN/pantr/issues"
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/pantr"]
+[tool.scikit-build]
+minimum-version = "build-system.requires"
+# The version's single source is `__version__` in the package __init__ (CMakeLists.txt checks
+# that include/pantr/version.hpp agrees).
+metadata.version.provider = "scikit_build_core.metadata.regex"
+metadata.version.input = "src/pantr/__init__.py"
+metadata.version.regex = '^__version__[^=]*=\s*"(?P<value>[^"]+)"'
+# One cp312-abi3 wheel per platform serves every CPython >= 3.12 (nanobind STABLE_ABI; the CMake
+# side asks for Python's SABIModule component when PANTR_STABLE_ABI is ON).
+wheel.py-api = "cp312"
+wheel.packages = ["src/pantr"]
+# `make ext` installs development builds into src/pantr; the wheel takes the modules this build
+# installs, never those.
+wheel.exclude = ["pantr/_pantr*.so", "pantr/_pantr*.pyd"]
+# Only the extension modules: pantr's headers and CMake package install from a CMake build, and the
+# test-only modules (component `testing`) never ship.
+install.components = ["python"]
+# scikit-build-core strips at install by default; keep the symbols, and with NOMINSIZE in the CMake
+# the -O3 the release build asks for (design/packaging.md).
+install.strip = false
+build-dir = "build/skbuild/{wheel_tag}"
+sdist.exclude = [".claude", "benchmarks/results"]
 
-# Single source of truth for the version: `__version__` in the package __init__.
-# The explicit pattern is required because the assignment carries a type
-# annotation (`__version__: Final[str] = "..."`), which hatchling's default
-# regex does not match.
-[tool.hatch.version]
-path = "src/pantr/__init__.py"
-pattern = '^__version__[^=]*=\s*"(?P<version>[^"]+)"'
+[tool.scikit-build.cmake]
+build-type = "Release"
+version = ">=3.28"
+
+[tool.scikit-build.cmake.define]
+PANTR_BUILD_PYTHON = "ON"
+PANTR_BUILD_TESTS = "OFF"
+PANTR_INSTALL = "OFF"
+PANTR_NATIVE_ARCH = "OFF"
+PANTR_STABLE_ABI = "ON"
+PANTR_MULTI_ISA = "ON"
 
 [tool.importlinter]
 root_package = "pantr"

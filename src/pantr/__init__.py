@@ -21,6 +21,9 @@ The main modules are:
 import sys
 from typing import Final
 
+# The compiled extension first: a missing, stale or mismatched module fails the import here, with
+# a message saying how to rebuild it, rather than at the first call that reaches it.
+from . import _ext  # noqa: F401  # isort: skip
 from . import (
     basis,
     bezier,

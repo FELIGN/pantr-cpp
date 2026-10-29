@@ -27,14 +27,19 @@ os.environ["NUMBA_DISABLE_JIT"] = "1"
 PROJECT_ROOT: Final[Path] = Path(__file__).resolve().parent.parent
 SRC_PATH: Final[Path] = PROJECT_ROOT / "src"
 
-sys.path.insert(0, str(SRC_PATH))
-
-pantr_spec = importlib.util.spec_from_file_location("pantr", SRC_PATH / "pantr" / "__init__.py")
-if pantr_spec is None or pantr_spec.loader is None:
-    msg = f"Unable to locate pantr package at {SRC_PATH / 'pantr' / '__init__.py'}"
-    raise ImportError(msg)
-pantr = importlib.util.module_from_spec(pantr_spec)
-pantr_spec.loader.exec_module(pantr)
+# Read the Docs installs pantr as a wheel (.readthedocs.yaml), which carries the compiled extension;
+# its checkout's src/pantr does not, since nothing there runs `make ext`. Everywhere else the docs
+# document this checkout's src, built with `make ext` first.
+if os.environ.get("READTHEDOCS") == "True":
+    import pantr
+else:
+    sys.path.insert(0, str(SRC_PATH))
+    pantr_spec = importlib.util.spec_from_file_location("pantr", SRC_PATH / "pantr" / "__init__.py")
+    if pantr_spec is None or pantr_spec.loader is None:
+        msg = f"Unable to locate pantr package at {SRC_PATH / 'pantr' / '__init__.py'}"
+        raise ImportError(msg)
+    pantr = importlib.util.module_from_spec(pantr_spec)
+    pantr_spec.loader.exec_module(pantr)
 CURRENT_YEAR: Final[int] = date.today().year
 
 project = "PaNTr"
