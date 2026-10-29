@@ -24,6 +24,7 @@
 #include "pantr/core/exact_rational.hpp"
 #include "pantr/core/ndarray.hpp"
 #include "pantr/core/scalar.hpp"
+#include "pantr/linalg/dense.hpp"
 #include "pantr/quad/rules_1d.hpp"
 
 #include <Eigen/Core>
@@ -41,10 +42,12 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <span>
 #include <string>
 #include <system_error>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 namespace pantr::change_basis {
@@ -146,35 +149,21 @@ inline void check_at_least_one(int degree) {
   }
 }
 
-template <StorageFloat T>
-using RowMatrix = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
+using linalg::as_matrix;
+using linalg::RowMatrix;
 
-template <StorageFloat T>
-Eigen::Map<const RowMatrix<T>> as_matrix(const NdArray<T>& a) {
-  return {a.data(), static_cast<Eigen::Index>(a.shape()[0]),
-          static_cast<Eigen::Index>(a.shape()[1])};
-}
-
-/// Solve `A X = I` by LU with partial pivoting: an explicit inverse (Du Croz and Higham's
-/// Method A), which bounds the residual `A X - I`, not `X A - I`.
+/// Solve `A X = I` by LU with partial pivoting (`linalg::try_inverse`).
 ///
 /// Raises:
 ///     value_error: A pivot of the factorisation is exactly zero or NaN ("Singular matrix", the
 ///         condition under which numpy.linalg.solve raises LinAlgError, a ValueError).
 template <StorageFloat T>
 NdArray<T> inverse(const NdArray<T>& a) {
-  const auto m = static_cast<Eigen::Index>(a.shape()[0]);
-  const Eigen::PartialPivLU<RowMatrix<T>> lu(as_matrix(a));
-  const auto& factors = lu.matrixLU();
-  for (Eigen::Index i = 0; i < m; ++i) {
-    const T pivot = factors(i, i);
-    if (pivot == static_cast<T>(0) || std::isnan(pivot)) {
-      throw value_error("Singular matrix");
-    }
+  std::optional<NdArray<T>> inv = linalg::try_inverse(a);
+  if (!inv) {
+    throw value_error("Singular matrix");
   }
-  NdArray<T> out({a.shape()[0], a.shape()[1]});
-  Eigen::Map<RowMatrix<T>>(out.data(), m, m) = lu.solve(RowMatrix<T>::Identity(m, m));
-  return out;
+  return std::move(*inv);
 }
 
 /// The Gram projection `old = M new`: row `i` of `M` holds the coefficients of the `i`-th old
