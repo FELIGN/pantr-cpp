@@ -56,7 +56,6 @@ boundedness, and the guard needs no tolerance and no bitwise-identical knots.
 
 from __future__ import annotations
 
-import contextlib
 from functools import cache
 from typing import Any, Final, TypedDict
 
@@ -151,9 +150,11 @@ preset.
 _EPS_BY_DTYPE_LIKE: dict[Any, float] = {}
 """Machine epsilon per dtype-like argument already seen, so a repeated call skips ``np.finfo``.
 
-Keyed on the caller's own argument (``np.float64``, ``"float64"``, a ``np.dtype``); only
-arguments naming one of the four supported formats are stored, so the table stays as small as the
-set of spellings a program uses.
+Keyed on the caller's own argument, and only for the spellings whose equality is the dtype's: a
+scalar type (``np.float64``), a string (``"float64"``) or a ``np.dtype``. Other dtype-likes are
+resolved every call: a NumPy scalar compares equal to its value in another format
+(``np.float32(1.0) == np.float64(1.0)``, with equal hashes), and an object exposing ``.dtype``
+can change it, so either as a key would serve one dtype's answer for another.
 """
 
 
@@ -169,14 +170,13 @@ def _machine_epsilon(dtype: npt.DTypeLike) -> float:
     Raises:
         ValueError: If dtype is not a supported floating-point type.
     """
-    try:
-        return _EPS_BY_DTYPE_LIKE[dtype]
-    except (KeyError, TypeError):  # not seen yet, or not hashable (then never stored)
-        pass
+    cacheable = isinstance(dtype, type | str | np.dtype)
+    if cacheable:
+        eps = _EPS_BY_DTYPE_LIKE.get(dtype)
+        if eps is not None:
+            return eps
     eps = float(np.finfo(_ensure_float_dtype(dtype)).eps)
-    # An object exposing a ``.dtype`` attribute names a supported format and may be unhashable:
-    # such an argument is served, just not remembered.
-    with contextlib.suppress(TypeError):
+    if cacheable:
         _EPS_BY_DTYPE_LIKE[dtype] = eps
     return eps
 

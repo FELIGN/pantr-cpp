@@ -690,3 +690,13 @@ class TestWrapperArgumentConversion:
         """A non-integer point count is refused, not truncated."""
         with pytest.raises(TypeError):
             create_lagrange_points_lattice(LagrangeVariant.EQUISPACES, [2.7])  # type: ignore[list-item]
+
+
+def test_dtype_scalar_answer_does_not_depend_on_call_order() -> None:
+    """A float64 scalar given as dtype first must not make a float32 scalar select float64.
+
+    ``np.float64(1.0)`` and ``np.float32(1.0)`` compare and hash equal; the dtype chosen must
+    depend on ``np.dtype(arg)`` only.
+    """
+    assert get_gauss_legendre_1d(3, np.float64(1.0))[0].dtype == np.float64
+    assert get_gauss_legendre_1d(3, np.float32(1.0))[0].dtype == np.float32

@@ -7,7 +7,6 @@ across packages. All helpers are private (not part of the public API).
 
 from __future__ import annotations
 
-import contextlib
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -38,8 +37,8 @@ def _validate_float_dtype(dtype: npt.DTypeLike) -> None:
 _IS_FLOAT32_BY_DTYPE_LIKE: dict[object, bool] = {}
 """Whether each dtype-like argument already validated names ``float32`` (else ``float64``).
 
-Keyed on the caller's own argument, so a repeated call skips ``np.dtype``; only valid arguments are
-stored, which keeps the table as small as the set of spellings a program uses.
+Keyed on the caller's own argument, so a repeated call skips ``np.dtype``; only valid scalar types,
+strings and ``np.dtype`` instances are stored (see :func:`_is_float32`).
 """
 
 
@@ -57,14 +56,16 @@ def _is_float32(dtype: npt.DTypeLike) -> bool:
     Raises:
         ValueError: If the dtype does not resolve to ``np.float32`` or ``np.float64``.
     """
-    try:
-        return _IS_FLOAT32_BY_DTYPE_LIKE[dtype]
-    except (KeyError, TypeError):  # not seen yet, or unhashable (then invalid, refused below)
-        pass
+    cacheable = isinstance(dtype, type | str | np.dtype)
+    if cacheable:
+        cached = _IS_FLOAT32_BY_DTYPE_LIKE.get(dtype)
+        if cached is not None:
+            return cached
     _validate_float_dtype(dtype)
     is_f32 = bool(np.dtype(dtype).type is np.float32)
-    # An object exposing a ``.dtype`` attribute may be unhashable: served, not remembered.
-    with contextlib.suppress(TypeError):
+    # Only spellings whose equality is the dtype's are keys: a NumPy scalar equals its value in
+    # another format (np.float32(1.0) == np.float64(1.0)), and a .dtype holder can change.
+    if cacheable:
         _IS_FLOAT32_BY_DTYPE_LIKE[dtype] = is_f32
     return is_f32
 
