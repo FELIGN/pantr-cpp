@@ -100,6 +100,9 @@ if(PANTR_MULTI_ISA)
     if(MSVC)
       pantr_add_extension(_pantr_v3 v3 /arch:AVX2)
       pantr_add_extension(_pantr_v4 v4 /arch:AVX512)
+      # MSVC's optimizer does not finish Eigen's AVX-512 matrix-product kernels (seen with 14.44);
+      # Eigen runs unvectorized in this rung, pantr's own kernels keep AVX-512.
+      target_compile_definitions(_pantr_v4 PRIVATE EIGEN_DONT_VECTORIZE)
     else()
       pantr_add_extension(_pantr_v3 v3 -march=x86-64-v3)
       pantr_add_extension(_pantr_v4 v4 -march=x86-64-v4)
