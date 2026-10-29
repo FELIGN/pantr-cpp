@@ -41,9 +41,9 @@ the previous release's candidate buffer overflowed and dropped roots, and in the
 - Every root is `computed`; no multiplicity is claimed (`-1`).
 - Completeness is `complete` unless clipping gave up on an interval at its depth cap (64): that
   interval is then listed and the result is `gap_localized`. The Python wrapper turns it into a
-  `RuntimeWarning` (QB7). A polynomial whose clips are exact (a line written at a higher degree)
-  with a tolerance below the spacing of doubles at its root reaches the cap, since no interval can
-  then narrow to it. `gap_unlocalized` is never produced.
+  `RuntimeWarning` (QB7). Reaching it needs a polynomial whose clips are exact (some lines
+  written at a higher degree, at some roots) and a tolerance below the spacing of doubles at its
+  root, so that no interval can narrow to it; it is rare. `gap_unlocalized` is never produced.
 - The Newton/bisection hybrid's iteration cap (64) is not a completeness gap: it keeps a bracket
   that holds the root and returns its midpoint, so only width is lost, never the root.
 - The Numba kernel's fixed buffers are gone: a work stack of 256 (it could not bind, a depth-first

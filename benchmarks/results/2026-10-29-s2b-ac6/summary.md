@@ -1,0 +1,34 @@
+| case | main stat (ns) | main range | branch stat (ns) | branch range | flags |
+|---|---|---|---|---|---|
+| S2.bezier_minimize_degree.medium@t1 | 4188285 | 388475 | 1365258 | 126220 |  |
+| S2.bezier_minimize_degree.medium@t8 | 4196467 | 205682 | 1372760 | 124916 |  |
+| S2.bezier_minimize_degree.tiny@t1 | 1471783 | 118268 | 202305 | 15594 |  |
+| S2.bezier_minimize_degree.tiny@t8 | 1496564 | 546729 | 205526 | 19625 |  |
+| S2.bezier_reduce_degree.medium@t1 | 29528 | 1629 | 10007 | 1578 |  |
+| S2.bezier_reduce_degree.medium@t8 | 29556 | 15896 | 10640 | 1651 |  |
+| S2.bezier_reduce_degree.tiny@t1 | 13336 | 796 | 3158 | 664 |  |
+| S2.bezier_reduce_degree.tiny@t8 | 13464 | 6573 | 3114 | 400 |  |
+| S2.find_monotone_root.tiny@t1 | 4941 | 667 | 3084 | 547 |  |
+| S2.find_monotone_root.tiny@t8 | 5075 | 2609 | 3183 | 302 |  |
+| S2.find_monotone_root_batch.large@t1 | 27395576 | 920778 | 20952556 | 3207128 |  |
+| S2.find_monotone_root_batch.large@t8 | 19799638 | 1117611 | 14726168 | 764186 |  |
+| S2.find_roots.tiny@t1 | 25198 | 2096 | 9326 | 923 |  |
+| S2.find_roots.tiny@t8 | 24621 | 1411 | 9422 | 994 |  |
+| S2.find_roots_batch.large@t1 | 105743142 | 5148350 | 68006724 | 1881184 |  |
+| S2.find_roots_batch.large@t8 | 32606678 | 9110662 | 28551500 | 1654741 |  |
+| S2.find_roots_batch.medium@t1 | 10602518 | 655128 | 6882686 | 929036 |  |
+| S2.find_roots_batch.medium@t8 | 4613427 | 1601004 | 2967715 | 438968 |  |
+| S2.find_roots_degree12.tiny@t1 | 26631 | 5566 | 8244 | 594 |  |
+| S2.find_roots_degree12.tiny@t8 | 26928 | 1362 | 8401 | 6335 |  |
+| S2.fit_bezier_scattered.medium@t1 | 487064 | 54916 | 354500 | 19256 |  |
+| S2.fit_bezier_scattered.medium@t8 | 582941 | 73310 | 367392 | 179640 |  |
+| S2.fit_bezier_scattered.tiny@t1 | 134395 | 10025 | 98954 | 7787 |  |
+| S2.fit_bezier_scattered.tiny@t8 | 161667 | 23387 | 100169 | 19137 |  |
+| S2.fit_bezier_tensor.medium@t1 | 315422 | 28247 | 117052 | 8779 |  |
+| S2.fit_bezier_tensor.medium@t8 | 364464 | 91944 | 118379 | 15933 |  |
+| S2.fit_bezier_tensor.tiny@t1 | 153978 | 11273 | 15966 | 1916 |  |
+| S2.fit_bezier_tensor.tiny@t8 | 180078 | 25670 | 15791 | 1511 |  |
+| S2.interpolate_bezier.medium@t1 | 579929 | 89339 | 406662 | 35308 |  |
+| S2.interpolate_bezier.medium@t8 | 675067 | 167855 | 406153 | 103853 |  |
+| S2.interpolate_bezier.tiny@t1 | 165032 | 9037 | 51376 | 2185 |  |
+| S2.interpolate_bezier.tiny@t8 | 185472 | 63627 | 51044 | 3880 |  |
