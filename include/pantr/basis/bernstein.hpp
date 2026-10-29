@@ -164,7 +164,7 @@ void bernstein_derivatives_point(int n, T s, int n_deriv, T* out_pt, T* ndu, T* 
   auto A = [&](int r, int c) -> T& {
     return a[static_cast<std::size_t>(r) * nd1 + static_cast<std::size_t>(c)];
   };
-  auto OUT = [&](int k, int j) -> T& {
+  auto out_at = [&](int k, int j) -> T& {
     return out_pt[static_cast<std::size_t>(k) * ord + static_cast<std::size_t>(j)];
   };
   for (std::size_t i = 0; i < nd1 * ord; ++i) {
@@ -188,7 +188,7 @@ void bernstein_derivatives_point(int n, T s, int n_deriv, T* out_pt, T* ndu, T* 
     NDU(j, j) = saved;
   }
   for (int j = 0; j < order; ++j) {
-    OUT(0, j) = NDU(j, n);
+    out_at(0, j) = NDU(j, n);
   }
   for (int r = 0; r < order; ++r) {
     int s1 = 0;
@@ -212,7 +212,7 @@ void bernstein_derivatives_point(int n, T s, int n_deriv, T* out_pt, T* ndu, T* 
         A(s2, k) = -A(s1, k - 1);
         d += A(s2, k) * NDU(r, pk);
       }
-      OUT(k, r) = d;
+      out_at(k, r) = d;
       std::swap(s1, s2);
     }
   }
@@ -224,7 +224,7 @@ void bernstein_derivatives_point(int n, T s, int n_deriv, T* out_pt, T* ndu, T* 
   for (int k = 1; k <= n_deriv; ++k) {
     const double f = exact ? static_cast<double>(fac) : fac_d;
     for (int j = 0; j < order; ++j) {
-      OUT(k, j) = static_cast<T>(static_cast<double>(OUT(k, j)) * f);
+      out_at(k, j) = static_cast<T>(static_cast<double>(out_at(k, j)) * f);
     }
     const int next = n - k;
     if (next <= 0) {

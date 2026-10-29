@@ -192,7 +192,7 @@ TEST_CASE("quad: PointsLattice validates, shares its rep, and orders all_points"
                        "All points must have at least 1 point", pantr::value_error);
   const quad::PointsLattice<double> lat({{0.0, 1.0}, {10.0, 20.0, 30.0}});
   const auto copy = lat;  // NOLINT(performance-unnecessary-copy-initialization): the point
-  CHECK(copy.rep() == lat.rep());
+  CHECK(copy.rep().get() == lat.rep().get());
   CHECK(lat.num_points() == 6);
   const auto c = lat.all_points(pantr::Order::C);
   const std::vector<double> c_expected = {0, 10, 0, 20, 0, 30, 1, 10, 1, 20, 1, 30};
