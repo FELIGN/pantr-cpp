@@ -183,6 +183,204 @@ def _s1_cases() -> list[Case]:
     return cases
 
 
+def _s2_geometry_cases() -> list[Case]:
+    """The AABB and AffineTransform cases of the S2 stage (C2.1)."""
+    from pantr.geometry import AABB  # noqa: PLC0415
+    from pantr.transform import AffineTransform  # noqa: PLC0415
+
+    cases: list[Case] = []
+
+    def add(name: str, size: str, what: str, setup: Callable[[], Callable[[], Any]]) -> None:
+        cases.append(Case(f"S2.{name}.{size}", "S2", size, what, setup))
+
+    box = AABB([0.0, 0.0, 0.0], [1.0, 2.0, 3.0])
+    other = AABB([0.5, -1.0, 1.0], [4.0, 1.0, 2.0])
+    rot = AffineTransform.rotation_3d(0.3, [1.0, 2.0, 2.0], center=[0.5, 0.5, 0.5])
+    x = np.array([0.5, 1.0, 1.5])
+    add("aabb_construct", "tiny", "AABB(lo, hi), 3-D", lambda: (lambda: AABB([0, 0, 0], [1, 2, 3])))
+    add("aabb_overlaps", "tiny", "AABB.overlaps, 3-D", lambda: (lambda: box.overlaps(other)))
+    add("aabb_union", "tiny", "AABB.union, 3-D", lambda: (lambda: box.union(other)))
+    add("aabb_intersect", "tiny", "AABB.intersect, 3-D", lambda: (lambda: box.intersect(other)))
+    add(
+        "aabb_contains_point",
+        "tiny",
+        "AABB.contains_point, 3-D",
+        lambda: (lambda: box.contains_point(x)),
+    )
+    add("aabb_pad", "tiny", "AABB.pad(0.1), 3-D", lambda: (lambda: box.pad(0.1)))
+    add(
+        "aabb_transform",
+        "tiny",
+        "AABB.transform(rotation), 3-D",
+        lambda: (lambda: box.transform(rot)),
+    )
+    add("affine_compose", "tiny", "AffineTransform @, 3-D", lambda: (lambda: rot @ rot))
+    for size, n in SIZES.items():
+
+        def setup_apply(n: int = n) -> Callable[[], Any]:
+            pts = np.random.default_rng(7).random((n, 3))
+            return lambda: rot(pts)
+
+        add("affine_apply", size, f"AffineTransform.__call__, {n} 3-D points", setup_apply)
+
+    return cases
+
+
+def _s2_bezier_cases() -> list[Case]:
+    """The Bezier value-type cases of the S2 stage (C2.2)."""
+    from pantr.bezier import Bezier  # noqa: PLC0415
+    from pantr.quad import PointsLattice  # noqa: PLC0415
+    from pantr.transform import AffineTransform  # noqa: PLC0415
+
+    cases: list[Case] = []
+
+    def add(name: str, size: str, what: str, setup: Callable[[], Callable[[], Any]]) -> None:
+        cases.append(Case(f"S2.{name}.{size}", "S2", size, what, setup))
+
+    rot = AffineTransform.rotation_3d(0.3, [1.0, 2.0, 2.0], center=[0.5, 0.5, 0.5])
+    rng = np.random.default_rng(11)
+    curve_cp = rng.random((4, 3))
+    surf_cp = rng.random((4, 4, 3))
+    curve = Bezier(curve_cp)
+    surf = Bezier(surf_cp)
+    rational = Bezier(
+        np.concatenate([curve_cp, rng.random((4, 1)) + 0.5], axis=1), is_rational=True
+    )
+    add(
+        "bezier_construct",
+        "tiny",
+        "Bezier(cp), degree 3, rank 3",
+        lambda: (lambda: Bezier(curve_cp)),
+    )
+    add(
+        "bezier_control_points",
+        "tiny",
+        "Bezier.control_points",
+        lambda: (lambda: curve.control_points),
+    )
+    for size, n in SIZES.items():
+
+        def setup_curve(n: int = n) -> Callable[[], Any]:
+            t = _points(n)
+            return lambda: curve.evaluate(t)
+
+        def setup_rational(n: int = n) -> Callable[[], Any]:
+            t = _points(n)
+            return lambda: rational.evaluate(t)
+
+        def setup_curve_d1(n: int = n) -> Callable[[], Any]:
+            t = _points(n)
+            return lambda: curve.evaluate_derivatives(t, 1)
+
+        def setup_surf(n: int = n) -> Callable[[], Any]:
+            uv = np.random.default_rng(3).random((n, 2))
+            return lambda: surf.evaluate(uv)
+
+        def setup_surf_d(n: int = n) -> Callable[[], Any]:
+            uv = np.random.default_rng(3).random((n, 2))
+            return lambda: surf.evaluate_derivatives(uv, [1, 1])
+
+        add("bezier_evaluate_curve", size, f"evaluate, degree-3 curve, {n} points", setup_curve)
+        add(
+            "bezier_evaluate_rational",
+            size,
+            f"evaluate, rational degree-3 curve, {n} points",
+            setup_rational,
+        )
+        add(
+            "bezier_derivatives_curve",
+            size,
+            f"evaluate_derivatives(1), degree-3 curve, {n} points",
+            setup_curve_d1,
+        )
+        add(
+            "bezier_evaluate_surface",
+            size,
+            f"evaluate, degree-(3, 3) surface, {n} points",
+            setup_surf,
+        )
+        add(
+            "bezier_derivatives_surface",
+            size,
+            f"evaluate_derivatives([1, 1]), surface, {n} points",
+            setup_surf_d,
+        )
+    for size, side in ND_SIDE.items():
+
+        def setup_lattice(side: int = side) -> Callable[[], Any]:
+            lattice = PointsLattice([_points(side), _points(side)])
+            return lambda: surf.evaluate(lattice)
+
+        add(
+            "bezier_evaluate_lattice",
+            size,
+            f"evaluate, surface, {side}x{side} lattice",
+            setup_lattice,
+        )
+    big = Bezier(rng.random((33, 33, 3)))
+    add(
+        "bezier_split",
+        "tiny",
+        "split(0, 0.3), degree-(3, 3) surface",
+        lambda: (lambda: surf.split(0, 0.3)),
+    )
+    add(
+        "bezier_split",
+        "medium",
+        "split(0, 0.3), degree-(32, 32) surface",
+        lambda: (lambda: big.split(0, 0.3)),
+    )
+    add(
+        "bezier_slice",
+        "tiny",
+        "slice(1, 0.3), degree-(3, 3) surface",
+        lambda: (lambda: surf.slice(1, 0.3)),
+    )
+    add(
+        "bezier_restrict",
+        "tiny",
+        "restrict((0.2, 0.7)), degree-3 curve",
+        lambda: (lambda: curve.restrict((0.2, 0.7))),
+    )
+    add(
+        "bezier_elevate_degree",
+        "tiny",
+        "elevate_degree(2), degree-3 curve",
+        lambda: (lambda: curve.elevate_degree(2)),
+    )
+    add(
+        "bezier_elevate_degree",
+        "medium",
+        "elevate_degree(2), degree-(32, 32) surface",
+        lambda: (lambda: big.elevate_degree(2)),
+    )
+    add(
+        "bezier_derivative",
+        "tiny",
+        "derivative(0), degree-(3, 3) surface",
+        lambda: (lambda: surf.derivative(0)),
+    )
+    add(
+        "bezier_multiply",
+        "tiny",
+        "multiply, degree-(3, 3) surfaces",
+        lambda: (lambda: surf.multiply(surf)),
+    )
+    add(
+        "bezier_reverse",
+        "tiny",
+        "reverse(0), degree-(3, 3) surface",
+        lambda: (lambda: surf.reverse(0)),
+    )
+    add(
+        "bezier_transform",
+        "tiny",
+        "transform(rotation), degree-(3, 3) surface",
+        lambda: (lambda: surf.transform(rot)),
+    )
+    return cases
+
+
 def _r6_cases() -> list[Case]:
     from pantr import (  # noqa: PLC0415
         basis,
@@ -223,6 +421,6 @@ def all_cases() -> list[Case]:
     """Return every case this tree can run.
 
     Returns:
-        list[Case]: The S1 cases, then the r6 cases.
+        list[Case]: The S1 cases, the S2 cases, then the r6 cases.
     """
-    return _s1_cases() + _r6_cases()
+    return _s1_cases() + _s2_geometry_cases() + _s2_bezier_cases() + _r6_cases()
