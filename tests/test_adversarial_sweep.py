@@ -65,11 +65,6 @@ _KNOWN_FINDINGS = frozenset(
         # `test_sweep_regressions.py::test_degree_elevation_outputs_are_mutually_consistent`.
         "elevate_degree_d0_m1_float64_random",
         "elevate_degree_d1_m2_float64_random",
-        # `_de_casteljau_eval_scalar` reads `coeff[0]` with no guard, so an empty
-        # coefficient array reads out of bounds. Layer 3 documents that it validates
-        # nothing, and no public path reaches it with an empty array, so this is a port
-        # note rather than a live bug: in C++ the same read is undefined behavior.
-        "de_casteljau_len0_float64",
     }
 )
 """Findings the smoke profile is expected to reproduce.

@@ -213,10 +213,9 @@ def _refuse_a_reduction_that_inverts_a_weight(
     weight convention is a statement about the representation, which the rest of the
     library already requires of knot removal, ``locate`` and ``find_roots``.
 
-    The remedy is the caller's to supply, because the two callers have different ones:
-    :meth:`~pantr.bezier.Bezier.minimize_degree` exists on a Bezier, and
-    :class:`~pantr.bspline.Bspline` has no such method, so a shared message naming it
-    would send a B-spline caller to an ``AttributeError``.
+    The remedy is the caller's to supply: the Bézier reduction (now in C++) names
+    :meth:`~pantr.bezier.Bezier.minimize_degree`, which :class:`~pantr.bspline.Bspline` does
+    not have, so the B-spline caller passes its own.
 
     Args:
         ctrl (npt.NDArray[np.floating[Any]]): Reduced control points, the last column the

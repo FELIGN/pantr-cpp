@@ -62,10 +62,8 @@ def _load_berf() -> types.ModuleType:
     try:
         return importlib.import_module(_BERF_MODULE)
     except ImportError as exc:
-        msg = (
-            "The 'berf' root provider needs the pantr-berf package "
-            '(pip install "pantr[berf]"), which could not be imported.'
-        )
+        msg = "The 'berf' root provider needs the pantr-berf package, which could not be imported."
+
         raise ImportError(msg) from exc
 
 
@@ -105,7 +103,7 @@ def set_root_provider(name: str) -> None:
     Raises:
         TypeError: If ``name`` is not a string.
         ValueError: If ``name`` is not a known provider.
-        ImportError: If ``name`` is ``"berf"`` and ``pantr-berf`` is not installed.
+        ImportError: If ``name`` is ``"berf"`` and ``pantr-berf`` cannot be imported.
 
     Example:
         >>> from pantr.bezier import get_root_provider, set_root_provider
@@ -145,7 +143,11 @@ def _default_provider() -> str:
         return requested
     try:
         importlib.import_module(_BERF_MODULE)
-    except ImportError:
+    except ModuleNotFoundError as exc:
+        # Only "pantr_berf is not installed" selects the builtin provider; an installed package
+        # that fails to import (a missing library, an interface mismatch) is an error to see.
+        if exc.name != _BERF_MODULE:
+            raise
         return _BUILTIN
     return _BERF
 
@@ -163,7 +165,10 @@ def get_root_provider() -> str:
     """
     global _active  # noqa: PLW0603
     if _active is None:
-        _active = _default_provider()
+        resolved = _default_provider()
+        # Resolution may import pantr_berf: a set_root_provider from another thread meanwhile wins.
+        if _active is None:
+            _active = resolved
     return _active
 
 
@@ -331,8 +336,7 @@ def _find_roots_impl(bezier: Bezier, *, tol: float | None = None) -> npt.NDArray
     roots, completeness = _function("find_roots", coeff.dtype)(coeff, resolved, resolved)
     if completeness != _COMPLETE:
         _warn_incomplete(1, 1)
-    result: npt.NDArray[np.float64] = roots
-    return result
+    return np.asarray(roots, dtype=np.float64)
 
 
 def _find_roots_batch_impl(
@@ -350,7 +354,7 @@ def _find_roots_batch_impl(
     n_incomplete = int(np.count_nonzero(completeness != _COMPLETE))
     if n_incomplete:
         _warn_incomplete(n_incomplete, n_polys)
-    return roots, np.asarray(counts, dtype=np.intp)
+    return np.asarray(roots, dtype=np.float64), np.asarray(counts, dtype=np.intp)
 
 
 def _solve_monotone_root_impl(bezier: Bezier, *, tol: float | None = None) -> float:
@@ -368,7 +372,6 @@ def _solve_monotone_root_batch_impl(
     if coeffs.shape[0] == 0:
         return np.empty(0, dtype=np.float64)
     resolved = float(_resolve_tol(coeffs.dtype, tol))
-    result: npt.NDArray[np.float64] = _function("find_monotone_root_batch", coeffs.dtype)(
-        coeffs, resolved
+    return np.asarray(
+        _function("find_monotone_root_batch", coeffs.dtype)(coeffs, resolved), dtype=np.float64
     )
-    return result

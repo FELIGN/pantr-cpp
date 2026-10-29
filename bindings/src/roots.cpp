@@ -130,49 +130,59 @@ void def_provider(nb::module_& m, const std::string& sfx) {
 // The provider's internals, with the call conventions of the Numba kernels they replace (a
 // root array and a count), for the tests that pin them. Both dtypes under one name: nanobind
 // tries the float64 overload without conversion first.
+// The Layer 3 helpers read `coeff[0]` unconditionally; a probe reachable from Python refuses an
+// empty array first, so a test or the adversarial sweep gets an exception, not undefined behaviour.
+template <class T>
+std::span<const T> nonempty(const Vec<T>& a) {
+  if (a.shape(0) == 0) {
+    throw value_error("coeff must have at least 1 element");
+  }
+  return span_of(a);
+}
+
 template <class T>
 void def_internals(nb::module_& m) {
   m.def(
       "de_casteljau_eval_scalar",
-      [](const Vec<T>& c, double t) { return rd::eval<T>(span_of(c), t); }, nb::arg("coeff"),
+      [](const Vec<T>& c, double t) { return rd::eval<T>(nonempty(c), t); }, nb::arg("coeff"),
       nb::arg("t"));
   m.def(
       "de_casteljau_eval_and_deriv_scalar",
       [](const Vec<T>& c, double t) {
-        const auto [f, df] = rd::eval_and_deriv<T>(span_of(c), t);
+        const auto [f, df] = rd::eval_and_deriv<T>(nonempty(c), t);
         return std::make_tuple(f, df);
       },
       nb::arg("coeff"), nb::arg("t"));
   m.def(
       "subdivide_scalar",
       [](const Vec<T>& c, double a, double b) {
-        return vector_to_numpy(rd::subdivide<T>(span_of(c), a, b));
+        return vector_to_numpy(rd::subdivide<T>(nonempty(c), a, b));
       },
       nb::arg("coeff"), nb::arg("t_min"), nb::arg("t_max"));
   m.def(
       "newton_polish_scalar",
       [](const Vec<T>& c, double mid, double lo, double hi, double tol) {
-        const rd::Polished p = rd::newton_polish<T>(span_of(c), mid, lo, hi, tol);
+        const rd::Polished p = rd::newton_polish<T>(nonempty(c), mid, lo, hi, tol);
         return std::make_tuple(p.t, p.f, p.df);
       },
       nb::arg("coeff"), nb::arg("mid"), nb::arg("lo"), nb::arg("hi"), nb::arg("param_tol"));
   m.def(
       "solve_monotone_root_kernel",
       [](const Vec<T>& c, double tol, int max_iter) {
-        return rd::solve_monotone<T>(span_of(c), tol, max_iter);
+        return rd::solve_monotone<T>(nonempty(c), tol, max_iter);
       },
       nb::arg("coeff"), nb::arg("param_tol"), nb::arg("max_iter") = rd::max_newton_iter);
   m.def(
       "yuksel_roots",
       [](const Vec<T>& c, double tol) {
-        const std::vector<double> r = rd::yuksel_roots<T>(span_of(c), tol);
+        const std::vector<double> r = rd::yuksel_roots<T>(nonempty(c), tol);
         return std::make_tuple(vector_to_numpy(r), static_cast<long long>(r.size()));
       },
       nb::arg("coeff"), nb::arg("tol"));
   m.def(
       "clip_roots_core",
       [](const Vec<T>& c, double param_tol, double geom_tol, int max_depth) {
-        const rd::ClipResult r = rd::clip_roots<T>(span_of(c), param_tol, geom_tol, max_depth);
+        const rd::ClipResult r = rd::clip_roots<T>(nonempty(c), param_tol, geom_tol, max_depth);
         return std::make_tuple(vector_to_numpy(r.candidates),
                                static_cast<long long>(r.candidates.size()));
       },
@@ -186,7 +196,7 @@ void def_internals(nb::module_& m) {
           throw value_error("n_roots must be in [0, len(raw_roots)]");
         }
         std::vector<double> v(raw.data(), raw.data() + n_roots);
-        return vector_to_numpy(rd::dedup_roots<T>(std::move(v), span_of(c), param_tol, geom_tol));
+        return vector_to_numpy(rd::dedup_roots<T>(std::move(v), nonempty(c), param_tol, geom_tol));
       },
       nb::arg("raw_roots"), nb::arg("n_roots"), nb::arg("coeff"), nb::arg("param_tol"),
       nb::arg("geom_tol"));

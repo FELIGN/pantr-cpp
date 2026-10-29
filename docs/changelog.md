@@ -286,8 +286,11 @@
   assembled in exact rationals as before (now Boost.Multiprecision) and are the same bits, and
   `reduce_degree`, `minimize_degree` and the roots of both root finders reproduce the previous
   release's values bit for bit on `float32` and `float64` (measured over random and special-value
-  inputs); `degree_reduction_error` can move in the last bits (the Gram contraction is summed in
-  another order). The fits' singular value decomposition is Eigen's instead of LAPACK's, so a
+  inputs, outside the depth-cap case below). `degree_reduction_error` sums its Gram contraction in
+  another order, so it moves within that contraction's rounding, which grows with the degree (from
+  the last bits at low degree to several percent near degree 30, as large as the previous release's
+  own error there); its docstring no longer calls the value exact. `minimize_degree` on non-finite
+  control points no longer emits NumPy's `RuntimeWarning`s (the result is the same). The fits' singular value decomposition is Eigen's instead of LAPACK's, so a
   fit moves within the bound the Vandermonde matrix's conditioning gives (a few units in the last
   place for a well-conditioned grid; more for clustered nodes, especially in `float32`). Batch
   root finding runs on pantr's thread pool with the GIL released.
@@ -295,18 +298,27 @@
   "... exhausted the root finder's subdivision budget ..."). Clipping abandons an interval that
   is still wider than `tol` after 64 levels of subdivision; it used to do so silently. A `tol`
   smaller than the spacing of doubles at a root reaches that depth (no interval can narrow to
-  it), as can, in principle, a run of clips that each remove little. The roots returned are the
-  same as before; only the warning is new.
+  it), as can, in principle, a run of clips that each remove little. In that case the candidate
+  list is no longer cut at `3 * degree + 4` entries, so a returned root can move by a unit in the
+  last place; elsewhere the roots are the same as before.
 - **`fit_bezier` and `interpolate_bezier` with `float16` or `longdouble` values compute in
-  `float64`** and return a `float64` Bézier, as `Bezier` itself now stores those dtypes (above).
-  The previous release failed in its Numba basis kernel (`NotImplementedError` for `float16`, a
-  Numba `TypingError` for `longdouble`) whenever a direction had more than one node.
+  `float64`** (nodes included) and return a `float64` Bézier, as `Bezier` itself now stores those
+  dtypes (above). `fit_bezier` failed in the previous release's Numba basis kernel
+  (`NotImplementedError` for `float16`, a Numba `TypingError` for `longdouble`) whenever a
+  direction had more than one node, and returned the values' dtype with one node per direction.
+  `interpolate_bezier` returned `longdouble` for `longdouble` values, and `float16` for `float16`
+  values with one node per direction; it now returns `float64` in both cases.
+- **`find_roots` and `find_monotone_root` accept a Bézier built from `float16`, `longdouble` or
+  boolean control points**, which `Bezier` now stores as `float64`; the previous release raised
+  `TypeError` ("... must be a float32 or float64 ndarray ...").
 - **A NaN or infinite node in `fit_bezier`** (or a scattered point) raises `ValueError` ("SVD did
   not converge"), as before, but no longer `numpy.linalg.LinAlgError` (a `ValueError`
   subclass), since the decomposition is no longer NumPy's.
 - **A negative `degree` for scattered `fit_bezier` nodes** is a `ValueError` ("degree must be
   non-negative"); the previous release raised `IndexError` for `-1` and NumPy's "negative
-  dimensions are not allowed" below it.
+  dimensions are not allowed" below it. An empty sequence of node arrays is a `ValueError`
+  ("fit_tensor: values need ... one node array ... per direction"); the previous release returned
+  a Bézier.
 - The private modules `pantr.bezier._bezier_degree`, `_bezier_utils`, `_root_finding_core`,
   `_yuksel_core`, `_clipping_core` and `_batch_core`, and the helpers
   `_bezier_interpolate._bernstein_interpolate`, `_bernstein_vandermonde_svd`,

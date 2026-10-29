@@ -519,8 +519,8 @@ class Bezier:
         each parametric direction.  Among the polynomials of the lower degree
         that reproduce this one at the ends of the parametric domain, the result
         is the one closest in :math:`L^2([0, 1]^{\dim})`; the endpoint values are
-        reproduced exactly, bit for bit, when the control points are finite (a ``-0.0``
-        comes back as ``+0.0``).
+        reproduced exactly, value for value, when the control points are finite (the
+        bits too, except that a ``-0.0`` comes back as ``+0.0``).
 
         Unlike :meth:`elevate_degree`, this operation is **not exact** in
         general: the result is an approximation of the original mapping.  Use
@@ -559,9 +559,11 @@ class Bezier:
     def degree_reduction_error(self, degree_decrements: int | Sequence[int]) -> float:
         r"""Compute the :math:`L^2` error that :meth:`reduce_degree` would introduce.
 
-        The value is exact rather than an estimate: it is
-        :math:`\lVert f - g \rVert_{L^2}` for the reduction *g* this Bézier would
-        produce, obtained from the Bernstein mass matrix rather than by sampling.
+        The value is :math:`\lVert f - g \rVert_{L^2}` for the reduction *g* this
+        Bézier would produce, obtained from the Bernstein mass matrix rather than by
+        sampling: exact in exact arithmetic, and computed in floating point, where the
+        Gram contraction loses relative accuracy as the degree grows (no bound is
+        derived for it; at high degree the value is an estimate).
         Rank components are combined in the Euclidean sense, and for a rational
         Bézier the norm is taken over the homogeneous coefficients, not over the
         projected mapping.
@@ -584,7 +586,8 @@ class Bezier:
             ValueError: If all degree decrements are zero.
             ValueError: If the number of decrements does not match the dimension.
             ValueError: If any decrement exceeds the current degree in that
-                direction.
+                direction, or the degree exceeds 61 (the round trip's elevation needs
+                exact binomial coefficients).
 
         Example:
             >>> import numpy as np

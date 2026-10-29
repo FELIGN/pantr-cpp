@@ -971,10 +971,9 @@ def _reduce_degree_cases(profile: Profile) -> Iterator[Case]:
                         # `dec` never exceeds `degree` and is never zero or negative, so
                         # none of the four documented refusals applies. Degree 62 is
                         # legal here even though it is not for `elevate_degree`:
-                        # `_degree_reduce_bezier` is built from exact `Fraction` and
-                        # `math.comb` arithmetic and never touches `_bincoeff`, so it
-                        # carries no envelope check. Verified: degree 62 reduces, while
-                        # elevating a degree-61 curve raises.
+                        # the reduction operators are assembled in exact rationals
+                        # (``include/pantr/bezier/reduce.hpp``) and never touch the
+                        # binomial kernel, so `reduce_degree` carries no envelope check.
                         must_succeed=True,
                     )
 
@@ -1086,16 +1085,11 @@ def _minimize_degree_cases(profile: Profile) -> Iterator[Case]:
             if degree == 0:
                 continue
             # `minimize_degree` checks every direction against the binomial-coefficient
-            # envelope before doing anything (`_bezier_degree.py:515-517`), so a
-            # degree-62 operand is refused outright -- verified: degree 61 minimizes,
-            # degree 62 raises. That refusal is correct (past 61 `_bincoeff` wraps
-            # int64 and the answer would be silently wrong), which is why it is graded
-            # `must_reject` rather than left unflagged. What is *missing* is the
-            # documentation: `Bezier.minimize_degree` has no `Raises:` section at all,
-            # while the Layer-2 function it calls documents this exact `ValueError`. So
-            # the sweep will report the refusal as an undocumented rejection -- a
-            # suspicion, not a bug -- which is the right strength of claim for a
-            # docstring gap, while a *return* at degree 62 would be graded a bug.
+            # envelope before doing anything (``include/pantr/bezier/reduce.hpp``), so a
+            # degree-62 operand is refused outright: degree 61 minimizes, degree 62
+            # raises. That refusal is correct (past 61 the binomial kernel would wrap),
+            # which is why it is graded `must_reject`; `Bezier.minimize_degree` documents
+            # it in its `Raises:` section, while a *return* at degree 62 would be a bug.
             over_envelope = degree > _BINCOEFF_MAX_DEGREE
             cp = _random_control_points(1, 1, degree, dtype, offset=7000 + degree)
             bezier = Bezier(cp)
@@ -2664,9 +2658,9 @@ def _monomial_reproduction_failure(result: object, k: int) -> str | None:
 def _de_casteljau_kernel_cases(profile: Profile) -> Iterator[Case]:
     """Yield direct probes of ``_de_casteljau_eval_scalar``.
 
-    This Numba kernel performs no input validation whatsoever, per its own
-    docstring. A length-0 ``coeff`` is the sharpest boundscheck target: the
-    algorithm reads ``coeff[0]`` unconditionally.
+    The root provider's de Casteljau kernel (C++, reached through ``pantr._testing``), which
+    validates nothing itself; its probe binding refuses an empty ``coeff`` before the kernel
+    reads ``coeff[0]``.
 
     Args:
         profile (Profile): Sweep width.
@@ -2684,16 +2678,8 @@ def _de_casteljau_kernel_cases(profile: Profile) -> Iterator[Case]:
                 lambda coeff=coeff: _de_casteljau_eval_scalar(coeff, 0.5),
                 {"length": length, "dtype": str(dtype), "t": 0.5},
                 arrays={"coeff": coeff},
-                # `length == 0` is the one case in this module that is deliberately
-                # *outside* the contract and so carries neither flag. This is a Layer-3
-                # kernel whose docstring says "Inputs are assumed to be correct (no
-                # validation performed)", so it owes a zero-length array nothing: the
-                # bounds-check hit it produces is the sweep proving the harness is live
-                # on a real pantr kernel, and a record for the port that this call site
-                # needs its own guard -- not a defect in the kernel. Flagging it either
-                # way would be a false claim, and neither flag could change the verdict
-                # anyway: `_core.classify` reports a Numba out-of-bounds access before
-                # it consults them. The other lengths are in contract.
+                # `length == 0` is outside the kernel's contract: the probe binding refuses it
+                # with a ValueError (a clean refusal). The other lengths are in contract.
                 must_succeed=length > 0,
             )
 

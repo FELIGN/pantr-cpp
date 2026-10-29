@@ -717,3 +717,30 @@ class TestNonFiniteNodes:
         """A single-node direction passes its value through, whatever the node."""
         b = fit_bezier(np.array([2.0]), np.array([np.nan]))
         np.testing.assert_array_equal(b.control_points, [[2.0]])
+
+
+class TestDtypesOutsideTheTwoStorageTypes:
+    """`float16` and `longdouble` values fit in `float64` (changelog), nodes included."""
+
+    @pytest.mark.parametrize("dtype", [np.float16, np.longdouble])
+    def test_fit_bezier_computes_in_float64(self, dtype: type[np.floating[Any]]) -> None:
+        """The fit equals the fit of the same values given as float64, at float64 nodes."""
+        nodes = np.linspace(0.0, 1.0, 7)
+        values = np.linspace(0.0, 1.0, 7).astype(dtype) ** 2
+        b = fit_bezier(values, nodes)
+        assert b.dtype == np.float64
+        expected = fit_bezier(values.astype(np.float64), nodes).control_points
+        np.testing.assert_array_equal(b.control_points, expected)
+
+    @pytest.mark.parametrize("dtype", [np.float16, np.longdouble])
+    def test_interpolate_bezier_returns_float64(self, dtype: type[np.floating[Any]]) -> None:
+        """Values of another dtype give a float64 Bézier, one node or several."""
+        for n in (1, 5):
+            b = interpolate_bezier(lambda lat: lat.get_all_points()[:, 0].astype(dtype), n)
+            assert b.dtype == np.float64
+
+    def test_scattered_negative_degree(self) -> None:
+        """A negative degree for scattered nodes is refused with the basis message."""
+        pts = np.random.default_rng(0).random((6, 1))
+        with pytest.raises(ValueError, match="degree must be non-negative"):
+            fit_bezier(np.ones(6), pts, degree=-1)

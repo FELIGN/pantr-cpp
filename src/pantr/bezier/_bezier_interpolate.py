@@ -234,7 +234,8 @@ def interpolate_bezier(
     The parametric dimension is determined by the length of ``n_pts`` (when
     given as a sequence) or defaults to 1 (when given as a scalar ``int``).
 
-    The output dtype is inferred from the return value of ``func``.
+    The fit runs in ``float64`` and returns a ``float64`` Bézier, except when every direction
+    has a single node and ``func`` returns ``float32``, which is kept.
 
     Args:
         func (Callable[..., npt.ArrayLike]): Function to interpolate.  Called
@@ -409,7 +410,8 @@ def fit_bezier(  # noqa: PLR0912
 ) -> Bezier:
     """Construct a Bézier from pre-evaluated sample values at known nodes.
 
-    The output dtype is inferred from *values*.
+    The output dtype follows *values*: ``float32`` is kept, every other dtype gives
+    ``float64`` (the nodes are converted to the same dtype).
 
     Supports two point layouts:
 
@@ -458,7 +460,7 @@ def fit_bezier(  # noqa: PLR0912
 
     # --- Scattered path ---
     if _is_scattered_nodes(nodes):
-        pts: npt.NDArray[np.floating[Any]] = np.asarray(nodes, dtype=dtype_obj)
+        pts: npt.NDArray[np.floating[Any]] = np.asarray(nodes, dtype=_compute_dtype(dtype_obj))
         ndim_param = pts.shape[1]
         n_pts = pts.shape[0]
 
@@ -528,5 +530,6 @@ def fit_bezier(  # noqa: PLR0912
         )
 
     degree_tuple_tp = _validate_degree(degree, n_pts_tuple)
-    node_arrays = _resolve_nodes_from_user(nodes, n_pts_tuple, dtype_obj)
-    return _fit_tensor(values_arr, node_arrays, degree_tuple_tp, tol, _compute_dtype(dtype_obj))
+    compute = _compute_dtype(dtype_obj)
+    node_arrays = _resolve_nodes_from_user(nodes, n_pts_tuple, compute)
+    return _fit_tensor(values_arr, node_arrays, degree_tuple_tp, tol, compute)

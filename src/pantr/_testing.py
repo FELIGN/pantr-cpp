@@ -163,7 +163,7 @@ def bernstein_interpolate(
 
     arr = np.asarray(f)
     nodes = [
-        get_modified_chebyshev_nodes_1d(max(n, 2), arr.dtype)[:n]
+        get_modified_chebyshev_nodes_1d(n, arr.dtype)
         if n >= 2  # noqa: PLR2004
         else np.array([0.5], dtype=arr.dtype)
         for n in arr.shape

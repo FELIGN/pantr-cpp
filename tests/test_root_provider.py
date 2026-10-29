@@ -504,3 +504,14 @@ def test_rational_scalar_curve_is_solved_on_its_first_homogeneous_column() -> No
     rational = Bezier(np.stack([numerator, weights], axis=1), is_rational=True)
     np.testing.assert_allclose(find_roots(rational), [0.5], atol=1e-12)
     np.testing.assert_allclose(find_roots(rational), find_roots(Bezier(numerator)), atol=1e-12)
+
+
+@pytest.mark.parametrize("dtype", [np.float16, np.longdouble, np.bool_])
+def test_roots_of_a_bezier_stored_as_float64(dtype: type[np.generic]) -> None:
+    """A Bézier built from float16, longdouble or bool is float64, and its roots are found."""
+    cp = np.array([1, 0], dtype=dtype) if dtype is np.bool_ else np.array([1.0, -1.0], dtype=dtype)
+    b = Bezier(cp)
+    assert b.dtype == np.float64
+    expected = [1.0] if dtype is np.bool_ else [0.5]
+    np.testing.assert_allclose(find_roots(b), expected)
+    np.testing.assert_allclose(find_monotone_root(b), expected[0], atol=1e-12)

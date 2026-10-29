@@ -1,8 +1,7 @@
 """Shared utilities for interpolation and fitting modules.
 
-Provides constants and helpers used by both
-:mod:`pantr.bezier._bezier_interpolate` and
-:mod:`pantr.bspline._bspline_interpolate`.
+Provides constants and helpers used by :mod:`pantr.bspline._bspline_interpolate` (Bézier
+fitting runs in C++).
 """
 
 from __future__ import annotations
