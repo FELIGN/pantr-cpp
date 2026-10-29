@@ -194,8 +194,9 @@ def tabulate_lagrange_1d(
         If `out` was provided, returns the same array.
 
     Raises:
-        ValueError: If provided degree is negative, or if `out` is provided and has incorrect
-            shape or dtype.
+        ValueError: If provided degree is negative, if `out` is provided and has incorrect
+            shape or dtype, if `variant` is not a :class:`LagrangeVariant` value, or if `pts`
+            is a masked array.
     """
     return _tabulate_Lagrange_basis_1D_impl(degree, variant, pts, out=out)
 
@@ -368,9 +369,12 @@ def tabulate_lagrange(
         returns the same array.
 
     Raises:
-        ValueError: If any degree is negative, or if `out` is provided and has incorrect
-            shape or dtype.
+        ValueError: If any degree is negative, if `out` is provided and has incorrect
+            shape or dtype, or if `pts` is a masked array.
     """
+    if isinstance(pts, np.ma.MaskedArray):
+        # As tabulate_lagrange_1d: a mask is refused rather than dropped.
+        raise ValueError("masked arrays are not supported")
     degrees = _validate_degrees(degrees)
     return _tabulate_tensor(
         _Family.LAGRANGE, degrees, _variant_code(variant), pts, funcs_order, out

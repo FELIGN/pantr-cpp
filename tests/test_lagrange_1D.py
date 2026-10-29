@@ -13,7 +13,7 @@ import pytest
 from numpy.polynomial import chebyshev, legendre
 
 from pantr._testing import _get_lagrange_points
-from pantr.basis import LagrangeVariant, tabulate_lagrange_1d
+from pantr.basis import LagrangeVariant, tabulate_lagrange, tabulate_lagrange_1d
 from pantr.tolerance import get_default
 
 
@@ -266,3 +266,12 @@ def test_negative_degree_raises_value_error() -> None:
     """Negative degree should raise ValueError."""
     with pytest.raises(ValueError, match="degree must be non-negative"):
         tabulate_lagrange_1d(-1, LagrangeVariant.EQUISPACES, [0.0, 0.5])
+
+
+def test_masked_points_are_refused() -> None:
+    """Masked points are refused rather than tabulated with their mask dropped."""
+    pts = np.ma.masked_array([0.1, 0.5], mask=[False, True])
+    with pytest.raises(ValueError, match="masked arrays are not supported"):
+        tabulate_lagrange_1d(2, LagrangeVariant.EQUISPACES, pts)
+    with pytest.raises(ValueError, match="masked arrays are not supported"):
+        tabulate_lagrange([1, 1], LagrangeVariant.EQUISPACES, np.ma.masked_array([[0.1, 0.5]]))

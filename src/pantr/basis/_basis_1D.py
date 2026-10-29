@@ -224,11 +224,16 @@ def _tabulate_Lagrange_basis_1D_impl(
 
     Raises:
         ValueError: If provided degree is negative, if `out` is provided and has incorrect
-            shape or dtype, or if `variant` is not a :class:`LagrangeVariant` value.
+            shape or dtype, if `variant` is not a :class:`LagrangeVariant` value, or if `t` is a
+            masked array.
     """
     # Lazy import: the enum's module imports this one.
     from ._basis_tabulate import _variant_code  # noqa: PLC0415
 
+    if isinstance(t, np.ma.MaskedArray):
+        # The previous (SciPy) implementation refused a mask; dropping it would tabulate the
+        # masked-out values as if they were data.
+        raise ValueError("masked arrays are not supported")
     return _tabulate_basis_1D_impl_helper(_Family.LAGRANGE, n, t, out, _variant_code(variant))
 
 
