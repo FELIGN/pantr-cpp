@@ -23,6 +23,7 @@ set(_pantr_test_sources
     test_binomial.cpp
     test_bezier_eval.cpp
     test_bezier_ops.cpp
+    test_bezier_subdivide.cpp
     test_geometry.cpp
     test_transform.cpp)
 add_executable(pantr_tests ${_pantr_test_sources})
