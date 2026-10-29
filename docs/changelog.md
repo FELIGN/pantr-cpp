@@ -46,6 +46,11 @@
   The identity branch of the kernels assumes a square operator and used to read past the
   operand. No public path builds such an operator; direct callers of the Layer 2 helpers
   were exposed.
+- **An unknown Lagrange variant is refused** by `tabulate_lagrange_1d`, `tabulate_lagrange`
+  and `create_lagrange_points_lattice` with a `ValueError` (`'...' is not a valid
+  LagrangeVariant`). Any value that was not one of the five used to select the Chebyshev
+  second-kind nodes silently. The variant is now converted once, for the C++ library, which
+  knows the five families and nothing else.
 
 ### Changed
 - **pantr needs Python 3.12 or later.** pantr is becoming a C++ library with a compiled
@@ -69,8 +74,36 @@
   `tol`.
 - Every Layer 2 entry point over a `parallel=True` kernel now waits for the JIT warmup
   thread before its first call, which avoids a process abort when a call races the warmup.
+- **Quadrature, tolerance, basis tabulation and change of basis run in pantr's C++
+  library** (`pantr.quad`, `pantr.tolerance`, `pantr.basis`, `pantr.change_basis` are thin
+  wrappers over it; names, signatures, defaults and messages are unchanged). Floating-point
+  results can move in the last bits: Gauss-Legendre and Gauss-Lobatto nodes come from
+  Newton's iteration on the Legendre recurrence instead of NumPy's eigenvalue route, the
+  tanh-sinh step from a Lambert W evaluation of pantr's own, and the change-of-basis
+  matrices from Eigen's LU instead of LAPACK's. `compute_monomial_to_bernstein_1d` is
+  unchanged to the bit, every entry the double nearest `C(i, j) / C(degree, j)`.
+- **The Lagrange basis is evaluated by pantr's barycentric formula**, with weights
+  accumulated as mantissa and exponent so they neither overflow nor underflow, instead of
+  SciPy's `BarycentricInterpolator` and its seeded random permutation of the products. The
+  values are the same polynomial to the accuracy of the formula, reproducible on every
+  platform and with every SciPy version; they are not bit-identical to the previous
+  release's. The 16-epsilon snap to the Kronecker row at a node is kept.
+- **The basis tabulations run on pantr's own thread pool and release the GIL** while a
+  large batch is computed, so several Python threads can tabulate at once. Results do not
+  depend on the thread count. `pantr.set_num_threads` sets their parallelism.
+- **`PointsLattice` stores coordinates of a dtype other than float32 and float64 as
+  float64.** The lattice is a C++ value of one of those two types; an integer lattice used
+  to keep its dtype, and no tabulation could use it.
+- **`PointsLattice` and `QuadratureRule` pickle and copy through their constructor**
+  (`__reduce__`), since they now hold a C++ value that Python cannot pickle by itself.
+- When both `n_pts` and `dtype` are invalid, the quadrature functions report the `dtype`
+  first; each is reported as before when it is the only invalid argument.
 
 ### Fixed
+- `create_lagrange_points_lattice` given a one-shot iterable of counts (a generator) now
+  builds the lattice it describes. The counts were read twice: the validation exhausted the
+  generator, and the construction then saw no direction and raised "Points lattice must
+  have at least 1 dimension".
 - `reduce_degree` on a periodic B-spline now succeeds for a smooth spline. The closure
   step used to compare the reduction's own approximation error against round-off and
   refused nearly every case.
