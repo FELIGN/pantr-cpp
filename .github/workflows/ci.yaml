@@ -379,7 +379,9 @@ jobs:
         include:
           - { os: ubuntu-24.04, label: linux-x86_64, archs: x86_64 }
           - { os: ubuntu-24.04-arm, label: linux-aarch64, archs: aarch64 }
-          - { os: macos-14, label: macos-arm64, archs: arm64 }
+          # On macOS the workflow's gcc-14 is Homebrew's GCC, whose libstdc++ delocate would bundle
+          # (and which needs a newer macOS than the wheel targets): build with Apple Clang.
+          - { os: macos-14, label: macos-arm64, archs: arm64, cc: clang, cxx: clang++ }
           - { os: windows-2022, label: windows-amd64, archs: AMD64 }
     steps:
       - uses: actions/checkout@v7
@@ -389,6 +391,8 @@ jobs:
       - uses: pypa/cibuildwheel@v4.3.5
         env:
           CIBW_ARCHS: ${{ matrix.archs }}
+          CC: ${{ matrix.cc || env.CC }}
+          CXX: ${{ matrix.cxx || env.CXX }}
       - name: The wheel carries no BeRF-FR file
         shell: bash
         run: |
