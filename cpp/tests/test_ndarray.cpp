@@ -91,8 +91,19 @@ TEST_CASE("NdArray: an element count that overflows is a capacity_error") {
   CHECK_THROWS_AS(pantr::NdArray<double>({e, e, e}), pantr::capacity_error);
 }
 
+// The oracle is NumPy (numpy.empty on doubles): (2**59, 0) is an empty array, while (2**60, 0),
+// (0, 2**60) and (2**31, 2**31, 0) raise "array is too big", because NumPy bounds the item size
+// times the product of the nonzero extents by the largest signed pointer difference.
 TEST_CASE("NdArray: a zero extent gives an empty array, wherever it sits") {
-  const std::size_t huge = std::numeric_limits<std::size_t>::max() / 2;
-  CHECK(pantr::NdArray<double>({huge, 0}).size() == 0);
-  CHECK(pantr::NdArray<double>({0, huge}).size() == 0);
+  CHECK(pantr::NdArray<double>({3, 0}).size() == 0);
+  CHECK(pantr::NdArray<double>({0, 3}).size() == 0);
+  CHECK(pantr::NdArray<double>({std::size_t{1} << 59, 0}).size() == 0);
+  CHECK(pantr::NdArray<double>({0, std::size_t{1} << 59}).size() == 0);
+}
+
+TEST_CASE("NdArray: an empty shape NumPy would refuse is refused (into_buffer hands it to NumPy)") {
+  CHECK_THROWS_AS(pantr::NdArray<double>({std::size_t{1} << 60, 0}), pantr::capacity_error);
+  CHECK_THROWS_AS(pantr::NdArray<double>({0, std::size_t{1} << 60}), pantr::capacity_error);
+  CHECK_THROWS_AS(pantr::NdArray<double>({std::size_t{1} << 31, std::size_t{1} << 31, 0}),
+                  pantr::capacity_error);
 }

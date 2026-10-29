@@ -34,7 +34,7 @@ namespace pantr {
 ///     size_ (std::size_t): Number of elements, the product of the extents.
 ///     data_ (std::shared_ptr<T[]>): The elements; never shared with another `NdArray`.
 template <class T>
-requires std::is_arithmetic_v<T>
+  requires std::is_arithmetic_v<T>
 class NdArray {
  public:
   /// Allocate a zero-initialized array of the given shape.
@@ -175,21 +175,28 @@ class NdArray {
     data_.reset();
   }
 
+  // NumPy's rule (PyArray_NewFromDescr): the item size times the product of the nonzero extents
+  // must fit in a signed pointer difference, and a zero extent then makes the array empty. Taking
+  // the same rule means every shape an NdArray accepts can be handed to NumPy (into_buffer), and
+  // every shape NumPy refuses is refused here first, with a C++ error rather than at the boundary.
   static std::size_t checked_size(const std::vector<std::size_t>& shape) {
-    constexpr std::size_t max_elements = (std::numeric_limits<std::size_t>::max)() / sizeof(T);
-    // A zero extent makes the array empty whatever the other extents are.
-    if (std::find(shape.begin(), shape.end(), std::size_t{0}) != shape.end()) {
-      return 0;
-    }
+    constexpr auto max_bytes =
+        static_cast<std::size_t>((std::numeric_limits<std::ptrdiff_t>::max)());
+    constexpr std::size_t max_elements = max_bytes / sizeof(T);
     std::size_t n = 1;
+    bool empty = false;
     for (const std::size_t extent : shape) {
+      if (extent == 0) {
+        empty = true;
+        continue;
+      }
       if (n > max_elements / extent) {
         throw capacity_error("NdArray shape " + py_repr(std::span<const std::size_t>(shape)) +
                              " has more elements than fit in memory");
       }
       n *= extent;
     }
-    return n;
+    return empty ? 0 : n;
   }
 
   template <class U, std::size_t Rank>
