@@ -275,3 +275,5 @@ def test_masked_points_are_refused() -> None:
         tabulate_lagrange_1d(2, LagrangeVariant.EQUISPACES, pts)
     with pytest.raises(ValueError, match="masked arrays are not supported"):
         tabulate_lagrange([1, 1], LagrangeVariant.EQUISPACES, np.ma.masked_array([[0.1, 0.5]]))
+    # Degree 0 never reached the previous release's interpolator, which is what refused a mask.
+    np.testing.assert_array_equal(tabulate_lagrange_1d(0, LagrangeVariant.EQUISPACES, pts), 1.0)
