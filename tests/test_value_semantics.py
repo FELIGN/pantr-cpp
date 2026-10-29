@@ -993,7 +993,12 @@ _HUGE_DIM_CHILD = textwrap.dedent(
     from pantr.transform import AffineTransform
 
     cap = 2 << 30
-    resource.setrlimit(resource.RLIMIT_AS, (cap, cap))
+    try:
+        resource.setrlimit(resource.RLIMIT_AS, (cap, cap))
+    except ValueError:
+        # macOS refuses to lower RLIMIT_AS (EINVAL); a regression there still fails loudly, as
+        # std::bad_alloc ("other") rather than "ValueError".
+        pass
     try:
         {call}
     except ValueError:
