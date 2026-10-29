@@ -108,6 +108,28 @@ namespace pantr::parallel {
 
 namespace detail {
 
+/// Read an environment variable.
+///
+/// MSVC deprecates `std::getenv` (C4996) because another thread may change the environment while
+/// the returned pointer is in use; every caller here copies or parses the value at once, so the
+/// warning is silenced for this one call rather than for the consumer's whole build.
+///
+/// Args:
+///     name (const char*): The variable's name.
+///
+/// Returns:
+///     const char*: The variable's value, or null when it is unset.
+[[nodiscard]] inline const char* env_value(const char* name) noexcept {
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+  return std::getenv(name);
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+}
+
 /// Parse the value of `PANTR_NUM_THREADS`.
 ///
 /// Args:
@@ -169,8 +191,8 @@ inline constinit std::atomic<std::size_t> capacity_cache{0};
   // forever. Concurrent first calls compute the same value; a call that throws stores nothing.
   std::size_t cap = capacity_cache.load(std::memory_order_acquire);
   if (cap == 0) {
-    cap = capacity_from(affinity_cpu_count(),
-                        parse_num_threads_env(std::getenv("PANTR_NUM_THREADS")));
+    cap =
+        capacity_from(affinity_cpu_count(), parse_num_threads_env(env_value("PANTR_NUM_THREADS")));
     capacity_cache.store(cap, std::memory_order_release);
   }
   return cap;

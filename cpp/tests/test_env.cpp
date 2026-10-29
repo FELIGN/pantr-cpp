@@ -10,7 +10,7 @@
 #include <string>
 
 TEST_CASE("PANTR_NUM_THREADS: max_threads honours the environment") {
-  const char* expect = std::getenv("PANTR_TEST_EXPECT");
+  const char* expect = pantr::parallel::detail::env_value("PANTR_TEST_EXPECT");
   REQUIRE(expect != nullptr);
   const std::string mode(expect);
   if (mode == "malformed") {
