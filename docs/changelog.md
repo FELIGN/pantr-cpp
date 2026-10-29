@@ -183,8 +183,9 @@
   Evaluation, and `AffineTransform.__call__` on many points, run on pantr's thread pool with the
   GIL released (NumPy's `@` ran on BLAS's threads). Where a result overflows, the plain loops can
   leave NaN where BLAS left `inf` (or the reverse), and NumPy's `RuntimeWarning`s for overflow and
-  invalid values in these operations are no longer emitted. The `-0.0` against `+0.0` tie in
-  `AABB.union` and `intersect` may resolve to the other sign (the values compare equal).
+  invalid values in these operations are no longer emitted. The sign of a zero result can differ (the values
+  compare equal): the `-0.0` against `+0.0` tie in `AABB.union` and `intersect`, a zero bound
+  from `AABB.transform`, a zero entry of `AffineTransform.inverse`'s offset.
 - A derivative of a polynomial `Bezier` above its degree in some direction is computed as the
   exact zero it is, without the derivative table, at any order: an order of `2**31 - 1` or more is
   refused as "derivative order N is too large" (`ValueError`), where the table used to be

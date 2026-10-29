@@ -231,6 +231,7 @@ Public functions and Layer 2 helpers accept an optional `out` argument for the r
 - Ruff with Google-style docstrings, line length 100, target Python 3.12
 - Warnings are treated as errors in pytest
 - Layer 3 kernels run under Numba `nopython=True`: only use NumPy operations supported in that mode; unsupported calls cause a hard compile error or silent object-mode fallback
+- C++ hot loops: GCC 14 with `-ffp-contract=on` (the flag `pantr::pantr` sets) leaves a loop scalar when its contracted `fma` sits in a body that may throw, such as a `parallel_for` chunk lambda (`-fopt-info-vec-missed`: "statement can throw an exception: .FMA"). Put the loop in a `noexcept` function of its own, as `bezier/detail/kernels_1d.hpp` `lerp_rows` does.
 
 ## Documentation guidelines
 

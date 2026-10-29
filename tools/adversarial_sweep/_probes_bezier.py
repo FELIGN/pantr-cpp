@@ -1347,7 +1347,7 @@ def _compose_cases(profile: Profile) -> Iterator[Case]:
     Invariant 4: ``outer.compose(inner).evaluate(t) == outer.evaluate(inner.evaluate(t))``.
     Combined degree is kept below 62 in the main crossing -- 62 is the known
     ``_bincoeff`` int64 overflow cliff reached through this path
-    (``_bezier_compose.py``) -- except for one labelled case documenting the
+    (``include/pantr/bezier/compose.hpp``) -- except for one labelled case documenting the
     boundary at the combined degree 61, one step below the cliff.
 
     Args:
@@ -1403,8 +1403,8 @@ def _compose_cases(profile: Profile) -> Iterator[Case]:
                 invariants=(_compose_invariant(ts_nd, expected_nd, tol_nd),),
                 arrays={"outer_control_points": outer_cp_nd, "inner_control_points": inner_cp_nd},
                 # Combined degree 90 and still `must_succeed`: the envelope guard is
-                # conditioned on `inner.dim == 1` (`_bezier_compose.py:86-90`), and this
-                # inner is 2-D, so the composition takes the `math.comb` nD path, which
+                # conditioned on `inner.dim == 1` (`include/pantr/bezier/compose.hpp`), and this
+                # inner is 2-D, so the composition takes the nD product path, which
                 # is exact at any degree and carries no ceiling.
                 must_succeed=True,
             )
@@ -1435,7 +1435,7 @@ def _compose_cases(profile: Profile) -> Iterator[Case]:
                 },
                 # Worth being precise about what this case does and does not prove: the
                 # combined degree is 61, but a degree-1 1-D outer is *exempt* from the
-                # envelope check altogether (`_bezier_compose.py:86-90` requires
+                # envelope check altogether (`include/pantr/bezier/compose.hpp` requires
                 # `outer.dim > 1 or outer.degree[0] > 1`), so this never reaches the
                 # guard. It documents that a degree-1 outer composes with an arbitrarily
                 # high-degree inner, not that the cliff is at 62.

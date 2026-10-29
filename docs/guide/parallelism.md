@@ -17,8 +17,8 @@ The following operations are parallelized over **evaluation points**:
 | B-spline evaluation (basis + combine) | `_evaluate_Bspline_basis_combine_1D` | points |
 | B-spline derivative evaluation | `_evaluate_Bspline_basis_combine_*_deriv_1D` | points |
 | Bernstein, cardinal B-spline, Legendre and Lagrange basis evaluation (1D and tensor product) | C++ (`include/pantr/basis/`), on pantr's own thread pool | points |
-| Bezier evaluation and derivatives | `_evaluate_bezier_1d_core` | points |
-| Bezier split / slice / restrict | `_split_bezier_1d_core` | control point columns |
+| Bezier evaluation and derivatives | C++ (`include/pantr/bezier/`), on pantr's own thread pool | points |
+| Bezier split / slice / restrict | C++ (`include/pantr/bezier/`), on pantr's own thread pool | control point columns |
 | Bezier extraction (`to_beziers`) | `_apply_bezier_extraction_1d_core` | elements |
 
 By default, all available CPU cores are used.
