@@ -1,8 +1,6 @@
-"""Bézier degree elevation, reduction, and minimization.
+"""Bézier degree reduction and minimization.
 
-This module provides :func:`_degree_elevate_bezier`, which raises the polynomial
-degree of a Bézier in one or more parametric directions while preserving the
-same geometric mapping, :func:`_degree_reduce_bezier`, which computes the
+This module provides :func:`_degree_reduce_bezier`, which computes the
 :math:`L^2`-optimal degree-reduced approximation that interpolates the segment
 endpoints, and :func:`_minimize_degree_bezier`, which automatically finds the
 lowest degree that preserves accuracy.
@@ -34,7 +32,6 @@ from .._array_utils import _flatten_along_axis, _unflatten_along_axis
 from .._ext import ext
 from ..bspline._bspline_degree_core import _apply_reduction_operator, _check_bincoeff_envelope
 from ..quad import get_gauss_legendre_1d
-from ._bezier_core import _degree_elevate_bezier_1d_core
 
 _kernels: Any = ext._kernels
 """The ported Bernstein kernels (interim surface, untyped: overloaded on the dtype)."""
@@ -80,63 +77,6 @@ difference being that the floor is a small multiple of ``eps`` rather than exact
 """
 
 
-def _degree_elevate_bezier(
-    bezier: Bezier,
-    increments: tuple[int, ...],
-) -> Bezier:
-    """Degree-elevate a Bézier in one or more parametric directions.
-
-    For each direction with a positive increment, applies the Bézier degree
-    elevation kernel via the shared flatten/unflatten helpers.
-
-    Args:
-        bezier (~pantr.bezier.Bezier): The Bézier to elevate.
-        increments (tuple[int, ...]): Degree increment per direction. All
-            values must be non-negative; at least one must be positive.
-
-    Returns:
-        ~pantr.bezier.Bezier: New Bézier with elevated degrees and updated
-        control points.
-
-    Raises:
-        ValueError: If an elevated degree would exceed the exactness envelope of the
-            binomial-coefficient kernel (see
-            :data:`~pantr.bspline._bspline_degree_core._BINCOEFF_MAX_N`).
-
-    Note:
-        Inputs are assumed to be validated by the caller (Layer 1).
-    """
-    from . import Bezier as BezierCls  # noqa: PLC0415
-
-    ctrl: npt.NDArray[np.float32 | np.float64] = bezier.control_points
-    degrees = bezier.degree
-
-    # ``_degree_elevate_bezier_1d_core`` builds its coefficient table from
-    # ``C(p + inc, i)``, so the elevated degree is what has to stay in range.
-    for d in range(bezier.dim):
-        if increments[d] > 0:
-            elevated = degrees[d] + increments[d]
-            _check_bincoeff_envelope(
-                elevated, f"Degree elevation to degree {elevated} in direction {d}"
-            )
-
-    for d in range(bezier.dim):
-        inc = increments[d]
-        if inc == 0:
-            continue
-
-        p = degrees[d]
-
-        pts_2d, trailing_shape = _flatten_along_axis(ctrl, d)
-        new_pts_2d = _degree_elevate_bezier_1d_core(p, pts_2d, inc)
-        ctrl = _unflatten_along_axis(new_pts_2d, trailing_shape, d)
-
-        # Update degrees for subsequent iterations.
-        degrees = (*degrees[:d], p + inc, *degrees[d + 1 :])
-
-    return BezierCls(ctrl, is_rational=bezier.is_rational)
-
-
 def _bernstein_gram_exact(degree: int) -> _ExactMatrix:
     r"""Build the degree-``n`` Bernstein Gram matrix as exact rationals.
 
@@ -175,7 +115,7 @@ def _elevation_matrix_exact(degree: int, increment: int) -> _ExactMatrix:
         \qquad \max(0, i - t) \le j \le \min(q, i),
 
     and zero elsewhere.  This is the closed form of the ``bezalfs`` coefficients
-    that :func:`~pantr.bezier._bezier_core._degree_elevate_bezier_1d_core`
+    that degree elevation (``include/pantr/bezier/elevate.hpp``)
     computes, assembled here as a matrix rather than applied.
 
     Args:
@@ -764,7 +704,7 @@ def _degree_reduction_l2_error(bezier: Bezier, decrements: tuple[int, ...]) -> f
         Inputs are assumed to be validated by the caller (Layer 1).
     """
     reduced = _apply_reduction_operators(bezier, decrements)
-    restored = _degree_elevate_bezier(reduced, decrements)
+    restored = reduced.elevate_degree(decrements)
 
     diff = restored.control_points - bezier.control_points
     rank = diff.shape[-1]
@@ -907,7 +847,12 @@ def _minimize_degree_bezier(
             # ... then re-elevate so the trial can be compared to `result`.
             flat_reduced, trailing_reduced = _flatten_along_axis(reduced, dim)
             elevated = _unflatten_along_axis(
-                _degree_elevate_bezier_1d_core(degree - 1, flat_reduced, 1),
+                getattr(
+                    _kernels,
+                    "bezier_elevate_degree_1d_f32"
+                    if flat_reduced.dtype == np.float32
+                    else "bezier_elevate_degree_1d",
+                )(degree - 1, np.ascontiguousarray(flat_reduced), 1),
                 trailing_reduced,
                 dim,
             )

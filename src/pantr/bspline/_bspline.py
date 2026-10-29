@@ -888,8 +888,9 @@ class Bspline:
         from ..bezier import Bezier as BezierCls  # noqa: PLC0415
 
         if self._space.has_Bezier_like_knots():
-            cp = self._control_points.copy() if copy else self._control_points
-            return BezierCls(cp, is_rational=self._is_rational)
+            if copy:
+                return BezierCls(self._control_points, is_rational=self._is_rational)
+            return BezierCls._borrow(self._control_points, self._is_rational)
 
         # Already open but not Bezier-like → multi-element, cannot convert.
         spaces = self._space.spaces

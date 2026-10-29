@@ -206,8 +206,8 @@ def _degree_reduce_bspline(bspline: Bspline, degree_decrements: tuple[int, ...])
     Returns:
         Bspline: New B-spline with reduced degrees.
     """
-    # Deferred to break the import cycle: pantr.bezier._bezier_core imports
-    # _bincoeff from this package's Layer 3.
+    # Deferred to break the import cycle: pantr.bezier._bezier_degree imports
+    # _check_bincoeff_envelope from this package's Layer 3.
     from ..bezier._bezier_degree import (  # noqa: PLC0415
         _interpolating_reduction_operator,
         _refuse_a_reduction_that_inverts_a_weight,

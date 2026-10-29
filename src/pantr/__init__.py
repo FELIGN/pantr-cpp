@@ -97,9 +97,6 @@ if not TYPE_CHECKING:
 
             _bspline_blossom_core._warmup_numba_functions()
             _bspline_roots_core._warmup_numba_functions()
-            from .bezier import _bezier_core  # noqa: PLC0415
-
-            _bezier_core._warmup_numba_functions()
             from .bezier import (  # noqa: PLC0415
                 _batch_core,
                 _clipping_core,

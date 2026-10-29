@@ -2,9 +2,8 @@
 
 This module provides :class:`Bezier`, which stores control points to represent
 a parametric Bezier curve, surface, or volume. Degree is derived from the
-control point array shape. Evaluation and manipulation methods use direct
-Bernstein algorithms implemented in ``_bezier_core``, ``_bezier_eval``,
-``_bezier_derivative``, ``_bezier_degree``, and ``_bezier_product``.
+control point array shape. Evaluation and manipulation run in pantr's C++
+library (``include/pantr/bezier/``); degree reduction is in ``_bezier_degree``.
 
 - :func:`interpolate_bezier`, :func:`fit_bezier`: approximation functions.
 - :func:`create_from_bspline`: create a Bézier from a B-spline.

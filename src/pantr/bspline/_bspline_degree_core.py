@@ -420,8 +420,8 @@ def _apply_reduction_operator(
     output values reproduce their inputs bit for bit.
 
     This kernel lives here rather than in ``pantr.bezier`` because
-    ``_bezier_core`` already imports ``_bincoeff`` from this module; the reverse
-    import would close a cycle.
+    ``_bezier_degree`` already imports ``_check_bincoeff_envelope`` from this module;
+    the reverse import would close a cycle.
 
     Args:
         operator (npt.NDArray[np.float64]): Reduction operator of shape

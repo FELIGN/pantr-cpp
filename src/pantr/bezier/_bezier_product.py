@@ -1,28 +1,22 @@
-"""Bézier pointwise product.
+"""Bernstein product coefficients for the B-spline product modules (interim).
 
-This module provides :func:`_multiply_bezier`, which computes the pointwise
-product of two Bézier objects via the Bernstein product formula.
-The result is a Bézier of degree ``p_d + q_d`` per direction: the degree is
-exact, the control points carry floating-point roundoff.
-
-The core Bernstein product formulas (:func:`_bernstein_product_coefficients`
-and :func:`_bernstein_product_coefficients_nd`) are also used by the B-spline
-product modules.
+:meth:`pantr.bezier.Bezier.multiply` runs in C++ (``include/pantr/bezier/product.hpp``). The
+B-spline product modules, not yet ported, still multiply Bézier segments given as arrays; the two
+helpers here reach the same C++ formula through ``_pantr._kernels``, so that one implementation
+serves both (DR-2's coexistence surface, removed with its last caller).
 """
 
 from __future__ import annotations
 
-import itertools
-import math
-from typing import TYPE_CHECKING
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
 
-from .._control_points_utils import _append_unit_weight_column
+from .._ext import ext
 
-if TYPE_CHECKING:
-    from . import Bezier
+_kernels: Any = ext._kernels
+"""The ported Bernstein kernels (interim surface, untyped: overloaded on the dtype)."""
 
 
 def _bernstein_product_coefficients(
@@ -42,225 +36,62 @@ def _bernstein_product_coefficients(
         b_f (npt.NDArray[np.float32 | np.float64]): Control points of the first
             Bézier segment, shape ``(p+1, rank)``.
         b_g (npt.NDArray[np.float32 | np.float64]): Control points of the second
-            Bézier segment, shape ``(q+1, rank)``.
+            Bézier segment, shape ``(q+1, rank)``, cast to ``b_f``'s dtype.
 
     Returns:
         npt.NDArray[np.float32 | np.float64]: Product Bézier control points of
-        shape ``(p+q+1, rank)``.
+        shape ``(p+q+1, rank)``, in ``b_f``'s dtype.
 
-    Note:
-        Inputs are assumed to be correct (no validation performed).
+    Raises:
+        ValueError: If the shapes are not ``(p+1, rank)`` and ``(q+1, rank)`` with one rank.
     """
-    p, q = b_f.shape[0] - 1, b_g.shape[0] - 1
-    r = p + q
-    dtype = b_f.dtype
-
-    cp = np.array([math.comb(p, i) for i in range(p + 1)], dtype=dtype)
-    cq = np.array([math.comb(q, j) for j in range(q + 1)], dtype=dtype)
-    inv_cr = np.array([1.0 / math.comb(r, k) for k in range(r + 1)], dtype=dtype)
-
-    i_idx = np.arange(p + 1)
-    j_idx = np.arange(q + 1)
-    k_mat = i_idx[:, None] + j_idx[None, :]  # (p+1, q+1)
-    coeff = cp[:, None] * cq[None, :] * inv_cr[k_mat]  # (p+1, q+1)
-
-    products = coeff[:, :, None] * b_f[:, None, :] * b_g[None, :, :]
-
-    d = np.zeros((r + 1, b_f.shape[1]), dtype=dtype)
-    np.add.at(d, k_mat.ravel(), products.reshape(-1, b_f.shape[1]))
-    return d
+    return _product(b_f, b_g, "bernstein_product")
 
 
 def _bernstein_product_coefficients_nd(
     b_f: npt.NDArray[np.float32 | np.float64],
     b_g: npt.NDArray[np.float32 | np.float64],
 ) -> npt.NDArray[np.float32 | np.float64]:
-    r"""Compute nD Bézier control points of the product of two Bézier patches.
+    r"""Compute tensor-product Bézier control points of the product of two Bézier patches.
 
-    Applies the tensor-product Bernstein product formula element-wise over the
-    rank axis.  For each multi-index :math:`\gamma`:
-
-    .. math::
-
-        h_\gamma = \frac{1}{\prod_d \binom{r_d}{\gamma_d}}
-                   \sum_{\alpha} \prod_d \binom{p_d}{\alpha_d}
-                   \binom{q_d}{\gamma_d - \alpha_d}\,
-                   b_f[\alpha]\, b_g[\gamma - \alpha]
-
-    where :math:`r_d = p_d + q_d`.
-
-    The nD convolution is computed via the accumulation strategy: for each
-    multi-index :math:`\alpha` of ``b_f``, the weighted product is accumulated
-    into the output at the offset :math:`[\alpha : \alpha + q + 1]`.
+    The multivariate Bernstein product formula, per direction as in
+    :func:`_bernstein_product_coefficients`, over every direction.
 
     Args:
-        b_f (npt.NDArray[np.float32 | np.float64]): Control points of the first
-            Bézier patch, shape ``(p_0+1, ..., p_{D-1}+1, rank)``.
-        b_g (npt.NDArray[np.float32 | np.float64]): Control points of the second
-            Bézier patch, shape ``(q_0+1, ..., q_{D-1}+1, rank)``.
+        b_f (npt.NDArray[np.float32 | np.float64]): Control points of the first patch,
+            shape ``(*p+1, rank)``.
+        b_g (npt.NDArray[np.float32 | np.float64]): Control points of the second patch,
+            shape ``(*q+1, rank)`` with the same number of directions, cast to ``b_f``'s dtype.
 
     Returns:
-        npt.NDArray[np.float32 | np.float64]: Product Bézier control points
-        of shape ``(p_0+q_0+1, ..., p_{D-1}+q_{D-1}+1, rank)``.
-
-    Note:
-        Inputs are assumed to be correct (no validation performed).
-    """
-    ndim = b_f.ndim - 1
-    p = tuple(s - 1 for s in b_f.shape[:ndim])
-    q = tuple(s - 1 for s in b_g.shape[:ndim])
-    r = tuple(pi + qi for pi, qi in zip(p, q, strict=True))
-    dtype = b_f.dtype
-    rank = b_f.shape[-1]
-
-    # Precompute per-direction binomial coefficients.
-    binom_p = [
-        np.array([math.comb(p[d], i) for i in range(p[d] + 1)], dtype=dtype) for d in range(ndim)
-    ]
-    binom_q = [
-        np.array([math.comb(q[d], j) for j in range(q[d] + 1)], dtype=dtype) for d in range(ndim)
-    ]
-    inv_binom_r = [
-        np.array([1.0 / math.comb(r[d], k) for k in range(r[d] + 1)], dtype=dtype)
-        for d in range(ndim)
-    ]
-
-    # Build weight arrays via outer product of per-direction binomial vectors.
-    w_f = binom_p[0]
-    for d in range(1, ndim):
-        w_f = np.multiply.outer(w_f, binom_p[d])
-    w_g = binom_q[0]
-    for d in range(1, ndim):
-        w_g = np.multiply.outer(w_g, binom_q[d])
-    inv_w_r = inv_binom_r[0]
-    for d in range(1, ndim):
-        inv_w_r = np.multiply.outer(inv_w_r, inv_binom_r[d])
-
-    # Weight the control points.
-    weighted_f = w_f[..., np.newaxis] * b_f
-    weighted_g = w_g[..., np.newaxis] * b_g
-
-    # nD convolution via accumulation.
-    result_shape = (*tuple(ri + 1 for ri in r), rank)
-    h_conv = np.zeros(result_shape, dtype=dtype)
-
-    for alpha in itertools.product(*(range(pi + 1) for pi in p)):
-        slices = tuple(slice(a, a + qi + 1) for a, qi in zip(alpha, q, strict=True))
-        h_conv[slices] = h_conv[slices] + weighted_f[alpha] * weighted_g
-
-    # Normalize by inverse product binomial coefficients.
-    return inv_w_r[..., np.newaxis] * h_conv
-
-
-# ---------------------------------------------------------------------------
-# Public entry point
-# ---------------------------------------------------------------------------
-
-
-def _multiply_bezier(a: Bezier, b: Bezier) -> Bezier:
-    """Compute the pointwise product of two Bézier objects.
-
-    Validates that both operands have matching dimension, dtype, and rank,
-    then dispatches to the non-rational or rational implementation.
-
-    Args:
-        a (~pantr.bezier.Bezier): First operand.
-        b (~pantr.bezier.Bezier): Second operand.
-
-    Returns:
-        ~pantr.bezier.Bezier: Product Bézier of degree ``p_d + q_d`` per
-        direction.
+        npt.NDArray[np.float32 | np.float64]: Product control points of shape
+        ``(*(p+q+1), rank)``, in ``b_f``'s dtype.
 
     Raises:
-        ValueError: If the operands have different dimensions, dtypes, or ranks.
+        ValueError: If the operands differ in their number of directions or in rank.
     """
-    if a.dim != b.dim:
-        raise ValueError(f"Operands must have the same dimension. Got {a.dim} and {b.dim}.")
-    if a.dtype != b.dtype:
-        raise ValueError(f"Operands must have the same dtype. Got {a.dtype} and {b.dtype}.")
-    if a.rank != b.rank:
-        raise ValueError(f"Operands must have the same rank. Got {a.rank} and {b.rank}.")
-
-    if a.is_rational or b.is_rational:
-        return _multiply_rational(a, b)
-    return _multiply_nonrational(a, b)
+    return _product(b_f, b_g, "bernstein_product_nd")
 
 
-def _multiply_nonrational(a: Bezier, b: Bezier) -> Bezier:
-    """Compute the product of two non-rational Bézier objects.
-
-    Args:
-        a (~pantr.bezier.Bezier): First operand (non-rational).
-        b (~pantr.bezier.Bezier): Second operand (non-rational).
-
-    Returns:
-        ~pantr.bezier.Bezier: Non-rational product Bézier.
-
-    Note:
-        Inputs are assumed to be correct (no validation performed).
-    """
-    from . import Bezier as BezierCls  # noqa: PLC0415
-
-    if a.dim == 1:
-        new_ctrl = _bernstein_product_coefficients(a.control_points, b.control_points)
-    else:
-        new_ctrl = _bernstein_product_coefficients_nd(a.control_points, b.control_points)
-    return BezierCls(new_ctrl, is_rational=False)
-
-
-def _multiply_rational(a: Bezier, b: Bezier) -> Bezier:
-    """Compute the product of two Bézier objects where at least one is rational.
-
-    Promotes non-rational operands to rational (unit weights) and multiplies
-    numerators and denominators independently.
-
-    Args:
-        a (~pantr.bezier.Bezier): First operand.
-        b (~pantr.bezier.Bezier): Second operand.
-
-    Returns:
-        ~pantr.bezier.Bezier: Rational product Bézier.
-
-    Note:
-        Inputs are assumed to be correct (no validation performed).
-    """
-    from . import Bezier as BezierCls  # noqa: PLC0415
-
-    # Promote non-rational to rational with unit weights.
-    a_ctrl = _ensure_rational_ctrl(a)
-    b_ctrl = _ensure_rational_ctrl(b)
-
-    # Decompose: numerator (weighted coords) and denominator (weights).
-    a_num = a_ctrl[..., :-1]
-    a_den = a_ctrl[..., -1:]
-    b_num = b_ctrl[..., :-1]
-    b_den = b_ctrl[..., -1:]
-
-    # Multiply numerators and denominators.
-    if a.dim == 1:
-        h_num = _bernstein_product_coefficients(a_num, b_num)
-        h_den = _bernstein_product_coefficients(a_den, b_den)
-    else:
-        h_num = _bernstein_product_coefficients_nd(a_num, b_num)
-        h_den = _bernstein_product_coefficients_nd(a_den, b_den)
-
-    result_ctrl = np.concatenate([h_num, h_den], axis=-1)
-    return BezierCls(result_ctrl, is_rational=True)
-
-
-def _ensure_rational_ctrl(
-    bezier: Bezier,
+def _product(
+    b_f: npt.NDArray[np.float32 | np.float64],
+    b_g: npt.NDArray[np.float32 | np.float64],
+    kernel: str,
 ) -> npt.NDArray[np.float32 | np.float64]:
-    """Return control points in homogeneous form, adding unit weights if needed.
+    """Call a compiled product on C-contiguous operands of ``b_f``'s dtype.
 
     Args:
-        bezier (~pantr.bezier.Bezier): The Bézier (rational or non-rational).
+        b_f (npt.NDArray[np.float32 | np.float64]): The first operand.
+        b_g (npt.NDArray[np.float32 | np.float64]): The second operand.
+        kernel (str): ``"bernstein_product"`` or ``"bernstein_product_nd"`` (the float32
+            function carries an ``_f32`` suffix).
 
     Returns:
-        npt.NDArray[np.float32 | np.float64]: Control points with shape
-        ``(..., rank+1)`` where the last column is the weight.
+        npt.NDArray[np.float32 | np.float64]: The product's control points.
     """
-    ctrl = bezier.control_points
-    if bezier.is_rational:
-        return ctrl
-    return _append_unit_weight_column(ctrl)
+    f32 = b_f.dtype == np.float32
+    dtype = np.float32 if f32 else np.float64
+    result: npt.NDArray[np.float32 | np.float64] = getattr(
+        _kernels, kernel + ("_f32" if f32 else "")
+    )(np.ascontiguousarray(b_f, dtype=dtype), np.ascontiguousarray(b_g, dtype=dtype))
+    return result
