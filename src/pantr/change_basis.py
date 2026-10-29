@@ -70,7 +70,7 @@ asserted.
 """
 
 from collections.abc import Mapping
-from enum import IntEnum
+from enum import IntEnum as _IntEnum
 from types import MappingProxyType
 from typing import Final, NamedTuple
 
@@ -78,7 +78,7 @@ import numpy as np
 import numpy.typing as npt
 
 from ._array_utils import _is_float32
-from ._ext import ext
+from ._ext import ext as _ext
 from .basis import LagrangeVariant
 from .basis._basis_tabulate import _variant_code
 from .basis._basis_utils import _allocate_or_validate_out
@@ -97,7 +97,7 @@ class _DegreeLimit(NamedTuple):
 
 
 _CARDINAL_TO_BERNSTEIN_MAX_DEGREE: Final = _DegreeLimit(
-    *ext.change_basis.cardinal_to_bernstein_max_degree()
+    *_ext.change_basis.cardinal_to_bernstein_max_degree()
 )
 r"""Supported degrees of :func:`compute_cardinal_to_bernstein_1d`.
 
@@ -120,7 +120,7 @@ here (at degree 11 in float64 it stands at ``9.2`` while the returned matrix is 
 """
 
 _BERNSTEIN_TO_CARDINAL_MAX_DEGREE: Final = _DegreeLimit(
-    *ext.change_basis.bernstein_to_cardinal_max_degree()
+    *_ext.change_basis.bernstein_to_cardinal_max_degree()
 )
 r"""Supported degrees of :func:`compute_bernstein_to_cardinal_1d`.
 
@@ -135,7 +135,7 @@ quantity.
 """
 
 _CARDINAL_TO_LEGENDRE_MAX_DEGREE: Final = _DegreeLimit(
-    *ext.change_basis.cardinal_to_legendre_max_degree()
+    *_ext.change_basis.cardinal_to_legendre_max_degree()
 )
 r"""Supported degrees of the cardinal-to-Legendre direction.
 
@@ -152,7 +152,7 @@ solvability criterion bounds the accuracy too, and no separate accuracy statemen
 _BERNSTEIN_TO_LAGRANGE_MAX_DEGREE: Final[Mapping[LagrangeVariant, _DegreeLimit]] = MappingProxyType(
     {
         variant: _DegreeLimit(
-            *ext.change_basis.bernstein_to_lagrange_max_degree(_variant_code(variant))
+            *_ext.change_basis.bernstein_to_lagrange_max_degree(_variant_code(variant))
         )
         for variant in LagrangeVariant
     }
@@ -174,7 +174,7 @@ matrix pantr actually forms rather than an idealized one.
 """
 
 
-class _Builder(IntEnum):
+class _Builder(_IntEnum):
     """Change-of-basis builders and process tables, with the C++ library's wire values.
 
     The first six are also ``pantr::change_basis::Kind``, the tables' keys.
@@ -227,7 +227,7 @@ def _build(
         ValueError: If ``dtype`` is not float32/float64, the C++ builder refuses the degree, or
             ``out`` has the wrong shape, dtype, or is not writeable.
     """
-    build = ext.change_basis.build_f32 if _is_float32(dtype) else ext.change_basis.build
+    build = _ext.change_basis.build_f32 if _is_float32(dtype) else _ext.change_basis.build
     result: npt.NDArray[np.float32 | np.float64] = build(builder.value, degree, variant)
     if out is None:
         return result
@@ -254,7 +254,7 @@ def _cached(
     Raises:
         ValueError: As the matching builder.
     """
-    table = ext.change_basis.cached_f32 if _is_float32(dtype) else ext.change_basis.cached
+    table = _ext.change_basis.cached_f32 if _is_float32(dtype) else _ext.change_basis.cached
     matrix: npt.NDArray[np.float32 | np.float64] = table(kind.value, degree, variant)
     return matrix
 

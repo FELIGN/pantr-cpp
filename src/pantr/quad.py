@@ -13,17 +13,19 @@ This module provides:
 
 from __future__ import annotations
 
-import operator
+import operator as _operator
 from collections.abc import Callable, Iterable, Sequence
-from typing import TYPE_CHECKING, Any, Final, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
 import numpy.typing as npt
 
 from ._array_utils import _is_float32
-from ._ext import ext
+from ._ext import ext as _ext
 
 if TYPE_CHECKING:
+    from typing import Final
+
     from ._pantr.quad import PointsLatticeF32, PointsLatticeF64
     from ._pantr.quad import QuadratureRule as _QuadratureRuleHandle
     from .basis import LagrangeVariant
@@ -35,7 +37,7 @@ _RuleFn = Callable[[int], _Rule1D]
 """A C++ rule builder: ``n_pts -> (nodes, weights)``, validating ``n_pts``."""
 
 _RULES: Final[dict[str, tuple[_RuleFn, _RuleFn]]] = {
-    name: (getattr(ext.quad, name), getattr(ext.quad, f"{name}_f32"))
+    name: (getattr(_ext.quad, name), getattr(_ext.quad, f"{name}_f32"))
     for name in (
         "trapezoidal_1d",
         "gauss_legendre_1d",
@@ -175,8 +177,8 @@ def get_modified_chebyshev_nodes_1d(
         ValueError: If *n_pts* < 2 or *dtype* is not float32 or float64.
     """
     if _is_float32(dtype):
-        return ext.quad.modified_chebyshev_nodes_1d_f32(n_pts)
-    return ext.quad.modified_chebyshev_nodes_1d(n_pts)
+        return _ext.quad.modified_chebyshev_nodes_1d_f32(n_pts)
+    return _ext.quad.modified_chebyshev_nodes_1d(n_pts)
 
 
 def get_chebyshev_gauss_2nd_kind_1d(
@@ -325,9 +327,9 @@ class PointsLattice:
             raise ValueError("All points must be 1D")
         coords = [_as_coordinates(pts) for pts in raw]
         lattice_cls = (
-            ext.quad.PointsLatticeF32
+            _ext.quad.PointsLatticeF32
             if coords[0].dtype.type is np.float32
-            else ext.quad.PointsLatticeF64
+            else _ext.quad.PointsLatticeF64
         )
         # The class is chosen by dtype above; the list's static type spans both.
         self._set_handle(lattice_cls(cast(Any, coords)))
@@ -449,11 +451,11 @@ def create_lagrange_points_lattice(
     from .basis._basis_tabulate import _variant_code  # noqa: PLC0415
 
     # operator.index refuses a float count (2.7) rather than truncating it.
-    counts = [operator.index(n) for n in n_pts_per_dir]
+    counts = [_operator.index(n) for n in n_pts_per_dir]
     build = (
-        ext.quad.lagrange_points_lattice_f32
+        _ext.quad.lagrange_points_lattice_f32
         if _is_float32(dtype)
-        else ext.quad.lagrange_points_lattice
+        else _ext.quad.lagrange_points_lattice
     )
     return PointsLattice._from_handle(build(_variant_code(lagrange_variant), counts))
 
@@ -491,7 +493,7 @@ class QuadratureRule:
         # and hide it from the rank checks.
         pts = np.asarray(points, dtype=np.float64, order="C")
         wts = np.asarray(weights, dtype=np.float64, order="C")
-        self._set_handle(ext.quad.QuadratureRule(pts, wts))
+        self._set_handle(_ext.quad.QuadratureRule(pts, wts))
 
     def _set_handle(self, handle: _QuadratureRuleHandle) -> None:
         """Hold a C++ rule and cache what its properties return (it is immutable).
@@ -610,7 +612,7 @@ def tensor_product_quadrature(
         )
         for pair in rules
     ]
-    return QuadratureRule._from_handle(ext.quad.tensor_product_quadrature(pairs))
+    return QuadratureRule._from_handle(_ext.quad.tensor_product_quadrature(pairs))
 
 
 def gauss_legendre_quadrature(ndim: int, npts: int | Sequence[int]) -> QuadratureRule:
@@ -636,7 +638,7 @@ def gauss_legendre_quadrature(ndim: int, npts: int | Sequence[int]) -> Quadratur
         :cite:p:`golub1969gauss`.
     """
     counts = [int(npts)] * ndim if isinstance(npts, int) else [int(n) for n in npts]
-    return QuadratureRule._from_handle(ext.quad.gauss_legendre_quadrature(ndim, counts))
+    return QuadratureRule._from_handle(_ext.quad.gauss_legendre_quadrature(ndim, counts))
 
 
 __all__ = [

@@ -62,7 +62,7 @@ from typing import Any, Final, TypedDict
 import numpy as np
 from numpy import typing as npt
 
-from ._ext import ext
+from ._ext import ext as _ext
 
 
 @cache
@@ -102,7 +102,7 @@ def _ensure_float_dtype(dtype: npt.DTypeLike) -> np.dtype[np.floating[Any]]:
     return _ensure_float_dtype_by_name(dtype_obj.name)
 
 
-_STRICT_EPS_FACTOR: Final[float] = ext.tolerance.strict_eps_factor
+_STRICT_EPS_FACTOR: Final[float] = _ext.tolerance.strict_eps_factor
 """Machine epsilons a :func:`get_strict` comparison allows for (4, owned by the C++ library).
 
 A handful of roundings and nothing more. Four is the count for the shape this tier
@@ -112,7 +112,7 @@ which is the fourth. (The comparison itself is exact in IEEE-754 and costs
 nothing.) Four is also already a power of two, so nothing is rounded up here.
 """
 
-_DEFAULT_EPS_FACTOR: Final[float] = ext.tolerance.default_eps_factor
+_DEFAULT_EPS_FACTOR: Final[float] = _ext.tolerance.default_eps_factor
 """Machine epsilons a :func:`get_default` comparison allows for (64, owned by the C++ library).
 
 A short algorithm -- on the order of 16 operations, whose worst-case accumulation
@@ -122,7 +122,7 @@ Four times the accumulation bound covers that, and 64 is the power of two it
 lands on.
 """
 
-_CONSERVATIVE_EPS_FACTOR: Final[float] = ext.tolerance.conservative_eps_factor
+_CONSERVATIVE_EPS_FACTOR: Final[float] = _ext.tolerance.conservative_eps_factor
 """Machine epsilons a :func:`get_conservative` comparison allows for (4096, owned by C++).
 
 A long accumulation, or a problem whose condition number reaches about 1e3: the
