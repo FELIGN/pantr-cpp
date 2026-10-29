@@ -167,6 +167,25 @@ def get_root_provider() -> str:
     return _active
 
 
+def _get_state() -> str | None:
+    """Get the raw provider state: the active name, or ``None`` before first use.
+
+    Returns:
+        str | None: The state (for tests, through ``pantr._testing``).
+    """
+    return _active
+
+
+def _set_state(state: str | None) -> None:
+    """Set the raw provider state, ``None`` meaning "resolve on first use" (for tests).
+
+    Args:
+        state (str | None): The state to restore.
+    """
+    global _active  # noqa: PLW0603
+    _active = state
+
+
 def _provider() -> Any:  # noqa: ANN401
     """Get the active provider's module (untyped: a compiled module or ``pantr_berf``).
 

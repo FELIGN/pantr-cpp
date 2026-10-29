@@ -17,6 +17,8 @@ module.
   Numba kernels they replaced (a root array and a count).
 - The degree-reduction operators and their process table, the exact elevation matrix, and the
   pieces of the rational round-trip measure (Gram norm, Gauss grid, projected sampling).
+- The root provider's raw state (``root_provider_state``, ``set_root_provider_state``), so a test
+  can return it to "resolve on first use".
 - :func:`bernstein_interpolate`: values on the modified-Chebyshev grid to Bernstein coefficients.
 """
 
@@ -30,6 +32,8 @@ import numpy.typing as npt
 from ._ext import ext
 from .basis._basis_1D import _Family
 from .basis._basis_lagrange import _get_lagrange_points
+from .bezier._find_roots import _get_state as root_provider_state
+from .bezier._find_roots import _set_state as set_root_provider_state
 from .change_basis import (
     _BERNSTEIN_TO_CARDINAL_MAX_DEGREE,
     _BERNSTEIN_TO_LAGRANGE_MAX_DEGREE,
@@ -225,7 +229,9 @@ __all__ = [
     "reduction_cache_clear",
     "reduction_cache_size",
     "root_provider_capabilities",
+    "root_provider_state",
     "sample_projected",
+    "set_root_provider_state",
     "solve_monotone_root_kernel",
     "spans_zero",
     "squared_l2_norm",
