@@ -76,3 +76,8 @@ def bernstein_product_nd_f32(
     b: Annotated[NDArray[numpy.float32], dict(order="C", device="cpu", writable=False)],
 ) -> NDArray[numpy.float32]:
     """As bernstein_product, always by the tensor formula."""
+
+def interpolating_reduction_operator(
+    degree: int, decrement: int
+) -> Annotated[NDArray[numpy.float64], dict(writable=False)]:
+    """The endpoint-interpolating reduction operator (read-only, from the process table)."""

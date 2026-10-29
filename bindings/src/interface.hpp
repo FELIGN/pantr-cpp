@@ -9,7 +9,7 @@ namespace pantr::bindings {
 /// Version of the module's interface. pantr/_ext.py refuses a module whose version differs from
 /// its EXPECTED_INTERFACE, so a stale build fails at import instead of as a phantom regression.
 /// Bump both together with any change to what the module exposes.
-inline constexpr int kInterfaceVersion = 4;
+inline constexpr int kInterfaceVersion = 5;
 
 /// Register the translation of pantr's C++ exceptions to Python exceptions.
 void register_errors(nanobind::module_& m);
@@ -40,6 +40,21 @@ void register_bezier(nanobind::module_& m);
 
 /// Register the Bezier kernels of the `_kernels` submodule (for Python callers not yet ported).
 void register_bezier_kernels(nanobind::module_& m);
+
+/// Register degree reduction and fitting in the `bezier` submodule.
+void register_bezier_approx(nanobind::module_& m);
+
+/// Register the reduction operator in the `_kernels` submodule (for the B-spline reduction).
+void register_bezier_approx_kernels(nanobind::module_& m);
+
+/// Register the reduction and fitting internals in the `_testing` submodule.
+void register_bezier_approx_testing(nanobind::module_& m);
+
+/// Register the `roots` submodule (the Builtin root provider).
+void register_roots(nanobind::module_& m);
+
+/// Register the root provider's internals in the `_testing` submodule.
+void register_roots_testing(nanobind::module_& m);
 
 /// Register the `_kernels` submodule: the interim surface through which Python code not yet ported
 /// reaches ported kernels (removed with the last such caller).

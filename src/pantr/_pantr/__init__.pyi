@@ -7,6 +7,7 @@ from pantr._pantr import bezier as bezier
 from pantr._pantr import change_basis as change_basis
 from pantr._pantr import geometry as geometry
 from pantr._pantr import quad as quad
+from pantr._pantr import roots as roots
 from pantr._pantr import tolerance as tolerance
 from pantr._pantr import transform as transform
 

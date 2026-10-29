@@ -1,6 +1,7 @@
 """Probes for tests and benchmarks (private)."""
 
-from typing import Annotated
+from collections.abc import Sequence
+from typing import Annotated, overload
 
 import numpy
 from numpy.typing import NDArray
@@ -68,3 +69,182 @@ def change_basis_cache_size() -> int:
 
 def change_basis_cache_clear() -> None:
     """Empty the change-of-basis process tables (matrices handed out stay valid)."""
+
+def have_same_sign(a: float, b: float) -> bool: ...
+def have_opposite_signs(a: float, b: float) -> bool: ...
+def spans_zero(a: float, b: float) -> bool: ...
+def count_sign_changes(
+    coeff: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+) -> int: ...
+def clip_hull_to_zero(
+    coeff: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+) -> tuple[float, float, bool]: ...
+
+ROOTS_MAX_NEWTON_ITER: int = ...
+
+ROOTS_CLIP_MAX_DEPTH: int = ...
+
+@overload
+def de_casteljau_eval_scalar(
+    coeff: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    t: float,
+) -> float: ...
+@overload
+def de_casteljau_eval_scalar(
+    coeff: Annotated[
+        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    t: float,
+) -> float: ...
+@overload
+def de_casteljau_eval_and_deriv_scalar(
+    coeff: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    t: float,
+) -> tuple[float, float]: ...
+@overload
+def de_casteljau_eval_and_deriv_scalar(
+    coeff: Annotated[
+        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    t: float,
+) -> tuple[float, float]: ...
+@overload
+def subdivide_scalar(
+    coeff: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    t_min: float,
+    t_max: float,
+) -> NDArray[numpy.float64]: ...
+@overload
+def subdivide_scalar(
+    coeff: Annotated[
+        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    t_min: float,
+    t_max: float,
+) -> NDArray[numpy.float64]: ...
+@overload
+def newton_polish_scalar(
+    coeff: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    mid: float,
+    lo: float,
+    hi: float,
+    param_tol: float,
+) -> tuple[float, float, float]: ...
+@overload
+def newton_polish_scalar(
+    coeff: Annotated[
+        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    mid: float,
+    lo: float,
+    hi: float,
+    param_tol: float,
+) -> tuple[float, float, float]: ...
+@overload
+def solve_monotone_root_kernel(
+    coeff: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    param_tol: float,
+    max_iter: int = ...,
+) -> float: ...
+@overload
+def solve_monotone_root_kernel(
+    coeff: Annotated[
+        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    param_tol: float,
+    max_iter: int = ...,
+) -> float: ...
+@overload
+def yuksel_roots(
+    coeff: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    tol: float,
+) -> tuple[NDArray[numpy.float64], int]: ...
+@overload
+def yuksel_roots(
+    coeff: Annotated[
+        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    tol: float,
+) -> tuple[NDArray[numpy.float64], int]: ...
+@overload
+def clip_roots_core(
+    root_coeff: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    param_tol: float,
+    geom_tol: float,
+    max_depth: int = ...,
+) -> tuple[NDArray[numpy.float64], int]: ...
+@overload
+def clip_roots_core(
+    root_coeff: Annotated[
+        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    param_tol: float,
+    geom_tol: float,
+    max_depth: int = ...,
+) -> tuple[NDArray[numpy.float64], int]: ...
+@overload
+def dedup_roots(
+    raw_roots: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    n_roots: int,
+    coeff: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    param_tol: float,
+    geom_tol: float,
+) -> NDArray[numpy.float64]: ...
+@overload
+def dedup_roots(
+    raw_roots: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    n_roots: int,
+    coeff: Annotated[
+        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    param_tol: float,
+    geom_tol: float,
+) -> NDArray[numpy.float64]: ...
+def l2_reduction_operator(
+    degree: int, decrement: int
+) -> Annotated[NDArray[numpy.float64], dict(writable=False)]: ...
+def elevation_matrix(degree: int, increment: int) -> NDArray[numpy.float64]: ...
+
+reduction_cache_max_degree: int = ...
+
+def reduction_cache_size() -> int: ...
+def reduction_cache_clear() -> None: ...
+def squared_l2_norm(
+    coeffs: Annotated[NDArray[numpy.float64], dict(order="C", device="cpu", writable=False)],
+) -> float: ...
+def projected_quadrature_size(degree: int) -> int: ...
+def tensor_gauss_weights(num_nodes: Sequence[int]) -> NDArray[numpy.float64]: ...
+def sample_projected(
+    ctrl: Annotated[NDArray[numpy.float64], dict(order="C", device="cpu", writable=False)],
+    num_nodes: Sequence[int],
+) -> NDArray[numpy.float64] | None: ...
+def projected_relative_deviation(
+    values: Annotated[NDArray[numpy.float64], dict(order="C", device="cpu", writable=False)] | None,
+    trial_values: Annotated[NDArray[numpy.float64], dict(order="C", device="cpu", writable=False)]
+    | None,
+    quad_weights: Annotated[NDArray[numpy.float64], dict(order="C", device="cpu", writable=False)],
+) -> float: ...

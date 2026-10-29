@@ -1,7 +1,7 @@
 """Bezier values and operations (private)."""
 
 from collections.abc import Sequence
-from typing import Annotated
+from typing import Annotated, overload
 
 import numpy
 from numpy.typing import NDArray
@@ -229,3 +229,69 @@ class BezierF32:
         offset: Annotated[NDArray[numpy.float64], dict(order="C", device="cpu", writable=False)],
     ) -> BezierF32:
         """Apply x -> A x + b to the geometry."""
+
+@overload
+def reduce_degree(bezier: BezierF64, decrements: Sequence[int]) -> BezierF64: ...
+@overload
+def reduce_degree(bezier: BezierF32, decrements: Sequence[int]) -> BezierF32:
+    """Endpoint-interpolating L2 degree reduction."""
+
+@overload
+def degree_reduction_error(bezier: BezierF64, decrements: Sequence[int]) -> float: ...
+@overload
+def degree_reduction_error(bezier: BezierF32, decrements: Sequence[int]) -> float:
+    """The exact L2 error of reduce_degree."""
+
+@overload
+def minimize_degree(bezier: BezierF64, tol: float | None) -> BezierF64: ...
+@overload
+def minimize_degree(bezier: BezierF32, tol: float | None) -> BezierF32:
+    """The lowest degree within a relative tolerance."""
+
+def fit_tensor(
+    values: Annotated[NDArray[numpy.float64], dict(order="C", device="cpu", writable=False)],
+    nodes: Sequence[
+        Annotated[
+            NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+        ]
+    ],
+    degrees: Sequence[int] | None,
+    tol: float | None,
+) -> BezierF64:
+    """Fit on a tensor grid: values (*n_pts, rank), one node array per direction."""
+
+def fit_scattered(
+    values: Annotated[
+        NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu", writable=False)
+    ],
+    pts: Annotated[
+        NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu", writable=False)
+    ],
+    degrees: Sequence[int],
+    tol: float | None,
+) -> BezierF64:
+    """Fit at scattered points: values (n_pts, rank), points (n_pts, dim)."""
+
+def fit_tensor_f32(
+    values: Annotated[NDArray[numpy.float32], dict(order="C", device="cpu", writable=False)],
+    nodes: Sequence[
+        Annotated[
+            NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
+        ]
+    ],
+    degrees: Sequence[int] | None,
+    tol: float | None,
+) -> BezierF32:
+    """Fit on a tensor grid: values (*n_pts, rank), one node array per direction."""
+
+def fit_scattered_f32(
+    values: Annotated[
+        NDArray[numpy.float32], dict(shape=(None, None), order="C", device="cpu", writable=False)
+    ],
+    pts: Annotated[
+        NDArray[numpy.float32], dict(shape=(None, None), order="C", device="cpu", writable=False)
+    ],
+    degrees: Sequence[int],
+    tol: float | None,
+) -> BezierF32:
+    """Fit at scattered points: values (n_pts, rank), points (n_pts, dim)."""

@@ -57,10 +57,16 @@ NB_MODULE(PANTR_EXT_MODULE_NAME, m) {
   pantr::bindings::register_transform(transform);
   nb::module_ bezier = m.def_submodule("bezier", "Bezier values and operations (private).");
   pantr::bindings::register_bezier(bezier);
+  pantr::bindings::register_bezier_approx(bezier);
+  nb::module_ roots = m.def_submodule("roots", "The Builtin root provider (private).");
+  pantr::bindings::register_roots(roots);
   nb::module_ kernels = m.def_submodule(
       "_kernels", "Ported kernels for Python callers not yet ported (private, interim).");
   pantr::bindings::register_kernels(kernels);
   pantr::bindings::register_bezier_kernels(kernels);
+  pantr::bindings::register_bezier_approx_kernels(kernels);
   nb::module_ testing = m.def_submodule("_testing", "Probes for tests and benchmarks (private).");
   pantr::bindings::register_testing(testing);
+  pantr::bindings::register_roots_testing(testing);
+  pantr::bindings::register_bezier_approx_testing(testing);
 }
