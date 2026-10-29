@@ -806,6 +806,10 @@ class TestCreateChangeBasis:
         result3 = compute_bernstein_to_cardinal_1d(degree, dtype=np.float32, out=out_f32)
         assert result3 is out_f32
         assert result3.dtype == np.float32
+        # Filled, not only returned: the float32 matrix is the double one to float32 resolution
+        # (entries of magnitude <= 1, a Gram solve with kappa about 30 at degree 2).
+        eps32 = float(np.finfo(np.float32).eps)
+        np.testing.assert_allclose(result3, result1, rtol=0, atol=64 * eps32)
 
     def test_out_parameter_validation(self) -> None:
         """A wrong ``out`` is refused with the shared messages (through a public builder)."""

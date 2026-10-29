@@ -111,6 +111,20 @@ TEST_CASE("change_basis: correctly rounded quotient agrees with double division 
   CHECK(pantr::exact::correctly_rounded_quotient(1, huge) ==
         std::numeric_limits<double>::denorm_min());
   CHECK(pantr::exact::correctly_rounded_quotient(1, huge << 2) == 0.0);
+  using pantr::exact::correctly_rounded_quotient;
+  using pantr::exact::Integer;
+  // Ties to even, upward: 2^53 + 3 lies halfway between 2^53 + 2 and 2^53 + 4.
+  CHECK(correctly_rounded_quotient((Integer(1) << 53) + 3, 1) == 9007199254740996.0);
+  // Below half a spacing (sticky low bits, no tie): 2^55 + 5 rounds to 2^55 + 8 (spacing 8).
+  CHECK(correctly_rounded_quotient((Integer(1) << 55) + 5, 1) == 36028797018963976.0);
+  // Half the smallest subnormal ties to even (0); three halves round to two.
+  CHECK(correctly_rounded_quotient(1, Integer(1) << 1075) == 0.0);
+  CHECK(correctly_rounded_quotient(3, Integer(1) << 1075) ==
+        2.0 * std::numeric_limits<double>::denorm_min());
+  // A numerator far above the denominator (the shift < 0 branch): 2^100 / 3 is exactly the
+  // correctly rounded 1/3 scaled by 2^100.
+  CHECK(correctly_rounded_quotient(Integer(1) << 100, 3) == std::ldexp(1.0 / 3.0, 100));
+  CHECK(std::isinf(correctly_rounded_quotient(Integer(1) << 1024, 1)));
 }
 
 TEST_CASE("change_basis: domain refusals carry the builder, the degree and the dtype") {
@@ -159,17 +173,46 @@ TEST_CASE("change_basis: process tables return one immutable matrix per key, bou
   CHECK(a->data()[0] == direct.data()[0]);  // a handed-out matrix outlives the table entry
 }
 
+TEST_CASE("change_basis: the explicit inverse refuses an exactly zero or NaN pivot") {
+  pantr::NdArray<double> singular({2, 2});  // [[1, 2], [2, 4]]: the second pivot is exactly 0
+  singular.data()[0] = 1.0;
+  singular.data()[1] = 2.0;
+  singular.data()[2] = 2.0;
+  singular.data()[3] = 4.0;
+  CHECK_THROWS_WITH_AS(static_cast<void>(cb::detail::inverse(singular)), "Singular matrix",
+                       pantr::value_error);
+  pantr::NdArray<double> with_nan({2, 2});
+  with_nan.data()[0] = 1.0;
+  with_nan.data()[1] = std::nan("");
+  with_nan.data()[2] = 1.0;
+  with_nan.data()[3] = 1.0;
+  CHECK_THROWS_WITH_AS(static_cast<void>(cb::detail::inverse(with_nan)), "Singular matrix",
+                       pantr::value_error);
+}
+
 TEST_CASE("change_basis: concurrent first use of a key yields one shared matrix") {
   cb::cache_clear<double>();
   constexpr int n_threads = 8;
   std::vector<std::shared_ptr<const pantr::NdArray<double>>> got(n_threads);
   std::vector<std::thread> threads;
+  // A start gate, so the threads enter cached() together rather than one finishing before the
+  // next has started (a degree-6 matrix takes far less time than a thread's start-up).
+  std::atomic<int> ready{0};
+  std::atomic<bool> go{false};
   for (int t = 0; t < n_threads; ++t) {
-    threads.emplace_back([&got, t] {
+    threads.emplace_back([&got, &ready, &go, t] {
+      ready.fetch_add(1);
+      while (!go.load()) {
+        std::this_thread::yield();
+      }
       got[static_cast<std::size_t>(t)] =
           cb::cached<double>(cb::Kind::bernstein_to_cardinal, 6, LagrangeVariant::equispaces);
     });
   }
+  while (ready.load() < n_threads) {
+    std::this_thread::yield();
+  }
+  go.store(true);
   for (auto& th : threads) {
     th.join();
   }

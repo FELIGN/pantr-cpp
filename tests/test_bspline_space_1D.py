@@ -2574,6 +2574,9 @@ class TestBernsteinSerialParallelTwins:
         out_many = tabulate_bernstein_1d(degree, t)
         eps = float(np.finfo(np.float64).eps)
         np.testing.assert_allclose(out_one, out_many, rtol=eps, atol=0.0)
+        # Both runs use the same chunks, so agreement cannot see a chunk left unwritten: every
+        # row must also be a partition of unity, within the recurrence's 8 (n + 1) eps.
+        assert np.all(np.abs(out_many.sum(axis=1) - 1.0) <= 8 * (degree + 1) * eps)
 
     @pytest.mark.parametrize("num_pts", [1, 3, 100, 5000, 60_000])
     @pytest.mark.parametrize("degree", [0, 2, 3])

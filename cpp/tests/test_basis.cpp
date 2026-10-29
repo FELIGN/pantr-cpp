@@ -79,7 +79,7 @@ TEST_CASE("basis: Bernstein derivatives of degree 2 match the closed form, order
 
 TEST_CASE("basis: Bernstein derivatives of order n are n! (-1)^(n-i) C(n, i), past 64 bits") {
   // The n-th derivative of B_{i,n} is the constant n! (-1)^(n-i) C(n, i). At degree 22 the
-  // scaling n!/(n-k)! passes 2^64 at k = 21, so the double fallback of the scaling runs (the
+  // scaling n!/(n-k)! passes 2^64 at k = 18, so the double fallback of the scaling runs (the
   // Numba kernel wrapped its int64 there); 1e-12 relative leaves room for the O(n^2)
   // recurrence's roundings, whose values are bounded by C(n, i) 2^n.
   const int n = 22;
@@ -107,7 +107,7 @@ TEST_CASE("basis: float tabulations are the double-intermediate values stored in
   for (std::size_t i = 0; i < pd.size(); ++i) {
     pf[i] = static_cast<float>(pd[i]);
   }
-  const double feps = std::numeric_limits<float>::epsilon();
+  const auto feps = static_cast<double>(std::numeric_limits<float>::epsilon());
   for (const int p : {0, 3, 7}) {  // 7 is past float's unmirrored bound (6)
     const auto bd = basis::tabulate_bernstein_1d<double>(p, pd);
     const auto bf = basis::tabulate_bernstein_1d<float>(p, pf);
@@ -130,7 +130,8 @@ TEST_CASE("basis: float tabulations are the double-intermediate values stored in
   basis::tabulate_bernstein_derivatives_1d<double>(3, pd, 2, dd.view<3>());
   basis::tabulate_bernstein_derivatives_1d<float>(3, pf, 2, df.view<3>());
   for (std::size_t i = 0; i < dd.size(); ++i) {
-    CHECK(std::fabs(static_cast<double>(df.data()[i]) - dd.data()[i]) <= 64.0 * feps * 6.0);  // |values| <= 6
+    CHECK(std::fabs(static_cast<double>(df.data()[i]) - dd.data()[i]) <=
+          64.0 * feps * 12.0);  // |values| <= 12 (B''_1 at u = 0)
   }
 }
 

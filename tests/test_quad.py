@@ -587,6 +587,16 @@ class TestTensorProductQuadrature:
         nptest.assert_allclose(rule.points, [[0.25, 0.5], [0.75, 0.5]])
         nptest.assert_allclose(rule.weights, [0.5, 0.5])
 
+    def test_c_order_on_a_two_by_three_rule(self) -> None:
+        # Two and three distinct nodes: C order (axis 1 fastest) and F order differ at every
+        # interior point, so this pins the order where the one-node case above cannot.
+        x0, w0 = np.array([0.1, 0.9]), np.array([0.25, 0.75])
+        x1, w1 = np.array([0.2, 0.5, 0.8]), np.array([0.5, 0.3, 0.2])
+        rule = tensor_product_quadrature([(x0, w0), (x1, w1)])
+        expected = [(x0[i], x1[j]) for i in range(2) for j in range(3)]
+        nptest.assert_array_equal(rule.points, expected)
+        nptest.assert_array_equal(rule.weights, [w0[i] * w1[j] for i in range(2) for j in range(3)])
+
     def test_weights_are_outer_product(self) -> None:
         rule = tensor_product_quadrature(
             [(np.array([0.5]), np.array([0.3])), (np.array([0.5]), np.array([0.4]))]
@@ -667,7 +677,7 @@ class TestWrapperArgumentConversion:
 
     def test_non_native_byte_order_coordinates(self) -> None:
         """Big-endian coordinates are converted to native float64, as any other dtype."""
-        lattice = PointsLattice([np.arange(3, dtype=">f8") / 2.0])
+        lattice = PointsLattice([(np.arange(3) / 2.0).astype(">f8")])
         assert lattice.dtype == np.float64
         nptest.assert_array_equal(lattice.pts_per_dir[0], [0.0, 0.5, 1.0])
 

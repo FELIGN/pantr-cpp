@@ -42,7 +42,8 @@ TEST_CASE("lambert_w0: solves w e^w = x, with W(0) = 0 and W(e) = 1") {
   }
   CHECK_THROWS_AS(static_cast<void>(pantr::lambert_w0(-1.0)), pantr::value_error);
   CHECK_THROWS_AS(static_cast<void>(pantr::lambert_w0(std::nan(""))), pantr::value_error);
-  CHECK_THROWS_AS(static_cast<void>(pantr::lambert_w0(INFINITY)), pantr::value_error);
+  CHECK_THROWS_AS(static_cast<void>(pantr::lambert_w0(std::numeric_limits<double>::infinity())),
+                  pantr::value_error);
 }
 
 namespace {

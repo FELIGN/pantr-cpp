@@ -43,8 +43,11 @@ TEST_CASE("work model: a memory-bound item's chunk streams at least chunk_bytes"
   using pantr::parallel::chunk_bytes;
   // 16 ops and 32 bytes per item: by operations alone 1024 items (32 KiB), by bytes 8192.
   CHECK(grain_for(WorkEstimate{16.0}, 32) == static_cast<std::size_t>(chunk_bytes / 32.0));
-  // A compute-bound item keeps its operation-derived chunk.
+  // One byte per item: the bytes bound dominates even an item worth a whole chunk of ops.
   CHECK(grain_for(WorkEstimate{chunk_ops}, 1) == static_cast<std::size_t>(chunk_bytes));
+  // A large item keeps its operation-derived chunk.
   CHECK(grain_for(WorkEstimate{1.0}, 1 << 20) == static_cast<std::size_t>(chunk_ops));
+  // The bytes bound rounds up: 2^18 / 24 = 10922.67.
+  CHECK(grain_for(WorkEstimate{16.0}, 24) == 10923);
   CHECK(grain_for(WorkEstimate{3.0}, 0) == grain_for(WorkEstimate{3.0}));
 }
