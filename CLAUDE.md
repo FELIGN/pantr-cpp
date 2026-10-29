@@ -88,8 +88,8 @@ The local suite passing is necessary but not sufficient. Known traps:
   locally, the tests that need them skip without complaint — install them before trusting a local
   green.
 - **A new Layer 2 entry point over `parallel=True` kernels must call
-  `pantr._numba_compat.wait_for_jit_warmup()` first**, as `basis/_basis_1D.py`,
-  `bspline/_bspline_roots.py` and `bezier/_find_roots.py` do. `__init__.py` compiles on a
+  `pantr._numba_compat.wait_for_jit_warmup()` first**, as `bspline/_bspline_basis_core.py`,
+  `bspline/_bspline_roots.py` and `bezier/_find_roots.py` do (code ported to C++ needs none). `__init__.py` compiles on a
   background thread, and Numba's default workqueue layer is not safe against a concurrent parallel
   call from another thread: the process **aborts** (`Fatal Python error: Aborted`) rather than
   raising, taking the whole run with it. Three things hide it from a local green — a full-file run
@@ -190,7 +190,7 @@ The library is organized in three strict layers. Each layer has a well-defined r
 - Allocates or validates `out` arrays, reshapes them as needed, then calls Layer 3 kernels
 - Never called directly by users; no Numba inside this layer
 
-**Layer 3 — Numba kernels** (`_basis_core.py`, `_basis_lagrange.py`, `_bspline_basis_core.py` core functions, …):
+**Layer 3 — Numba kernels** (`_bspline_basis_core.py` core functions, … ; quad, tolerance, basis and change_basis are C++ under `include/pantr`, reached through `pantr._pantr`):
 - Pure computation: Cox–de Boor, de Boor, Lagrange evaluation, etc.
 - Decorated with `@nb_jit(nopython=True, cache=True, parallel=True)` and `prange` for multi-core throughput
 - **No input validation whatsoever** — docstrings explicitly state this. All correctness guarantees come from Layer 2.

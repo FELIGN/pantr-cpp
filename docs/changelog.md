@@ -46,6 +46,9 @@
   The identity branch of the kernels assumes a square operator and used to read past the
   operand. No public path builds such an operator; direct callers of the Layer 2 helpers
   were exposed.
+- **Complex `PointsLattice` coordinates are refused** (`ValueError`), and a non-integer
+  point count given to `create_lagrange_points_lattice` raises `TypeError` instead of being
+  truncated. A complex lattice used to keep its dtype, which no tabulation could use.
 - **An unknown Lagrange variant is refused** by `tabulate_lagrange_1d`, `tabulate_lagrange`
   and `create_lagrange_points_lattice` with a `ValueError` (`'...' is not a valid
   LagrangeVariant`). Any value that was not one of the five used to select the Chebyshev
@@ -96,10 +99,16 @@
   to keep its dtype, and no tabulation could use it.
 - **`PointsLattice` and `QuadratureRule` pickle and copy through their constructor**
   (`__reduce__`), since they now hold a C++ value that Python cannot pickle by itself.
-- When both `n_pts` and `dtype` are invalid, the quadrature functions report the `dtype`
-  first; each is reported as before when it is the only invalid argument.
+- When both the size (`n_pts` or `degree`) and `dtype` are invalid, the quadrature functions and
+  the change-of-basis builders report the `dtype` first; each is reported as before when it is
+  the only invalid argument. A degree too large for a C++ `int` is reported as that limit's
+  value in the change-of-basis domain message.
 
 ### Fixed
+- High-order Bernstein derivatives (reached by `Bezier.evaluate_derivatives` and the
+  Bezier-like B-spline paths) are now correct where the scaling `degree! / (degree - k)!`
+  passes 2^63, for example from order 14 at degree 30. The scaling
+  was an `int64` that wrapped; it now switches to double precision when it would overflow.
 - `create_lagrange_points_lattice` given a one-shot iterable of counts (a generator) now
   builds the lattice it describes. The counts were read twice: the validation exhausted the
   generator, and the construction then saw no direction and raised "Points lattice must
