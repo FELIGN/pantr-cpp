@@ -269,7 +269,8 @@ def interpolate_bezier(
     Raises:
         ValueError: If ``n_pts`` values are < 1, *degree* >= *n_pts*, *nodes*
             is inconsistent with *n_pts*, or the callable returns an
-            unexpected shape.
+            unexpected shape; or ("SVD did not converge") if a custom node is
+            NaN or infinite in a direction with more than one node.
 
     Example:
         >>> from pantr.bezier import Bezier
@@ -443,7 +444,9 @@ def fit_bezier(  # noqa: PLR0912
 
     Raises:
         ValueError: If *nodes* are inconsistent with *values*, *degree* is
-            invalid, or *degree* is missing for scattered nodes.
+            invalid, or *degree* is missing for scattered nodes; or ("SVD did not
+            converge") if a node in a direction with more than one node, or a
+            scattered point, is NaN or infinite.
     """
     from . import Bezier as BezierCls  # noqa: PLC0415
 

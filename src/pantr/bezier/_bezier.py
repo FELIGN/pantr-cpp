@@ -519,7 +519,7 @@ class Bezier:
         each parametric direction.  Among the polynomials of the lower degree
         that reproduce this one at the ends of the parametric domain, the result
         is the one closest in :math:`L^2([0, 1]^{\dim})`; the endpoint values are
-        reproduced exactly, bit for bit.
+        reproduced exactly, bit for bit (a ``-0.0`` comes back as ``+0.0``).
 
         Unlike :meth:`elevate_degree`, this operation is **not exact** in
         general: the result is an approximation of the original mapping.  Use

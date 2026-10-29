@@ -696,3 +696,24 @@ class TestFitValidation:
         """Values with wrong number of dims raises ValueError."""
         with pytest.raises(ValueError, match="dimensions"):
             fit_bezier(np.ones((2, 3, 4)), np.array([0.0, 1.0]))
+
+
+class TestNonFiniteNodes:
+    """A NaN or infinite node is refused, as LAPACK's SVD refused it ("SVD did not converge")."""
+
+    @pytest.mark.parametrize("bad", [np.nan, np.inf, -np.inf])
+    def test_tensor_node(self, bad: float) -> None:
+        """A non-finite node in a direction with several nodes raises ValueError."""
+        with pytest.raises(ValueError, match="SVD did not converge"):
+            fit_bezier(np.ones(4), np.array([0.0, bad, 0.5, 1.0]))
+
+    def test_scattered_point(self) -> None:
+        """A non-finite scattered point raises ValueError."""
+        pts = np.array([[0.0], [np.nan], [0.2], [0.4], [0.6], [1.0]])
+        with pytest.raises(ValueError, match="SVD did not converge"):
+            fit_bezier(np.ones(6), pts, degree=2)
+
+    def test_single_node_needs_no_decomposition(self) -> None:
+        """A single-node direction passes its value through, whatever the node."""
+        b = fit_bezier(np.array([2.0]), np.array([np.nan]))
+        np.testing.assert_array_equal(b.control_points, [[2.0]])

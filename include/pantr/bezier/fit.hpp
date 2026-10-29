@@ -23,11 +23,16 @@
 #include <Eigen/Core>
 #include <Eigen/SVD>
 
+#include <algorithm>
+#include <bit>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -40,6 +45,10 @@ inline constexpr double svd_tol_factor = 100.0;
 
 namespace detail {
 
+/// The unsigned integer of the width of `T`, for a bitwise comparison of nodes.
+template <class T>
+using UInt = std::conditional_t<sizeof(T) == 8, std::uint64_t, std::uint32_t>;
+
 /// The truncated pseudo-inverse `V^+ = V_r Sigma_r^{-1} U_r^T` of a dense matrix, in `T`.
 ///
 /// Args:
@@ -49,10 +58,22 @@ namespace detail {
 ///
 /// Returns:
 ///     NdArray<T>: `(n, m)`.
+///
+/// Raises:
+///     value_error: `v` has a NaN or infinite entry, or the SVD fails ("SVD did not converge").
 template <StorageFloat T>
 [[nodiscard]] NdArray<T> truncated_pinv(const linalg::RowMatrix<T>& v, double tol) {
   using Mat = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>;
+  // LAPACK's gesdd reports a NaN or infinite entry as a failure to converge (NumPy's LinAlgError,
+  // a ValueError); Eigen would return NaN singular values, which the truncation below would then
+  // zero, a silent wrong answer. The same refusal, as a value_error with NumPy's message.
+  if (!v.allFinite()) {
+    throw value_error("SVD did not converge");
+  }
   const Eigen::BDCSVD<Mat, Eigen::ComputeThinU | Eigen::ComputeThinV> svd(v);
+  if (svd.info() != Eigen::Success) {
+    throw value_error("SVD did not converge");
+  }
   const auto& sigma = svd.singularValues();
   const auto k = sigma.size();
   Eigen::Matrix<T, Eigen::Dynamic, 1> inv(k);
@@ -135,6 +156,8 @@ template <StorageFloat T>
     throw value_error("fit_tensor: values do not match their shape.");
   }
   const std::size_t dim = nodes.size();
+  std::vector<long long> degs(dim, -1);
+  std::vector<std::shared_ptr<const NdArray<T>>> pinvs(dim);
   std::vector<std::size_t> cur(shape.begin(), shape.end());
   NdArray<T> current(std::vector<std::size_t>(cur), for_overwrite);
   std::copy(values.begin(), values.end(), current.data());
@@ -145,7 +168,26 @@ template <StorageFloat T>
                         " values.");
     }
     const long long deg = degrees ? (*degrees)[d] : static_cast<long long>(shape[d]) - 1;
-    const NdArray<T> pinv = bernstein_pinv<T>(nodes[d], deg, tol);
+    // A direction with the same nodes (bit for bit) and degree as an earlier one has the same
+    // pseudo-inverse; reusing it saves an SVD, the dominant cost, on the usual square grid.
+    std::size_t same = d;
+    for (std::size_t e = 0; e < d; ++e) {
+      if (degs[e] == deg && std::equal(nodes[e].begin(), nodes[e].end(), nodes[d].begin(),
+                                       nodes[d].end(), [](T a, T b) {
+                                         return std::bit_cast<detail::UInt<T>>(a) ==
+                                                std::bit_cast<detail::UInt<T>>(b);
+                                       })) {
+        same = e;
+        break;
+      }
+    }
+    degs[d] = deg;
+    if (same == d) {
+      pinvs[d] = std::make_shared<const NdArray<T>>(bernstein_pinv<T>(nodes[d], deg, tol));
+    } else {
+      pinvs[d] = pinvs[same];
+    }
+    const NdArray<T>& pinv = *pinvs[d];
     if (cur[d] == 1 && pinv.shape()[0] == 1) {
       continue;  // a single node and degree 0: the value is the coefficient
     }

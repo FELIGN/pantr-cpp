@@ -395,7 +395,8 @@ namespace detail {
 /// Apply `op` (`(q + 1, p + 1)`) to the columns of `ctrl` (`(p + 1, n_cols)`): `out = op ctrl`,
 /// accumulated in `double` and rounded to `T` once. Each product is a statement of its own, so no
 /// `fma` is contracted: the unit rows of the interpolating operator then reproduce their inputs
-/// bit for bit whatever the build.
+/// bit for bit whatever the build, except that a `-0.0` comes back as `+0.0` (the sum starts at
+/// `+0.0`, as the previous release's did).
 ///
 /// Note:
 ///     Inputs are assumed to be correct (no validation performed).
@@ -519,7 +520,8 @@ void refuse_inverted_weight(const NdArray<T>& ctrl, std::string_view remedy) {
 ///
 /// Among the polynomials of the lower degree that agree with this one at both ends of each
 /// reduced direction, the result is the closest in `L^2([0, 1]^dim)`; the end values are
-/// reproduced bit for bit. A reduction to degree 0 returns the plain projection (the mean).
+/// reproduced bit for bit (a `-0.0` as `+0.0`). A reduction to degree 0 returns the plain
+/// projection (the mean).
 ///
 /// Args:
 ///     b (const Bezier<T>&): The Bézier.
