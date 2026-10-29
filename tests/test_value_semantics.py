@@ -989,15 +989,17 @@ def test_transform_keeps_its_own_copy_of_the_callers_arrays() -> None:
 # call would ask for.
 _HUGE_DIM_CHILD = textwrap.dedent(
     """
-    import resource
     from pantr.transform import AffineTransform
 
-    cap = 2 << 30
+    # The address-space cap is where the platform allows it: Windows has no `resource`, and macOS
+    # refuses to lower RLIMIT_AS (EINVAL). Without it a regression still fails loudly, as
+    # std::bad_alloc ("other") rather than "ValueError".
     try:
+        import resource
+
+        cap = 2 << 30
         resource.setrlimit(resource.RLIMIT_AS, (cap, cap))
-    except ValueError:
-        # macOS refuses to lower RLIMIT_AS (EINVAL); a regression there still fails loudly, as
-        # std::bad_alloc ("other") rather than "ValueError".
+    except (ImportError, ValueError):
         pass
     try:
         {call}
