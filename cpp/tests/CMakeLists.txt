@@ -56,7 +56,7 @@ set_tests_properties(env.num_threads_malformed PROPERTIES
 # build. The MPI communicator header is the one header allowed to include it.
 set(PANTR_MPI_HEADER_ALLOWED "pantr/mpi/mpi_communicator.hpp")
 file(GLOB_RECURSE _pantr_headers CONFIGURE_DEPENDS RELATIVE "${PROJECT_SOURCE_DIR}/include"
-     "${PROJECT_SOURCE_DIR}/include/pantr/*.hpp")
+     "${PROJECT_SOURCE_DIR}/include/pantr/*.hpp" "${PROJECT_SOURCE_DIR}/include/pantr/*.h")
 set(_pantr_header_tus "")
 foreach(_h IN LISTS _pantr_headers)
   if(_h STREQUAL PANTR_MPI_HEADER_ALLOWED)

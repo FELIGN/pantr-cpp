@@ -53,6 +53,11 @@ inline void check_work(WorkEstimate w) {
 
 /// Chunk size for a loop whose items each cost `w`: `max(1, ceil(chunk_ops / ops_per_item))`.
 ///
+/// The quotient is a rounded double, so where the exact quotient sits within a rounding error of
+/// an integer the chunk can be one item smaller than the exact ceiling. The chunk size is an
+/// admitted heuristic (see `chunk_ops`); one item either way changes no result, since the chunks
+/// are a function of `n` and the grain only.
+///
 /// Args:
 ///     w (WorkEstimate): Work per item.
 ///

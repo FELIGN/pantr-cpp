@@ -46,11 +46,14 @@ void run_chunk(F& body, std::size_t n, std::size_t grain, std::size_t k) {
 ///         possibly concurrently from several threads.
 ///
 /// Raises:
-///     value_error: `grain` is 0.
+///     value_error: `grain` is 0, or the calling thread has no setting and `PANTR_NUM_THREADS` is
+///         malformed (see `max_threads`).
+///     std::system_error: The calling thread has no setting and the affinity query failed, or the
+///         pool could not start its threads.
 ///     The first exception a chunk threw, after every running chunk has finished; chunks not yet
 ///     started when it was thrown are skipped.
 template <class F>
-requires std::invocable<F&, std::size_t, std::size_t>
+  requires std::invocable<F&, std::size_t, std::size_t>
 void parallel_for(std::size_t n, std::size_t grain, F&& body) {
   if (grain == 0) {
     throw value_error("grain must be >= 1, got 0");
@@ -95,7 +98,7 @@ void parallel_for(std::size_t n, std::size_t grain, F&& body) {
 ///     value_error: `work.ops_per_item` is not a finite number >= 1.
 ///     The first exception a chunk threw (see the overload taking a grain).
 template <class F>
-requires std::invocable<F&, std::size_t, std::size_t>
+  requires std::invocable<F&, std::size_t, std::size_t>
 void parallel_for(std::size_t n, WorkEstimate work, F&& body) {
   const std::size_t grain = grain_for(work);
   if (worth_parallel(n, work)) {
