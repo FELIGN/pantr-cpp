@@ -700,3 +700,11 @@ def test_dtype_scalar_answer_does_not_depend_on_call_order() -> None:
     """
     assert get_gauss_legendre_1d(3, np.float64(1.0))[0].dtype == np.float64
     assert get_gauss_legendre_1d(3, np.float32(1.0))[0].dtype == np.float32
+
+
+def test_quadrature_argument_order_kept_from_the_previous_release() -> None:
+    """Check ndim before reading npts, and the variant before a lattice's counts."""
+    with pytest.raises(ValueError, match="ndim must be >= 1"):
+        gauss_legendre_quadrature(0, None)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="is not a valid LagrangeVariant"):
+        create_lagrange_points_lattice("foo", [2.5])  # type: ignore[arg-type, list-item]

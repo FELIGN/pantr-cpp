@@ -16,6 +16,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <span>
 #include <vector>
@@ -217,6 +218,7 @@ void register_basis(nb::module_& m) {
       "Tabulate the 1D basis `family` (0 Bernstein, 1 cardinal B-spline, 2 Legendre, 3 Lagrange "
       "on node family `variant`) of `degree` at `pts`, into `out` when given (then returning "
       "None).";
+  m.attr("max_degree") = (std::numeric_limits<int>::max)();
   m.def("tabulate_1d", &tabulate_1d<double>, nb::arg("family"), nb::arg("degree"),
         nb::arg("variant"), nb::arg("pts"), nb::arg("out").none().noconvert(), tab_doc);
   m.def("tabulate_1d", &tabulate_1d<float>, nb::arg("family"), nb::arg("degree"),

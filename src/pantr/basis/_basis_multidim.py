@@ -62,10 +62,12 @@ def _tabulate_tensor(  # noqa: PLR0913
         If `out` was provided, returns the same array.
 
     Raises:
-        ValueError: If the points array is not 2D or has no coordinate, the number of
-            degrees differs from the dimension of the points, or `out` is provided and
-            has incorrect shape or dtype.
+        ValueError: If `order` is not 'C' or 'F', the points array is not 2D or has no
+            coordinate, the number of degrees differs from the dimension of the points, or
+            `out` is provided and has incorrect shape or dtype.
     """
+    if order not in ("C", "F"):
+        raise ValueError(f"funcs_order must be 'C' or 'F'; got {order!r}")
     order_code = _Order.F if order == "F" else _Order.C
     # The bindings are overloaded on the dtype (float and double instantiations); the points
     # are either, so they and the output reach the binding untyped. The enumerations cross as

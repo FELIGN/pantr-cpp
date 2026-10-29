@@ -8,6 +8,8 @@ from numpy.typing import NDArray
 
 import pantr._pantr.quad
 
+max_degree: int = ...
+
 @overload
 def tabulate_1d(
     family: int,

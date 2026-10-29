@@ -451,13 +451,15 @@ def create_lagrange_points_lattice(
     from .basis._basis_tabulate import _variant_code  # noqa: PLC0415
 
     # operator.index refuses a float count (2.7) rather than truncating it.
+    # The variant first, as everywhere else a variant is converted.
+    variant_code = _variant_code(lagrange_variant)
     counts = [_operator.index(n) for n in n_pts_per_dir]
     build = (
         _ext.quad.lagrange_points_lattice_f32
         if _is_float32(dtype)
         else _ext.quad.lagrange_points_lattice
     )
-    return PointsLattice._from_handle(build(_variant_code(lagrange_variant), counts))
+    return PointsLattice._from_handle(build(variant_code, counts))
 
 
 class QuadratureRule:
@@ -637,7 +639,12 @@ def gauss_legendre_quadrature(ndim: int, npts: int | Sequence[int]) -> Quadratur
         Nodes and weights follow the classical Gauss-Legendre construction
         :cite:p:`golub1969gauss`.
     """
-    counts = [int(npts)] * ndim if isinstance(npts, int) else [int(n) for n in npts]
+    # ndim is compared before npts is read, as the previous release did: the C++ call then refuses
+    # ndim < 1 with no count to convert.
+    if ndim < 1:
+        counts: list[int] = []
+    else:
+        counts = [int(npts)] * ndim if isinstance(npts, int) else [int(n) for n in npts]
     return QuadratureRule._from_handle(_ext.quad.gauss_legendre_quadrature(ndim, counts))
 
 

@@ -81,9 +81,9 @@ def _tabulate_basis_1D_impl_helper(
 
     # The binding is overloaded on the dtype; ``pts`` is either, so it is passed untyped.
     pts: Any = np.ascontiguousarray(_normalize_points_1D(t))
-    if n < 0:
-        # Refused by the C++ call (with the message the suite matches) before any output is
-        # sized or looked at; it raises.
+    if not 0 <= n <= ext.basis.max_degree:
+        # Refused by the C++ call (with the message the suite matches: a negative degree, one
+        # past the largest supported, one outside int64) before any output is sized; it raises.
         ext.basis.tabulate_1d(family.value, n, variant, pts, None)
     if out is None:
         # Allocated here rather than by the binding: an uninitialized NumPy array is the cheaper

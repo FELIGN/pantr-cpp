@@ -65,7 +65,10 @@ def _variant_code(variant: LagrangeVariant | str) -> int:
     Raises:
         ValueError: If ``variant`` is not a :class:`LagrangeVariant` value.
     """
-    code = _VARIANT_CODES.get(variant)
+    try:
+        code = _VARIANT_CODES.get(variant)
+    except TypeError:  # unhashable (a list, say): not a variant either
+        code = None
     if code is None:
         # LagrangeVariant(...) raises the ValueError for an unknown value.
         return _VARIANT_CODES[LagrangeVariant(variant)]

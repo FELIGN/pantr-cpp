@@ -934,3 +934,16 @@ def test_non_native_byte_order_points_are_converted() -> None:
     nptest.assert_array_equal(
         tabulate_bernstein([2, 1], pts.astype(">f8")), tabulate_bernstein([2, 1], pts)
     )
+
+
+def test_argument_checks_kept_from_the_previous_release() -> None:
+    """Refusals the wrappers keep in the previous release's type and order."""
+    pts = np.array([[0.25, 0.5]])
+    with pytest.raises(ValueError, match="funcs_order must be 'C' or 'F'"):
+        tabulate_bernstein([1, 1], pts, funcs_order="c")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="is not a valid LagrangeVariant"):
+        tabulate_lagrange_1d(2, ["equispaces"], [0.5])  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="exceeds the largest supported degree"):
+        tabulate_bernstein_1d(2**31, [0.5])
+    with pytest.raises(TypeError):
+        tabulate_bernstein_1d(2**63, [0.5])
