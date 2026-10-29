@@ -22,9 +22,8 @@ void register_parallel(nb::module_& m) {
         "Set the calling thread's parallelism for the C++ pool (1 <= n <= max_threads()).");
   // _pantr owns the process's pool and per-thread settings; another pantr module built from the
   // same headers attaches this table at import (pantr/parallel/shared.hpp).
-  m.attr("_shared_parallelism") =
-      nb::capsule(&pantr::parallel::owner_shared_parallelism(),
-                  pantr::parallel::kSharedParallelismCapsule);
+  m.attr("_shared_parallelism") = nb::capsule(&pantr::parallel::owner_shared_parallelism(),
+                                              pantr::parallel::kSharedParallelismCapsule);
 }
 
 }  // namespace pantr::bindings

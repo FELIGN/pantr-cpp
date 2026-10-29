@@ -36,7 +36,7 @@ namespace pantr::detail {
 ///     mutex_ (std::mutex): Serializes the computation.
 ///     value_ (std::optional<Block>): The block, written once under `mutex_`.
 template <class Block>
-requires std::is_object_v<Block> && std::is_destructible_v<Block>
+  requires std::is_object_v<Block> && std::is_destructible_v<Block>
 class Lazy {
  public:
   Lazy() = default;
@@ -56,7 +56,7 @@ class Lazy {
   /// Raises:
   ///     Whatever `compute` throws; nothing is stored in that case.
   template <class F>
-  requires std::is_convertible_v<std::invoke_result_t<F&>, Block>
+    requires std::is_convertible_v<std::invoke_result_t<F&>, Block>
   const Block& get(F&& compute) const {
     if (!ready_.load(std::memory_order_acquire)) {
       std::lock_guard<std::mutex> lock(mutex_);

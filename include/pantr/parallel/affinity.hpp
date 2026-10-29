@@ -169,7 +169,8 @@ inline constinit std::atomic<std::size_t> capacity_cache{0};
   // forever. Concurrent first calls compute the same value; a call that throws stores nothing.
   std::size_t cap = capacity_cache.load(std::memory_order_acquire);
   if (cap == 0) {
-    cap = capacity_from(affinity_cpu_count(), parse_num_threads_env(std::getenv("PANTR_NUM_THREADS")));
+    cap = capacity_from(affinity_cpu_count(),
+                        parse_num_threads_env(std::getenv("PANTR_NUM_THREADS")));
     capacity_cache.store(cap, std::memory_order_release);
   }
   return cap;

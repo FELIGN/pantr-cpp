@@ -367,8 +367,9 @@ inline const int pool_atfork_status =
 
 inline Pool& Pool::instance() {
   if (routes_shared_parallelism()) {
-    throw state_error("this module runs parallel loops on another module's pool; "
-                      "Pool::instance() would start a second pool");
+    throw state_error(
+        "this module runs parallel loops on another module's pool; "
+        "Pool::instance() would start a second pool");
   }
   return local_instance();
 }

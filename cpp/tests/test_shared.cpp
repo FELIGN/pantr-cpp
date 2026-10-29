@@ -44,12 +44,10 @@ int fake_run(par::detail::Job* job, char* message, std::size_t size) noexcept {
 std::size_t* fake_thread_setting() noexcept { return &fake_setting; }
 bool* fake_thread_in_region() noexcept { return &fake_region; }
 
-constexpr par::SharedParallelism kFake{par::kSharedParallelismAbi,
-                                       static_cast<std::uint32_t>(sizeof(par::SharedParallelism)),
-                                       fake_max_threads,
-                                       fake_run,
-                                       fake_thread_setting,
-                                       fake_thread_in_region};
+constexpr par::SharedParallelism kFake{
+    par::kSharedParallelismAbi, static_cast<std::uint32_t>(sizeof(par::SharedParallelism)),
+    fake_max_threads,           fake_run,
+    fake_thread_setting,        fake_thread_in_region};
 
 }  // namespace
 
@@ -114,9 +112,8 @@ TEST_CASE("shared: a loop inside the owner's parallel region runs inline") {
   fake_region = true;
   const int calls = run_calls.load();
   int sum = 0;
-  par::parallel_for(std::size_t{10}, std::size_t{1}, [&](std::size_t b, std::size_t) {
-    sum += static_cast<int>(b);
-  });
+  par::parallel_for(std::size_t{10}, std::size_t{1},
+                    [&](std::size_t b, std::size_t) { sum += static_cast<int>(b); });
   CHECK(sum == 45);
   CHECK(run_calls.load() == calls);
   fake_region = false;
@@ -139,13 +136,13 @@ TEST_CASE("shared: the owner's failures are raised here with its message") {
   par::attach_shared_parallelism(&kFake);
   fake_setting = 4;
   run_status = static_cast<int>(par::SharedStatus::value_error);
-  CHECK_THROWS_WITH_AS(par::parallel_for(std::size_t{10}, std::size_t{1},
-                                         [](std::size_t, std::size_t) {}),
-                       "the owner's pool failed", pantr::value_error);
+  CHECK_THROWS_WITH_AS(
+      par::parallel_for(std::size_t{10}, std::size_t{1}, [](std::size_t, std::size_t) {}),
+      "the owner's pool failed", pantr::value_error);
   run_status = static_cast<int>(par::SharedStatus::runtime_error);
-  CHECK_THROWS_WITH_AS(par::parallel_for(std::size_t{10}, std::size_t{1},
-                                         [](std::size_t, std::size_t) {}),
-                       "the owner's pool failed", std::runtime_error);
+  CHECK_THROWS_WITH_AS(
+      par::parallel_for(std::size_t{10}, std::size_t{1}, [](std::size_t, std::size_t) {}),
+      "the owner's pool failed", std::runtime_error);
   run_status = 0;
 }
 
@@ -174,8 +171,8 @@ TEST_CASE("shared: the owner's table serves the module it was compiled into") {
   struct Ctx {
     decltype(body)& f;
   } ctx{body};
-  par::detail::Job job{8, &ctx,
-                       [](void* p, std::size_t k) { static_cast<Ctx*>(p)->f(k, k + 1); }, 1};
+  par::detail::Job job{8, &ctx, [](void* p, std::size_t k) { static_cast<Ctx*>(p)->f(k, k + 1); },
+                       1};
   CHECK(own.run(&job, message, sizeof(message)) == 0);
   CHECK(chunks.load() == 8);
 }

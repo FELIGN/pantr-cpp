@@ -35,8 +35,8 @@ namespace detail {
 struct Job;
 }  // namespace detail
 
-/// Layout version of `SharedParallelism` and of `detail::Job`, which crosses the table. Bump it with
-/// any change to either, so that modules built from different headers refuse to share.
+/// Layout version of `SharedParallelism` and of `detail::Job`, which crosses the table. Bump it
+/// with any change to either, so that modules built from different headers refuse to share.
 inline constexpr std::uint32_t kSharedParallelismAbi = 1;
 
 /// Name of the Python capsule that carries a `SharedParallelism*` between extension modules.
@@ -128,11 +128,12 @@ inline void attach_shared_parallelism(const SharedParallelism* table) {
     throw value_error("the shared-parallelism table is null");
   }
   if (table->abi != kSharedParallelismAbi || table->size != sizeof(SharedParallelism)) {
-    throw state_error("pantr extension modules were built from different headers: the owner's "
-                      "shared-parallelism layout is version " +
-                      std::to_string(table->abi) + " (size " + std::to_string(table->size) +
-                      "), this module's is version " + std::to_string(kSharedParallelismAbi) +
-                      " (size " + std::to_string(sizeof(SharedParallelism)) + ")");
+    throw state_error(
+        "pantr extension modules were built from different headers: the owner's "
+        "shared-parallelism layout is version " +
+        std::to_string(table->abi) + " (size " + std::to_string(table->size) +
+        "), this module's is version " + std::to_string(kSharedParallelismAbi) + " (size " +
+        std::to_string(sizeof(SharedParallelism)) + ")");
   }
   const SharedParallelism* expected = nullptr;
   if (!detail::shared_table.compare_exchange_strong(expected, table, std::memory_order_acq_rel) &&

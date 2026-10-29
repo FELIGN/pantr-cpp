@@ -49,8 +49,8 @@ inline constexpr const char* isa_name = PANTR_SIMD_ISA_NAME;
 
 /// Number of `T` lanes in one vector register at this level; 1 at the scalar level.
 template <class T>
-inline constexpr std::size_t lanes = PANTR_SIMD_REGISTER_BYTES == 0
-                                         ? std::size_t{1}
-                                         : std::size_t{PANTR_SIMD_REGISTER_BYTES} / sizeof(T);
+inline constexpr std::size_t lanes =
+    PANTR_SIMD_REGISTER_BYTES == 0 ? std::size_t{1}
+                                   : std::size_t{PANTR_SIMD_REGISTER_BYTES} / sizeof(T);
 
 }  // namespace pantr::simd

@@ -82,9 +82,10 @@ constexpr bool bit(std::uint32_t reg, unsigned n) { return ((reg >> n) & 1U) != 
 
 /// Feature bits the levels need, read once.
 struct Features {
-  bool v2 = false;   ///< x86-64-v2: CMPXCHG16B, LAHF/SAHF, POPCNT, SSE3, SSE4.1, SSE4.2, SSSE3.
-  bool v3 = false;   ///< v3 on top of v2: AVX, AVX2, BMI1, BMI2, F16C, FMA, LZCNT, MOVBE, OS AVX state.
-  bool v4 = false;   ///< v4 on top of v3: AVX512F/BW/CD/DQ/VL, OS opmask and ZMM state.
+  bool v2 = false;  ///< x86-64-v2: CMPXCHG16B, LAHF/SAHF, POPCNT, SSE3, SSE4.1, SSE4.2, SSSE3.
+  bool v3 =
+      false;  ///< v3 on top of v2: AVX, AVX2, BMI1, BMI2, F16C, FMA, LZCNT, MOVBE, OS AVX state.
+  bool v4 = false;  ///< v4 on top of v3: AVX512F/BW/CD/DQ/VL, OS opmask and ZMM state.
 };
 
 Features read_features() {
@@ -103,8 +104,8 @@ Features read_features() {
 
   const bool osxsave = bit(l1.ecx, 27);
   const std::uint64_t xcr = osxsave ? xcr0() : 0;
-  constexpr std::uint64_t kSseAvxState = 0x6;      // XMM, YMM upper halves
-  constexpr std::uint64_t kAvx512State = 0xE0;     // opmask, ZMM_Hi256, Hi16_ZMM
+  constexpr std::uint64_t kSseAvxState = 0x6;   // XMM, YMM upper halves
+  constexpr std::uint64_t kAvx512State = 0xE0;  // opmask, ZMM_Hi256, Hi16_ZMM
   const bool os_avx = osxsave && (xcr & kSseAvxState) == kSseAvxState;
   const bool os_avx512 = os_avx && (xcr & kAvx512State) == kAvx512State;
 
