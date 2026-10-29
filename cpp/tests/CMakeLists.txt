@@ -85,16 +85,25 @@ add_test(NAME header_rules.no_mpi_include_text
          COMMAND "${CMAKE_COMMAND}" -DINCLUDE_DIR=${PROJECT_SOURCE_DIR}/include
                  -DALLOWED=${PANTR_MPI_HEADER_ALLOWED} -P "${CMAKE_CURRENT_SOURCE_DIR}/header_rules/check_no_mpi.cmake")
 
-# config.hpp rejects fast-math, under each flag that enables it.
-foreach(_flag -ffast-math -ffinite-math-only)
+# config.hpp rejects fast-math, under each flag that enables it. MSVC has /fp:fast only: no flag of
+# its own assumes finite math.
+if(MSVC)
+  set(_pantr_fast_math_flags /fp:fast)
+else()
+  set(_pantr_fast_math_flags -ffast-math -ffinite-math-only)
+endif()
+set(_pantr_fast_math_tests "")
+foreach(_flag ${_pantr_fast_math_flags})
   string(MAKE_C_IDENTIFIER "${_flag}" _id)
+  string(REGEX REPLACE "[/:]" "-" _name "${_flag}")
   add_library(pantr_reject${_id} OBJECT EXCLUDE_FROM_ALL header_rules/fast_math_probe.cpp)
   target_link_libraries(pantr_reject${_id} PRIVATE pantr::pantr)
   target_compile_options(pantr_reject${_id} PRIVATE ${_flag})
-  add_test(NAME header_rules.rejects${_flag}
+  add_test(NAME header_rules.rejects${_name}
            COMMAND "${CMAKE_COMMAND}" --build "${PROJECT_BINARY_DIR}" --target pantr_reject${_id})
-  set_tests_properties(header_rules.rejects${_flag} PROPERTIES
+  set_tests_properties(header_rules.rejects${_name} PROPERTIES
                        PASS_REGULAR_EXPRESSION "must not be compiled with fast-math")
+  list(APPEND _pantr_fast_math_tests header_rules.rejects${_name})
 endforeach()
 
 # Every pinned dependency commit is listed, with its license, in THIRD_PARTY_NOTICES.md.
@@ -111,7 +120,7 @@ add_test(NAME install.consumer
                  -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/consumer_run
                  -DCONSUMER_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/consumer
                  -DCXX_COMPILER=${CMAKE_CXX_COMPILER} -DGENERATOR=${CMAKE_GENERATOR}
-                 -DMAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}
+                 -DMAKE_PROGRAM=${CMAKE_MAKE_PROGRAM} -DMT_PROGRAM=${CMAKE_MT}
                  -DBUILD_TYPE=${CMAKE_BUILD_TYPE} -DCOMPONENTS=$<IF:$<TARGET_EXISTS:pantr_mpi>,mpi,>
                  -P "${CMAKE_CURRENT_SOURCE_DIR}/consumer/run_consumer_test.cmake")
 set_tests_properties(install.consumer PROPERTIES TIMEOUT 600)
@@ -133,6 +142,5 @@ set_tests_properties(install.native_flag_not_exported PROPERTIES TIMEOUT 600)
 
 # The tests above drive `cmake --build` or `cmake --install` on this very build tree; two of them at
 # once would regenerate it concurrently.
-set_tests_properties(header_rules.poison_mpi_control header_rules.rejects-ffast-math
-                     header_rules.rejects-ffinite-math-only install.consumer
+set_tests_properties(header_rules.poison_mpi_control ${_pantr_fast_math_tests} install.consumer
                      PROPERTIES RESOURCE_LOCK pantr_build_tree)

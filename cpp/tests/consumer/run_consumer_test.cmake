@@ -1,7 +1,8 @@
 # ctest driver: install pantr's build tree to a fresh prefix, then build and run the consumer
 # project against that prefix alone.
 #
-# Inputs: BUILD_DIR, WORK_DIR, CONSUMER_SOURCE, CXX_COMPILER, GENERATOR, MAKE_PROGRAM, BUILD_TYPE,
+# Inputs: BUILD_DIR, WORK_DIR, CONSUMER_SOURCE, CXX_COMPILER, GENERATOR, MAKE_PROGRAM, MT_PROGRAM
+# (the MSVC manifest tool, else empty), BUILD_TYPE,
 # COMPONENTS (empty, or "mpi" when pantr::mpi was built).
 cmake_minimum_required(VERSION 3.28)
 
@@ -42,6 +43,11 @@ set(isolate
 set(common -G "${GENERATOR}" -DCMAKE_MAKE_PROGRAM=${MAKE_PROGRAM}
            -DCMAKE_CXX_COMPILER=${CXX_COMPILER} -DCMAKE_BUILD_TYPE=${BUILD_TYPE}
            -DCMAKE_PREFIX_PATH=${prefix} -DPANTR_EXPECTED_PREFIX=${prefix})
+# MSVC links through the manifest tool, which CMake finds on the PATH: the isolation above switches
+# that search off, so the outer build's tool is passed in.
+if(MT_PROGRAM)
+  list(APPEND common -DCMAKE_MT=${MT_PROGRAM})
+endif()
 
 # The core consumer leaves PANTR_NATIVE_ARCH at its default (ON: built and run on this machine);
 # the mpi consumer turns it OFF. Each asserts the flag follows its own setting.
