@@ -60,7 +60,7 @@ void parallel_for(std::size_t n, std::size_t grain, F&& body) {
   }
   const std::size_t n_chunks = (n - 1) / grain + 1;
   const std::size_t threads = get_num_threads();
-  if (n_chunks == 1 || threads == 1 || detail::tl_in_parallel_region) {
+  if (n_chunks == 1 || threads == 1 || detail::in_parallel_region()) {
     for (std::size_t k = 0; k < n_chunks; ++k) {
       detail::run_chunk(body, n, grain, k);
     }
@@ -77,7 +77,7 @@ void parallel_for(std::size_t n, std::size_t grain, F&& body) {
                     detail::run_chunk(c->body, c->n, c->grain, k);
                   },
                   (std::min)(threads - 1, n_chunks - 1)};
-  Pool::instance().run(job);
+  detail::run_job(job);
 }
 
 /// Run `body(begin, end)` over `[0, n)` with the chunk size and the serial-or-parallel decision

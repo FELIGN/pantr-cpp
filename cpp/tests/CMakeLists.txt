@@ -29,6 +29,13 @@ target_link_libraries(pantr_tests_scalar PRIVATE pantr::pantr pantr_native_arch 
 target_compile_definitions(pantr_tests_scalar PRIVATE PANTR_SIMD_FORCE_SCALAR PANTR_TEST_EXPECT_SCALAR)
 doctest_discover_tests(pantr_tests_scalar TEST_PREFIX "scalar: ")
 
+# Routing through another module's parallel state: a binary of its own, since an attached table
+# cannot be detached.
+add_executable(pantr_tests_shared test_main.cpp test_shared.cpp)
+target_link_libraries(pantr_tests_shared PRIVATE pantr::pantr pantr_native_arch pantr_doctest
+                                                 pantr_cxx_warnings)
+doctest_discover_tests(pantr_tests_shared)
+
 # PANTR_NUM_THREADS wiring: one process per setting, since max_threads() reads it once.
 add_executable(pantr_tests_env test_main.cpp test_env.cpp)
 target_link_libraries(pantr_tests_env PRIVATE pantr::pantr pantr_native_arch pantr_doctest

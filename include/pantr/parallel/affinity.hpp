@@ -8,6 +8,7 @@
 
 #include "pantr/config.hpp"
 #include "pantr/core/errors.hpp"
+#include "pantr/parallel/shared.hpp"
 
 #include <atomic>
 #include <cerrno>
@@ -154,13 +155,7 @@ namespace detail {
 /// Cached pool capacity; 0 until the first `max_threads()` call computes it.
 inline constinit std::atomic<std::size_t> capacity_cache{0};
 
-}  // namespace detail
-
-/// Get the pool capacity: the most threads a pantr parallel call may use.
-///
-/// The affinity count, lowered by the environment variable `PANTR_NUM_THREADS` when it is set.
-/// Read on the first call in the process (and possibly by concurrent first calls); later changes to
-/// the affinity or the environment are not seen.
+/// This module's pool capacity, ignoring any attached table (see `max_threads`).
 ///
 /// Returns:
 ///     std::size_t: At least 1.
@@ -168,17 +163,45 @@ inline constinit std::atomic<std::size_t> capacity_cache{0};
 /// Raises:
 ///     value_error: `PANTR_NUM_THREADS` is set to something other than a positive integer.
 ///     std::system_error: The affinity query failed.
-[[nodiscard]] inline std::size_t max_threads() {
+[[nodiscard]] inline std::size_t local_max_threads() {
   // A constant-initialized atomic rather than a function-local static: a static's initialization
   // guard could be inherited mid-initialization by a forked child, which would then block on it
   // forever. Concurrent first calls compute the same value; a call that throws stores nothing.
-  std::size_t cap = detail::capacity_cache.load(std::memory_order_acquire);
+  std::size_t cap = capacity_cache.load(std::memory_order_acquire);
   if (cap == 0) {
-    cap = detail::capacity_from(affinity_cpu_count(),
-                                detail::parse_num_threads_env(std::getenv("PANTR_NUM_THREADS")));
-    detail::capacity_cache.store(cap, std::memory_order_release);
+    cap = capacity_from(affinity_cpu_count(), parse_num_threads_env(std::getenv("PANTR_NUM_THREADS")));
+    capacity_cache.store(cap, std::memory_order_release);
   }
   return cap;
+}
+
+}  // namespace detail
+
+/// Get the pool capacity: the most threads a pantr parallel call may use.
+///
+/// The affinity count, lowered by the environment variable `PANTR_NUM_THREADS` when it is set.
+/// Read on the first call in the process (and possibly by concurrent first calls); later changes to
+/// the affinity or the environment are not seen. In a module attached to another's shared state
+/// (shared.hpp), the owner's capacity.
+///
+/// Returns:
+///     std::size_t: At least 1.
+///
+/// Raises:
+///     value_error: `PANTR_NUM_THREADS` is set to something other than a positive integer.
+///     std::system_error: The affinity query failed (the owner's failure, in an attached module, is
+///         raised as `std::runtime_error` with the owner's message).
+[[nodiscard]] inline std::size_t max_threads() {
+  if (const SharedParallelism* shared = detail::shared_table.load(std::memory_order_acquire)) {
+    std::size_t out = 0;
+    char message[detail::kSharedMessageSize];
+    const int status = shared->max_threads(&out, message, sizeof(message));
+    if (status != 0) {
+      detail::raise_shared_failure(status, message);
+    }
+    return out;
+  }
+  return detail::local_max_threads();
 }
 
 }  // namespace pantr::parallel

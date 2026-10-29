@@ -17,11 +17,12 @@
 /// initialization, so no static-initialization guard or creation mutex is inherited mid-update.
 /// The pool is never destroyed (see `detail::PoolHolder`).
 ///
-/// Note: the pool, the holder and the thread-local setting are inline variables. Shared objects
+/// Note: the pool, the holder and the thread-local settings are inline variables. Shared objects
 /// that each include these headers and keep their symbols local (hidden visibility, or `dlopen`
-/// with `RTLD_LOCAL` on toolchains without GNU unique symbols) each get their own pool and their
-/// own setting. A program loading several such modules must route parallel work through one of
-/// them. Design note: design/threading.md.
+/// with `RTLD_LOCAL` on toolchains without GNU unique symbols) each get their own copy. pantr's
+/// extension modules share one pool by routing through the owner's table (shared.hpp): in a module
+/// that attached one, `parallel_for` and the thread settings act on the owner's state, and
+/// `Pool::instance()` refuses. Design note: design/threading.md.
 #pragma once
 
 #include "pantr/config.hpp"
@@ -54,6 +55,23 @@ inline thread_local std::size_t tl_num_threads = 0;
 
 /// True while the thread executes chunks of a parallel loop (always, on a pool worker).
 inline thread_local bool tl_in_parallel_region = false;
+
+/// The calling thread's parallelism setting: the owner's when attached (shared.hpp), else this
+/// module's `tl_num_threads`.
+[[nodiscard]] inline std::size_t& thread_setting() noexcept {
+  if (const SharedParallelism* shared = shared_table.load(std::memory_order_acquire)) {
+    return *shared->thread_setting();
+  }
+  return tl_num_threads;
+}
+
+/// The calling thread's in-parallel-region flag: the owner's when attached, else this module's.
+[[nodiscard]] inline bool in_parallel_region() noexcept {
+  if (const SharedParallelism* shared = shared_table.load(std::memory_order_acquire)) {
+    return *shared->thread_in_region();
+  }
+  return tl_in_parallel_region;
+}
 
 /// Process id, used to detect that the pool was inherited through `fork`.
 [[nodiscard]] inline std::int64_t current_pid() noexcept {
@@ -192,6 +210,20 @@ class Pool {
   /// Raises:
   ///     The exception of the first chunk that threw, after the join.
   void run(detail::Job& job) {
+    execute(job);
+    if (job.error) {
+      std::rethrow_exception(job.error);
+    }
+  }
+
+  /// Run every chunk of `job` as `run` does, leaving a chunk's exception in `job.error`.
+  ///
+  /// Args:
+  ///     job (detail::Job&): The loop; must outlive the call.
+  ///
+  /// Raises:
+  ///     std::system_error: Locking the pool's mutex failed.
+  void execute(detail::Job& job) {
     const std::size_t wanted = (std::min)(job.max_workers, threads_.size());
     if (wanted > 0) {
       {
@@ -218,9 +250,6 @@ class Pool {
       jobs_.erase(std::remove(jobs_.begin(), jobs_.end(), &job), jobs_.end());
       done_cv_.wait(lock, [&job] { return job.active == 0; });
     }
-    if (job.error) {
-      std::rethrow_exception(job.error);
-    }
   }
 
   /// Get the process pool, creating it on first use (and again in a forked child).
@@ -230,9 +259,20 @@ class Pool {
   ///
   /// Raises:
   ///     value_error: `PANTR_NUM_THREADS` is malformed (see `max_threads`).
+  ///     state_error: This module routes its parallel work through another module's pool
+  ///         (shared.hpp); use `parallel_for`.
   ///     std::system_error: The affinity query or a thread start failed, or the fork handler could
   ///         not be registered.
   static Pool& instance();
+
+  /// Get this module's own pool, ignoring any attached table (see `instance`).
+  ///
+  /// Returns:
+  ///     Pool&: This module's pool, created on first use (and again in a forked child).
+  ///
+  /// Raises:
+  ///     As `instance`, except `state_error`.
+  static Pool& local_instance();
 
  private:
   void shutdown() noexcept {
@@ -326,6 +366,14 @@ inline const int pool_atfork_status =
 }  // namespace detail
 
 inline Pool& Pool::instance() {
+  if (routes_shared_parallelism()) {
+    throw state_error("this module runs parallel loops on another module's pool; "
+                      "Pool::instance() would start a second pool");
+  }
+  return local_instance();
+}
+
+inline Pool& Pool::local_instance() {
   detail::PoolHolder& h = detail::pool_holder;
 #if !defined(_WIN32)
   // Reading the status here also odr-uses it, so its registration cannot be deferred past this.
@@ -345,7 +393,7 @@ inline Pool& Pool::instance() {
     // never touch it. The new pool keeps a pointer to it, so it stays reachable (no leak report)
     // and is never destroyed.
     Pool* inherited = p;
-    p = new Pool(max_threads() - 1);
+    p = new Pool(detail::local_max_threads() - 1);
     p->inherited_ = inherited;
     h.current.store(p, std::memory_order_release);
   }
@@ -358,7 +406,8 @@ inline Pool& Pool::instance() {
 ///     n (std::int64_t): Threads a loop called from this thread may use, the caller included.
 ///
 /// Raises:
-///     value_error: `n < 1` or `n > max_threads()`.
+///     value_error: `n < 1` or `n > max_threads()`, or `PANTR_NUM_THREADS` is malformed.
+///     std::system_error: The affinity query failed (see `max_threads`).
 inline void set_num_threads(std::int64_t n) {
   if (n < 1) {
     throw value_error("n must be >= 1, got " + std::to_string(n));
@@ -368,15 +417,95 @@ inline void set_num_threads(std::int64_t n) {
     throw value_error("n must be <= the pool capacity (" + std::to_string(cap) + "), got " +
                       std::to_string(n));
   }
-  detail::tl_num_threads = static_cast<std::size_t>(n);
+  detail::thread_setting() = static_cast<std::size_t>(n);
 }
 
 /// Get the calling thread's parallelism for pantr's parallel loops.
 ///
 /// Returns:
 ///     std::size_t: The value last set on this thread, else `max_threads()`.
+///
+/// Raises:
+///     value_error: Nothing was set on this thread and `PANTR_NUM_THREADS` is malformed.
+///     std::system_error: Nothing was set on this thread and the affinity query failed.
 [[nodiscard]] inline std::size_t get_num_threads() {
-  return detail::tl_num_threads != 0 ? detail::tl_num_threads : max_threads();
+  const std::size_t setting = detail::thread_setting();
+  return setting != 0 ? setting : max_threads();
+}
+
+namespace detail {
+
+/// Run `job` on the process pool: the owner's when attached (shared.hpp), else this module's.
+///
+/// Args:
+///     job (Job&): The loop; must outlive the call.
+///
+/// Raises:
+///     The exception of the first chunk that threw, after the join; the errors of
+///     `Pool::instance()` (in an attached module, the owner's, see `raise_shared_failure`).
+inline void run_job(Job& job) {
+  if (const SharedParallelism* shared = shared_table.load(std::memory_order_acquire)) {
+    char message[kSharedMessageSize];
+    const int status = shared->run(&job, message, sizeof(message));
+    if (status != 0) {
+      raise_shared_failure(status, message);
+    }
+    if (job.error) {
+      std::rethrow_exception(job.error);
+    }
+    return;
+  }
+  Pool::instance().run(job);
+}
+
+/// Report a caught exception through a table function's status and message.
+inline int shared_failure(char* message, std::size_t size) noexcept {
+  try {
+    throw;
+  } catch (const value_error& e) {
+    write_shared_message(e.what(), message, size);
+    return static_cast<int>(SharedStatus::value_error);
+  } catch (const std::exception& e) {
+    write_shared_message(e.what(), message, size);
+  } catch (...) {
+    write_shared_message("unknown error in the pool owner", message, size);
+  }
+  return static_cast<int>(SharedStatus::runtime_error);
+}
+
+}  // namespace detail
+
+/// Get the table over this module's own parallel state, for other modules to attach.
+///
+/// Only the owning module calls this (pantr's `_pantr`); its functions always serve the module
+/// they were compiled into, whether or not that module itself attached a table.
+///
+/// Returns:
+///     const SharedParallelism&: The table, valid for the life of the process.
+[[nodiscard]] inline const SharedParallelism& owner_shared_parallelism() noexcept {
+  static constexpr SharedParallelism table{
+      kSharedParallelismAbi,
+      static_cast<std::uint32_t>(sizeof(SharedParallelism)),
+      [](std::size_t* out, char* message, std::size_t size) noexcept -> int {
+        try {
+          *out = detail::local_max_threads();
+          return 0;
+        } catch (...) {
+          return detail::shared_failure(message, size);
+        }
+      },
+      [](detail::Job* job, char* message, std::size_t size) noexcept -> int {
+        try {
+          Pool::local_instance().execute(*job);
+          return 0;
+        } catch (...) {
+          return detail::shared_failure(message, size);
+        }
+      },
+      []() noexcept -> std::size_t* { return &detail::tl_num_threads; },
+      []() noexcept -> bool* { return &detail::tl_in_parallel_region; },
+  };
+  return table;
 }
 
 }  // namespace pantr::parallel
