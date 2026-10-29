@@ -19,7 +19,10 @@ set(_pantr_test_sources
     test_dependencies.cpp
     test_quad.cpp
     test_basis.cpp
-    test_change_basis.cpp)
+    test_change_basis.cpp
+    test_binomial.cpp
+    test_bezier_eval.cpp
+    test_bezier_ops.cpp)
 add_executable(pantr_tests ${_pantr_test_sources})
 target_link_libraries(pantr_tests PRIVATE pantr::pantr pantr_native_arch pantr_doctest
                                           pantr_cxx_warnings)
