@@ -171,8 +171,54 @@
   `pantr.change_basis` used to re-export by accident (NumPy's `chebyshev` and `legendre`,
   `functools`, `comb`, a few pantr functions; `Callable` from `pantr.change_basis`) are gone from
   their namespaces.
+- **`AABB`, `AffineTransform` and the `Bezier` value type run in pantr's C++ library**
+  (`pantr.geometry`, `pantr.transform` and `pantr.bezier.Bezier` are thin wrappers over it;
+  names, signatures, defaults and messages are unchanged except as listed below). Results can
+  move in the last bits: Bézier contractions are summed point by point in C++ instead of by
+  `einsum`/`tensordot`, the 1D evaluation seeds its recurrence with an exact integer power
+  instead of `pow`, and affine maps and transforms are applied by plain loops instead of BLAS.
+  Evaluation releases the GIL while it runs on pantr's thread pool.
+- **A `Bezier` is immutable**, as the C++ values are (they are shared rather than copied, which
+  is what makes them cheap to pass and safe across threads): the constructor copies the control
+  points, so a later write to the array it was given no longer changes the Bézier;
+  `control_points` is a read-only view; `reverse()` returns an independent Bézier (it shared
+  memory with the original through `np.flip`); `reverse`, `permute_directions` and `transform`
+  with `in_place=True` replace the value the object holds, so a `control_points` array read
+  before the call keeps the values it had. `Bezier.to_bspline(copy=False)` gives a B-spline
+  holding that read-only view, which cannot then be changed in place. `create_from_bspline` and
+  `Bspline.to_bezier` with `copy=False` still share the B-spline's array (read-only through the
+  Bézier), as before.
+- **`Bezier` keeps `float32` and stores every other real dtype as `float64`**: integers as
+  before, and now booleans, `float16`, `longdouble` and byte-swapped arrays (`">f4"` becomes
+  native `float32`). The previous release stored those dtypes as given and then failed in
+  evaluation (or, for booleans, computed in boolean arithmetic). Complex control points are a
+  `TypeError`. The C++ library instantiates the two storage types only.
+- **`Bezier`, `AABB` and `AffineTransform` pickle and copy explicitly** (`__reduce__`; for
+  `Bezier` also `__copy__` and `__deepcopy__`, which share the immutable value), since they now
+  hold a C++ value Python cannot pickle by itself. A deep copy is immutable like the original:
+  its arrays are read-only, where they used to be writable.
+- `AABB.lo` and `hi`, `AffineTransform.matrix` and `offset`, `Bezier.control_points` and the
+  Bézier results are NumPy arrays over C++ buffers that do not own their data
+  (`flags.owndata` is `False`).
+- `AffineTransform.inverse` refuses a matrix whose LU factorisation meets a NaN pivot
+  ("Cannot invert a singular affine transformation."), as it refuses an exactly zero one;
+  NumPy returned NaNs there or raised, depending on where the NaN sat. One rule for the C++
+  library, NumPy's for the zero pivot.
+- `AABB.transform` given an offset without `ndim` entries is a `ValueError` ("affine.offset must
+  have shape ...") where NumPy raised a broadcasting error; the C++ library checks every input.
+- **Inputs outside the annotated types, and calls with two invalid arguments**, in
+  `pantr.geometry`, `pantr.transform` and `Bezier`, may raise another exception or message than
+  before, since the compiled binding converts an argument (an index, a float) before the checks
+  run and most checks now run in C++: for example a `bool` direction is quoted as `1`, a
+  non-numeric `factor` or `angle` is a `TypeError` from the binding before any range check.
+- The private modules `pantr.bezier._bezier_core`, `_bezier_eval`, `_bezier_derivative`,
+  `_bezier_compose`, `_bezier_collapse`, `_bezier_split`, `_bezier_slice` and `_bezier_restrict`,
+  and `_bezier_degree._degree_elevate_bezier`, are gone with the Numba kernels they held.
 
 ### Fixed
+- `AABB` can be pickled and copied (`pickle`, `copy.copy`, `copy.deepcopy`); each raised
+  `AttributeError` from the immutability guard, which refused the state the default protocol
+  restores.
 - Multi-dimensional tabulations at zero points in three or more dimensions return an empty
   `(0, n_functions)` array; they raised a NumPy reshape error.
 - `get_modified_chebyshev_nodes_1d` honors `dtype` when `n_pts` is a NumPy integer; it returned
