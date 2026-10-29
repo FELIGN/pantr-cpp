@@ -381,6 +381,144 @@ def _s2_bezier_cases() -> list[Case]:
     return cases
 
 
+def _s2_approx_roots_cases() -> list[Case]:
+    """The degree-reduction, fitting and root-finding cases of the S2 stage (C2.3, C2.4)."""
+    from pantr.bezier import (  # noqa: PLC0415
+        Bezier,
+        find_monotone_root,
+        find_roots,
+        fit_bezier,
+        interpolate_bezier,
+    )
+
+    cases: list[Case] = []
+
+    def add(name: str, size: str, what: str, setup: Callable[[], Callable[[], Any]]) -> None:
+        cases.append(Case(f"S2.{name}.{size}", "S2", size, what, setup))
+
+    rng = np.random.default_rng(13)
+    curve = Bezier(rng.random((7, 3)))
+    surf = Bezier(rng.random((13, 13, 3)))
+    # Degree-3 curve elevated to 9 and 20: minimize_degree recovers degree 3 in each.
+    base = Bezier(rng.random((4, 3)))
+    elevated = base.elevate_degree(6)
+    elevated_big = base.elevate_degree(17)
+    add(
+        "bezier_reduce_degree",
+        "tiny",
+        "reduce_degree(2), degree-6 curve",
+        lambda: (lambda: curve.reduce_degree(2)),
+    )
+    add(
+        "bezier_reduce_degree",
+        "medium",
+        "reduce_degree(3), degree-(12, 12) surface",
+        lambda: (lambda: surf.reduce_degree(3)),
+    )
+    add(
+        "bezier_minimize_degree",
+        "tiny",
+        "minimize_degree, degree-9 curve of degree 3",
+        lambda: (lambda: elevated.minimize_degree()),
+    )
+    add(
+        "bezier_minimize_degree",
+        "medium",
+        "minimize_degree, degree-20 curve of degree 3",
+        lambda: (lambda: elevated_big.minimize_degree()),
+    )
+
+    def setup_interp(dims: list[int]) -> Callable[[], Any]:
+        def func(lattice: Any) -> Any:  # noqa: ANN401
+            x = lattice.get_all_points()
+            return np.sin(3.0 * x[:, 0]) * np.cos(2.0 * x[:, -1])
+
+        return lambda: interpolate_bezier(func, dims)
+
+    add("interpolate_bezier", "tiny", "interpolate_bezier, 8 nodes", lambda: setup_interp([8]))
+    add(
+        "interpolate_bezier",
+        "medium",
+        "interpolate_bezier, 32x32 nodes",
+        lambda: setup_interp([32, 32]),
+    )
+
+    def setup_fit_tensor(n: int) -> Callable[[], Any]:
+        nodes = [np.linspace(0.0, 1.0, n), np.linspace(0.0, 1.0, n)]
+        values = np.random.default_rng(5).random((n, n, 2))
+        return lambda: fit_bezier(values, nodes, degree=n // 2)
+
+    def setup_fit_scattered(n: int) -> Callable[[], Any]:
+        pts = np.random.default_rng(6).random((n, 2))
+        values = np.random.default_rng(7).random((n, 2))
+        return lambda: fit_bezier(values, pts, degree=[3, 3])
+
+    add("fit_bezier_tensor", "tiny", "fit_bezier, 6x6 grid, degree 3", lambda: setup_fit_tensor(6))
+    add(
+        "fit_bezier_tensor",
+        "medium",
+        "fit_bezier, 32x32 grid, degree 16",
+        lambda: setup_fit_tensor(32),
+    )
+    add(
+        "fit_bezier_scattered",
+        "tiny",
+        "fit_bezier, 20 scattered points, degree (3, 3)",
+        lambda: setup_fit_scattered(20),
+    )
+    add(
+        "fit_bezier_scattered",
+        "medium",
+        "fit_bezier, 1000 scattered points, degree (3, 3)",
+        lambda: setup_fit_scattered(1000),
+    )
+
+    roots3 = Bezier(np.array([1.0, -2.0, 1.5, -0.5]))
+    roots12 = Bezier(np.cos(np.linspace(0.0, 7.0, 13)))
+    add("find_roots", "tiny", "find_roots, degree 3 (Yuksel)", lambda: (lambda: find_roots(roots3)))
+    add(
+        "find_roots_degree12",
+        "tiny",
+        "find_roots, degree 12 (clipping)",
+        lambda: (lambda: find_roots(roots12)),
+    )
+
+    def setup_batch(n: int) -> Callable[[], Any]:
+        coeffs = np.random.default_rng(8).standard_normal((n, 6))
+        batch = [Bezier(c) for c in coeffs]
+        return lambda: find_roots(batch)
+
+    add(
+        "find_roots_batch", "medium", "find_roots, batch of 1e3 degree-5", lambda: setup_batch(1000)
+    )
+    add(
+        "find_roots_batch",
+        "large",
+        "find_roots, batch of 1e4 degree-5",
+        lambda: setup_batch(10_000),
+    )
+    mono = Bezier(np.array([-1.0, -0.4, 0.3, 0.8, 1.2]))
+    add(
+        "find_monotone_root",
+        "tiny",
+        "find_monotone_root, degree 4",
+        lambda: (lambda: find_monotone_root(mono)),
+    )
+
+    def setup_mono_batch(n: int) -> Callable[[], Any]:
+        coeffs = np.sort(np.random.default_rng(9).standard_normal((n, 5)), axis=1)
+        batch = [Bezier(c) for c in coeffs]
+        return lambda: find_monotone_root(batch)
+
+    add(
+        "find_monotone_root_batch",
+        "large",
+        "find_monotone_root, batch of 1e4 degree-4",
+        lambda: setup_mono_batch(10_000),
+    )
+    return cases
+
+
 def _r6_cases() -> list[Case]:
     from pantr import (  # noqa: PLC0415
         basis,
@@ -423,4 +561,10 @@ def all_cases() -> list[Case]:
     Returns:
         list[Case]: The S1 cases, the S2 cases, then the r6 cases.
     """
-    return _s1_cases() + _s2_geometry_cases() + _s2_bezier_cases() + _r6_cases()
+    return (
+        _s1_cases()
+        + _s2_geometry_cases()
+        + _s2_bezier_cases()
+        + _s2_approx_roots_cases()
+        + _r6_cases()
+    )
