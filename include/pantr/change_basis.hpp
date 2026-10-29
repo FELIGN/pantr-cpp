@@ -156,10 +156,17 @@ NdArray<T> inverse(const NdArray<T>& a) {
 
 /// The Gram projection `old = M new`: row `i` of `M` holds the coefficients of the `i`-th old
 /// basis function in the new basis, from `G M^T = C` with `G` the new basis's Gram matrix and `C`
-/// the mixed one, both by `n_quad` Gauss-Legendre points in `T`.
+/// the mixed one, both by `n_quad` Gauss-Legendre points in `T` (`degree + 1` points integrate
+/// every product of two degree-`degree` polynomials exactly).
+///
+/// Raises:
+///     value_error: `n_quad < 1`, or an exactly singular Gram matrix.
 template <std::floating_point T, class NewEval, class OldEval>
-NdArray<T> gram_projection(int degree, NewEval new_eval, OldEval old_eval) {
-  const quad::Rule1D<T> rule = quad::gauss_legendre_1d<T>(degree + 1);
+NdArray<T> gram_projection(int degree, long long n_quad, NewEval new_eval, OldEval old_eval) {
+  if (n_quad < 1) {
+    throw value_error("Number of quadrature points must be positive.");
+  }
+  const quad::Rule1D<T> rule = quad::gauss_legendre_1d<T>(n_quad);
   const std::span<const T> pts = rule.nodes.flat();
   const NdArray<T> new_b = new_eval(degree, pts);
   const NdArray<T> old_b = old_eval(degree, pts);
@@ -231,7 +238,8 @@ template <std::floating_point T>
   detail::check_domain<T>(degree, bernstein_to_cardinal_max_degree,
                           "compute_bernstein_to_cardinal_1d");
   return detail::gram_projection<T>(
-      degree, [](int d, std::span<const T> p) { return basis::tabulate_bernstein_1d<T>(d, p); },
+      degree, degree + 1,
+      [](int d, std::span<const T> p) { return basis::tabulate_bernstein_1d<T>(d, p); },
       [](int d, std::span<const T> p) { return basis::tabulate_cardinal_bspline_1d<T>(d, p); });
 }
 
@@ -258,7 +266,8 @@ template <std::floating_point T>
 [[nodiscard]] NdArray<T> legendre_to_cardinal(int degree) {
   detail::check_non_negative(degree);
   return detail::gram_projection<T>(
-      degree, [](int d, std::span<const T> p) { return basis::tabulate_legendre_1d<T>(d, p); },
+      degree, degree + 1,
+      [](int d, std::span<const T> p) { return basis::tabulate_legendre_1d<T>(d, p); },
       [](int d, std::span<const T> p) { return basis::tabulate_cardinal_bspline_1d<T>(d, p); });
 }
 

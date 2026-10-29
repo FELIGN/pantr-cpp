@@ -43,6 +43,17 @@ NB_MODULE(PANTR_EXT_MODULE_NAME, m) {
   m.attr("simd_isa") = PANTR_SIMD_ISA_NAME;
   pantr::bindings::register_errors(m);
   pantr::bindings::register_parallel(m);
+  nb::module_ quad = m.def_submodule("quad", "Quadrature rules and lattices (private).");
+  pantr::bindings::register_quad(quad);
+  nb::module_ tolerance = m.def_submodule("tolerance", "Tolerance preset factors (private).");
+  pantr::bindings::register_tolerance(tolerance);
+  nb::module_ basis = m.def_submodule("basis", "Basis tabulation (private).");
+  pantr::bindings::register_basis(basis);
+  nb::module_ change_basis = m.def_submodule("change_basis", "Change-of-basis matrices (private).");
+  pantr::bindings::register_change_basis(change_basis);
+  nb::module_ kernels = m.def_submodule(
+      "_kernels", "Ported kernels for Python callers not yet ported (private, interim).");
+  pantr::bindings::register_kernels(kernels);
   nb::module_ testing = m.def_submodule("_testing", "Probes for tests and benchmarks (private).");
   pantr::bindings::register_testing(testing);
 }

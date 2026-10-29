@@ -27,7 +27,7 @@ convention = "google"
 [lint.per-file-ignores]
 # Stubs written by nanobind.stubgen (`make stubs`): regenerated, never edited, so their docstring
 # line lengths and its `dict(...)` annotations are the generator's.
-"src/pantr/_pantr/*.pyi" = ["E501", "C408"]
+"src/pantr/_pantr/*.pyi" = ["E501", "C408", "D418"]
 "src/pantr/_pantr_cpu.pyi" = ["E501", "C408"]
 "src/**/*.py" = ["ANN101"]
 "tests/**/*.py" = [

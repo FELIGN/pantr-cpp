@@ -331,12 +331,25 @@ inline constexpr double tanh_sinh_decay_factor = 0.6;
 ///
 /// Nodes `x = tanh((pi / 2) sinh t)` on `[-1, 1]` at a uniform step `h` (see
 /// `tanh_sinh_decay_factor`), weights `(pi / 2) cosh t / cosh^2((pi / 2) sinh t)`, symmetric
-/// about 0. Generation stops at the first node whose endpoint gap `1 - |x|` is below `eps(T)`:
-/// below `0.75 eps(T)` the mapped node would round onto the endpoint in `T`, and `eps(T)` clears
-/// that by one representable step of the gap (the argument is in pantr.quad's
-/// `_tanh_sinh_min_gap`). So no node lies on an endpoint, and fewer than `n_pts` nodes may be
-/// returned, fewer in `float` than in `double`. The weights are rescaled onto the measure 2 of
-/// `[-1, 1]` before the mapping, up to the rounding of their own sum.
+/// about 0. Generation stops at the first node whose endpoint gap `1 - |x|` is below `eps(T)`, so
+/// no node lies on an endpoint, and fewer than `n_pts` nodes may be returned (fewer in `float` than
+/// in `double`). The weights are rescaled onto the measure 2 of `[-1, 1]` before the mapping, up
+/// to the rounding of their own sum.
+///
+/// Why the gap is `eps(T)`: the node near `+1` reaches `[0, 1]` as `((1 - gap) + 1) / 2` rounded
+/// to `T`, and that whole expression must stay below 1. With `u = eps / 2` the spacing below 1,
+/// `1 - gap` rounds to `1 - u` while `gap < 1.5 u` (to `1 - 2u` from there on); `+ 1` maps `1 - u`
+/// to the midpoint `2 - u` of `[2 - 2u, 2]`, which ties to even and becomes 2, and maps `1 - 2u`
+/// to `2 - 2u` exactly; the halving is exact. So the node collapses onto 1 exactly when
+/// `gap < 0.75 eps`, and `eps` clears that by one representable step of the gap. (Reasoning on
+/// `2 - gap` alone gives `eps / 2`, a factor 1.5 too low, because it ignores the rounding of
+/// `1 - gap`.) The argument is about the binade boundary at 1, so it holds in `float` and `double`
+/// alike. Truncating there costs nothing: with `gap = 1 - tanh(omega)`,
+/// `cosh(omega)^-2 = gap (2 - gap)`, so a discarded weight is at most `pi cosh(t) gap`, which at
+/// the threshold is below the rounding of the weight sum it would have joined. The bound does not
+/// claim the returned nodes are distinct: two consecutive samples can clear the threshold and
+/// still round onto one representable coordinate next to 1, the format running out of coordinates
+/// rather than a node reaching the endpoint.
 ///
 /// Args:
 ///     n_pts (long long): Requested number of points, at least 1.

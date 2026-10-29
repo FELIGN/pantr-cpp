@@ -1,17 +1,22 @@
 // _pantr._testing: probes for the tests and the benchmark harness. Not a public API.
+#include "arrays.hpp"
 #include "interface.hpp"
 #include "probes.hpp"
 
-#include "pantr/core/errors.hpp"
+#include "pantr/basis/bernstein.hpp"
+#include "pantr/basis/lagrange_variant.hpp"
+#include "pantr/basis/tabulate.hpp"
+#include "pantr/change_basis.hpp"
 #include "pantr/parallel/shared.hpp"
 
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
 
 #include <cstddef>
-#include <cstdint>
-#include <limits>
+#include <span>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace nb = nanobind;
 
@@ -19,51 +24,82 @@ namespace pantr::bindings {
 
 namespace {
 
-/// A class with one read-only integer property: the binding's attribute-read cost.
-class ProbeObject {
- public:
-  explicit ProbeObject(std::int64_t degree) : degree_(degree) {}
-  [[nodiscard]] std::int64_t degree() const noexcept { return degree_; }
-
- private:
-  std::int64_t degree_;
-};
-
-using PointsIn = nb::ndarray<const double, nb::ndim<1>, nb::c_contig, nb::device::cpu>;
-using TableOut = nb::ndarray<nb::numpy, double, nb::ndim<2>>;
-
-/// Bernstein basis of `degree` at each point, by the de Casteljau triangle.
-///
-/// The measurement vehicle of the stage-0 stable-ABI check (one small array in, one out), not
-/// pantr's Bernstein tabulation, which its own stage ports with its validation and oracles.
-TableOut probe_bernstein(std::int64_t degree, const PointsIn& pts) {
-  if (degree < 0) {
-    throw pantr::value_error("degree must be >= 0, got " + std::to_string(degree));
+// The Bernstein row kernels at one point, for the tests that pin which recurrence runs where.
+template <class T, void (*Row)(int, T, T*)>
+NumpyArray<T> bernstein_row(int n, T u) {
+  pantr::basis::detail::check_degree(n);
+  NdArray<T> row({static_cast<std::size_t>(n) + 1});
+  if (n == 0) {
+    row.data()[0] = static_cast<T>(1);
+  } else {
+    Row(n, u, row.data());
   }
-  const auto p = static_cast<std::size_t>(degree);
-  const std::size_t n = pts.shape(0);
-  constexpr std::size_t max_doubles = (std::numeric_limits<std::size_t>::max)() / sizeof(double);
-  if (p >= max_doubles || (n != 0 && p + 1 > max_doubles / n)) {
-    throw pantr::capacity_error("a table of " + std::to_string(n) + " points by degree " +
-                                std::to_string(degree) + " does not fit in memory");
+  return to_numpy(std::move(row));
+}
+
+template <class T>
+NumpyArray<T> bernstein_derivatives_point(int n, T s, int n_deriv) {
+  pantr::basis::detail::check_degree(n);
+  const auto ord = static_cast<std::size_t>(n) + 1;
+  const auto nd1 = static_cast<std::size_t>(n_deriv) + 1;
+  NdArray<T> out({nd1, ord});
+  std::vector<T> ndu(ord * ord);
+  std::vector<T> a(2 * nd1);
+  pantr::basis::detail::bernstein_derivatives_point<T>(n, s, n_deriv, out.data(), ndu.data(),
+                                                       a.data());
+  return to_numpy(std::move(out));
+}
+
+template <class T>
+NumpyArray<T> bernstein_derivatives(
+    int n, const nb::ndarray<const T, nb::ndim<1>, nb::c_contig, nb::device::cpu>& pts,
+    int n_deriv) {
+  pantr::basis::detail::check_degree(n);
+  if (n_deriv < 0) {
+    throw pantr::value_error("n_deriv must be non-negative");
   }
-  auto* data = new double[n * (p + 1)];
-  nb::capsule owner(data, [](void* q) noexcept { delete[] static_cast<double*>(q); });
-  for (std::size_t i = 0; i < n; ++i) {
-    const double t = pts(i);
-    double* row = data + i * (p + 1);
-    row[0] = 1.0;
-    for (std::size_t j = 1; j <= p; ++j) {
-      double saved = 0.0;
-      for (std::size_t k = 0; k < j; ++k) {
-        const double value = row[k];
-        row[k] = saved + (1.0 - t) * value;
-        saved = t * value;
-      }
-      row[j] = saved;
-    }
-  }
-  return TableOut(data, {n, p + 1}, owner);
+  const std::span<const T> p(pts.data(), pts.shape(0));
+  NdArray<T> out(
+      {p.size(), static_cast<std::size_t>(n_deriv) + 1, static_cast<std::size_t>(n) + 1});
+  pantr::basis::tabulate_bernstein_derivatives_1d<T>(n, p, n_deriv, out.template view<3>());
+  return to_numpy(std::move(out));
+}
+
+template <class T>
+void def_bernstein(nb::module_& m, const char* suffix) {
+  using pantr::basis::detail::bernstein_row_mirrored;
+  using pantr::basis::detail::bernstein_row_unmirrored;
+  m.def((std::string("bernstein_row_mirrored") + suffix).c_str(),
+        &bernstein_row<T, &bernstein_row_mirrored<T>>, nb::arg("n"), nb::arg("u"),
+        "Bernstein values at one point by the mirrored ratio recurrence.");
+  m.def((std::string("bernstein_row_unmirrored") + suffix).c_str(),
+        &bernstein_row<T, &bernstein_row_unmirrored<T>>, nb::arg("n"), nb::arg("u"),
+        "Bernstein values at one point by the plain forward recurrence (low degrees only).");
+  m.def((std::string("bernstein_derivatives_point") + suffix).c_str(),
+        &bernstein_derivatives_point<T>, nb::arg("n"), nb::arg("s"), nb::arg("n_deriv"),
+        "Bernstein derivatives of orders 0..n_deriv at one point, (n_deriv + 1, n + 1).");
+  m.def(
+      (std::string("tabulate_bernstein_derivatives_1d") + suffix).c_str(),
+      &bernstein_derivatives<T>, nb::arg("n"), nb::arg("pts"), nb::arg("n_deriv"),
+      "Bernstein derivatives of orders 0..n_deriv at each point, (len(pts), n_deriv + 1, n + 1).");
+}
+
+// The generic Gram projection behind the change-of-basis builders, over any two families.
+template <class T>
+NumpyArray<T> gram_projection(int new_family, int old_family, int degree, long long n_quad) {
+  const auto fnew = pantr::basis::to_family(new_family);
+  const auto fold = pantr::basis::to_family(old_family);
+  const auto eval = [](pantr::basis::Family f) {
+    return [f](int d, std::span<const T> p) {
+      pantr::basis::detail::check_degree(d);
+      NdArray<T> out({p.size(), static_cast<std::size_t>(d) + 1});
+      pantr::basis::tabulate_1d<T>(f, d, pantr::basis::LagrangeVariant::equispaces, p,
+                                   out.template view<2>());
+      return out;
+    };
+  };
+  return to_numpy(
+      pantr::change_basis::detail::gram_projection<T>(degree, n_quad, eval(fnew), eval(fold)));
 }
 
 }  // namespace
@@ -75,14 +111,30 @@ void register_testing(nb::module_& m) {
         "`hold_us` microseconds each.");
   m.def("routes_shared_parallelism", &pantr::parallel::routes_shared_parallelism,
         "Report whether this module routes its parallel state through another module.");
+  m.attr("bernstein_max_unmirrored_degree_double") =
+      pantr::basis::bernstein_max_unmirrored_degree_double;
+  m.attr("bernstein_max_unmirrored_degree_float") =
+      pantr::basis::bernstein_max_unmirrored_degree_float;
+  def_bernstein<double>(m, "");
+  def_bernstein<float>(m, "_f32");
+  m.def("gram_projection", &gram_projection<double>, nb::arg("new_family"), nb::arg("old_family"),
+        nb::arg("degree"), nb::arg("n_quad_pts"),
+        "The matrix M with old = M new, by an n_quad_pts-point Gauss-Legendre Gram projection.");
+  m.def("gram_projection_f32", &gram_projection<float>, nb::arg("new_family"),
+        nb::arg("old_family"), nb::arg("degree"), nb::arg("n_quad_pts"),
+        "The float instantiation of gram_projection.");
+  namespace cb = pantr::change_basis;
+  m.attr("change_basis_cache_max_degree") = cb::change_basis_cache_max_degree;
   m.def(
-      "probe_scalar", [](double x) { return 2.0 * x; }, nb::arg("x"),
-      "Return 2 * x: the binding's cost for one float in, one float out.");
-  m.def("probe_bernstein", &probe_bernstein, nb::arg("degree"), nb::arg("pts"),
-        "Bernstein basis by de Casteljau: the binding's cost for one small array in and out.");
-  nb::class_<ProbeObject>(m, "ProbeObject", "An object with one read-only integer property.")
-      .def(nb::init<std::int64_t>(), nb::arg("degree"))
-      .def_prop_ro("degree", &ProbeObject::degree, "The value given at construction.");
+      "change_basis_cache_size", [] { return cb::cache_size<double>() + cb::cache_size<float>(); },
+      "Number of matrices the change-of-basis process tables hold, both dtypes.");
+  m.def(
+      "change_basis_cache_clear",
+      [] {
+        cb::cache_clear<double>();
+        cb::cache_clear<float>();
+      },
+      "Empty the change-of-basis process tables (matrices handed out stay valid).");
 }
 
 }  // namespace pantr::bindings

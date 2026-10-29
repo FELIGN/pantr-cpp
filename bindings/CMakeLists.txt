@@ -73,7 +73,8 @@ else()
   set(PANTR_EXT_ARCH other)
 endif()
 
-set(_pantr_ext_sources src/module.cpp src/parallel.cpp src/testing.cpp)
+set(_pantr_ext_sources src/module.cpp src/parallel.cpp src/testing.cpp src/quad.cpp src/basis.cpp
+                       src/change_basis.cpp)
 
 # Build one copy of the extension: module name <name>, rung <isa>, extra compile options in ARGN.
 function(pantr_add_extension name isa)

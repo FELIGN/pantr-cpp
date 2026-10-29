@@ -78,10 +78,16 @@ using Integer = boost::multiprecision::cpp_int;
   const long long shift = bits_den - bits_num + 55;
   Integer q;
   Integer r;
+  // In-place shifts throughout: GCC 14 at -O3 reports a false -Wstringop-overflow inside
+  // Boost's shift of a temporary (`Integer(x) << n`).
   if (shift >= 0) {
-    boost::multiprecision::divide_qr(Integer(num << static_cast<unsigned>(shift)), den, q, r);
+    Integer scaled = num;
+    scaled <<= static_cast<unsigned>(shift);
+    boost::multiprecision::divide_qr(scaled, den, q, r);
   } else {
-    boost::multiprecision::divide_qr(num, Integer(den << static_cast<unsigned>(-shift)), q, r);
+    Integer scaled = den;
+    scaled <<= static_cast<unsigned>(-shift);
+    boost::multiprecision::divide_qr(num, scaled, q, r);
   }
   const bool sticky = r != 0;
   const auto qbits = static_cast<long long>(boost::multiprecision::msb(q)) + 1;
@@ -93,10 +99,17 @@ using Integer = boost::multiprecision::cpp_int;
     return 0.0;  // below half the smallest subnormal
   }
   const long long excess = qbits - keep;  // >= 2: qbits >= 55 and keep <= 53
-  Integer mant = q >> static_cast<unsigned>(excess);
-  const Integer low = q - (mant << static_cast<unsigned>(excess));
-  const Integer half = Integer(1) << static_cast<unsigned>(excess - 1);
-  if (low > half || (low == half && (sticky || (mant & 1) != 0))) {
+  Integer mant = q;
+  mant >>= static_cast<unsigned>(excess);
+  Integer low = mant;
+  low <<= static_cast<unsigned>(excess);
+  low = q - low;  // the discarded bits
+  // Round to nearest, ties to even: up when the first discarded bit is set and either a later
+  // discarded bit, the division's remainder or the kept last bit is.
+  const auto half_bit = static_cast<unsigned>(excess - 1);
+  const bool above_half = boost::multiprecision::bit_test(low, half_bit);
+  boost::multiprecision::bit_unset(low, half_bit);
+  if (above_half && (low != 0 || sticky || boost::multiprecision::bit_test(mant, 0U))) {
     mant += 1;
   }
   return std::ldexp(mant.convert_to<double>(), static_cast<int>(excess - shift));

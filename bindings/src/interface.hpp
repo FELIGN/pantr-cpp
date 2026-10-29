@@ -9,13 +9,29 @@ namespace pantr::bindings {
 /// Version of the module's interface. pantr/_ext.py refuses a module whose version differs from
 /// its EXPECTED_INTERFACE, so a stale build fails at import instead of as a phantom regression.
 /// Bump both together with any change to what the module exposes.
-inline constexpr int kInterfaceVersion = 1;
+inline constexpr int kInterfaceVersion = 2;
 
 /// Register the translation of pantr's C++ exceptions to Python exceptions.
 void register_errors(nanobind::module_& m);
 
 /// Register the thread settings over the C++ pool and the shared-parallelism capsule.
 void register_parallel(nanobind::module_& m);
+
+/// Register the `quad` submodule (1D rules, PointsLattice, QuadratureRule).
+void register_quad(nanobind::module_& m);
+
+/// Register the `tolerance` submodule (the preset factors).
+void register_tolerance(nanobind::module_& m);
+
+/// Register the `basis` submodule (1D and tensor-product tabulation).
+void register_basis(nanobind::module_& m);
+
+/// Register the `change_basis` submodule (builders and process tables).
+void register_change_basis(nanobind::module_& m);
+
+/// Register the `_kernels` submodule: the interim surface through which Python code not yet ported
+/// reaches ported kernels (removed with the last such caller).
+void register_kernels(nanobind::module_& m);
 
 /// Register the `_testing` submodule (probes for tests and benchmarks; not a public API).
 void register_testing(nanobind::module_& m);
