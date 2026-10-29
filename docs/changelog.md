@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added
+- **`pantr.bezier.set_root_provider` and `get_root_provider`** select which root finder
+  `find_roots` and `find_monotone_root` use: `"builtin"` (pantr's own) or `"berf"` (BeRF-FR,
+  from the `pantr-berf` package). The initial choice comes from the `PANTR_ROOT_PROVIDER`
+  environment variable, read on first use (an unknown name raises `ValueError` then, not at
+  import); without it, `"berf"` when `pantr-berf` is installed, else `"builtin"`. Asking for
+  `"berf"` without the package raises `ImportError`. This is the runtime switch for the
+  certified finder the C++ port adds as an optional package.
+
 ### Rejected where it used to be accepted
 - **`num_intervals=0` is refused by all three knot-vector factories.**
   `create_uniform_open_knots` and `create_uniform_periodic_knots` documented
@@ -269,6 +278,42 @@
   `_bezier_utils._tabulate_Bernstein_basis_1D_core`,
   `_bezier_degree._degree_elevate_bezier_1d_core` and `_tabulate_Bernstein_basis_1D_serial_core`,
   and the attribute `Bezier._control_points`, whose work is now done in C++.
+
+- **Degree reduction (`Bezier.reduce_degree`, `degree_reduction_error`, `minimize_degree`),
+  fitting (`interpolate_bezier`, `fit_bezier`) and root finding (`find_roots`,
+  `find_monotone_root`) run in pantr's C++ library**; `pantr.bezier` is now a thin wrapper
+  over it, with the names, signatures and defaults it had. The reduction operators are
+  assembled in exact rationals as before (now Boost.Multiprecision) and are the same bits, and
+  `reduce_degree`, `minimize_degree` and the roots of both root finders reproduce the previous
+  release's values bit for bit on `float32` and `float64` (measured over random and special-value
+  inputs); `degree_reduction_error` can move in the last bits (the Gram contraction is summed in
+  another order). The fits' singular value decomposition is Eigen's instead of LAPACK's, so a
+  fit moves within the bound the Vandermonde matrix's conditioning gives (a few units in the last
+  place for a well-conditioned grid; more for clustered nodes, especially in `float32`). Batch
+  root finding runs on pantr's thread pool with the GIL released.
+- **`find_roots` warns when Bézier clipping gives up on part of `[0, 1]`** (`RuntimeWarning`,
+  "... exhausted the root finder's subdivision budget ..."). Clipping abandons an interval that
+  is still wider than `tol` after 64 levels of subdivision; it used to do so silently. A `tol`
+  smaller than the spacing of doubles at a root reaches that depth (no interval can narrow to
+  it), as can, in principle, a run of clips that each remove little. The roots returned are the
+  same as before; only the warning is new.
+- **`fit_bezier` and `interpolate_bezier` with `float16` or `longdouble` values compute in
+  `float64`** and return a `float64` Bézier, as `Bezier` itself now stores those dtypes (above).
+  The previous release failed in its Numba basis kernel (`NotImplementedError` for `float16`, a
+  Numba `TypingError` for `longdouble`) whenever a direction had more than one node.
+- **A NaN or infinite node in `fit_bezier`** (or a scattered point) raises `ValueError` ("SVD did
+  not converge"), as before, but no longer `numpy.linalg.LinAlgError` (a `ValueError`
+  subclass), since the decomposition is no longer NumPy's.
+- **A negative `degree` for scattered `fit_bezier` nodes** is a `ValueError` ("degree must be
+  non-negative"); the previous release raised `IndexError` for `-1` and NumPy's "negative
+  dimensions are not allowed" below it.
+- The private modules `pantr.bezier._bezier_degree`, `_bezier_utils`, `_root_finding_core`,
+  `_yuksel_core`, `_clipping_core` and `_batch_core`, and the helpers
+  `_bezier_interpolate._bernstein_interpolate`, `_bernstein_vandermonde_svd`,
+  `_build_bernstein_pinv`, `_build_nd_bernstein_vandermonde`, `_fit_from_scattered`,
+  `_fit_from_values` and `_find_roots._validate_coeff_array`, are gone with the Numba kernels and
+  NumPy code they held, whose work is now done in C++. The B-spline reduction's weight check
+  moved to `pantr.bspline._bspline_degree`.
 
 ### Fixed
 - `AABB` can be pickled and copied (`pickle`, `copy.copy`, `copy.deepcopy`); each raised
