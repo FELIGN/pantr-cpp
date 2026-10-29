@@ -10,7 +10,8 @@ The rule:
 - ``PANTR_ISA`` set means exactly that rung (``generic`` names the base module). A rung that is not
   installed, or that the CPU cannot run, raises :class:`ImportError`: an explicit choice never
   falls through to another module, so a benchmark cannot silently measure the wrong one.
-- Unset means the best installed rung the CPU supports, then the base module. On x86-64 the
+- Unset, empty or blank means the best installed rung the CPU supports, then the base module
+  (an empty value clears a choice, as an empty ``PANTR_NUM_THREADS`` does). On x86-64 the
   ``pantr._pantr_cpu`` probe decides (CPUID and the OS's vector state); NEON is the AArch64
   baseline and needs no probe.
 

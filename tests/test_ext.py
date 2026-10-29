@@ -89,6 +89,16 @@ def test_override_loads_exactly_that_rung(
     assert _isa.load("pkg", "_m").__name__ == _isa.module_name("pkg", "_m", rung)
 
 
+@pytest.mark.parametrize("value", ["", "  "])
+def test_empty_override_means_unset(
+    fake_modules: dict[str, object], monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    """An empty (or blank) PANTR_ISA is read as unset, as an empty PANTR_NUM_THREADS is."""
+    _install(fake_modules, "generic", "v3", "v4")
+    monkeypatch.setenv(_isa.ENV_VAR, value)
+    assert _isa.load("pkg", "_m").__name__ == "pkg._m_v3"
+
+
 def test_override_of_a_missing_rung_raises(
     fake_modules: dict[str, object], monkeypatch: pytest.MonkeyPatch
 ) -> None:
