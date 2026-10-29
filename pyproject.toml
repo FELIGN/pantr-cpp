@@ -90,6 +90,9 @@ dev = [
   "pytest-xdist>=3,<4",
   "mypy>=1.10,<2",
   "ruff>=0.12.0,<0.13",
+  # Pinned exactly: clang-format's output changes between major versions, and CI checks the
+  # C++ sources against this one (`clang-format --dry-run --Werror`).
+  "clang-format==18.1.8",
   "pre-commit>=3.6,<4",
   "import-linter>=2.0,<3",
   "pantr[mpi]",
@@ -135,6 +138,24 @@ PANTR_INSTALL = "OFF"
 PANTR_NATIVE_ARCH = "OFF"
 PANTR_STABLE_ABI = "ON"
 PANTR_MULTI_ISA = "ON"
+
+[tool.cibuildwheel]
+# One cp312-abi3 wheel per platform (R8: Linux x86_64 and aarch64, macOS arm64, Windows amd64),
+# built by CI leg 11. No musllinux, no 32-bit Windows (the x86-64 rungs have no 32-bit target).
+build = ["cp312-*"]
+skip = ["*-musllinux_*", "*-win32"]
+build-verbosity = 1
+manylinux-x86_64-image = "manylinux_2_28"
+manylinux-aarch64-image = "manylinux_2_28"
+# The suite against the installed wheel, once per rung the runner executes (tools/wheel_test.py
+# sets PANTR_TEST_INSTALLED=1 and empties pytest.ini's pythonpath, so the checkout's src is never
+# imported).
+test-requires = ["pytest>=7.4,<9", "pytest-xdist>=3,<4"]
+test-command = "python {project}/tools/wheel_test.py {project} -n 4"
+
+[tool.cibuildwheel.macos]
+# Floating-point std::to_chars needs macOS 13.4 (design DR-8).
+environment = { MACOSX_DEPLOYMENT_TARGET = "13.4" }
 
 [tool.importlinter]
 root_package = "pantr"

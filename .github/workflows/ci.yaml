@@ -1,3 +1,16 @@
+# CI for pantr: the Python suite over the compiled extension, the C++ library, and the wheels.
+#
+# The legs follow design/port_design.md, section 8.2 (numbered there 1 to 12, plus the MSVC leg,
+# 13 here; the BeRF-FR provider leg lands with that provider). Every push of the port branch runs
+# all of them, nothing reduced.
+#
+# The extension is built once where legs can share it: `build-ext` compiles the stable-ABI
+# (cp312-abi3) modules on Python 3.12, and the tests, docs and no-MPI legs download them into
+# src/pantr. The same binary then runs under 3.12, 3.13 and 3.14, so the stable-ABI claim is
+# tested rather than assumed. No job installs pantr editable: a source install compiles the
+# extension, so jobs install their tools from pyproject.toml with tools/requirements.py and build
+# with `make ext` where they need to.
+
 name: CI
 
 on:
@@ -6,394 +19,450 @@ on:
   pull_request:
     branches: [main]
 
+# A second push cancels the first run's jobs, and a cancelled job reads as a failure in
+# `gh pr checks`: confirm a job was cancelled before reacting to it.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # The compiler of the Linux C++ legs and extension builds. GCC 14 is the first GCC whose
+  # -ffp-contract=on contracts within expressions (design section 1.3).
+  CC: gcc-14
+  CXX: g++-14
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  # Fetched third-party sources (pinned by SHA), shared by every job that builds C++.
+  FETCHCONTENT_BASE_DIR: ${{ github.workspace }}/build/_deps
+
 jobs:
+  # --- 1 ------------------------------------------------------------------------------------------
   lint:
-    name: Lint (Ruff)
-    runs-on: ubuntu-latest
+    name: "1 lint (ruff, ruff format, clang-format)"
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
-    strategy:
-      matrix:
-        python-version: ["3.11", "3.13", "3.14"]
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Set up Python
-        id: setup-python
-        uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
         with:
-          python-version: ${{ matrix.python-version }}
-          cache: "pip"
-          cache-dependency-path: |
-            pyproject.toml
-
-      - name: Cache Ruff cache
-        uses: actions/cache@v5
-        with:
-          path: ~/.cache/ruff
-          key: ${{ runner.os }}-ruff-${{ hashFiles('ruff.toml', '.ruff.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-ruff-
-
-      - name: Cache virtualenv
-        id: cache-venv
-        uses: actions/cache@v5
-        with:
-          path: .venv
-          key: ${{ runner.os }}-venv-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('pyproject.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-venv-${{ steps.setup-python.outputs.python-version }}-
-
-      - name: Create venv and install dev deps (on cache miss)
-        if: steps.cache-venv.outputs.cache-hit != 'true'
-        run: |
-          python -m venv .venv
-          . .venv/bin/activate
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
-
+          python-version: "3.12"
+      - name: Install the linters
+        run: python -m pip install $(python tools/requirements.py dev | grep -E '^(ruff|clang-format)[<>=]')
       - name: Ruff lint
-        run: |
-          . .venv/bin/activate
-          make ruff-lint
-
+        run: ruff check .
       - name: Ruff formatting check
+        run: ruff format --check .
+      - name: clang-format check
         run: |
-          . .venv/bin/activate
-          make ruff-format-check
+          git ls-files -- 'include/*.hpp' 'cpp/*.hpp' 'cpp/*.cpp' 'bindings/*.hpp' 'bindings/*.cpp' \
+            | xargs clang-format --dry-run --Werror
 
-      - name: Import boundary check (import-linter)
-        run: |
-          . .venv/bin/activate
-          make import-lint
-
+  # --- 2 ------------------------------------------------------------------------------------------
   type-check:
-    name: Type check (mypy)
-    runs-on: ubuntu-latest
+    name: "2 type-check (mypy, py${{ matrix.python-version }})"
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
+      fail-fast: false
       matrix:
-        python-version: ["3.11", "3.13", "3.14"]
+        python-version: ["3.12", "3.13", "3.14"]
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Set up Python
-        id: setup-python
-        uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
-          cache: "pip"
-          cache-dependency-path: |
-            pyproject.toml
-
-      - name: Cache mypy cache
-        uses: actions/cache@v5
-        with:
-          path: .mypy_cache
-          key: ${{ runner.os }}-mypy-${{ hashFiles('pyproject.toml', 'mypy.ini') }}
-          restore-keys: |
-            ${{ runner.os }}-mypy-
-
-      - name: Cache virtualenv
-        id: cache-venv
-        uses: actions/cache@v5
-        with:
-          path: .venv
-          key: ${{ runner.os }}-venv-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('pyproject.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-venv-${{ steps.setup-python.outputs.python-version }}-
-
-      - name: Create venv and install dev deps (on cache miss)
-        if: steps.cache-venv.outputs.cache-hit != 'true'
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      # mypy reads the committed extension stubs, so nothing is built here.
+      - name: Install the dependencies
         run: |
-          python -m venv .venv
-          . .venv/bin/activate
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
-
+          python tools/requirements.py dev > requirements.txt
+          python -m pip install -r requirements.txt
       - name: Type check
-        run: |
-          . .venv/bin/activate
-          make type-check
+        run: make type-check
 
-  tests:
-    name: Tests with coverage
-    needs: [lint, type-check]
-    runs-on: ubuntu-latest
+  # --- 3: the extension, built once ------------------------------------------------------------
+  build-ext:
+    name: "3 build the extension (abi3, every rung) and check its stubs"
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
-    strategy:
-      matrix:
-        python-version: ["3.11", "3.13", "3.14"]
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install the build and runtime dependencies
+        run: |
+          python tools/requirements.py build > requirements.txt
+          python tools/requirements.py dev | grep '^ruff' >> requirements.txt
+          python -m pip install -r requirements.txt "cmake>=3.28" ninja
+      - uses: actions/cache@v5
+        with:
+          path: build/_deps
+          key: deps-${{ hashFiles('cmake/PantrDependencies.cmake') }}
+      - name: Build, warnings as errors
+        run: make ext EXT_CMAKE_ARGS="-DPANTR_WARNINGS_AS_ERRORS=ON"
+      - name: The committed stubs match the build
+        run: make stubs-check
+      - name: No module is compiled for size or stripped
+        run: |
+          if ninja -C build/dev -t commands | grep -E -- '(^| )-Os( |$)|-Wl,-s( |$)'; then exit 1; fi
+          file src/pantr/_pantr*.so
+          if file src/pantr/_pantr*.so | grep -v 'not stripped'; then exit 1; fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ext-linux-abi3
+          path: src/pantr/_pantr*.so
+          if-no-files-found: error
 
-      - name: Set up Python
-        id: setup-python
-        uses: actions/setup-python@v6
+  # --- 3: one binary, three interpreters --------------------------------------------------------
+  tests:
+    name: "3 tests, doctests, coverage (py${{ matrix.python-version }})"
+    needs: [build-ext]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
-          cache: "pip"
-          cache-dependency-path: |
-            pyproject.toml
-
-      - name: Cache virtualenv
-        id: cache-venv
-        uses: actions/cache@v5
-        with:
-          path: .venv
-          key: ${{ runner.os }}-venv-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('pyproject.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-venv-${{ steps.setup-python.outputs.python-version }}-
-
-      - name: Cache Numba compiled objects
-        uses: actions/cache@v5
-        with:
-          path: |
-            src/pantr/basis/__pycache__
-            src/pantr/bezier/__pycache__
-            src/pantr/bspline/__pycache__
-          key: ${{ runner.os }}-numba-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('src/**/*.py') }}
-          restore-keys: |
-            ${{ runner.os }}-numba-${{ steps.setup-python.outputs.python-version }}-
-
-      - name: Install OpenMPI
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install OpenMPI (mpi4py, in the dev extra, builds against it)
         run: |
-          # The runner images do not name a mirror in sources.list: they point apt at
-          # a mirror *list*, `mirror+file:/etc/apt/apt-mirrors.txt`, whose first entry
-          # is azure.archive.ubuntu.com. That host intermittently stops answering, and
-          # apt then spends a full timeout per index file before falling back to the
-          # canonical mirror -- which is why this step has taken 16 s and 240 s on
-          # identical input, and once sat past 38 minutes with a log full of `Ign`
-          # lines. Replacing the list with a single entry removes the retry round: apt
-          # either reaches the mirror or fails, and does not spend minutes finding out.
-          echo 'https://archive.ubuntu.com/ubuntu/' | sudo tee /etc/apt/apt-mirrors.txt
           sudo apt-get update -q
           sudo apt-get install -y libopenmpi-dev openmpi-bin
-
-      - name: Create venv and install dev deps (on cache miss)
-        if: steps.cache-venv.outputs.cache-hit != 'true'
+      - name: Install the dependencies
         run: |
-          python -m venv .venv
-          . .venv/bin/activate
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
-
-      - name: Run tests with JIT (populates Numba cache)
-        run: |
-          . .venv/bin/activate
-          make test PYTEST_WORKERS=auto
-
-      # On the full matrix rather than once, because an example can drift from the code
-      # on any version and a numpy release that prints a value differently breaks it on
-      # one leg only. A step here rather than a job of its own: it reuses this job's
-      # venv, runs in under a second, and wants no coverage. The target sets
-      # NUMBA_DISABLE_JIT=1 -- see the Makefile for why.
-      - name: Run doctests
-        run: |
-          . .venv/bin/activate
-          make doctest
-
-      - name: Run pytest with coverage
-        run: |
-          . .venv/bin/activate
-          make coverage
-
-      - name: Upload coverage xml
-        uses: actions/upload-artifact@v7
+          python tools/requirements.py dev > requirements.txt
+          python -m pip install -r requirements.txt
+      # Downloaded after the checkout, so the modules are newer than every source and the test
+      # session's staleness check passes.
+      - uses: actions/download-artifact@v8
+        with:
+          name: ext-linux-abi3
+          path: src/pantr
+      - name: Import boundaries (import-linter, against this tree)
+        run: make import-lint
+      - name: Tests (JIT on)
+        run: make test PYTEST_WORKERS=auto
+      - name: Doctests
+        run: make doctest
+      - name: Coverage
+        run: make coverage
+      - uses: actions/upload-artifact@v7
         with:
           name: coverage-xml-py${{ matrix.python-version }}-run${{ github.run_attempt }}
           path: coverage.xml
           if-no-files-found: error
 
+  # --- 4 ------------------------------------------------------------------------------------------
   docs:
-    name: Build documentation
-    needs: [lint, type-check]
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    name: "4 docs (Sphinx -W)"
+    needs: [build-ext]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Cache Sphinx doctrees
-        uses: actions/cache@v5
-        with:
-          path: docs/_build/doctrees
-          key: ${{ runner.os }}-sphinx-${{ hashFiles('docs/**/*.md', 'docs/conf.py', 'pyproject.toml', 'src/**/*.py') }}
-
-      - name: Cache intersphinx inventories
-        id: cache-intersphinx
-        uses: actions/cache@v5
-        with:
-          path: docs/_intersphinx
-          key: ${{ runner.os }}-intersphinx-${{ hashFiles('docs/conf.py') }}
-          restore-keys: |
-            ${{ runner.os }}-intersphinx-
-
-      - name: Set up Python
-        id: setup-python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.11"
-          cache: "pip"
-          cache-dependency-path: |
-            pyproject.toml
-
-      - name: Cache virtualenv
-        id: cache-venv
-        uses: actions/cache@v5
-        with:
-          path: .venv
-          key: ${{ runner.os }}-venv-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('pyproject.toml', 'docs/**/*.md', 'docs/conf.py') }}
-          restore-keys: |
-            ${{ runner.os }}-venv-${{ steps.setup-python.outputs.python-version }}-
-
-      - name: Create venv and install docs deps (on cache miss)
-        if: steps.cache-venv.outputs.cache-hit != 'true'
-        run: |
-          python -m venv .venv
-          . .venv/bin/activate
-          python -m pip install --upgrade pip
-          pip install -e ".[docs]"
-
-      - name: Download intersphinx inventories (on cache miss)
-        if: steps.cache-intersphinx.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p docs/_intersphinx
-          curl -fsSL --retry 3 --retry-delay 2 https://docs.python.org/3/objects.inv \
-            -o docs/_intersphinx/python.inv || rm -f docs/_intersphinx/python.inv
-          curl -fsSL --retry 3 --retry-delay 2 https://numpy.org/doc/stable/objects.inv \
-            -o docs/_intersphinx/numpy.inv || rm -f docs/_intersphinx/numpy.inv
-          curl -fsSL --retry 3 --retry-delay 2 https://docs.scipy.org/doc/scipy/objects.inv \
-            -o docs/_intersphinx/scipy.inv || rm -f docs/_intersphinx/scipy.inv
-          curl -fsSL --retry 3 --retry-delay 2 https://matplotlib.org/stable/objects.inv \
-            -o docs/_intersphinx/matplotlib.inv || rm -f docs/_intersphinx/matplotlib.inv
-
-      - name: Build docs
-        run: |
-          . .venv/bin/activate
-          make docs SPHINXOPTS="-W --keep-going -j auto"
-
-  mpi-tests:
-    name: MPI tests (mpiexec)
-    needs: [lint, type-check]
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    # The only job that exercises the real distributed stack under multiple ranks. It
-    # builds mpi4py from source against the system OpenMPI -- the prebuilt wheels are not
-    # guaranteed to match the system launcher's wire protocol. PANTR_RUN_MPI enables the
-    # otherwise-skipped tests under tests/mpi/.
-    env:
-      PANTR_RUN_MPI: "1"
-      PIP_NO_BINARY: "mpi4py"
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Set up Python
-        id: setup-python
-        uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-          cache: "pip"
-          cache-dependency-path: |
-            pyproject.toml
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install the docs dependencies
+        run: |
+          python tools/requirements.py docs > requirements.txt
+          python -m pip install -r requirements.txt
+      - uses: actions/download-artifact@v8
+        with:
+          name: ext-linux-abi3
+          path: src/pantr
+      - name: Build the docs
+        run: make docs SPHINXOPTS="-W --keep-going -j auto"
 
+  # --- 5 ------------------------------------------------------------------------------------------
+  cpp:
+    name: "5 cpp (${{ matrix.compiler }}, ${{ matrix.isa }})"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc-14, clang-18]
+        isa: [baseline, x86-64-v3, scalar]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/cache@v5
+        with:
+          path: build/_deps
+          key: deps-${{ hashFiles('cmake/PantrDependencies.cmake') }}
+      - name: Install Ninja
+        run: sudo apt-get install -y ninja-build
+      - name: Configure, build and test (Release, warnings as errors, no native ISA)
+        run: |
+          case "${{ matrix.compiler }}" in
+            gcc-14) preset=gcc-release; cxx=g++-14 ;;
+            clang-18) preset=clang-release; cxx=clang++-18 ;;
+          esac
+          case "${{ matrix.isa }}" in
+            baseline) extra=() ;;
+            x86-64-v3) extra=(-DCMAKE_CXX_FLAGS=-march=x86-64-v3) ;;
+            scalar) extra=(-DPANTR_FORCE_SCALAR=ON) ;;
+          esac
+          cmake --preset "$preset" -DCMAKE_CXX_COMPILER="$cxx" "${extra[@]}"
+          cmake --build --preset "$preset"
+          ctest --preset "$preset"
+
+  # --- 6 ------------------------------------------------------------------------------------------
+  cpp-asan-ubsan:
+    name: "6 cpp-asan-ubsan (clang-18)"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/cache@v5
+        with:
+          path: build/_deps
+          key: deps-${{ hashFiles('cmake/PantrDependencies.cmake') }}
+      - name: Install Ninja
+        run: sudo apt-get install -y ninja-build
+      # The preset sets -fno-sanitize-recover=undefined: without it UBSan reports and exits 0.
+      - name: Configure, build and test
+        run: |
+          cmake --preset clang-asan-ubsan -DCMAKE_CXX_COMPILER=clang++-18
+          cmake --build --preset clang-asan-ubsan
+          ctest --preset clang-asan-ubsan
+
+  # --- 7 ------------------------------------------------------------------------------------------
+  cpp-tsan:
+    name: "7 cpp-tsan (gcc-14)"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/cache@v5
+        with:
+          path: build/_deps
+          key: deps-${{ hashFiles('cmake/PantrDependencies.cmake') }}
+      - name: Install Ninja
+        run: sudo apt-get install -y ninja-build
+      # A runner kernel that randomizes mmap more than the TSan runtime accepts stops it at start;
+      # this lowers the randomization for the job (a runner setting, not a test setting).
+      - name: Let TSan map its shadow memory
+        run: sudo sysctl vm.mmap_rnd_bits=28
+      - name: Configure, build and test
+        run: |
+          cmake --preset gcc-tsan -DCMAKE_CXX_COMPILER=g++-14
+          cmake --build --preset gcc-tsan
+          ctest --preset gcc-tsan
+
+  # --- 8 ------------------------------------------------------------------------------------------
+  install-consumer:
+    name: "8 install-consumer (find_package with the mpi component, poisoned mpi.h)"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/cache@v5
+        with:
+          path: build/_deps
+          key: deps-${{ hashFiles('cmake/PantrDependencies.cmake') }}
+      - name: Install Ninja and an MPI (the consumer asks for the mpi component)
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y ninja-build libopenmpi-dev openmpi-bin
+      # The install tests put pantr in a fresh prefix and build cpp/tests/consumer against it with
+      # every package-search shortcut off; the header tests compile each core header with a
+      # poisoned mpi.h first on the include path.
+      - name: Configure, build and run the install and header tests
+        run: |
+          cmake --preset gcc-release -DCMAKE_CXX_COMPILER=g++-14
+          cmake --build --preset gcc-release
+          ctest --preset gcc-release -R "install|header|notices"
+
+  # --- 9 ------------------------------------------------------------------------------------------
+  mpi:
+    name: "9 mpi (OpenMPI, mpiexec -n 2 and 3)"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      PANTR_RUN_MPI: "1"
+      # mpi4py built against the runner's MPI, so launcher and library agree.
+      PIP_NO_BINARY: mpi4py
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - name: Install OpenMPI
         run: |
-          # The runner images do not name a mirror in sources.list: they point apt at
-          # a mirror *list*, `mirror+file:/etc/apt/apt-mirrors.txt`, whose first entry
-          # is azure.archive.ubuntu.com. That host intermittently stops answering, and
-          # apt then spends a full timeout per index file before falling back to the
-          # canonical mirror -- which is why this step has taken 16 s and 240 s on
-          # identical input, and once sat past 38 minutes with a log full of `Ign`
-          # lines. Replacing the list with a single entry removes the retry round: apt
-          # either reaches the mirror or fails, and does not spend minutes finding out.
-          echo 'https://archive.ubuntu.com/ubuntu/' | sudo tee /etc/apt/apt-mirrors.txt
           sudo apt-get update -q
           sudo apt-get install -y libopenmpi-dev openmpi-bin
-
-      - name: Cache virtualenv
-        id: cache-venv
-        uses: actions/cache@v5
+      - name: Install the dependencies
+        run: |
+          python tools/requirements.py dev build > requirements.txt
+          python -m pip install -r requirements.txt "cmake>=3.28" ninja
+      - uses: actions/cache@v5
         with:
-          path: .venv
-          key: ${{ runner.os }}-venv-${{ steps.setup-python.outputs.python-version }}-mpi-${{ hashFiles('pyproject.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-venv-${{ steps.setup-python.outputs.python-version }}-mpi-
+          path: build/_deps
+          key: deps-${{ hashFiles('cmake/PantrDependencies.cmake') }}
+      # Built here rather than downloaded: the MPI extension of a later stage is built from source
+      # against this runner's MPI, in this leg.
+      - name: Build the extension
+        run: make ext EXT_MULTI_ISA=OFF
+      - name: mpi4py matches the launcher
+        run: mpiexec --oversubscribe -n 2 python -c "from mpi4py import MPI; assert MPI.COMM_WORLD.size == 2"
+      - name: MPI tests, 2 ranks
+        run: mpiexec --oversubscribe -n 2 python -m pytest tests/mpi/ -p no:cacheprovider
+      - name: MPI tests, 3 ranks
+        run: mpiexec --oversubscribe -n 3 python -m pytest tests/mpi/ -p no:cacheprovider
 
-      - name: Create venv and install (with mpi4py built from source, on cache miss)
-        if: steps.cache-venv.outputs.cache-hit != 'true'
-        run: |
-          python -m venv .venv
-          . .venv/bin/activate
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
-
-      - name: Verify mpi4py matches the launcher
-        run: |
-          . .venv/bin/activate
-          mpiexec --oversubscribe -n 2 python -c "from mpi4py import MPI; assert MPI.COMM_WORLD.size == 2"
-
-      - name: Run MPI smoke tests (2 ranks)
-        run: |
-          . .venv/bin/activate
-          mpiexec --oversubscribe -n 2 python -m pytest tests/mpi/ --no-cov -p no:cacheprovider
-
-      - name: Run MPI smoke tests (3 ranks)
-        run: |
-          . .venv/bin/activate
-          mpiexec --oversubscribe -n 3 python -m pytest tests/mpi/ --no-cov -p no:cacheprovider
-
-  adversarial-sweep:
-    name: Adversarial sweep (Numba bounds check)
-    needs: [lint, type-check]
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    # The only job that compiles the Layer-3 kernels with bounds checking on. It needs a
-    # job of its own because NUMBA_BOUNDSCHECK is not part of the Numba cache key, so it is
-    # silently ignored for a cache=True kernel that was already compiled without it -- and
-    # every pantr kernel is cache=True. The test hands the sweep a fresh cache directory
-    # per run, which means recompiling everything it touches, hence the separate job rather
-    # than a step in `tests`. PANTR_RUN_SWEEP enables the otherwise-skipped test.
+  # --- 10 -----------------------------------------------------------------------------------------
+  sweep:
+    name: "10 sweep (sanitized extension, Numba bounds checks, slow tests)"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
     env:
       PANTR_RUN_SWEEP: "1"
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Set up Python
-        id: setup-python
-        uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-          cache: "pip"
-          cache-dependency-path: |
-            pyproject.toml
-
-      - name: Cache virtualenv
-        id: cache-venv
-        uses: actions/cache@v5
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install OpenMPI (mpi4py, in the dev extra, builds against it)
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y libopenmpi-dev openmpi-bin
+      - name: Install the dependencies
+        run: |
+          python tools/requirements.py dev build > requirements.txt
+          python -m pip install -r requirements.txt "cmake>=3.28" ninja
+      - uses: actions/cache@v5
         with:
-          path: .venv
-          key: ${{ runner.os }}-venv-${{ steps.setup-python.outputs.python-version }}-sweep-${{ hashFiles('pyproject.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-venv-${{ steps.setup-python.outputs.python-version }}-sweep-
-
-      - name: Create venv and install (on cache miss)
-        if: steps.cache-venv.outputs.cache-hit != 'true'
+          path: build/_deps
+          key: deps-${{ hashFiles('cmake/PantrDependencies.cmake') }}
+      # ASan, UBSan without recovery, and libstdc++'s assertions in every module. The interpreter
+      # is not sanitized, so the runtimes are preloaded and leak detection is off (CPython's own
+      # allocations alive at exit would be reported).
+      - name: Build the sanitized extension
+        run: >-
+          make ext EXT_BUILD_DIR=build/sweep EXT_MULTI_ISA=OFF
+          EXT_CMAKE_ARGS="-DCMAKE_BUILD_TYPE=RelWithDebInfo
+          '-DCMAKE_CXX_FLAGS=-fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer -D_GLIBCXX_ASSERTIONS'
+          -DCMAKE_MODULE_LINKER_FLAGS=-fsanitize=address,undefined"
+      - name: Adversarial sweep and slow tests, under the sanitizers
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         run: |
-          python -m venv .venv
-          . .venv/bin/activate
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          export LD_PRELOAD="$(g++-14 -print-file-name=libasan.so):$(g++-14 -print-file-name=libubsan.so)"
+          python -m pytest tests/test_adversarial_sweep.py -v -p no:cacheprovider
+          python -m pytest -m slow -n 4 -p no:cacheprovider
 
-      - name: Run the bounds-checked smoke sweep
+  # --- 11 -----------------------------------------------------------------------------------------
+  wheels:
+    name: "11 wheels (${{ matrix.label }})"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, label: linux-x86_64, archs: x86_64 }
+          - { os: ubuntu-24.04-arm, label: linux-aarch64, archs: aarch64 }
+          - { os: macos-14, label: macos-arm64, archs: arm64 }
+          - { os: windows-2022, label: windows-amd64, archs: AMD64 }
+    steps:
+      - uses: actions/checkout@v7
+      # Builds the cp312-abi3 wheel, repairs it, installs it in a clean environment and runs the
+      # suite against it once per rung the runner can execute ([tool.cibuildwheel] in
+      # pyproject.toml, tools/wheel_test.py).
+      - uses: pypa/cibuildwheel@v4.3.5
+        env:
+          CIBW_ARCHS: ${{ matrix.archs }}
+      - name: The wheel carries no BeRF-FR file
+        shell: bash
         run: |
-          . .venv/bin/activate
-          python -m pytest tests/test_adversarial_sweep.py -v --no-cov -p no:cacheprovider
+          for wheel in wheelhouse/*.whl; do python -m zipfile -l "$wheel"; done | tee wheel-contents.txt
+          if grep -i berf wheel-contents.txt; then exit 1; fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheel-${{ matrix.label }}
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+
+  # --- 12 -----------------------------------------------------------------------------------------
+  no-mpi:
+    name: "12 no-mpi (no MPI library, no mpi4py)"
+    needs: [build-ext]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install the runtime and test dependencies only
+        run: |
+          python tools/requirements.py > requirements.txt
+          python tools/requirements.py dev | grep -E '^pytest(-xdist)?[<>=]' >> requirements.txt
+          python -m pip install -r requirements.txt
+          if python -c "import mpi4py"; then exit 1; fi
+      - uses: actions/download-artifact@v8
+        with:
+          name: ext-linux-abi3
+          path: src/pantr
+      - name: pantr and pantr.mpi import without MPI
+        run: PYTHONPATH="$PWD/src" python -c "import pantr, pantr.mpi"
+      - name: The fake-communicator tests
+        run: >-
+          python -m pytest -n 4 -p no:cacheprovider tests/test_mpi*.py
+          tests/test_distributed_space.py tests/test_from_dolfinx.py
+
+  # --- 13 -----------------------------------------------------------------------------------------
+  msvc:
+    name: "13 msvc (C++ suite; the extension's loading tests)"
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Install the dependencies
+        shell: bash
+        run: |
+          python tools/requirements.py build > requirements.txt
+          python tools/requirements.py dev | grep -E '^pytest[<>=]' >> requirements.txt
+          python -m pip install -r requirements.txt "cmake>=3.28" ninja
+      - name: C++ suite (MSVC, Release, warnings as errors)
+        shell: bash
+        run: |
+          cmake -S . -B build/msvc -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=cl \
+            -DPANTR_NATIVE_ARCH=OFF -DPANTR_WARNINGS_AS_ERRORS=ON
+          cmake --build build/msvc
+          ctest --test-dir build/msvc --output-on-failure
+      - name: The extension, every rung, installed into src/pantr
+        shell: bash
+        run: |
+          cmake -S . -B build/msvc-ext -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=cl \
+            -DPython_EXECUTABLE="$(python -c 'import sys; print(sys.executable)')" \
+            -DPANTR_BUILD_PYTHON=ON -DPANTR_BUILD_TESTS=OFF -DPANTR_INSTALL=OFF \
+            -DPANTR_NATIVE_ARCH=OFF -DPANTR_MULTI_ISA=ON -DPANTR_BUILD_PYTHON_TEST_MODULES=ON \
+            -DPANTR_WARNINGS_AS_ERRORS=ON
+          cmake --build build/msvc-ext
+          cmake --install build/msvc-ext --component python --prefix src
+          cmake --install build/msvc-ext --component testing --prefix src
+      - name: Loading, ISA ladder, CPU probe, shared pool, thread settings
+        shell: bash
+        run: python -m pytest -p no:cacheprovider tests/test_ext.py tests/test_shared_parallelism.py tests/test_parallel.py
