@@ -6,6 +6,7 @@
 #include "pantr/config.hpp"
 #include "pantr/core/mdspan.hpp"
 #include "pantr/core/ndarray.hpp"
+#include "pantr/core/scalar.hpp"
 
 #include <cmath>
 #include <concepts>
@@ -27,7 +28,7 @@ namespace detail {
 /// Note:
 ///     Inputs are assumed to be correct (no validation performed).
 ///     For general use, call `tabulate_legendre_1d` instead.
-template <std::floating_point T>
+template <StorageFloat T>
 void tabulate_legendre_1d_kernel(int degree, std::span<const T> pts, mdview<T, 2> out) {
   T* data = out.data_handle();
   const std::size_t stride = static_cast<std::size_t>(degree) + 1;
@@ -70,7 +71,7 @@ void tabulate_legendre_1d_kernel(int degree, std::span<const T> pts, mdview<T, 2
 ///
 /// Raises:
 ///     value_error: `degree < 0`, or `out` has other extents.
-template <std::floating_point T>
+template <StorageFloat T>
 void tabulate_legendre_1d(int degree, std::span<const T> pts, mdview<T, 2> out) {
   detail::check_degree(degree);
   detail::check_out<T, 2>(out, {pts.size(), static_cast<std::size_t>(degree) + 1});
@@ -84,7 +85,7 @@ void tabulate_legendre_1d(int degree, std::span<const T> pts, mdview<T, 2> out) 
 ///
 /// Raises:
 ///     value_error: `degree < 0`.
-template <std::floating_point T>
+template <StorageFloat T>
 [[nodiscard]] NdArray<T> tabulate_legendre_1d(int degree, std::span<const T> pts) {
   detail::check_degree(degree);
   NdArray<T> out({pts.size(), static_cast<std::size_t>(degree) + 1});

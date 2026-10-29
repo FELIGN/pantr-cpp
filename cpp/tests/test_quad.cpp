@@ -2,6 +2,7 @@
 // defining equation of W, symmetry, and the exact constants of the presets.
 #include <doctest/doctest.h>
 
+#include <pantr/basis/lagrange_variant.hpp>
 #include <pantr/core/lambert_w.hpp>
 #include <pantr/quad/points_lattice.hpp>
 #include <pantr/quad/quadrature_rule.hpp>
@@ -29,13 +30,15 @@ TEST_CASE("tolerance: presets are K eps with K = 4, 64, 4096, exactly") {
 TEST_CASE("lambert_w0: solves w e^w = x, with W(0) = 0 and W(e) = 1") {
   CHECK(pantr::lambert_w0(0.0) == 0.0);
   CHECK(pantr::lambert_w0(std::numbers::e) == doctest::Approx(1.0).epsilon(4 * eps));
-  for (const double x : {1e-300, 1e-8, 0.5, 1.0, 1.884955592153876, 10.0, 1e3, 1e9, 1e300}) {
+  for (const double x : {1e-300, 1e-8, 0.5, 1.0, 1.884955592153876, 10.0, 1e3, 1e9, 1e300,
+                         2.818e307, std::numeric_limits<double>::max()}) {
     CAPTURE(x);
     const double w = pantr::lambert_w0(x);
-    // Residual of the defining equation, relative: |w e^w - x| / x is a few roundings of the
-    // product, amplified by w + 1 through the error in w (the condition number of x -> W(x) is
-    // 1 / (1 + W)); 16 (w + 1) eps covers both.
-    CHECK(std::fabs(w * std::exp(w) - x) <= 16.0 * (w + 1.0) * eps * x);
+    // The defining equation in log form, w + log(w) = log(x) (w > 0), which does not overflow
+    // near the largest double: an error dw in w moves the left side by dw (1 + 1/w), so a
+    // relative error of a few eps in w shows as a few eps of max(w, 1) there; the logs add one
+    // rounding each. 16 eps (1 + |log x|) covers both.
+    CHECK(std::fabs(w + std::log(w) - std::log(x)) <= 16.0 * eps * (1.0 + std::fabs(std::log(x))));
   }
   CHECK_THROWS_AS(static_cast<void>(pantr::lambert_w0(-1.0)), pantr::value_error);
   CHECK_THROWS_AS(static_cast<void>(pantr::lambert_w0(std::nan(""))), pantr::value_error);
@@ -130,6 +133,55 @@ TEST_CASE("quad: tanh-sinh nodes are interior, weights sum to 1, float keeps few
     CHECK(r.nodes.size() <= static_cast<std::size_t>(n));
   }
   CHECK(quad::tanh_sinh_1d<float>(200).nodes.size() < quad::tanh_sinh_1d<double>(200).nodes.size());
+}
+
+TEST_CASE("quad: tanh-sinh keeps the Python implementation's node counts (known answers)") {
+  // Counts of pantr 0.7's scipy-based rule (the Python suite's golden file pins the values too):
+  // they fix the step h (decay factor and Lambert W) and the truncation gap at once.
+  struct Count {
+    long long n;
+    std::size_t f64;
+    std::size_t f32;
+  };
+  for (const Count c :
+       {Count{2, 2, 2}, Count{3, 3, 3}, Count{7, 7, 7}, Count{50, 48, 36}, Count{100, 82, 62},
+        Count{200, 142, 106}, Count{544, 326, 244}, Count{1000, 546, 410}}) {
+    CAPTURE(c.n);
+    CHECK(quad::tanh_sinh_1d<double>(c.n).nodes.size() == c.f64);
+    CHECK(quad::tanh_sinh_1d<float>(c.n).nodes.size() == c.f32);
+  }
+}
+
+TEST_CASE("quad: float rules are the double rules rounded once") {
+  for (const long long n : {1LL, 5LL, 33LL}) {
+    const auto d = quad::gauss_legendre_1d<double>(n);
+    const auto f = quad::gauss_legendre_1d<float>(n);
+    const auto ld = quad::gauss_lobatto_legendre_1d<double>(n + 1);
+    const auto lf = quad::gauss_lobatto_legendre_1d<float>(n + 1);
+    for (std::size_t i = 0; i < d.nodes.size(); ++i) {
+      CHECK(f.nodes.data()[i] == static_cast<float>(d.nodes.data()[i]));
+      CHECK(f.weights.data()[i] == static_cast<float>(d.weights.data()[i]));
+    }
+    for (std::size_t i = 0; i < ld.nodes.size(); ++i) {
+      CHECK(lf.nodes.data()[i] == static_cast<float>(ld.nodes.data()[i]));
+    }
+  }
+}
+
+TEST_CASE("quad: every Lagrange node family is ascending (the Lagrange kernel relies on it)") {
+  using pantr::basis::LagrangeVariant;
+  for (const auto v : {LagrangeVariant::equispaces, LagrangeVariant::gauss_legendre,
+                       LagrangeVariant::gauss_lobatto_legendre, LagrangeVariant::chebyshev_1st,
+                       LagrangeVariant::chebyshev_2nd}) {
+    for (long long n = 2; n <= 80; ++n) {
+      const auto d = pantr::basis::lagrange_points<double>(v, n);
+      const auto f = pantr::basis::lagrange_points<float>(v, n);
+      for (std::size_t i = 1; i < d.size(); ++i) {
+        CHECK(d.data()[i] > d.data()[i - 1]);
+        CHECK(f.data()[i] >= f.data()[i - 1]);  // float may merge neighbours; never reorder
+      }
+    }
+  }
 }
 
 TEST_CASE("quad: PointsLattice validates, shares its rep, and orders all_points") {

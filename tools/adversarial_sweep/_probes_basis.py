@@ -16,11 +16,11 @@ including the ones that deliberately sit outside ``[0, 1]`` or carry ``NaN``.
 contract genuinely admits both, and the exceptions say why at the site. The decision is
 easy for this group and worth stating once: the only precondition any tabulator states is
 ``degree >= 0`` (plus a valid ``out``), and **no entry point here documents a domain for
-its evaluation points at all** -- Layer 1 is silent, and the one Layer-3 kernel that does
-made a domain claim, the retired Numba cardinal B-spline kernel's "Values are zero
-outside [0, 1]", was contradicted by the kernel itself, which extrapolated (the C++ kernel
-says it evaluates the polynomial pieces at every point). So an out-of-domain or ``NaN`` point is not an illegal input, it is an
-unspecified one: the call must still *return*, and what it returns is graded by the
+its evaluation points at all** -- Layer 1 is silent, and the one kernel that made a domain
+claim, the retired Numba cardinal B-spline kernel's "Values are zero outside [0, 1]", was
+contradicted by the kernel itself, which extrapolated (the C++ kernel says it evaluates the
+polynomial pieces at every point). So an out-of-domain or ``NaN`` point is not an illegal
+input, it is an unspecified one: the call must still *return*, and what it returns is graded by the
 finiteness check and nothing stronger.
 """
 

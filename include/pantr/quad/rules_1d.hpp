@@ -12,6 +12,7 @@
 #include "pantr/core/errors.hpp"
 #include "pantr/core/lambert_w.hpp"
 #include "pantr/core/ndarray.hpp"
+#include "pantr/core/scalar.hpp"
 #include "pantr/tolerance.hpp"
 
 #include <cmath>
@@ -30,7 +31,7 @@ namespace pantr::quad {
 /// Attributes:
 ///     nodes (NdArray<T>): The nodes, shape `(n,)`, ascending.
 ///     weights (NdArray<T>): The weights, shape `(n,)`.
-template <std::floating_point T>
+template <StorageFloat T>
 struct Rule1D {
   NdArray<T> nodes;
   NdArray<T> weights;
@@ -45,7 +46,7 @@ inline void check_n_pts(long long n_pts, long long min_pts) {
 }
 
 /// Map a rule on `[-1, 1]` (in double) to `[0, 1]` and round it to `T`.
-template <std::floating_point T>
+template <StorageFloat T>
 Rule1D<T> to_unit_interval(const std::vector<double>& x, const std::vector<double>& w) {
   Rule1D<T> rule{NdArray<T>({x.size()}), NdArray<T>({w.size()})};
   for (std::size_t i = 0; i < x.size(); ++i) {
@@ -100,7 +101,7 @@ inline bool newton_converged(double dx, double x) {
 ///
 /// Raises:
 ///     value_error: `n_pts < 1`.
-template <std::floating_point T>
+template <StorageFloat T>
 [[nodiscard]] Rule1D<T> trapezoidal_1d(long long n_pts) {
   detail::check_n_pts(n_pts, 1);
   const auto n = static_cast<std::size_t>(n_pts);
@@ -139,7 +140,7 @@ template <std::floating_point T>
 /// Raises:
 ///     value_error: `n_pts < 1`.
 ///     state_error: Newton's iteration did not converge (not observed; a loud bound).
-template <std::floating_point T>
+template <StorageFloat T>
 [[nodiscard]] Rule1D<T> gauss_legendre_1d(long long n_pts) {
   detail::check_n_pts(n_pts, 1);
   const auto n = static_cast<std::size_t>(n_pts);
@@ -199,7 +200,7 @@ template <std::floating_point T>
 /// Raises:
 ///     value_error: `n_pts < 2`.
 ///     state_error: Newton's iteration did not converge (not observed; a loud bound).
-template <std::floating_point T>
+template <StorageFloat T>
 [[nodiscard]] Rule1D<T> gauss_lobatto_legendre_1d(long long n_pts) {
   detail::check_n_pts(n_pts, 2);
   const auto n = static_cast<std::size_t>(n_pts);
@@ -250,7 +251,7 @@ template <std::floating_point T>
 ///
 /// Raises:
 ///     value_error: `n_pts < 1`.
-template <std::floating_point T>
+template <StorageFloat T>
 [[nodiscard]] Rule1D<T> chebyshev_gauss_1st_kind_1d(long long n_pts) {
   detail::check_n_pts(n_pts, 1);
   const auto n = static_cast<std::size_t>(n_pts);
@@ -277,7 +278,7 @@ template <std::floating_point T>
 ///
 /// Raises:
 ///     value_error: `n_pts < 2`.
-template <std::floating_point T>
+template <StorageFloat T>
 [[nodiscard]] Rule1D<T> chebyshev_gauss_2nd_kind_1d(long long n_pts) {
   detail::check_n_pts(n_pts, 2);
   const auto n = static_cast<std::size_t>(n_pts);
@@ -305,7 +306,7 @@ template <std::floating_point T>
 ///
 /// Raises:
 ///     value_error: `n_pts < 2`.
-template <std::floating_point T>
+template <StorageFloat T>
 [[nodiscard]] NdArray<T> modified_chebyshev_nodes_1d(long long n_pts) {
   detail::check_n_pts(n_pts, 2);
   const auto n = static_cast<std::size_t>(n_pts);
@@ -361,7 +362,7 @@ inline constexpr double tanh_sinh_decay_factor = 0.6;
 /// Raises:
 ///     value_error: `n_pts < 1`.
 ///     state_error: The Lambert W iteration did not converge (not observed; a loud bound).
-template <std::floating_point T>
+template <StorageFloat T>
 [[nodiscard]] Rule1D<T> tanh_sinh_1d(long long n_pts) {
   detail::check_n_pts(n_pts, 1);
   const auto n = static_cast<std::size_t>(n_pts);

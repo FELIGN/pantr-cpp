@@ -6,6 +6,7 @@
 #include "pantr/config.hpp"
 #include "pantr/core/mdspan.hpp"
 #include "pantr/core/ndarray.hpp"
+#include "pantr/core/scalar.hpp"
 
 #include <cmath>
 #include <concepts>
@@ -27,21 +28,24 @@ inline constexpr int bernstein_max_unmirrored_degree_float = 6;
 
 namespace detail {
 
-template <std::floating_point T>
+template <StorageFloat T>
 constexpr int max_unmirrored_degree() {
-  return sizeof(T) == sizeof(double) ? bernstein_max_unmirrored_degree_double
-                                     : bernstein_max_unmirrored_degree_float;
+  return std::same_as<T, double> ? bernstein_max_unmirrored_degree_double
+                                 : bernstein_max_unmirrored_degree_float;
 }
 
 /// Bernstein values of degree `n >= 1` at `u` by the O(n) ratio recurrence, run from the
-/// endpoint that keeps the seed `>= 0.5^n` (no underflow at any degree): forward from 0 for
+/// endpoint that keeps the seed `>= 0.5^n`: forward from 0 for
 /// `u <= 0.5`, else forward on `1 - u` (seed `u^n`) and the row reversed, by the symmetry
-/// `B_i(u) = B_{n-i}(1 - u)`. Intermediates in double, each value stored in `T`.
+/// `B_i(u) = B_{n-i}(1 - u)`. Intermediates in double, each value stored in `T` and read back
+/// from it (as the Numba kernel this replaces did). The seed `0.5^n` itself underflows `T` from
+/// degree 150 (`float`) and 1075 (`double`) on, where a row near `u = 0.5` comes out zero: the
+/// envelope of this recurrence, far past any degree pantr uses.
 ///
 /// Note:
 ///     Inputs are assumed to be correct (no validation performed).
 ///     For general use, call `tabulate_bernstein_1d` instead.
-template <std::floating_point T>
+template <StorageFloat T>
 void bernstein_row_mirrored(int n, T u, T* row) {
   const auto ud = static_cast<double>(u);
   const double one_minus_u = 1.0 - ud;
@@ -67,7 +71,7 @@ void bernstein_row_mirrored(int n, T u, T* row) {
 /// Note:
 ///     Inputs are assumed to be correct (no validation performed), the degree bound included.
 ///     For general use, call `tabulate_bernstein_1d` instead.
-template <std::floating_point T>
+template <StorageFloat T>
 void bernstein_row_unmirrored(int n, T u, T* row) {
   if (u == static_cast<T>(1)) {
     for (int i = 0; i < n; ++i) {
@@ -91,7 +95,7 @@ void bernstein_row_unmirrored(int n, T u, T* row) {
 /// Note:
 ///     Inputs are assumed to be correct (no validation performed).
 ///     For general use, call `tabulate_bernstein_1d` instead.
-template <std::floating_point T>
+template <StorageFloat T>
 void tabulate_bernstein_1d_kernel(int degree, std::span<const T> pts, mdview<T, 2> out) {
   T* data = out.data_handle();
   const std::size_t stride = static_cast<std::size_t>(degree) + 1;
@@ -117,7 +121,7 @@ void tabulate_bernstein_1d_kernel(int degree, std::span<const T> pts, mdview<T, 
 /// Note:
 ///     Inputs are assumed to be correct (no validation performed).
 ///     For general use, call `tabulate_bernstein_derivatives_1d` instead.
-template <std::floating_point T>
+template <StorageFloat T>
 void bernstein_derivatives_point(int n, T s, int n_deriv, T* out_pt, T* ndu, T* a) {
   const int order = n + 1;
   const auto nd1 = static_cast<std::size_t>(n_deriv) + 1;
@@ -217,7 +221,7 @@ void bernstein_derivatives_point(int n, T s, int n_deriv, T* out_pt, T* ndu, T* 
 /// Note:
 ///     Inputs are assumed to be correct (no validation performed).
 ///     For general use, call `tabulate_bernstein_derivatives_1d` instead.
-template <std::floating_point T>
+template <StorageFloat T>
 void tabulate_bernstein_derivatives_1d_kernel(int degree, std::span<const T> pts, int n_deriv,
                                               mdview<T, 3> out) {
   const auto ord = static_cast<std::size_t>(degree) + 1;
@@ -251,7 +255,7 @@ void tabulate_bernstein_derivatives_1d_kernel(int degree, std::span<const T> pts
 ///
 /// Raises:
 ///     value_error: `degree < 0`, or `out` has other extents.
-template <std::floating_point T>
+template <StorageFloat T>
 void tabulate_bernstein_1d(int degree, std::span<const T> pts, mdview<T, 2> out) {
   detail::check_degree(degree);
   detail::check_out<T, 2>(out, {pts.size(), static_cast<std::size_t>(degree) + 1});
@@ -269,7 +273,7 @@ void tabulate_bernstein_1d(int degree, std::span<const T> pts, mdview<T, 2> out)
 ///
 /// Raises:
 ///     value_error: `degree < 0`.
-template <std::floating_point T>
+template <StorageFloat T>
 [[nodiscard]] NdArray<T> tabulate_bernstein_1d(int degree, std::span<const T> pts) {
   detail::check_degree(degree);
   NdArray<T> out({pts.size(), static_cast<std::size_t>(degree) + 1});
@@ -290,7 +294,7 @@ template <std::floating_point T>
 ///
 /// Raises:
 ///     value_error: `degree < 0`, `n_deriv < 0`, or `out` has other extents.
-template <std::floating_point T>
+template <StorageFloat T>
 void tabulate_bernstein_derivatives_1d(int degree, std::span<const T> pts, int n_deriv,
                                        mdview<T, 3> out) {
   detail::check_degree(degree);

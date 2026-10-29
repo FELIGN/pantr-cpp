@@ -8,6 +8,7 @@
 #include "pantr/core/errors.hpp"
 #include "pantr/core/mdspan.hpp"
 #include "pantr/core/ndarray.hpp"
+#include "pantr/core/scalar.hpp"
 #include "pantr/tolerance.hpp"
 
 #include <algorithm>
@@ -15,7 +16,6 @@
 #include <cmath>
 #include <concepts>
 #include <cstddef>
-#include <numeric>
 #include <span>
 #include <vector>
 
@@ -32,7 +32,7 @@ namespace detail {
 /// Barycentric weights `w_j = 1 / prod_{k != j} (x_j - x_k)` of distinct nodes, up to a common
 /// factor (which cancels in the barycentric quotient). Each product is accumulated as a mantissa
 /// and a binary exponent (`frexp`), so it neither overflows nor underflows at any degree, and the
-/// weights are scaled by a common power of two so the largest has magnitude in `[1, 2)`. This
+/// weights are scaled by a common power of two so the largest has magnitude in `(1, 2]`. This
 /// replaces the random permutation of the products SciPy uses for the same purpose, which made the
 /// weights depend on a generator's stream.
 ///
@@ -81,7 +81,7 @@ inline std::vector<double> barycentric_weights(const std::vector<double>& x) {
 /// Note:
 ///     Inputs are assumed to be correct (no validation performed).
 ///     For general use, call `tabulate_lagrange_1d` instead.
-template <std::floating_point T>
+template <StorageFloat T>
 void tabulate_lagrange_1d_kernel(int degree, LagrangeVariant variant, std::span<const T> pts,
                                  mdview<T, 2> out) {
   T* data = out.data_handle();
@@ -90,19 +90,15 @@ void tabulate_lagrange_1d_kernel(int degree, LagrangeVariant variant, std::span<
     detail::for_each_point(pts.size(), 1.0, [&](std::size_t j) { data[j] = static_cast<T>(1); });
     return;
   }
+  // lagrange_points returns every family's nodes ascending (a C++ test holds each family to it),
+  // so column i is node i and the first node within the snap distance is the nearest one below.
   const NdArray<T> nodes_t = lagrange_points<T>(variant, static_cast<long long>(m));
-  std::vector<std::size_t> perm(m);
-  std::iota(perm.begin(), perm.end(), std::size_t{0});
   const T* nt = nodes_t.data();
-  std::stable_sort(perm.begin(), perm.end(),
-                   [nt](std::size_t a, std::size_t b) { return nt[a] < nt[b]; });
-  std::vector<T> sorted_t(m);
-  std::vector<double> sorted(m);
+  std::vector<double> x(m);
   for (std::size_t k = 0; k < m; ++k) {
-    sorted_t[k] = nt[perm[k]];
-    sorted[k] = static_cast<double>(sorted_t[k]);
+    x[k] = static_cast<double>(nt[k]);
   }
-  const std::vector<double> w = barycentric_weights(sorted);
+  const std::vector<double> w = barycentric_weights(x);
   const T snap = static_cast<T>(lagrange_node_snap_eps_factor *
                                 static_cast<double>(tolerance::machine_epsilon<T>()));
   detail::for_each_point(pts.size(), 6.0 * static_cast<double>(m), [&](std::size_t j) {
@@ -110,11 +106,11 @@ void tabulate_lagrange_1d_kernel(int degree, LagrangeVariant variant, std::span<
     const T tj = pts[j];
     for (std::size_t k = 0; k < m; ++k) {
       using std::abs;
-      if (abs(tj - sorted_t[k]) <= snap) {
+      if (abs(tj - nt[k]) <= snap) {
         for (std::size_t i = 0; i < m; ++i) {
           row[i] = static_cast<T>(0);
         }
-        row[perm[k]] = static_cast<T>(1);
+        row[k] = static_cast<T>(1);
         return;
       }
     }
@@ -122,10 +118,10 @@ void tabulate_lagrange_1d_kernel(int degree, LagrangeVariant variant, std::span<
     const auto t = static_cast<double>(tj);
     double den = 0.0;
     for (std::size_t k = 0; k < m; ++k) {
-      den += w[k] / (t - sorted[k]);
+      den += w[k] / (t - x[k]);
     }
     for (std::size_t k = 0; k < m; ++k) {
-      row[perm[k]] = static_cast<T>((w[k] / (t - sorted[k])) / den);
+      row[k] = static_cast<T>((w[k] / (t - x[k])) / den);
     }
   });
 }
@@ -144,9 +140,8 @@ void tabulate_lagrange_1d_kernel(int degree, LagrangeVariant variant, std::span<
 ///     out (mdview<T, 2>): Output, extents `(pts.size(), degree + 1)`.
 ///
 /// Raises:
-///     value_error: `degree < 0`, `out` has other extents, `degree + 1` is below the family's
-///         minimum node count, or two nodes coincide in `T`.
-template <std::floating_point T>
+///     value_error: `degree < 0`, `out` has other extents, or two nodes coincide in `T`.
+template <StorageFloat T>
 void tabulate_lagrange_1d(int degree, LagrangeVariant variant, std::span<const T> pts,
                           mdview<T, 2> out) {
   detail::check_degree(degree);
@@ -161,7 +156,7 @@ void tabulate_lagrange_1d(int degree, LagrangeVariant variant, std::span<const T
 ///
 /// Raises:
 ///     value_error: As the `out` overload, extents aside.
-template <std::floating_point T>
+template <StorageFloat T>
 [[nodiscard]] NdArray<T> tabulate_lagrange_1d(int degree, LagrangeVariant variant,
                                               std::span<const T> pts) {
   detail::check_degree(degree);

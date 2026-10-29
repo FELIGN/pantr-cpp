@@ -5,6 +5,7 @@
 #include "pantr/config.hpp"
 #include "pantr/core/errors.hpp"
 #include "pantr/core/ndarray.hpp"
+#include "pantr/core/scalar.hpp"
 #include "pantr/quad/rules_1d.hpp"
 
 #include <concepts>
@@ -74,7 +75,7 @@ enum class LagrangeVariant : int {
 ///
 /// Raises:
 ///     value_error: `n_pts` is below the family's minimum.
-template <std::floating_point T>
+template <StorageFloat T>
 [[nodiscard]] NdArray<T> lagrange_points(LagrangeVariant v, long long n_pts) {
   switch (v) {
     case LagrangeVariant::equispaces:

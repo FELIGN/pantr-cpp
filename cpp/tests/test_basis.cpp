@@ -77,6 +77,63 @@ TEST_CASE("basis: Bernstein derivatives of degree 2 match the closed form, order
   }
 }
 
+TEST_CASE("basis: Bernstein derivatives of order n are n! (-1)^(n-i) C(n, i), past 64 bits") {
+  // The n-th derivative of B_{i,n} is the constant n! (-1)^(n-i) C(n, i). At degree 22 the
+  // scaling n!/(n-k)! passes 2^64 at k = 21, so the double fallback of the scaling runs (the
+  // Numba kernel wrapped its int64 there); 1e-12 relative leaves room for the O(n^2)
+  // recurrence's roundings, whose values are bounded by C(n, i) 2^n.
+  const int n = 22;
+  const std::vector<double> pts = {0.3};
+  pantr::NdArray<double> out({1, static_cast<std::size_t>(n) + 1, static_cast<std::size_t>(n) + 1});
+  basis::tabulate_bernstein_derivatives_1d<double>(n, pts, n, out.view<3>());
+  double fact = 1.0;
+  for (int k = 2; k <= n; ++k) {
+    fact *= k;
+  }
+  for (int i = 0; i <= n; ++i) {
+    const double expected = fact * binomial(n, i) * (((n - i) % 2 == 0) ? 1.0 : -1.0);
+    const double got = out.data()[static_cast<std::size_t>(n) * static_cast<std::size_t>(n + 1) +
+                                  static_cast<std::size_t>(i)];
+    CAPTURE(i);
+    CHECK(std::fabs(got - expected) <= 1e-12 * fact * binomial(n, n / 2));
+  }
+}
+
+TEST_CASE("basis: float tabulations are the double-intermediate values stored in float") {
+  // Bernstein, cardinal and Legendre compute in double and store each value in float, reading it
+  // back for the next step; agreement with the double tabulation is a few float roundings.
+  const std::vector<double> pd = {0.0, 0.1, 0.45, 0.5, 0.77, 1.0};
+  std::vector<float> pf(pd.size());
+  for (std::size_t i = 0; i < pd.size(); ++i) {
+    pf[i] = static_cast<float>(pd[i]);
+  }
+  const double feps = std::numeric_limits<float>::epsilon();
+  for (const int p : {0, 3, 7}) {  // 7 is past float's unmirrored bound (6)
+    const auto bd = basis::tabulate_bernstein_1d<double>(p, pd);
+    const auto bf = basis::tabulate_bernstein_1d<float>(p, pf);
+    const auto cd = basis::tabulate_cardinal_bspline_1d<double>(p, pd);
+    const auto cf = basis::tabulate_cardinal_bspline_1d<float>(p, pf);
+    const auto ld = basis::tabulate_legendre_1d<double>(p, pd);
+    const auto lf = basis::tabulate_legendre_1d<float>(p, pf);
+    for (std::size_t i = 0; i < bd.size(); ++i) {
+      CAPTURE(p);
+      CAPTURE(i);
+      CHECK(std::fabs(static_cast<double>(bf.data()[i]) - bd.data()[i]) <= 4.0 * (p + 1) * feps);
+      CHECK(std::fabs(static_cast<double>(cf.data()[i]) - cd.data()[i]) <= 4.0 * (p + 1) * feps);
+      // Legendre values grow like sqrt(2p + 1) <= 4 here.
+      CHECK(std::fabs(static_cast<double>(lf.data()[i]) - ld.data()[i]) <= 16.0 * (p + 1) * feps);
+    }
+  }
+  // Derivatives run in the storage type: float within float roundings of double.
+  pantr::NdArray<double> dd({pd.size(), 3, 4});
+  pantr::NdArray<float> df({pf.size(), 3, 4});
+  basis::tabulate_bernstein_derivatives_1d<double>(3, pd, 2, dd.view<3>());
+  basis::tabulate_bernstein_derivatives_1d<float>(3, pf, 2, df.view<3>());
+  for (std::size_t i = 0; i < dd.size(); ++i) {
+    CHECK(std::fabs(static_cast<double>(df.data()[i]) - dd.data()[i]) <= 64.0 * feps * 6.0);  // |values| <= 6
+  }
+}
+
 TEST_CASE("basis: cardinal B-splines of degree 2 match the explicit polynomials") {
   const auto pts = sample_points();
   const auto b = basis::tabulate_cardinal_bspline_1d<double>(2, pts);
@@ -192,6 +249,38 @@ TEST_CASE("basis: tensor tabulation is the product of 1D values in C and F order
                                                       pantr::Order::C, out.view<2>()),
                        "The number of evaluators must be equal to the dimension of the points.",
                        pantr::value_error);
+}
+
+TEST_CASE("basis: a 3D tensor tabulation is the product of 1D values, in C and F order") {
+  const pantr::quad::PointsLattice<double> lat({{0.2, 0.7}, {0.1, 0.4, 0.9}, {0.35, 0.6}});
+  const std::vector<int> degrees = {1, 2, 1};
+  const auto b0 = basis::tabulate_bernstein_1d<double>(1, lat.pts(0));
+  const auto b1 = basis::tabulate_bernstein_1d<double>(2, lat.pts(1));
+  const auto b2 = basis::tabulate_bernstein_1d<double>(1, lat.pts(2));
+  for (const auto order : {pantr::Order::C, pantr::Order::F}) {
+    pantr::NdArray<double> out({12, 12});
+    basis::tabulate_tensor<double>(basis::Family::bernstein, degrees, LagrangeVariant::equispaces,
+                                   lat, order, out.view<2>());
+    const bool c = order == pantr::Order::C;
+    for (std::size_t p0 = 0; p0 < 2; ++p0) {
+      for (std::size_t p1 = 0; p1 < 3; ++p1) {
+        for (std::size_t p2 = 0; p2 < 2; ++p2) {
+          const std::size_t p = c ? (p0 * 3 + p1) * 2 + p2 : (p2 * 3 + p1) * 2 + p0;
+          for (std::size_t f0 = 0; f0 < 2; ++f0) {
+            for (std::size_t f1 = 0; f1 < 3; ++f1) {
+              for (std::size_t f2 = 0; f2 < 2; ++f2) {
+                const std::size_t f = c ? (f0 * 3 + f1) * 2 + f2 : (f2 * 3 + f1) * 2 + f0;
+                // Products in direction order, ((r0 r1) r2), as the einsum chain did.
+                const double expected =
+                    (b0.data()[p0 * 2 + f0] * b1.data()[p1 * 3 + f1]) * b2.data()[p2 * 2 + f2];
+                CHECK(out.data()[p * 12 + f] == expected);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
 }
 
 TEST_CASE("basis: results do not depend on the thread count (M7)") {

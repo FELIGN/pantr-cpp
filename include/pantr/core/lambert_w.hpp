@@ -26,7 +26,8 @@ inline constexpr int lambert_w_max_iterations = 64;
 
 /// Evaluate the principal branch `W0(x)` for `x >= 0`.
 ///
-/// Halley's iteration on `f(w) = w e^w - x`. It stops once a step satisfies
+/// Halley's iteration on `f(w) = w e^w - x`, scaled by `e^-w` so nothing overflows up to the
+/// largest double. It stops once a step satisfies
 /// `|dw| <= 4 eps (1 + |w|)`: both an absolute term (`W(0) = 0`, where a relative test alone
 /// never terminates) and a relative one, each four roundings of the update, the step itself being
 /// computed from three roundings of `f` and a quotient.
@@ -52,10 +53,11 @@ inline constexpr int lambert_w_max_iterations = 64;
   double w = x < std::numbers::e ? std::log1p(x) : std::log(x) - std::log(std::log(x));
   constexpr double tol = 4.0 * std::numeric_limits<double>::epsilon();
   for (int it = 0; it < lambert_w_max_iterations; ++it) {
-    const double ew = std::exp(w);
-    const double f = w * ew - x;
+    // Halley on f(w) = w e^w - x, written with g = f e^-w = w - x e^-w: the same step, but no
+    // intermediate overflows (w e^w and its derivative pass the largest double for x near it).
+    const double g = w - x * std::exp(-w);
     const double wp1 = w + 1.0;
-    const double dw = f / (ew * wp1 - (w + 2.0) * f / (2.0 * wp1));
+    const double dw = g / (wp1 - (w + 2.0) * g / (2.0 * wp1));
     w -= dw;
     if (std::fabs(dw) <= tol * (1.0 + std::fabs(w))) {
       return w;

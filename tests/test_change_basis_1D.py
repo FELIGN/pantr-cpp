@@ -936,6 +936,27 @@ class TestCachedChangeBasisMatrices:
 class TestMonomialToBernsteinBasisOperator:
     """Test the compute_monomial_to_bernstein_1d function."""
 
+    @pytest.mark.parametrize("degree", [*range(81), 120, 300])
+    @pytest.mark.parametrize("dtype", [np.float64, np.float32])
+    def test_every_entry_is_the_correctly_rounded_quotient(
+        self, degree: int, dtype: type[np.float32] | type[np.float64]
+    ) -> None:
+        """Each entry is Python's ``comb(i, j) / comb(degree, j)``, to the bit.
+
+        Python's ``int / int`` rounds the exact quotient once; the float32 matrix is that double
+        rounded again. Past degree 56 the binomials no longer fit a double exactly, so this
+        holds the exact-integer path as well as the double one. The first column is exactly 1.
+        """
+        from math import comb  # noqa: PLC0415
+
+        expected = np.zeros((degree + 1, degree + 1))
+        for i in range(degree + 1):
+            for j in range(i + 1):
+                expected[i, j] = comb(i, j) / comb(degree, j)
+        result = compute_monomial_to_bernstein_1d(degree, dtype)
+        np.testing.assert_array_equal(result, expected.astype(dtype))
+        assert np.all(result[:, 0] == 1.0)
+
     def test_negative_degree_error(self) -> None:
         """Test that negative degree raises ValueError."""
         with pytest.raises(ValueError, match="Degree must be non-negative"):

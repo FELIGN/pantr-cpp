@@ -13,6 +13,7 @@
 #include "pantr/core/errors.hpp"
 #include "pantr/core/mdspan.hpp"
 #include "pantr/core/ndarray.hpp"
+#include "pantr/core/scalar.hpp"
 #include "pantr/quad/points_lattice.hpp"
 
 #include <concepts>
@@ -55,7 +56,7 @@ enum class Family : int {
 ///
 /// Raises:
 ///     value_error: As the family's own function.
-template <std::floating_point T>
+template <StorageFloat T>
 void tabulate_1d(Family family, int degree, LagrangeVariant variant, std::span<const T> pts,
                  mdview<T, 2> out) {
   switch (family) {
@@ -80,7 +81,7 @@ namespace detail {
 /// Write, into `row`, the tensor product of the rows `rows[d]` (lengths `len[d]`), the function
 /// index ordered as `order`; `scratch` holds as many values as `row`. Products accumulate in
 /// direction order: `((r_0 r_1) r_2) ...`.
-template <std::floating_point T>
+template <StorageFloat T>
 void kron_row(std::span<const T* const> rows, std::span<const std::size_t> len, Order order, T* row,
               T* scratch) {
   std::size_t m = len[0];
@@ -103,18 +104,6 @@ void kron_row(std::span<const T* const> rows, std::span<const std::size_t> len, 
   }
 }
 
-/// Number of functions of a tensor product, refusing a count `std::size_t` cannot hold.
-inline std::size_t product_size(std::span<const std::size_t> counts) {
-  std::size_t n = 1;
-  for (const std::size_t c : counts) {
-    if (c != 0 && n > static_cast<std::size_t>(-1) / c) {
-      throw capacity_error("the tensor product has more entries than fit in memory");
-    }
-    n *= c;
-  }
-  return n;
-}
-
 }  // namespace detail
 
 /// Evaluate a tensor-product basis on a lattice into `out`.
@@ -134,7 +123,7 @@ inline std::size_t product_size(std::span<const std::size_t> counts) {
 /// Raises:
 ///     value_error: The number of degrees differs from the lattice dimension, a degree is
 ///         negative, or `out` has other extents.
-template <std::floating_point T>
+template <StorageFloat T>
 void tabulate_tensor(Family family, std::span<const int> degrees, LagrangeVariant variant,
                      const quad::PointsLattice<T>& lattice, Order order, mdview<T, 2> out) {
   const std::size_t dim = lattice.dim();
@@ -152,8 +141,8 @@ void tabulate_tensor(Family family, std::span<const int> degrees, LagrangeVarian
     tables.emplace_back(std::vector<std::size_t>{n_pts[d], n_fun[d]});
     tabulate_1d<T>(family, degrees[d], variant, pts, tables.back().template view<2>());
   }
-  const std::size_t total_pts = detail::product_size(n_pts);
-  const std::size_t total_fun = detail::product_size(n_fun);
+  const std::size_t total_pts = checked_product(n_pts);
+  const std::size_t total_fun = checked_product(n_fun);
   detail::check_out<T, 2>(out, {total_pts, total_fun});
   T* data = out.data_handle();
   parallel::parallel_for(total_pts, parallel::WorkEstimate{2.0 * static_cast<double>(total_fun)},
@@ -190,7 +179,7 @@ void tabulate_tensor(Family family, std::span<const int> degrees, LagrangeVarian
 /// Raises:
 ///     value_error: `dim` is 0, the number of degrees differs from `dim`, a degree is negative,
 ///         or `out` has other extents.
-template <std::floating_point T>
+template <StorageFloat T>
 void tabulate_tensor(Family family, std::span<const int> degrees, LagrangeVariant variant,
                      mdview<const T, 2> pts, Order order, mdview<T, 2> out) {
   const std::size_t n = pts.extent(0);
@@ -215,7 +204,7 @@ void tabulate_tensor(Family family, std::span<const int> degrees, LagrangeVarian
     tabulate_1d<T>(family, degrees[d], variant, std::span<const T>(column),
                    tables.back().template view<2>());
   }
-  const std::size_t total_fun = detail::product_size(n_fun);
+  const std::size_t total_fun = checked_product(n_fun);
   detail::check_out<T, 2>(out, {n, total_fun});
   T* data = out.data_handle();
   parallel::parallel_for(n, parallel::WorkEstimate{2.0 * static_cast<double>(total_fun)},

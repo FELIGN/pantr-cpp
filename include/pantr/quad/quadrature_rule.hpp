@@ -56,9 +56,16 @@ class QuadratureRule {
   ///     weights (DoubleArrayRef): Extents `(num_points,)`.
   ///
   /// Raises:
-  ///     value_error: `points` is not 2-D, `weights` is not 1-D, their lengths differ, either is
-  ///         empty, a value is not finite, or a point lies outside the unit cube.
+  ///     value_error: An array's data does not hold its shape's element count, `points` is not
+  ///         2-D, `weights` is not 1-D, their lengths differ, either is empty, a value is not
+  ///         finite, or a point lies outside the unit cube.
   QuadratureRule(DoubleArrayRef points, DoubleArrayRef weights) {
+    for (const DoubleArrayRef* a : {&points, &weights}) {
+      if (checked_product(a->shape) != a->data.size()) {
+        throw value_error("an array of shape " + py_repr(a->shape) + " cannot hold " +
+                          std::to_string(a->data.size()) + " elements");
+      }
+    }
     if (points.shape.size() != 2) {
       throw value_error("points must be 2D (num_points, ndim); got shape " + py_repr(points.shape) +
                         ".");
@@ -146,14 +153,20 @@ class QuadratureRule {
 /// Raises:
 ///     value_error: No axis, an axis whose arrays are not 1-D or not matching non-empty arrays,
 ///         or (from the rule) a node outside `[0, 1]` or a non-finite value.
+///     capacity_error: The number of points overflows `std::size_t`.
 [[nodiscard]] inline QuadratureRule tensor_product_quadrature(
     std::span<const std::pair<DoubleArrayRef, DoubleArrayRef>> rules) {
   if (rules.empty()) {
     throw value_error("tensor_product_quadrature: rules must have at least one axis.");
   }
-  std::size_t n = 1;
   for (std::size_t d = 0; d < rules.size(); ++d) {
     const auto& [nodes, weights] = rules[d];
+    for (const DoubleArrayRef* a : {&nodes, &weights}) {
+      if (checked_product(a->shape) != a->data.size()) {
+        throw value_error("an array of shape " + py_repr(a->shape) + " cannot hold " +
+                          std::to_string(a->data.size()) + " elements");
+      }
+    }
     if (nodes.shape.size() != 1 || weights.shape.size() != 1) {
       throw value_error("tensor_product_quadrature: axis " + std::to_string(d) +
                         " nodes and weights must be 1D; got shapes " + py_repr(nodes.shape) +
@@ -164,8 +177,12 @@ class QuadratureRule {
                         " needs matching non-empty (nodes, weights); got shapes " +
                         py_repr(nodes.shape) + " and " + py_repr(weights.shape) + ".");
     }
-    n *= nodes.shape[0];
   }
+  std::vector<std::size_t> counts;
+  for (const auto& r : rules) {
+    counts.push_back(r.first.shape[0]);
+  }
+  const std::size_t n = checked_product(counts);
   const std::size_t ndim = rules.size();
   std::vector<double> pts(n * ndim);
   std::vector<double> wts(n);

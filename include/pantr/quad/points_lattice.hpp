@@ -6,6 +6,7 @@
 #include "pantr/config.hpp"
 #include "pantr/core/errors.hpp"
 #include "pantr/core/ndarray.hpp"
+#include "pantr/core/scalar.hpp"
 
 #include <concepts>
 #include <cstddef>
@@ -34,7 +35,7 @@ namespace pantr::quad {
 ///
 /// Attributes:
 ///     rep_ (std::shared_ptr<const std::vector<std::vector<T>>>): The coordinates per direction.
-template <std::floating_point T>
+template <StorageFloat T>
 class PointsLattice {
  public:
   /// The shared representation: one coordinate vector per direction.
@@ -47,16 +48,21 @@ class PointsLattice {
   ///
   /// Raises:
   ///     value_error: No direction, or a direction with no point.
+  ///     capacity_error: The number of points overflows `std::size_t`.
   explicit PointsLattice(std::vector<std::vector<T>> pts_per_dir)
       : rep_(std::make_shared<const Rep>(std::move(pts_per_dir))) {
     if (rep_->empty()) {
       throw value_error("Points lattice must have at least 1 dimension");
     }
+    std::vector<std::size_t> counts;
+    counts.reserve(rep_->size());
     for (const auto& pts : *rep_) {
       if (pts.empty()) {
         throw value_error("All points must have at least 1 point");
       }
+      counts.push_back(pts.size());
     }
+    static_cast<void>(checked_product(counts));  // num_points() then cannot overflow
   }
 
   /// Get the number of directions.
@@ -147,7 +153,7 @@ class PointsLattice {
 ///
 /// Raises:
 ///     value_error: A count below 1, a count below the family's minimum, or no direction.
-template <std::floating_point T>
+template <StorageFloat T>
 [[nodiscard]] PointsLattice<T> lagrange_points_lattice(basis::LagrangeVariant variant,
                                                        std::span<const long long> n_pts_per_dir) {
   for (const long long n : n_pts_per_dir) {

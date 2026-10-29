@@ -9,7 +9,7 @@
 /// rebuilt in exact arithmetic, are the Python module `pantr.change_basis`'s and
 /// `tests/test_change_basis_domain.py`). Linear algebra on Eigen; a solve against the identity is
 /// an LU factorisation with partial pivoting, as numpy.linalg.solve's gesv, and refuses an exactly
-/// zero or NaN pivot as gesv does.
+/// zero pivot as gesv does, and a NaN pivot wherever it appears (gesv only in some positions).
 ///
 /// The process tables (`cached_*`) hold one immutable matrix per key for a whole process, for
 /// callers that need the same small matrix many times; see `change_basis_cache_max_degree`.
@@ -23,10 +23,15 @@
 #include "pantr/core/errors.hpp"
 #include "pantr/core/exact_rational.hpp"
 #include "pantr/core/ndarray.hpp"
+#include "pantr/core/scalar.hpp"
 #include "pantr/quad/rules_1d.hpp"
 
 #include <Eigen/Core>
 #include <Eigen/LU>
+
+#if !defined(_WIN32)
+#include <pthread.h>
+#endif
 
 #include <cmath>
 #include <concepts>
@@ -37,6 +42,7 @@
 #include <mutex>
 #include <span>
 #include <string>
+#include <system_error>
 #include <tuple>
 #include <vector>
 
@@ -74,7 +80,7 @@ inline constexpr DegreeLimit cardinal_to_legendre_max_degree{6, 12};
 ///
 /// Returns:
 ///     DegreeLimit: Equispaced 17/37, Gauss-Legendre 22/51, the other three 23/52.
-[[nodiscard]] constexpr DegreeLimit bernstein_to_lagrange_max_degree(LagrangeVariant v) noexcept {
+[[nodiscard]] constexpr DegreeLimit bernstein_to_lagrange_max_degree(LagrangeVariant v) {
   switch (v) {
     case LagrangeVariant::equispaces:
       return {17, 37};
@@ -85,19 +91,19 @@ inline constexpr DegreeLimit cardinal_to_legendre_max_degree{6, 12};
     case LagrangeVariant::chebyshev_2nd:
       return {23, 52};
   }
-  return {0, 0};
+  throw value_error("unknown Lagrange variant");  // only an invalid enumerator value reaches here
 }
 
 namespace detail {
 
-template <std::floating_point T>
+template <StorageFloat T>
 constexpr const char* dtype_name() {
-  return sizeof(T) == sizeof(double) ? "float64" : "float32";
+  return std::same_as<T, double> ? "float64" : "float32";
 }
 
-template <std::floating_point T>
+template <StorageFloat T>
 void check_domain(int degree, DegreeLimit limit, const std::string& builder) {
-  const int max = sizeof(T) == sizeof(double) ? limit.float64 : limit.float32;
+  const int max = std::same_as<T, double> ? limit.float64 : limit.float32;
   if (degree <= max) {
     return;
   }
@@ -123,10 +129,10 @@ inline void check_at_least_one(int degree) {
   }
 }
 
-template <std::floating_point T>
+template <StorageFloat T>
 using RowMatrix = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
 
-template <std::floating_point T>
+template <StorageFloat T>
 Eigen::Map<const RowMatrix<T>> as_matrix(const NdArray<T>& a) {
   return {a.data(), static_cast<Eigen::Index>(a.shape()[0]),
           static_cast<Eigen::Index>(a.shape()[1])};
@@ -138,7 +144,7 @@ Eigen::Map<const RowMatrix<T>> as_matrix(const NdArray<T>& a) {
 /// Raises:
 ///     value_error: A pivot of the factorisation is exactly zero or NaN ("Singular matrix", the
 ///         condition under which numpy.linalg.solve raises LinAlgError, a ValueError).
-template <std::floating_point T>
+template <StorageFloat T>
 NdArray<T> inverse(const NdArray<T>& a) {
   const auto m = static_cast<Eigen::Index>(a.shape()[0]);
   const Eigen::PartialPivLU<RowMatrix<T>> lu(as_matrix(a));
@@ -161,7 +167,7 @@ NdArray<T> inverse(const NdArray<T>& a) {
 ///
 /// Raises:
 ///     value_error: `n_quad < 1`, or an exactly singular Gram matrix.
-template <std::floating_point T, class NewEval, class OldEval>
+template <StorageFloat T, class NewEval, class OldEval>
 NdArray<T> gram_projection(int degree, long long n_quad, NewEval new_eval, OldEval old_eval) {
   if (n_quad < 1) {
     throw value_error("Number of quadrature points must be positive.");
@@ -198,7 +204,7 @@ NdArray<T> gram_projection(int degree, long long n_quad, NewEval new_eval, OldEv
 ///
 /// Raises:
 ///     value_error: `degree < 1`, or the variant needs more nodes.
-template <std::floating_point T>
+template <StorageFloat T>
 [[nodiscard]] NdArray<T> lagrange_to_bernstein(int degree, LagrangeVariant variant) {
   detail::check_at_least_one(degree);
   const NdArray<T> x = basis::lagrange_points<T>(variant, degree + 1);
@@ -218,7 +224,7 @@ template <std::floating_point T>
 /// Raises:
 ///     value_error: `degree < 1`, `degree` past `bernstein_to_lagrange_max_degree(variant)`, or an
 ///         exactly singular factorisation.
-template <std::floating_point T>
+template <StorageFloat T>
 [[nodiscard]] NdArray<T> bernstein_to_lagrange(int degree, LagrangeVariant variant) {
   detail::check_at_least_one(degree);
   detail::check_domain<T>(degree, bernstein_to_lagrange_max_degree(variant),
@@ -232,7 +238,7 @@ template <std::floating_point T>
 ///
 /// Raises:
 ///     value_error: `degree < 0`, or past `bernstein_to_cardinal_max_degree`.
-template <std::floating_point T>
+template <StorageFloat T>
 [[nodiscard]] NdArray<T> bernstein_to_cardinal(int degree) {
   detail::check_non_negative(degree);
   detail::check_domain<T>(degree, bernstein_to_cardinal_max_degree,
@@ -249,7 +255,7 @@ template <std::floating_point T>
 /// Raises:
 ///     value_error: `degree < 0`, past `cardinal_to_bernstein_max_degree`, or an exactly singular
 ///         factorisation.
-template <std::floating_point T>
+template <StorageFloat T>
 [[nodiscard]] NdArray<T> cardinal_to_bernstein(int degree) {
   detail::check_non_negative(degree);
   detail::check_domain<T>(degree, cardinal_to_bernstein_max_degree,
@@ -262,7 +268,7 @@ template <std::floating_point T>
 ///
 /// Raises:
 ///     value_error: `degree < 0`.
-template <std::floating_point T>
+template <StorageFloat T>
 [[nodiscard]] NdArray<T> legendre_to_cardinal(int degree) {
   detail::check_non_negative(degree);
   return detail::gram_projection<T>(
@@ -276,7 +282,7 @@ template <std::floating_point T>
 /// Raises:
 ///     value_error: `degree < 0`, past `cardinal_to_legendre_max_degree`, or an exactly singular
 ///         factorisation.
-template <std::floating_point T>
+template <StorageFloat T>
 [[nodiscard]] NdArray<T> cardinal_to_legendre(int degree) {
   detail::check_non_negative(degree);
   detail::check_domain<T>(degree, cardinal_to_legendre_max_degree,
@@ -291,7 +297,7 @@ template <std::floating_point T>
 /// Raises:
 ///     value_error: `degree < 0`, past `cardinal_to_legendre_max_degree`, or an exactly singular
 ///         factorisation.
-template <std::floating_point T>
+template <StorageFloat T>
 [[nodiscard]] NdArray<T> cardinal_dual_legendre_coeffs(int degree) {
   detail::check_non_negative(degree);
   detail::check_domain<T>(degree, cardinal_to_legendre_max_degree,
@@ -316,7 +322,7 @@ template <std::floating_point T>
 ///
 /// Raises:
 ///     value_error: `degree < 0`.
-template <std::floating_point T>
+template <StorageFloat T>
 [[nodiscard]] NdArray<T> monomial_to_bernstein(int degree) {
   detail::check_non_negative(degree);
   const auto m = static_cast<std::size_t>(degree) + 1;
@@ -366,26 +372,44 @@ enum class Kind : int {
 };
 
 /// Largest degree whose matrix a process table keeps. Bounds each table at a few hundred entries
-/// (six kinds, five node families for two of them, degrees 0 to 64) and under a megabyte per kind
-/// and type, while covering every degree the solving builders accept (at most 52). An admitted
-/// bound, not a derived one; a matrix of higher degree is computed per call and not kept.
+/// (six kinds, five node families for two of them, degrees 0 to 64), each (kind, family, type)
+/// under a megabyte of matrices, while covering every degree the solving builders accept (at most
+/// 52). An admitted bound, not a derived one; a matrix of higher degree is computed per call and
+/// not kept.
 inline constexpr int change_basis_cache_max_degree = 64;
 
 namespace detail {
 
-template <std::floating_point T>
-struct MatrixTable {
-  std::mutex mutex;
-  std::map<std::tuple<int, int, int>, std::shared_ptr<const NdArray<T>>> entries;
-};
+/// Guards both process tables. Constant-initialized (no initialization guard a forked child could
+/// inherit mid-initialization) and, on POSIX, held by the forking thread across `fork` and released
+/// in both processes (`table_atfork_status`), so a child never inherits it locked by a thread it
+/// does not have. The same arrangement as the pool's (design/threading.md, fork safety).
+inline constinit std::mutex table_mutex;
 
-template <std::floating_point T>
-MatrixTable<T>& matrix_table() {
-  static MatrixTable<T> table;
-  return table;
+/// The entries of the process table for `T`, keyed on `(kind, degree, variant)`. A variable with
+/// static storage initialized when the program image loads, so no function-local guard is taken on
+/// first use.
+template <StorageFloat T>
+inline std::map<std::tuple<int, int, int>, std::shared_ptr<const NdArray<T>>> table_entries;
+
+#if !defined(_WIN32)
+/// Registration of `table_mutex`'s fork handlers; nonzero means it failed, which `cached` reports.
+inline const int table_atfork_status = ::pthread_atfork(
+    [] { table_mutex.lock(); }, [] { table_mutex.unlock(); }, [] { table_mutex.unlock(); });
+#endif
+
+inline void check_table_atfork() {
+#if !defined(_WIN32)
+  // Reading the status also odr-uses it, so its registration cannot be deferred past this.
+  if (table_atfork_status != 0) {
+    throw std::system_error(table_atfork_status, std::generic_category(),
+                            "pthread_atfork: the change-of-basis table's fork handler could not "
+                            "be registered");
+  }
+#endif
 }
 
-template <std::floating_point T>
+template <StorageFloat T>
 NdArray<T> compute(Kind kind, int degree, LagrangeVariant variant) {
   switch (kind) {
     case Kind::lagrange_to_bernstein:
@@ -409,9 +433,11 @@ NdArray<T> compute(Kind kind, int degree, LagrangeVariant variant) {
 /// Get a change-of-basis matrix from the process table, computing it on first use.
 ///
 /// Every call with the same key returns the same immutable matrix (one allocation per key per
-/// process), up to `change_basis_cache_max_degree`; past it each call computes a fresh matrix.
-/// Thread-safe: the matrix is computed outside the table's lock, and when two threads compute one
-/// key at once the first to store it wins and both return that one.
+/// program image: each shared object compiled from these headers with hidden symbols, such as
+/// each Python extension module, has its own table), up to `change_basis_cache_max_degree`; past it
+/// each call computes a fresh matrix. Thread-safe: the matrix is computed outside the table's lock,
+/// and when two threads compute one key at once the first to store it wins and both return that
+/// one.
 ///
 /// Args:
 ///     kind (Kind): Which matrix.
@@ -424,18 +450,20 @@ NdArray<T> compute(Kind kind, int degree, LagrangeVariant variant) {
 ///
 /// Raises:
 ///     value_error: As the matching builder.
-template <std::floating_point T>
+///     std::system_error: The table's fork handler could not be registered (POSIX).
+template <StorageFloat T>
 [[nodiscard]] std::shared_ptr<const NdArray<T>> cached(Kind kind, int degree,
                                                        LagrangeVariant variant) {
   const bool lagrange = kind == Kind::lagrange_to_bernstein || kind == Kind::bernstein_to_lagrange;
   const std::tuple<int, int, int> key{static_cast<int>(kind), degree,
                                       lagrange ? static_cast<int>(variant) : 0};
   const bool keep = degree >= 0 && degree <= change_basis_cache_max_degree;
-  auto& table = detail::matrix_table<T>();
+  detail::check_table_atfork();
+  auto& entries = detail::table_entries<T>;
   if (keep) {
-    const std::lock_guard<std::mutex> lock(table.mutex);
-    const auto it = table.entries.find(key);
-    if (it != table.entries.end()) {
+    const std::lock_guard<std::mutex> lock(detail::table_mutex);
+    const auto it = entries.find(key);
+    if (it != entries.end()) {
       return it->second;
     }
   }
@@ -443,27 +471,25 @@ template <std::floating_point T>
   if (!keep) {
     return fresh;
   }
-  const std::lock_guard<std::mutex> lock(table.mutex);
-  return table.entries.try_emplace(key, std::move(fresh)).first->second;
+  const std::lock_guard<std::mutex> lock(detail::table_mutex);
+  return entries.try_emplace(key, std::move(fresh)).first->second;
 }
 
 /// Get the number of matrices a process table holds for `T`.
 ///
 /// Returns:
 ///     std::size_t: The entry count.
-template <std::floating_point T>
+template <StorageFloat T>
 [[nodiscard]] std::size_t cache_size() {
-  auto& table = detail::matrix_table<T>();
-  const std::lock_guard<std::mutex> lock(table.mutex);
-  return table.entries.size();
+  const std::lock_guard<std::mutex> lock(detail::table_mutex);
+  return detail::table_entries<T>.size();
 }
 
 /// Empty the process table for `T`. Matrices already handed out stay valid (they are shared).
-template <std::floating_point T>
+template <StorageFloat T>
 void cache_clear() {
-  auto& table = detail::matrix_table<T>();
-  const std::lock_guard<std::mutex> lock(table.mutex);
-  table.entries.clear();
+  const std::lock_guard<std::mutex> lock(detail::table_mutex);
+  detail::table_entries<T>.clear();
 }
 
 }  // namespace pantr::change_basis

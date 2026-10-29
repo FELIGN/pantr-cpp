@@ -24,6 +24,28 @@
 
 namespace pantr {
 
+/// Multiply extents, refusing a product `std::size_t` cannot hold.
+///
+/// Args:
+///     extents (std::span<const std::size_t>): The factors.
+///
+/// Returns:
+///     std::size_t: Their product (1 for none).
+///
+/// Raises:
+///     capacity_error: The product overflows `std::size_t`.
+[[nodiscard]] inline std::size_t checked_product(std::span<const std::size_t> extents) {
+  std::size_t n = 1;
+  for (const std::size_t e : extents) {
+    if (e != 0 && n > (std::numeric_limits<std::size_t>::max)() / e) {
+      throw capacity_error("a product of extents " + py_repr(extents) +
+                           " has more entries than fit in memory");
+    }
+    n *= e;
+  }
+  return n;
+}
+
 /// Owning, contiguous, row-major (C order) array whose rank and extents are runtime values.
 ///
 /// A value type: copying copies the elements, so two arrays never alias. A moved-from array has
