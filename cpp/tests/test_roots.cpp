@@ -551,15 +551,15 @@ TEST_CASE("roots dedup (b): a double root reached by several clip branches is re
   // Reached: at least two candidates farther apart than the base merge radius, so that only the
   // derivative-aware radius can join them (the base radius is max(2 param_tol, 4 zero_tol)).
   const double base = merge_base_radius(tr, c, f);
-  std::vector<double> near;
+  std::vector<double> clustered;
   for (const double x : raw.candidates) {
     if (std::fabs(x - e.x) <= rho) {
-      near.push_back(x);
+      clustered.push_back(x);
     }
   }
-  REQUIRE(near.size() >= 2);
-  REQUIRE(*std::max_element(near.begin(), near.end()) -
-              *std::min_element(near.begin(), near.end()) >
+  REQUIRE(clustered.size() >= 2);
+  REQUIRE(*std::max_element(clustered.begin(), clustered.end()) -
+              *std::min_element(clustered.begin(), clustered.end()) >
           base);
   const pr::RootSet<double> rs = builtin_roots<double>(c, f);
   CHECK(count_near(rs.roots, e.x, rho) == 1);
@@ -578,15 +578,15 @@ TEST_CASE("roots dedup (b): a triple root reached by several clip branches is re
   const double rho = position_bound<double>(tr, c, e, f);
   const prd::ClipResult raw = raw_candidates<double>(c, f);
   const double base = merge_base_radius(tr, c, f);
-  std::vector<double> near;
+  std::vector<double> clustered;
   for (const double x : raw.candidates) {
     if (std::fabs(x - e.x) <= rho) {
-      near.push_back(x);
+      clustered.push_back(x);
     }
   }
-  REQUIRE(near.size() >= 2);
-  REQUIRE(*std::max_element(near.begin(), near.end()) -
-              *std::min_element(near.begin(), near.end()) >
+  REQUIRE(clustered.size() >= 2);
+  REQUIRE(*std::max_element(clustered.begin(), clustered.end()) -
+              *std::min_element(clustered.begin(), clustered.end()) >
           base);
   const pr::RootSet<double> rs = builtin_roots<double>(c, f);
   CHECK(count_near(rs.roots, e.x, rho) == 1);
