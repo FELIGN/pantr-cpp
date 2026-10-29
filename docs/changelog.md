@@ -230,8 +230,8 @@
   `[[1, 2, 3], [4, 5, 6], [7, 8, 9]]` is now inverted (to entries of order `1e15`, noise, as any
   inverse of it is) where it was refused, and some other near-singular matrices are refused where
   they were inverted. A matrix with a zero row or a zero column is refused as before. A matrix
-  with equal rows is now always refused; the previous release inverted some of them to noise,
-  depending on BLAS rounding. Results can move in the last bits for a well-conditioned matrix;
+  with equal rows is refused up to 16 dimensions (the previous release inverted some of them to
+  noise, depending on BLAS rounding); above that size neither library refuses them reliably. Results can move in the last bits for a well-conditioned matrix;
   for an ill-conditioned one they move within the bound the condition number gives.
 - `AABB.transform` given an offset without `ndim` entries is a `ValueError` ("affine.offset must
   have shape ..."). NumPy broadcast a one-entry or 0-d offset to every axis and raised a
@@ -239,7 +239,7 @@
 - **Inputs outside the annotated types, and calls with two invalid arguments**, in
   `pantr.geometry`, `pantr.transform` and `Bezier`, may raise another exception or message than
   before, since the compiled binding converts an argument (an index, a float) before the checks
-  run and most checks now run in C++: for example a `bool` direction is quoted as `1`, a
+  run and most checks now run in C++: for example a `bool` direction can be quoted as `1`, a
   non-numeric `factor` or `angle` is a `TypeError` from the binding before any range check, an
   integer outside the int64 range for a `direction`, `axis`, `ndim`, `n`, `dim`, `component` or
   degree increment is a `TypeError` from the binding (it was a `ValueError` from the range
@@ -247,11 +247,14 @@
   given for an integer is the integer it is (`True` is `1`) everywhere: `AABB.empty(True)`,
   `AABB.unbounded(True)`, `AffineTransform.identity(True)` and `Bezier.permute_directions` with
   `bool` entries are accepted where they were a `TypeError`; `AffineTransform.shear` with a `bool`
-  direction shears along that axis (the previous release used it as a mask);
-  `Bezier.evaluate_derivatives(points, True)` is the first derivative (the previous release
-  returned another shape) and a list of `bool` orders is accepted where it raised. NumPy scalars of
-  another precision are converted to the Bézier's dtype before use: `restrict` with `np.float32`
-  bounds on a `float64` Bézier computes in `float64` (it computed in `float32`).
+  `component` or `direction` (`True` or `False`) shears along that axis (the previous release used
+  it as a mask); `Bezier.evaluate_derivatives(points, True)` and a list of `bool` orders are the
+  first derivative; the previous release raised `ValueError` for a surface or volume and, for a
+  curve, returned the table of orders 0 and 1 with an extra axis. `False` is order 0 (it raised
+  `IndexError` for a curve). Messages can still echo a `bool` as given. Bounds and split
+  values given as NumPy scalars are converted to `double` by the binding, whatever their
+  precision: `restrict` with two `np.float32` bounds on a `float64` Bézier computes in `float64`
+  (it computed in `float32`, because both bounds kept their `float32` type).
 - **Under a tight address-space limit** (`ulimit -v`), the first parallel `Bezier.evaluate` or
   `AffineTransform.__call__` can fail to start pool threads, as the tabulations can (above):
   `RuntimeError` ("Resource temporarily unavailable") or `MemoryError` ("std::bad_alloc"), and
