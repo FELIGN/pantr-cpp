@@ -229,3 +229,36 @@ TEST_CASE("quad: QuadratureRule validation and the tensor-product Gauss-Legendre
                        "gauss_legendre_quadrature: every npts entry must be >= 1; got (0, 3).",
                        pantr::value_error);
 }
+
+// The iteration caps are loud: an exhausted Newton or Halley loop raises state_error naming the
+// cap, never returns its last iterate. Reached through the detail overloads that take the cap.
+TEST_CASE("lambert_w0: an exhausted Halley iteration raises state_error") {
+  CHECK_THROWS_WITH_AS(static_cast<void>(pantr::detail::lambert_w0_capped(2.0, 1)),
+                       "lambert_w0(2.0) did not converge in 1 Halley steps", pantr::state_error);
+  CHECK_THROWS_AS(static_cast<void>(pantr::detail::lambert_w0_capped(2.0, 0)), pantr::state_error);
+  // The default cap converges where a cap of one does not, to the same root.
+  CHECK(pantr::detail::lambert_w0_capped(2.0, pantr::lambert_w_max_iterations) ==
+        pantr::lambert_w0(2.0));
+  // W(0) = 0 needs no iteration, so no cap applies.
+  CHECK(pantr::detail::lambert_w0_capped(0.0, 0) == 0.0);
+}
+
+TEST_CASE("Gauss rules: an exhausted Newton iteration raises state_error") {
+  namespace qd = pantr::quad::detail;
+  CHECK_THROWS_WITH_AS(static_cast<void>(qd::gauss_legendre_1d_capped<double>(8, 1)),
+                       "gauss_legendre_1d: Newton's iteration for n_pts = 8 did not converge in 1 "
+                       "steps",
+                       pantr::state_error);
+  CHECK_THROWS_AS(static_cast<void>(qd::gauss_lobatto_legendre_1d_capped<double>(8, 1)),
+                  pantr::state_error);
+  CHECK_THROWS_AS(static_cast<void>(qd::gauss_legendre_1d_capped<float>(64, 0)),
+                  pantr::state_error);
+  // One point is the middle node (0), found without iterating.
+  CHECK(qd::gauss_legendre_1d_capped<double>(1, 0).nodes.data()[0] == 0.5);
+  // The default cap gives the public rule.
+  const auto capped = qd::gauss_legendre_1d_capped<double>(8, qd::newton_max_iterations);
+  const auto pub = pantr::quad::gauss_legendre_1d<double>(8);
+  for (std::size_t i = 0; i < 8; ++i) {
+    CHECK(capped.nodes.data()[i] == pub.nodes.data()[i]);
+  }
+}

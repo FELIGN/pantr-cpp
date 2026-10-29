@@ -81,9 +81,9 @@ inline bool newton_converged(double dx, double x) {
   return std::fabs(dx) <= 4.0 * std::numeric_limits<double>::epsilon() * (1.0 + std::fabs(x));
 }
 
-[[noreturn]] inline void newton_failed(const char* rule, std::size_t n) {
+[[noreturn]] inline void newton_failed(const char* rule, std::size_t n, int max_iterations) {
   throw state_error(std::string(rule) + ": Newton's iteration for n_pts = " + std::to_string(n) +
-                    " did not converge in " + std::to_string(newton_max_iterations) + " steps");
+                    " did not converge in " + std::to_string(max_iterations) + " steps");
 }
 
 }  // namespace detail
@@ -122,6 +122,54 @@ template <StorageFloat T>
   return rule;
 }
 
+namespace detail {
+
+/// `gauss_legendre_1d` with the Newton iteration cap as an argument, so a test can exhaust it.
+template <StorageFloat T>
+[[nodiscard]] Rule1D<T> gauss_legendre_1d_capped(long long n_pts, int max_iterations) {
+  check_n_pts(n_pts, 1);
+  const auto n = static_cast<std::size_t>(n_pts);
+  std::vector<double> x(n), w(n);
+  const double nd = static_cast<double>(n);
+  for (std::size_t i = 0; i < (n + 1) / 2; ++i) {
+    // Root i counted from +1 downward; its mirror is -root.
+    const bool middle = (n % 2 == 1) && (i == n / 2);
+    double r =
+        middle ? 0.0 : std::cos(std::numbers::pi * (static_cast<double>(i) + 0.75) / (nd + 0.5));
+    double dp = 0.0;
+    bool converged = middle;
+    for (int it = 0; it < max_iterations && !converged; ++it) {
+      const auto [p, p_prev] = legendre_pair(n, r);
+      dp = nd * (r * p - p_prev) / (r * r - 1.0);
+      const double dx = p / dp;
+      r -= dx;
+      converged = newton_converged(dx, r);
+    }
+    if (!converged) {
+      newton_failed("gauss_legendre_1d", n, max_iterations);
+    }
+    // Derivative at the converged root.
+    const auto [p, p_prev] = legendre_pair(n, r);
+    static_cast<void>(p);
+    dp = nd * (r * p - p_prev) / (r * r - 1.0);
+    const double weight = 2.0 / ((1.0 - r * r) * dp * dp);
+    x[n - 1 - i] = r;
+    x[i] = -r;
+    w[n - 1 - i] = weight;
+    w[i] = weight;
+  }
+  double sum = 0.0;
+  for (const double wi : w) {
+    sum += wi;
+  }
+  for (double& wi : w) {
+    wi *= 2.0 / sum;
+  }
+  return to_unit_interval<T>(x, w);
+}
+
+}  // namespace detail
+
 /// Get the `n_pts`-point Gauss-Legendre rule on `[0, 1]`.
 ///
 /// The nodes are the roots of `P_n`, found by Newton's iteration on the three-term recurrence
@@ -142,46 +190,52 @@ template <StorageFloat T>
 ///     state_error: Newton's iteration did not converge (not observed; a loud bound).
 template <StorageFloat T>
 [[nodiscard]] Rule1D<T> gauss_legendre_1d(long long n_pts) {
-  detail::check_n_pts(n_pts, 1);
+  return detail::gauss_legendre_1d_capped<T>(n_pts, detail::newton_max_iterations);
+}
+
+namespace detail {
+
+/// `gauss_lobatto_legendre_1d` with the Newton iteration cap as an argument, so a test can exhaust
+/// it.
+template <StorageFloat T>
+[[nodiscard]] Rule1D<T> gauss_lobatto_legendre_1d_capped(long long n_pts, int max_iterations) {
+  check_n_pts(n_pts, 2);
   const auto n = static_cast<std::size_t>(n_pts);
+  const std::size_t big_n = n - 1;
+  const double nd = static_cast<double>(big_n);
+  const double nn1 = nd * (nd + 1.0);
   std::vector<double> x(n), w(n);
-  const double nd = static_cast<double>(n);
-  for (std::size_t i = 0; i < (n + 1) / 2; ++i) {
-    // Root i counted from +1 downward; its mirror is -root.
-    const bool middle = (n % 2 == 1) && (i == n / 2);
-    double r =
-        middle ? 0.0 : std::cos(std::numbers::pi * (static_cast<double>(i) + 0.75) / (nd + 0.5));
-    double dp = 0.0;
+  x[0] = -1.0;
+  x[n - 1] = 1.0;
+  for (std::size_t k = 1; k <= (n - 1) / 2; ++k) {
+    const bool middle = (big_n % 2 == 0) && (2 * k == big_n);
+    double r = middle ? 0.0 : std::cos(std::numbers::pi * static_cast<double>(k) / nd);
     bool converged = middle;
-    for (int it = 0; it < detail::newton_max_iterations && !converged; ++it) {
-      const auto [p, p_prev] = detail::legendre_pair(n, r);
-      dp = nd * (r * p - p_prev) / (r * r - 1.0);
-      const double dx = p / dp;
+    for (int it = 0; it < max_iterations && !converged; ++it) {
+      const auto [p, p_prev] = legendre_pair(big_n, r);
+      const double one_minus_r2 = 1.0 - r * r;
+      const double d1 = nd * (p_prev - r * p) / one_minus_r2;     // P_N'
+      const double d2 = (2.0 * r * d1 - nn1 * p) / one_minus_r2;  // P_N''
+      const double dx = d1 / d2;
       r -= dx;
-      converged = detail::newton_converged(dx, r);
+      converged = newton_converged(dx, r);
     }
     if (!converged) {
-      detail::newton_failed("gauss_legendre_1d", n);
+      newton_failed("gauss_lobatto_legendre_1d", n, max_iterations);
     }
-    // Derivative at the converged root.
-    const auto [p, p_prev] = detail::legendre_pair(n, r);
-    static_cast<void>(p);
-    dp = nd * (r * p - p_prev) / (r * r - 1.0);
-    const double weight = 2.0 / ((1.0 - r * r) * dp * dp);
-    x[n - 1 - i] = r;
-    x[i] = -r;
-    w[n - 1 - i] = weight;
-    w[i] = weight;
+    x[n - 1 - k] = r;
+    x[k] = -r;
   }
-  double sum = 0.0;
-  for (const double wi : w) {
-    sum += wi;
+  for (std::size_t i = 0; i < n; ++i) {
+    const double p = legendre_pair(big_n, x[i]).first;
+    w[i] = 2.0 / nn1 / (p * p);
   }
-  for (double& wi : w) {
-    wi *= 2.0 / sum;
-  }
-  return detail::to_unit_interval<T>(x, w);
+  // Symmetric by construction of the nodes; the weights of a pair are computed at exact
+  // negatives, so P_N^2 agrees and they are equal.
+  return to_unit_interval<T>(x, w);
 }
+
+}  // namespace detail
 
 /// Get the `n_pts`-point Gauss-Lobatto-Legendre rule on `[0, 1]`.
 ///
@@ -202,40 +256,7 @@ template <StorageFloat T>
 ///     state_error: Newton's iteration did not converge (not observed; a loud bound).
 template <StorageFloat T>
 [[nodiscard]] Rule1D<T> gauss_lobatto_legendre_1d(long long n_pts) {
-  detail::check_n_pts(n_pts, 2);
-  const auto n = static_cast<std::size_t>(n_pts);
-  const std::size_t big_n = n - 1;
-  const double nd = static_cast<double>(big_n);
-  const double nn1 = nd * (nd + 1.0);
-  std::vector<double> x(n), w(n);
-  x[0] = -1.0;
-  x[n - 1] = 1.0;
-  for (std::size_t k = 1; k <= (n - 1) / 2; ++k) {
-    const bool middle = (big_n % 2 == 0) && (2 * k == big_n);
-    double r = middle ? 0.0 : std::cos(std::numbers::pi * static_cast<double>(k) / nd);
-    bool converged = middle;
-    for (int it = 0; it < detail::newton_max_iterations && !converged; ++it) {
-      const auto [p, p_prev] = detail::legendre_pair(big_n, r);
-      const double one_minus_r2 = 1.0 - r * r;
-      const double d1 = nd * (p_prev - r * p) / one_minus_r2;     // P_N'
-      const double d2 = (2.0 * r * d1 - nn1 * p) / one_minus_r2;  // P_N''
-      const double dx = d1 / d2;
-      r -= dx;
-      converged = detail::newton_converged(dx, r);
-    }
-    if (!converged) {
-      detail::newton_failed("gauss_lobatto_legendre_1d", n);
-    }
-    x[n - 1 - k] = r;
-    x[k] = -r;
-  }
-  for (std::size_t i = 0; i < n; ++i) {
-    const double p = detail::legendre_pair(big_n, x[i]).first;
-    w[i] = 2.0 / nn1 / (p * p);
-  }
-  // Symmetric by construction of the nodes; the weights of a pair are computed at exact
-  // negatives, so P_N^2 agrees and they are equal.
-  return detail::to_unit_interval<T>(x, w);
+  return detail::gauss_lobatto_legendre_1d_capped<T>(n_pts, detail::newton_max_iterations);
 }
 
 /// Get the `n_pts`-point Chebyshev-Gauss rule of the first kind on `[0, 1]`.

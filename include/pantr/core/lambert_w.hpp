@@ -24,6 +24,37 @@ namespace pantr {
 /// guaranteed, an admitted heuristic rather than a derived count.
 inline constexpr int lambert_w_max_iterations = 64;
 
+namespace detail {
+
+/// `lambert_w0` with the iteration cap as an argument, so a test can exhaust it.
+[[nodiscard]] inline double lambert_w0_capped(double x, int max_iterations) {
+  if (!(x >= 0.0) || !std::isfinite(x)) {
+    throw value_error("lambert_w0 needs a finite argument >= 0, got " + py_repr(x));
+  }
+  if (x == 0.0) {
+    return 0.0;
+  }
+  // Starting point: log1p(x) bounds W(x) from above on [0, inf) and is close for small x; past e,
+  // the asymptotic log(x) - log(log(x)) is within a few percent.
+  double w = x < std::numbers::e ? std::log1p(x) : std::log(x) - std::log(std::log(x));
+  constexpr double tol = 4.0 * std::numeric_limits<double>::epsilon();
+  for (int it = 0; it < max_iterations; ++it) {
+    // Halley on f(w) = w e^w - x, written with g = f e^-w = w - x e^-w: the same step, but no
+    // intermediate overflows (w e^w and its derivative pass the largest double for x near it).
+    const double g = w - x * std::exp(-w);
+    const double wp1 = w + 1.0;
+    const double dw = g / (wp1 - (w + 2.0) * g / (2.0 * wp1));
+    w -= dw;
+    if (std::fabs(dw) <= tol * (1.0 + std::fabs(w))) {
+      return w;
+    }
+  }
+  throw state_error("lambert_w0(" + py_repr(x) + ") did not converge in " +
+                    std::to_string(max_iterations) + " Halley steps");
+}
+
+}  // namespace detail
+
 /// Evaluate the principal branch `W0(x)` for `x >= 0`.
 ///
 /// Halley's iteration on `f(w) = w e^w - x`, scaled by `e^-w` so nothing overflows up to the
@@ -42,29 +73,7 @@ inline constexpr int lambert_w_max_iterations = 64;
 ///     value_error: `x` is negative, NaN or infinite.
 ///     state_error: The iteration did not converge within `lambert_w_max_iterations` steps.
 [[nodiscard]] inline double lambert_w0(double x) {
-  if (!(x >= 0.0) || !std::isfinite(x)) {
-    throw value_error("lambert_w0 needs a finite argument >= 0, got " + py_repr(x));
-  }
-  if (x == 0.0) {
-    return 0.0;
-  }
-  // Starting point: log1p(x) bounds W(x) from above on [0, inf) and is close for small x; past e,
-  // the asymptotic log(x) - log(log(x)) is within a few percent.
-  double w = x < std::numbers::e ? std::log1p(x) : std::log(x) - std::log(std::log(x));
-  constexpr double tol = 4.0 * std::numeric_limits<double>::epsilon();
-  for (int it = 0; it < lambert_w_max_iterations; ++it) {
-    // Halley on f(w) = w e^w - x, written with g = f e^-w = w - x e^-w: the same step, but no
-    // intermediate overflows (w e^w and its derivative pass the largest double for x near it).
-    const double g = w - x * std::exp(-w);
-    const double wp1 = w + 1.0;
-    const double dw = g / (wp1 - (w + 2.0) * g / (2.0 * wp1));
-    w -= dw;
-    if (std::fabs(dw) <= tol * (1.0 + std::fabs(w))) {
-      return w;
-    }
-  }
-  throw state_error("lambert_w0(" + py_repr(x) + ") did not converge in " +
-                    std::to_string(lambert_w_max_iterations) + " Halley steps");
+  return detail::lambert_w0_capped(x, lambert_w_max_iterations);
 }
 
 }  // namespace pantr
