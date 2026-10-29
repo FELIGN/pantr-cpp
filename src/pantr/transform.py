@@ -13,11 +13,17 @@ Main exports:
 from __future__ import annotations
 
 import functools
+from typing import Any
 
 import numpy as np
 from numpy import typing as npt
 
+from ._ext import ext
+
 __all__ = ["AffineTransform"]
+
+_cpp: Any = ext.transform
+"""The compiled AffineTransform (private; untyped)."""
 
 
 class AffineTransform:
@@ -29,10 +35,13 @@ class AffineTransform:
     method mutates an existing instance.
 
     Attributes:
-        _matrix (npt.NDArray[np.float64]): The ``(n, n)`` linear part.
-        _translation (npt.NDArray[np.float64]): The ``(n,)`` translation.
+        _h (Any): The compiled value.
+        _matrix (npt.NDArray[np.float64]): The ``(n, n)`` linear part, a read-only view of ``_h``.
+        _translation (npt.NDArray[np.float64]): The ``(n,)`` translation, a read-only view of
+            ``_h``.
     """
 
+    _h: Any
     _matrix: npt.NDArray[np.float64]
     _translation: npt.NDArray[np.float64]
 
@@ -63,23 +72,47 @@ class AffineTransform:
             read-only ``float64`` arrays.
         """
         mat = np.ascontiguousarray(np.asarray(matrix, dtype=np.float64))
-        if mat.ndim != 2 or mat.shape[0] != mat.shape[1]:  # noqa: PLR2004
-            raise ValueError(f"matrix must be a square 2-D array, got shape {mat.shape}.")
+        tvec = (
+            None
+            if translation is None
+            else np.ascontiguousarray(np.asarray(translation, dtype=np.float64))
+        )
+        self._set_handle(_cpp.AffineTransform(mat, tvec))
 
-        n = mat.shape[0]
+    def _set_handle(self, h: Any) -> None:  # noqa: ANN401
+        """Hold a compiled value and cache its read-only views (DR-25: it is immutable).
 
-        tvec: npt.NDArray[np.float64]
-        if translation is None:
-            tvec = np.zeros(n, dtype=np.float64)
-        else:
-            tvec = np.ascontiguousarray(np.asarray(translation, dtype=np.float64))
-            if tvec.shape != (n,):
-                raise ValueError(f"translation must have shape ({n},), got {tvec.shape}.")
+        Args:
+            h (Any): The compiled value.
+        """
+        self._h = h
+        self._matrix = h.matrix
+        self._translation = h.offset
 
-        mat.flags.writeable = False
-        tvec.flags.writeable = False
-        self._matrix = mat
-        self._translation = tvec
+    @classmethod
+    def _from_handle(cls, h: Any) -> AffineTransform:  # noqa: ANN401
+        """Wrap a compiled AffineTransform without copying it.
+
+        Args:
+            h (Any): The compiled value.
+
+        Returns:
+            AffineTransform: The wrapper.
+        """
+        t = object.__new__(cls)
+        t._set_handle(h)
+        return t
+
+    def __reduce__(
+        self,
+    ) -> tuple[type[AffineTransform], tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]]:
+        """Pickle and copy through the constructor.
+
+        Returns:
+            tuple[type[AffineTransform], tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]]:
+            The class and its matrix and translation.
+        """
+        return (AffineTransform, (self._matrix, self._translation))
 
     # ------------------------------------------------------------------
     # Properties
@@ -127,12 +160,7 @@ class AffineTransform:
         Raises:
             ValueError: If the matrix is singular.
         """
-        try:
-            inv_mat = np.linalg.inv(self._matrix)
-        except np.linalg.LinAlgError as exc:
-            raise ValueError("Cannot invert a singular affine transformation.") from exc
-        inv_trans = -inv_mat @ self._translation
-        return AffineTransform(inv_mat, inv_trans)
+        return AffineTransform._from_handle(self._h.inverse())
 
     # ------------------------------------------------------------------
     # Factory methods
@@ -148,7 +176,7 @@ class AffineTransform:
         Returns:
             AffineTransform: The identity map.
         """
-        return AffineTransform(np.eye(n))
+        return AffineTransform._from_handle(_cpp.AffineTransform.identity(n))
 
     @staticmethod
     def translation(offset: npt.ArrayLike) -> AffineTransform:
@@ -160,8 +188,8 @@ class AffineTransform:
         Returns:
             AffineTransform: A translation by *offset*.
         """
-        b = np.asarray(offset, dtype=np.float64).ravel()
-        return AffineTransform(np.eye(len(b)), b)
+        b = np.ascontiguousarray(np.asarray(offset, dtype=np.float64).ravel())
+        return AffineTransform._from_handle(_cpp.AffineTransform.translation(b))
 
     @staticmethod
     def scaling(
@@ -221,8 +249,7 @@ class AffineTransform:
                     f"scaling factors must be non-zero (singular transform), got {f!r}."
                 )
 
-        mat = np.diag(f)
-        return _with_optional_center(mat, center)
+        return AffineTransform._from_handle(_cpp.AffineTransform.scaling(f, _center(center)))
 
     @staticmethod
     def rotation_2d(
@@ -242,12 +269,9 @@ class AffineTransform:
         Raises:
             ValueError: If *angle* is non-finite.
         """
-        angle_f = float(angle)
-        if not np.isfinite(angle_f):
-            raise ValueError(f"angle must be finite, got {angle_f!r}.")
-        c, s = np.cos(angle_f), np.sin(angle_f)
-        mat = np.array([[c, -s], [s, c]], dtype=np.float64)
-        return _with_optional_center(mat, center)
+        return AffineTransform._from_handle(
+            _cpp.AffineTransform.rotation_2d(float(angle), _center(center))
+        )
 
     @staticmethod
     def rotation_3d(
@@ -282,27 +306,15 @@ class AffineTransform:
             u = np.zeros(3, dtype=np.float64)
             u[axis_int] = 1.0
         else:
-            u = np.asarray(axis, dtype=np.float64).ravel()
-            if u.shape != (3,):
-                raise ValueError(f"Rotation axis must have shape (3,), got {u.shape}.")
-            norm = np.linalg.norm(u)
-            if norm == 0.0 or not np.isfinite(norm):
-                raise ValueError(f"Rotation axis must be a finite non-zero vector, got {u!r}.")
-            u = u / norm
-
-        angle_f = float(angle)
-        if not np.isfinite(angle_f):
-            raise ValueError(f"angle must be finite, got {angle_f!r}.")
-        # Rodrigues rotation matrix: R = I cos(t) + (1-cos(t)) u u^T + sin(t) [u]x
-        c, s = np.cos(angle_f), np.sin(angle_f)
-        ux, uy, uz = u
-        K = np.array(
-            [[0.0, -uz, uy], [uz, 0.0, -ux], [-uy, ux, 0.0]],
-            dtype=np.float64,
+            u = np.ascontiguousarray(np.asarray(axis, dtype=np.float64).ravel())
+            # Checked here as well as in C++ for the message, which spells NumPy's repr of `u`.
+            if u.shape == (3,):
+                norm = np.linalg.norm(u)
+                if norm == 0.0 or not np.isfinite(norm):
+                    raise ValueError(f"Rotation axis must be a finite non-zero vector, got {u!r}.")
+        return AffineTransform._from_handle(
+            _cpp.AffineTransform.rotation_3d(float(angle), u, _center(center))
         )
-        mat = c * np.eye(3) + (1.0 - c) * np.outer(u, u) + s * K
-
-        return _with_optional_center(mat, center)
 
     @staticmethod
     def mirror(
@@ -328,13 +340,12 @@ class AffineTransform:
         Raises:
             ValueError: If *normal* is zero or non-finite.
         """
-        n = np.asarray(normal, dtype=np.float64).ravel()
+        n = np.ascontiguousarray(np.asarray(normal, dtype=np.float64).ravel())
+        # Checked here as well as in C++ for the message, which spells NumPy's repr of `n`.
         norm = np.linalg.norm(n)
         if norm == 0.0 or not np.isfinite(norm):
             raise ValueError(f"Mirror normal must be a finite non-zero vector, got {n!r}.")
-        n = n / norm
-        mat = np.eye(len(n)) - 2.0 * np.outer(n, n)
-        return _with_optional_center(mat, center)
+        return AffineTransform._from_handle(_cpp.AffineTransform.mirror(n, _center(center)))
 
     @staticmethod
     def shear(
@@ -362,18 +373,9 @@ class AffineTransform:
             ValueError: If *component* or *direction* is out of range.
             ValueError: If *factor* is non-finite.
         """
-        if component == direction:
-            raise ValueError("component and direction must differ.")
-        if not (0 <= component < dim):
-            raise ValueError(f"component must be in [0, {dim}), got {component}.")
-        if not (0 <= direction < dim):
-            raise ValueError(f"direction must be in [0, {dim}), got {direction}.")
-        factor_f = float(factor)
-        if not np.isfinite(factor_f):
-            raise ValueError(f"factor must be finite, got {factor_f!r}.")
-        mat = np.eye(dim, dtype=np.float64)
-        mat[component, direction] = factor_f
-        return AffineTransform(mat)
+        return AffineTransform._from_handle(
+            _cpp.AffineTransform.shear(dim, component, direction, factor)
+        )
 
     # ------------------------------------------------------------------
     # Composition and application
@@ -393,13 +395,7 @@ class AffineTransform:
         Raises:
             ValueError: If the dimensions do not match.
         """
-        if self.dim != other.dim:
-            raise ValueError(
-                f"Cannot compose transforms of different dimensions ({self.dim} and {other.dim})."
-            )
-        new_mat = self._matrix @ other._matrix
-        new_trans = self._matrix @ other._translation + self._translation
-        return AffineTransform(new_mat, new_trans)
+        return AffineTransform._from_handle(self._h.compose(other._h))
 
     def __matmul__(self, other: object) -> AffineTransform:
         """Compose via the ``@`` operator.
@@ -437,7 +433,8 @@ class AffineTransform:
                 f"Points last dimension ({pts.shape[-1]}) must match "
                 f"transform dimension ({self.dim})."
             )
-        return np.asarray(pts @ self._matrix.T + self._translation, dtype=np.float64)
+        out: npt.NDArray[np.float64] = self._h.apply(np.ascontiguousarray(pts)).reshape(pts.shape)
+        return out
 
     # ------------------------------------------------------------------
     # Dunder helpers
@@ -461,51 +458,15 @@ class AffineTransform:
 # ------------------------------------------------------------------
 
 
-def _apply_center(
-    transform: AffineTransform,
-    center: npt.ArrayLike,
-) -> AffineTransform:
-    """Conjugate *transform* by a translation to/from *center*.
-
-    Computes ``translate(center) @ transform @ translate(-center)`` so that
-    the linear part of *transform* is applied about *center* rather than the
-    origin.
+def _center(center: npt.ArrayLike | None) -> npt.NDArray[np.float64] | None:
+    """Normalise an optional center point for the compiled factories.
 
     Args:
-        transform (AffineTransform): A linear (or affine) transformation.
-        center (npt.ArrayLike): The center point.
+        center (npt.ArrayLike | None): The center, any shape (ravelled), or ``None``.
 
     Returns:
-        AffineTransform: The re-centred transformation.
-
-    Raises:
-        ValueError: If *center* does not have shape ``(transform.dim,)``.
+        npt.NDArray[np.float64] | None: A C-contiguous 1-D ``float64`` array, or ``None``.
     """
-    c = np.asarray(center, dtype=np.float64).ravel()
-    if c.shape != (transform.dim,):
-        raise ValueError(
-            f"center must have shape ({transform.dim},), got {np.asarray(center).shape}."
-        )
-    t_neg = AffineTransform.translation(-c)
-    t_pos = AffineTransform.translation(c)
-    return t_pos @ transform @ t_neg
-
-
-def _with_optional_center(
-    mat: npt.NDArray[np.float64],
-    center: npt.ArrayLike | None,
-) -> AffineTransform:
-    """Build an :class:`AffineTransform` from ``mat``, re-centred if requested.
-
-    Args:
-        mat (npt.NDArray[np.float64]): The linear part of the transform.
-        center (npt.ArrayLike | None): Optional center point; when given, the
-            transform is conjugated about it via :func:`_apply_center`.
-
-    Returns:
-        AffineTransform: The transform, about ``center`` when provided.
-    """
-    t = AffineTransform(mat)
-    if center is not None:
-        t = _apply_center(t, center)
-    return t
+    if center is None:
+        return None
+    return np.ascontiguousarray(np.asarray(center, dtype=np.float64).ravel())

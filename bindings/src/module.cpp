@@ -51,6 +51,10 @@ NB_MODULE(PANTR_EXT_MODULE_NAME, m) {
   pantr::bindings::register_basis(basis);
   nb::module_ change_basis = m.def_submodule("change_basis", "Change-of-basis matrices (private).");
   pantr::bindings::register_change_basis(change_basis);
+  nb::module_ geometry = m.def_submodule("geometry", "Axis-aligned bounding boxes (private).");
+  pantr::bindings::register_geometry(geometry);
+  nb::module_ transform = m.def_submodule("transform", "Affine maps (private).");
+  pantr::bindings::register_transform(transform);
   nb::module_ kernels = m.def_submodule(
       "_kernels", "Ported kernels for Python callers not yet ported (private, interim).");
   pantr::bindings::register_kernels(kernels);

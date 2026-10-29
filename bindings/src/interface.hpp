@@ -9,7 +9,7 @@ namespace pantr::bindings {
 /// Version of the module's interface. pantr/_ext.py refuses a module whose version differs from
 /// its EXPECTED_INTERFACE, so a stale build fails at import instead of as a phantom regression.
 /// Bump both together with any change to what the module exposes.
-inline constexpr int kInterfaceVersion = 2;
+inline constexpr int kInterfaceVersion = 3;
 
 /// Register the translation of pantr's C++ exceptions to Python exceptions.
 void register_errors(nanobind::module_& m);
@@ -28,6 +28,12 @@ void register_basis(nanobind::module_& m);
 
 /// Register the `change_basis` submodule (builders and process tables).
 void register_change_basis(nanobind::module_& m);
+
+/// Register the `geometry` submodule (AABB).
+void register_geometry(nanobind::module_& m);
+
+/// Register the `transform` submodule (AffineTransform).
+void register_transform(nanobind::module_& m);
 
 /// Register the `_kernels` submodule: the interim surface through which Python code not yet ported
 /// reaches ported kernels (removed with the last such caller).

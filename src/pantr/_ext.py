@@ -32,7 +32,7 @@ __all__ = [
     "stale_sources",
 ]
 
-EXPECTED_INTERFACE: Final[int] = 2
+EXPECTED_INTERFACE: Final[int] = 3
 """The ``interface_version`` this package expects of the compiled module."""
 
 SOURCE_DIRS: Final[tuple[str, ...]] = ("include", "bindings", "cmake")
