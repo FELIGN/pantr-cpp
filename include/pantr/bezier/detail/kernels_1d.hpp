@@ -316,7 +316,9 @@ void split_1d_kernel(mdview<const T, 2> ctrl, double value, mdview<T, 2> out_lef
   // contiguous, so each step of a pass is a loop over `w` columns that vectorises (one column at
   // a time it would read `ctrl` with a stride of `n_cols`). Every column sees the same operations
   // in the same order as on its own.
-  parallel::parallel_for(n_cols, parallel::WorkEstimate{ops},
+  // A column writes its two halves, `2 (p + 1)` values: chunked by those bytes too, so a chunk is
+  // wide enough for the column loop to vectorise (by work alone a chunk is about ten columns).
+  parallel::parallel_for(n_cols, parallel::WorkEstimate{ops}, 2 * (p + 1) * sizeof(T),
                          [&](std::size_t begin, std::size_t end) {
                            const std::size_t w = end - begin;
                            std::vector<T> d((p + 1) * w);

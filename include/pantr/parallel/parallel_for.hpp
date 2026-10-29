@@ -100,7 +100,27 @@ void parallel_for(std::size_t n, std::size_t grain, F&& body) {
 template <class F>
   requires std::invocable<F&, std::size_t, std::size_t>
 void parallel_for(std::size_t n, WorkEstimate work, F&& body) {
-  const std::size_t grain = grain_for(work);
+  parallel_for(n, work, 0, body);
+}
+
+/// Run `body(begin, end)` over `[0, n)` as the overload taking only the work does, with chunks
+/// also large enough to stream `chunk_bytes` of output (`grain_for(work, bytes_per_item)`): for a
+/// cheap item that writes much, or whose body is vectorised across the items of its chunk, so a
+/// chunk is not too short to pay for its own start.
+///
+/// Args:
+///     n (std::size_t): Number of items.
+///     work (WorkEstimate): Operations per item, derived from the algorithm.
+///     bytes_per_item (std::size_t): Bytes of output one item writes (0: chunk by work alone).
+///     body (F&&): As for the overload taking a grain.
+///
+/// Raises:
+///     value_error: `work.ops_per_item` is not a finite number >= 1.
+///     The first exception a chunk threw (see the overload taking a grain).
+template <class F>
+  requires std::invocable<F&, std::size_t, std::size_t>
+void parallel_for(std::size_t n, WorkEstimate work, std::size_t bytes_per_item, F&& body) {
+  const std::size_t grain = grain_for(work, bytes_per_item);
   if (worth_parallel(n, work)) {
     parallel_for(n, grain, body);
     return;
