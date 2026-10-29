@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy as _copy
 import functools
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Literal, overload
@@ -38,7 +39,10 @@ class Bezier:
 
     The value is immutable: the control points are copied in at construction
     and read-only, and the operations that take ``in_place=True`` replace the
-    compiled value this object holds rather than writing into it.
+    compiled value this object holds rather than writing into it. (The one
+    exception, until :class:`~pantr.bspline.Bspline` is ported: a Bézier made
+    by a ``copy=False`` conversion from a B-spline shares the B-spline's array,
+    so an in-place change of the B-spline shows through it.)
 
     Attributes:
         _h (Any): The compiled value (``BezierF64`` or ``BezierF32``).
@@ -47,8 +51,10 @@ class Bezier:
         _is_rational (bool): Whether the Bézier is rational (last control
             point coordinate is a homogeneous weight).
         _dtype (np.dtype): ``float32`` or ``float64``.
+
     The read-only control point view is read from ``_h`` on first use and kept
-    in the instance (``control_points``, a cached property).
+    in the instance (``control_points`` is a cached property that refuses
+    assignment).
     """
 
     _h: Any
@@ -80,11 +86,13 @@ class Bezier:
         """
         cp = _as_control_points(control_points)
         rational = bool(is_rational)
-        f32 = cp.dtype is _F32 or (cp.dtype is not _F64 and cp.dtype == _F32)
-        self._h = (_cpp.BezierF32 if f32 else _cpp.BezierF64)(cp, rational)
-        self._shape = cp.shape
-        self._is_rational = rational
-        self._dtype = _F32 if f32 else _F64
+        f32 = cp.dtype is _F32
+        # Stored in the instance dict directly: an attribute write would go through `__setattr__`.
+        d = self.__dict__
+        d["_h"] = (_cpp.BezierF32 if f32 else _cpp.BezierF64)(cp, rational)
+        d["_shape"] = cp.shape
+        d["_is_rational"] = rational
+        d["_dtype"] = _F32 if f32 else _F64
 
     def _set_handle(
         self,
@@ -99,15 +107,14 @@ class Bezier:
             shape (tuple[int, ...] | None): Its control point shape, when the caller knows it.
             dtype (np.dtype | None): Its dtype, when the caller knows it.
         """
-        self._h = h
-        self._shape = tuple(h.shape) if shape is None else shape
-        self._is_rational = bool(h.rational)
-        if dtype is None:
-            self._dtype = _F32 if isinstance(h, _cpp.BezierF32) else _F64
-        else:
-            self._dtype = _F32 if dtype == _F32 else _F64
-        # Drop the control points `functools.cached_property` stored for the previous value.
-        self.__dict__.pop("control_points", None)
+        f32 = isinstance(h, _cpp.BezierF32) if dtype is None else dtype == _F32
+        d = self.__dict__
+        d["_h"] = h
+        d["_shape"] = tuple(h.shape) if shape is None else shape
+        d["_is_rational"] = bool(h.rational)
+        d["_dtype"] = _F32 if f32 else _F64
+        # Drop the control-point view of the previous value; the next read takes the new one.
+        d.pop("control_points", None)
 
     @classmethod
     def _from_handle(cls, h: Any) -> Bezier:  # noqa: ANN401
@@ -144,32 +151,53 @@ class Bezier:
         b._set_handle(_class_for(cp.dtype).borrow(cp, bool(is_rational)), cp.shape, cp.dtype)
         return b
 
-    def __reduce__(self) -> tuple[type[Bezier], tuple[Any, bool]]:
-        """Pickle through the constructor.
+    def __reduce__(self) -> tuple[Any, ...]:
+        """Pickle through the constructor, with a subclass's own attributes as state.
 
         Returns:
-            tuple[type[Bezier], tuple[Any, bool]]: The class, the control points and rationality.
+            tuple[Any, ...]: The class, the constructor arguments and the extra attributes.
         """
-        return (Bezier, (self.control_points, self._is_rational))
+        return (type(self), (self.control_points, self._is_rational), _extra_state(self))
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Restore extra attributes, or rebuild from a previous release's pickle.
+
+        A previous release pickled the plain attributes ``_control_points`` and ``_is_rational``;
+        such a state rebuilds the compiled value from them.
+
+        Args:
+            state (dict[str, Any]): The pickled state.
+        """
+        state = dict(state)
+        if "_control_points" in state:
+            cp = state.pop("_control_points")
+            Bezier.__init__(self, cp, bool(state.pop("_is_rational", False)))
+        self.__dict__.update(state)
 
     def __copy__(self) -> Bezier:
         """Copy: the new object shares the immutable compiled value.
 
         Returns:
-            Bezier: The copy.
+            Bezier: The copy, of the same class, with the same attributes.
         """
-        return Bezier._from_handle(self._h)
+        new = object.__new__(type(self))
+        new.__dict__.update(self.__dict__)
+        return new
 
     def __deepcopy__(self, memo: dict[int, Any]) -> Bezier:
-        """Deep copy: as :meth:`__copy__`, since the compiled value is immutable.
+        """Deep copy: shares the immutable compiled value and deep-copies any other attribute.
 
         Args:
-            memo (dict[int, Any]): The deep-copy memo (unused: nothing mutable is shared).
+            memo (dict[int, Any]): The deep-copy memo.
 
         Returns:
             Bezier: The copy.
         """
-        return Bezier._from_handle(self._h)
+        new = object.__new__(type(self))
+        memo[id(self)] = new
+        for key, value in self.__dict__.items():
+            new.__dict__[key] = value if key in _VALUE_ATTRS else _copy.deepcopy(value, memo)
+        return new
 
     @property
     def dim(self) -> int:
@@ -200,8 +228,41 @@ class Bezier:
             immutable value, which keeps the values it showed when it was read
             even after an in-place operation on this object.
         """
+        # Read once and kept in the instance dict, so later reads cost no call; `__setattr__` and
+        # `__delattr__` refuse the name, as they did for the plain property it replaces.
         cp: npt.NDArray[np.float32 | np.float64] = self._h.control_points
         return cp
+
+    def __setattr__(self, name: str, value: object) -> None:
+        """Refuse assigning ``control_points``, a read-only property.
+
+        Args:
+            name (str): The attribute.
+            value (object): The value.
+
+        Raises:
+            AttributeError: For ``control_points``.
+        """
+        if name == "control_points":
+            raise AttributeError(
+                f"property 'control_points' of {type(self).__name__!r} object has no setter"
+            )
+        object.__setattr__(self, name, value)
+
+    def __delattr__(self, name: str) -> None:
+        """Refuse deleting ``control_points``, a read-only property.
+
+        Args:
+            name (str): The attribute.
+
+        Raises:
+            AttributeError: For ``control_points``.
+        """
+        if name == "control_points":
+            raise AttributeError(
+                f"property 'control_points' of {type(self).__name__!r} object has no deleter"
+            )
+        object.__delattr__(self, name)
 
     @property
     def is_rational(self) -> bool:
@@ -1232,7 +1293,8 @@ def create_from_bspline(bspline: Bspline, *, copy: bool = True) -> Bezier:
         copy (bool): If ``True`` (default), the control points are
             deep-copied into the new Bézier. If ``False``, the Bézier
             shares the same underlying control point array (read-only
-            through the Bézier).
+            through the Bézier) when it is C-contiguous float32 or float64;
+            another layout or dtype is converted, which shares nothing.
 
     Returns:
         Bezier: The equivalent Bézier.
@@ -1245,6 +1307,22 @@ def create_from_bspline(bspline: Bspline, *, copy: bool = True) -> Bezier:
     if copy:
         return Bezier(bspline.control_points, is_rational=bspline.is_rational)
     return Bezier._borrow(bspline.control_points, bspline.is_rational)
+
+
+_VALUE_ATTRS = frozenset({"_h", "_shape", "_is_rational", "_dtype", "control_points"})
+"""The attributes that hold the immutable value and what is cached from it (shared by copies)."""
+
+
+def _extra_state(b: Bezier) -> dict[str, Any]:
+    """Get a Bézier's attributes other than its value, for pickling a subclass.
+
+    Args:
+        b (Bezier): The Bézier.
+
+    Returns:
+        dict[str, Any]: The other attributes (empty for a plain Bézier).
+    """
+    return {k: v for k, v in b.__dict__.items() if k not in _VALUE_ATTRS}
 
 
 def _as_control_points(control_points: npt.ArrayLike) -> npt.NDArray[np.float32 | np.float64]:

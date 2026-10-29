@@ -875,8 +875,10 @@ class Bspline:
             copy (bool): If ``True`` (default), the control points are
                 deep-copied into the new Bézier.  If ``False``, the Bézier
                 shares the same underlying control point array when possible
-                (direct extraction) or owns the freshly allocated array
-                produced by the open-form conversion.
+                (direct extraction of a C-contiguous float32 or float64 array;
+                another layout or dtype is converted, which shares nothing) or
+                owns the freshly allocated array produced by the open-form
+                conversion.
 
         Returns:
             ~pantr.bezier.Bezier: Equivalent Bézier representation.

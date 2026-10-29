@@ -68,7 +68,10 @@ mdview<const T, 2> view_of_points(const Points<T>& p) {
 }
 
 /// Work per evaluated point, for the GIL decision only: one multiply-add per control-point
-/// coordinate, the size of the tensor-product contraction (an upper bound on the 1D kernel's).
+/// coordinate. It is the 1D kernel's order, and below the tensor contraction's (which also
+/// tabulates the bases), so the GIL may stay held over a short parallel call; that is safe
+/// because no pool task touches Python or owns a Bezier (they capture by reference), and only
+/// costs other Python threads a wait.
 template <class T>
 double ops_per_point(const Bezier<T>& b) {
   return static_cast<double>(b.size());
@@ -90,7 +93,11 @@ void def_bezier(nb::module_& m, const char* name) {
           [](const Any<T>& cp, bool rational) {
             // Interim (until the B-spline is ported): a `copy=False` conversion from a B-spline
             // shares the B-spline's array, as the previous release did. The buffer aliases that
-            // array and keeps it alive; the deleter may run on any thread, so it takes the GIL.
+            // array and keeps it alive. The deleter runs where the last copy of the value dies:
+            // a Python thread today, since no pool task owns a Bezier; the explicit acquire is
+            // for any other thread (nanobind's own release of the array also takes the thread
+            // state, so it is redundant on a Python thread, and harmless). A pool task that did
+            // own a Bezier while its submitter held the GIL would deadlock here.
             auto* keep = new Any<T>(cp);
             std::shared_ptr<const T[]> data(cp.data(), [keep](const T* /*unused*/) {
               const nb::gil_scoped_acquire gil;

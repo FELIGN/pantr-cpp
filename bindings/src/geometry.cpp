@@ -182,7 +182,12 @@ void register_transform(nb::module_& m) {
       .def(
           "apply",
           [](const AffineTransform& t, const AnyArray& points) {
-            return to_numpy(t.apply(span_of(points)));
+            const std::size_t n = t.dim() == 0 ? 0 : points.size() / t.dim();
+            NdArray<double> out = [&] {
+              const ReleaseIfParallel release(n, t.ops_per_point().ops_per_item);
+              return t.apply(span_of(points));
+            }();
+            return to_numpy(std::move(out));  // with the GIL: it builds a Python object
           },
           nb::arg("points"), "A p + b per point, (m, n).");
 }

@@ -180,7 +180,8 @@
   polynomial curve's derivative is evaluated on its hodograph (the forward differences of its
   control points, a Bézier of lower degree) instead of the derivative basis, which is several
   times faster, and affine maps and transforms are applied by plain loops instead of BLAS.
-  Evaluation releases the GIL while it runs on pantr's thread pool.
+  Evaluation, and `AffineTransform.__call__` on many points, run on pantr's thread pool with the
+  GIL released (NumPy's `@` ran on BLAS's threads).
 - **A `Bezier` is immutable**, as the C++ values are (they are shared rather than copied, which
   is what makes them cheap to pass and safe across threads): the constructor copies the control
   points, so a later write to the array it was given no longer changes the Bézier;
@@ -190,7 +191,8 @@
   before the call keeps the values it had. `Bezier.to_bspline(copy=False)` gives a B-spline
   holding that read-only view, which cannot then be changed in place. `create_from_bspline` and
   `Bspline.to_bezier` with `copy=False` still share the B-spline's array (read-only through the
-  Bézier), as before.
+  Bézier) when it is a C-contiguous float32 or float64 array, as before; an array of another
+  layout (a reversed view, say) or dtype is converted, so the Bézier no longer shares it.
 - **`Bezier` keeps `float32` and stores every other real dtype as `float64`**: integers as
   before, and now booleans, `float16`, `longdouble` and byte-swapped arrays (`">f4"` becomes
   native `float32`). The previous release stored those dtypes as given and then failed in
@@ -199,7 +201,8 @@
 - **`Bezier`, `AABB` and `AffineTransform` pickle and copy explicitly** (`__reduce__`; for
   `Bezier` also `__copy__` and `__deepcopy__`, which share the immutable value), since they now
   hold a C++ value Python cannot pickle by itself. A deep copy is immutable like the original:
-  its arrays are read-only, where they used to be writable.
+  its arrays are read-only, where they used to be writable. A `Bezier` or `AffineTransform`
+  pickled by the previous release still loads: its plain attributes rebuild the value.
 - `AABB.lo` and `hi`, `AffineTransform.matrix` and `offset`, `Bezier.control_points` and the
   Bézier results are NumPy arrays over C++ buffers that do not own their data
   (`flags.owndata` is `False`).
@@ -208,7 +211,8 @@
   NumPy returned NaNs there or raised, depending on where the NaN sat. One rule for the C++
   library, NumPy's for the zero pivot.
 - `AABB.transform` given an offset without `ndim` entries is a `ValueError` ("affine.offset must
-  have shape ...") where NumPy raised a broadcasting error; the C++ library checks every input.
+  have shape ..."). NumPy broadcast a one-entry or 0-d offset to every axis and raised a
+  broadcasting error for other lengths; the C++ library checks every input.
 - **Inputs outside the annotated types, and calls with two invalid arguments**, in
   `pantr.geometry`, `pantr.transform` and `Bezier`, may raise another exception or message than
   before, since the compiled binding converts an argument (an index, a float) before the checks
@@ -222,6 +226,9 @@
 - `AABB` can be pickled and copied (`pickle`, `copy.copy`, `copy.deepcopy`); each raised
   `AttributeError` from the immutability guard, which refused the state the default protocol
   restores.
+- `AffineTransform(matrix)`, `AffineTransform.translation` and the other factories no longer make
+  the caller's own float64 array read-only (the constructor set `writeable = False` on it when it
+  needed no conversion); the C++ value holds its own copy.
 - Multi-dimensional tabulations at zero points in three or more dimensions return an empty
   `(0, n_functions)` array; they raised a NumPy reshape error.
 - `get_modified_chebyshev_nodes_1d` honors `dtype` when `n_pts` is a NumPy integer; it returned

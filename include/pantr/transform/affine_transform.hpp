@@ -7,6 +7,7 @@
 #include "pantr/core/format.hpp"
 #include "pantr/core/ndarray.hpp"
 #include "pantr/linalg/dense.hpp"
+#include "pantr/parallel/parallel_for.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -112,7 +113,7 @@ class AffineTransform {
       throw value_error("scaling factors must be non-zero (singular transform).");
     }
     const std::size_t n = factors.size();
-    std::vector<double> mat(n * n, 0.0);
+    std::vector<double> mat(square_size(n), 0.0);
     for (std::size_t i = 0; i < n; ++i) {
       mat[i * n + i] = factors[i];
     }
@@ -212,7 +213,7 @@ class AffineTransform {
     for (std::size_t i = 0; i < n; ++i) {
       u[i] = normal[i] / norm;
     }
-    std::vector<double> mat(n * n);
+    std::vector<double> mat(square_size(n));
     for (std::size_t i = 0; i < n; ++i) {
       for (std::size_t j = 0; j < n; ++j) {
         mat[i * n + j] = (i == j ? 1.0 : 0.0) - 2.0 * (u[i] * u[j]);
@@ -386,17 +387,28 @@ class AffineTransform {
     const std::span<const double> a = matrix();
     const std::span<const double> b = offset();
     const std::size_t m = n == 0 ? 0 : points.size() / n;
-    for (std::size_t p = 0; p < m; ++p) {
-      const double* x = points.data() + p * n;
-      double* y = out.data() + p * n;
-      for (std::size_t i = 0; i < n; ++i) {
-        double acc = 0.0;
-        for (std::size_t j = 0; j < n; ++j) {
-          acc += x[j] * a[i * n + j];
+    parallel::parallel_for(m, ops_per_point(), [&](std::size_t begin, std::size_t end) {
+      for (std::size_t p = begin; p < end; ++p) {
+        const double* x = points.data() + p * n;
+        double* y = out.data() + p * n;
+        for (std::size_t i = 0; i < n; ++i) {
+          double acc = 0.0;
+          for (std::size_t j = 0; j < n; ++j) {
+            acc += x[j] * a[i * n + j];
+          }
+          y[i] = acc + b[i];
         }
-        y[i] = acc + b[i];
       }
-    }
+    });
+  }
+
+  /// Work per point of `apply`: a multiply-add per entry of `A`, and an addition per coordinate.
+  ///
+  /// Returns:
+  ///     parallel::WorkEstimate: The estimate, at least one operation.
+  [[nodiscard]] parallel::WorkEstimate ops_per_point() const noexcept {
+    const auto n = static_cast<double>(dim());
+    return parallel::WorkEstimate{(std::max)(1.0, 2.0 * n * n + n)};
   }
 
   /// Get the shared representation, for an owner that must keep `A` and `b` alive.
@@ -408,8 +420,15 @@ class AffineTransform {
   }
 
  private:
+  /// `n * n`, refused when it overflows (a wrapped product would size a buffer the diagonal then
+  /// writes past).
+  static std::size_t square_size(std::size_t n) {
+    const std::size_t extents[2] = {n, n};
+    return checked_product(extents);
+  }
+
   static std::vector<double> identity_matrix(std::size_t n) {
-    std::vector<double> eye(n * n, 0.0);
+    std::vector<double> eye(square_size(n), 0.0);
     for (std::size_t i = 0; i < n; ++i) {
       eye[i * n + i] = 1.0;
     }
@@ -460,7 +479,7 @@ class AffineTransform {
                         ".");
     }
     const std::size_t n = matrix_shape[0];
-    if (matrix.size() != n * n) {
+    if (matrix.size() != square_size(n)) {
       throw value_error("matrix holds " + std::to_string(matrix.size()) +
                         " values, but its shape needs " + std::to_string(n * n));
     }

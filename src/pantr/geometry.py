@@ -162,7 +162,7 @@ class AABB:
         Returns:
             tuple[type[AABB], tuple[npt.NDArray[np.float64], ...]]: The class and its corners.
         """
-        return (AABB, (self.lo, self.hi))
+        return (type(self), (self.lo, self.hi))
 
     def __setattr__(self, name: str, value: object) -> None:
         """Reject post-construction attribute writes.

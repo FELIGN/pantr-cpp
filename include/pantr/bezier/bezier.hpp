@@ -39,7 +39,10 @@ struct BezierRep {
 ///
 /// An immutable value (design §2.2): the control points are fixed at construction and shared,
 /// read-only, by every copy (a copy is a reference-count increment). Every operation constructs a
-/// new value.
+/// new value. The buffer constructor is the one way to break that: a caller that hands it memory
+/// someone else may write (the Python binding's interim `borrow`, for a `copy=False` conversion
+/// from a B-spline not yet ported) makes a value that follows those writes, and a write during an
+/// operation is a data race.
 ///
 /// The control points have extents `(degree[0] + 1, ..., degree[dim - 1] + 1, cp_size)`, row-major.
 /// For a rational Bézier the last of the `cp_size` coordinates is the weight and the others are
@@ -70,8 +73,9 @@ class Bezier {
       // unspecified, and a moved-from shape would skip `copy_of`'s size check.
       : Bezier(copy_of(control_points, shape), shape, rational) {}
 
-  /// Build a Bézier over an existing immutable buffer, without copying (a result, or a
-  /// conversion that shares another immutable value's control points).
+  /// Build a Bézier over an existing buffer, without copying (a result, or a conversion that
+  /// shares another value's control points). The buffer must not be written while the value
+  /// lives, or the value is not immutable (see the class note).
   ///
   /// Args:
   ///     data (std::shared_ptr<const T[]>): Row-major over `shape`; must hold

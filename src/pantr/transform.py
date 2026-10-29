@@ -25,6 +25,9 @@ __all__ = ["AffineTransform"]
 _cpp: Any = ext.transform
 """The compiled AffineTransform (private; untyped)."""
 
+_VALUE_ATTRS = frozenset({"_h", "_matrix", "_translation", "inverse"})
+"""The attributes that hold the immutable value and what is cached from it."""
+
 
 class AffineTransform:
     """An affine transformation T(x) = A x + b in n-dimensional space.
@@ -103,16 +106,31 @@ class AffineTransform:
         t._set_handle(h)
         return t
 
-    def __reduce__(
-        self,
-    ) -> tuple[type[AffineTransform], tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]]:
-        """Pickle and copy through the constructor.
+    def __reduce__(self) -> tuple[Any, ...]:
+        """Pickle and copy through the constructor, keeping a subclass and its own attributes.
 
         Returns:
-            tuple[type[AffineTransform], tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]]:
-            The class and its matrix and translation.
+            tuple[Any, ...]: The class, its matrix and translation, and any other attributes.
         """
-        return (AffineTransform, (self._matrix, self._translation))
+        extra = {k: v for k, v in self.__dict__.items() if k not in _VALUE_ATTRS}
+        return (type(self), (self._matrix, self._translation), extra)
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Restore extra attributes, or rebuild from a previous release's pickle.
+
+        A previous release pickled the plain attributes ``_matrix`` and ``_translation`` (and the
+        cached ``inverse``); such a state rebuilds the compiled value from them.
+
+        Args:
+            state (dict[str, Any]): The pickled state.
+        """
+        state = dict(state)
+        if "_h" not in self.__dict__ and "_matrix" in state:
+            mat = np.ascontiguousarray(state.pop("_matrix"), dtype=np.float64)
+            tvec = np.ascontiguousarray(state.pop("_translation"), dtype=np.float64)
+            state.pop("inverse", None)
+            self._set_handle(_cpp.AffineTransform(mat, tvec))
+        self.__dict__.update(state)
 
     # ------------------------------------------------------------------
     # Properties
