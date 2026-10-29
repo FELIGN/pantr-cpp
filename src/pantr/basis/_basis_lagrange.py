@@ -48,7 +48,7 @@ def _get_lagrange_points(
     from ._basis_tabulate import _variant_code  # noqa: PLC0415
 
     build = ext.quad.lagrange_points_f32 if _is_float32(dtype) else ext.quad.lagrange_points
-    return cast(npt.NDArray[np.float32 | np.float64], build(_variant_code(variant), n_pts))
+    return cast("npt.NDArray[np.float32 | np.float64]", build(_variant_code(variant), n_pts))
 
 
 __all__ = ["_get_lagrange_points"]

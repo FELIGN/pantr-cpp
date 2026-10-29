@@ -7,6 +7,7 @@ across packages. All helpers are private (not part of the public API).
 
 from __future__ import annotations
 
+import contextlib
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -62,7 +63,9 @@ def _is_float32(dtype: npt.DTypeLike) -> bool:
         pass
     _validate_float_dtype(dtype)
     is_f32 = bool(np.dtype(dtype).type is np.float32)
-    _IS_FLOAT32_BY_DTYPE_LIKE[dtype] = is_f32
+    # An object exposing a ``.dtype`` attribute may be unhashable: served, not remembered.
+    with contextlib.suppress(TypeError):
+        _IS_FLOAT32_BY_DTYPE_LIKE[dtype] = is_f32
     return is_f32
 
 

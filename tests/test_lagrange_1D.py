@@ -12,8 +12,8 @@ import numpy.typing as npt
 import pytest
 from numpy.polynomial import chebyshev, legendre
 
+from pantr._testing import _get_lagrange_points
 from pantr.basis import LagrangeVariant, tabulate_lagrange_1d
-from pantr.basis._basis_lagrange import _get_lagrange_points
 from pantr.tolerance import get_default
 
 
@@ -125,7 +125,8 @@ def test_partition_of_unity(variant: LagrangeVariant, dtype: npt.DTypeLike) -> N
 _SNAP_CLEARANCE: float = 1e-5
 """Minimum distance from an evaluation point to the nearest node, for the test below.
 
-``_tabulate_lagrange_basis_1D_core`` replaces any row within ``16 * eps`` of a node by a
+The Lagrange kernel (``include/pantr/basis/lagrange.hpp``)
+replaces any row within ``16 * eps`` of a node by a
 hardcoded identity row, so a test meant to see the interpolator has to stay outside that
 window. ``16 * eps`` is 3.6e-15; this leaves ten orders of magnitude. The tightest
 approach the fixed points make is 1e-4, from ``0.5001`` against the node at ``0.5``
@@ -191,7 +192,8 @@ def test_matches_exact_rational_arithmetic_away_from_the_nodes(
     """Off-node values match the defining product formula computed in exact arithmetic.
 
     The delta and partition-of-unity tests above cannot see the interpolator at all:
-    ``_tabulate_lagrange_basis_1D_core`` overwrites any row within ``16 * eps`` of a node
+    The Lagrange kernel (``include/pantr/basis/lagrange.hpp``)
+    overwrites any row within ``16 * eps`` of a node
     with a hardcoded identity row, so the first is satisfied by that snap, and the second
     is satisfied by any basis that sums to one, which a wrong-degree interpolant still
     does. A mutation that lowered the interpolator's degree left both of them green.

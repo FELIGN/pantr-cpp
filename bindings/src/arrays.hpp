@@ -10,6 +10,7 @@
 #include <nanobind/ndarray.h>
 
 #include <cstddef>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -61,6 +62,33 @@ NumpyView<T> view_of(const T* data, std::span<const std::size_t> shape,
   nb::capsule owner(holder,
                     [](void* p) noexcept { delete static_cast<std::shared_ptr<const R>*>(p); });
   return NumpyView<T>(data, shape.size(), shape.data(), owner);
+}
+
+/// Narrow a degree from Python's unbounded `int` to the C++ API's `int`, saturating.
+///
+/// A degree outside `int` is far outside every domain: saturating keeps the C++ refusal (a
+/// negative degree, a degree past a builder's domain, an output too large to allocate), all
+/// `ValueError`s, where a narrowing argument would fail the binding's type check with a
+/// `TypeError` first. Only the degree a refusal message quotes is the saturated one.
+///
+/// Args:
+///     degree (long long): The degree as given.
+///
+/// Returns:
+///     int: `degree`, clamped to `[INT_MIN, INT_MAX]`.
+inline int saturate_degree(long long degree) {
+  constexpr long long lo = (std::numeric_limits<int>::min)();
+  constexpr long long hi = (std::numeric_limits<int>::max)();
+  return static_cast<int>(degree < lo ? lo : (degree > hi ? hi : degree));
+}
+
+/// Narrow a list of degrees as `saturate_degree` does.
+inline std::vector<int> saturate_degrees(const std::vector<long long>& degrees) {
+  std::vector<int> out(degrees.size());
+  for (std::size_t i = 0; i < degrees.size(); ++i) {
+    out[i] = saturate_degree(degrees[i]);
+  }
+  return out;
 }
 
 /// Release the GIL for the lifetime of the guard when `n` items of `ops` work each will run in

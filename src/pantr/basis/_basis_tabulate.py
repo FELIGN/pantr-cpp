@@ -16,9 +16,7 @@ import numpy as np
 import numpy.typing as npt
 
 from ._basis_1D import (
-    _BERNSTEIN,
-    _CARDINAL_BSPLINE,
-    _LAGRANGE,
+    _Family,
     _tabulate_Bernstein_basis_1D_impl,
     _tabulate_cardinal_Bspline_basis_1D_impl,
     _tabulate_Lagrange_basis_1D_impl,
@@ -294,7 +292,7 @@ def tabulate_bernstein(
             shape or dtype.
     """
     degrees = _validate_degrees(degrees)
-    return _tabulate_tensor(_BERNSTEIN, degrees, 0, pts, funcs_order, out)
+    return _tabulate_tensor(_Family.BERNSTEIN, degrees, 0, pts, funcs_order, out)
 
 
 def tabulate_cardinal_bspline(
@@ -333,7 +331,7 @@ def tabulate_cardinal_bspline(
             shape or dtype.
     """
     degrees = _validate_degrees(degrees)
-    return _tabulate_tensor(_CARDINAL_BSPLINE, degrees, 0, pts, funcs_order, out)
+    return _tabulate_tensor(_Family.CARDINAL_BSPLINE, degrees, 0, pts, funcs_order, out)
 
 
 def tabulate_lagrange(
@@ -374,4 +372,6 @@ def tabulate_lagrange(
             shape or dtype.
     """
     degrees = _validate_degrees(degrees)
-    return _tabulate_tensor(_LAGRANGE, degrees, _variant_code(variant), pts, funcs_order, out)
+    return _tabulate_tensor(
+        _Family.LAGRANGE, degrees, _variant_code(variant), pts, funcs_order, out
+    )

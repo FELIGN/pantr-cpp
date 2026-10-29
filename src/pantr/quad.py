@@ -13,6 +13,7 @@ This module provides:
 
 from __future__ import annotations
 
+import operator
 from collections.abc import Callable, Iterable, Sequence
 from typing import TYPE_CHECKING, Any, Final, Literal, cast
 
@@ -261,8 +262,9 @@ def get_tanh_sinh_1d(
 def _as_coordinates(pts: npt.ArrayLike) -> npt.NDArray[np.float32 | np.float64]:
     """Turn one direction's coordinates into the array the C++ lattice copies.
 
-    ``float32`` and ``float64`` keep their dtype; any other dtype is converted to ``float64``,
-    the lattice being a C++ value of one of those two types. The dimensionality is preserved, so
+    ``float32`` and ``float64`` keep their dtype; any other real dtype (an integer, ``float16``,
+    a non-native byte order) is converted to ``float64``, the lattice being a C++ value of one of
+    those two types. The dimensionality is preserved, so
     a 0-D or 2-D input is still there for the lattice's validation to reject.
 
     Args:
@@ -271,9 +273,15 @@ def _as_coordinates(pts: npt.ArrayLike) -> npt.NDArray[np.float32 | np.float64]:
     Returns:
         npt.NDArray[np.float32 | np.float64]: A C-contiguous array (a view of the caller's when it
         already is one; the C++ lattice copies it).
+
+    Raises:
+        ValueError: If the coordinates are complex.
     """
     arr = np.asarray(pts)
-    if arr.dtype.type not in (np.float32, np.float64):
+    if np.iscomplexobj(arr):
+        raise ValueError("PointsLattice coordinates must be real")
+    # Compared as dtypes, not as scalar types, so a non-native byte order is converted too.
+    if arr.dtype not in (np.float32, np.float64):
         arr = arr.astype(np.float64)
     return np.ascontiguousarray(arr)
 
@@ -306,7 +314,7 @@ class PointsLattice:
 
         Raises:
             ValueError: If the dimension is less than 1, the points have different dtypes, an
-                array is not 1D, or an array is empty.
+                array is not 1D, an array is empty, or the coordinates are complex.
         """
         raw = tuple(np.asarray(pts) for pts in pts_per_dir)
         if len(raw) < 1:
@@ -358,7 +366,7 @@ class PointsLattice:
             tuple[type[PointsLattice], tuple[tuple[npt.NDArray[Any], ...]]]: The class and its
             constructor argument.
         """
-        return (PointsLattice, (self._pts_per_dir,))
+        return (type(self), (self._pts_per_dir,))
 
     @property
     def dim(self) -> int:
@@ -440,7 +448,8 @@ def create_lagrange_points_lattice(
     # Lazy import: pantr.basis imports this module.
     from .basis._basis_tabulate import _variant_code  # noqa: PLC0415
 
-    counts = [int(n) for n in n_pts_per_dir]
+    # operator.index refuses a float count (2.7) rather than truncating it.
+    counts = [operator.index(n) for n in n_pts_per_dir]
     build = (
         ext.quad.lagrange_points_lattice_f32
         if _is_float32(dtype)
@@ -478,8 +487,10 @@ class QuadratureRule:
                 lengths disagree, either is empty, any value is non-finite, or any
                 point lies outside ``[0, 1]``.
         """
-        pts = np.ascontiguousarray(points, dtype=np.float64)
-        wts = np.ascontiguousarray(weights, dtype=np.float64)
+        # order="C" rather than ascontiguousarray, which would turn a 0-d array into a 1-d one
+        # and hide it from the rank checks.
+        pts = np.asarray(points, dtype=np.float64, order="C")
+        wts = np.asarray(weights, dtype=np.float64, order="C")
         self._set_handle(ext.quad.QuadratureRule(pts, wts))
 
     def _set_handle(self, handle: _QuadratureRuleHandle) -> None:
@@ -517,7 +528,7 @@ class QuadratureRule:
             tuple[type[QuadratureRule], tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]]:
             The class and its constructor arguments.
         """
-        return (QuadratureRule, (self._points, self._weights))
+        return (type(self), (self._points, self._weights))
 
     @property
     def ndim(self) -> int:
@@ -594,8 +605,8 @@ def tensor_product_quadrature(
     """
     pairs = [
         (
-            np.ascontiguousarray(pair[0], dtype=np.float64),
-            np.ascontiguousarray(pair[1], dtype=np.float64),
+            np.asarray(pair[0], dtype=np.float64, order="C"),
+            np.asarray(pair[1], dtype=np.float64, order="C"),
         )
         for pair in rules
     ]

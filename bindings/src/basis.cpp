@@ -39,45 +39,46 @@ using AnyStride2D = nb::ndarray<T, nb::ndim<2>, nb::device::cpu>;
 template <class T>
 using AnyStride3D = nb::ndarray<T, nb::ndim<3>, nb::device::cpu>;
 
-// Work per point of a 1D tabulation, as the kernels estimate it, for the GIL decision.
-double ops_1d(int degree) { return 4.0 * (static_cast<double>(degree) + 1.0); }
-
 template <class T>
-nb::object tabulate_1d(int family, int degree, int variant, const In1D<T>& pts,
+nb::object tabulate_1d(int family, long long degree_in, int variant, const In1D<T>& pts,
                        std::optional<Out2D<T>> out) {
+  const int degree = saturate_degree(degree_in);
+  basis::detail::check_degree(degree);  // before the work estimate, which assumes it
   const basis::Family fam = basis::to_family(family);
   const basis::LagrangeVariant var = basis::to_lagrange_variant(variant);
   const std::span<const T> p(pts.data(), pts.shape(0));
   if (out) {
     const mdview<T, 2> o(out->data(), out->shape(0), out->shape(1));
     {
-      const ReleaseIfParallel gil(p.size(), ops_1d(degree));
+      const ReleaseIfParallel gil(p.size(), basis::ops_per_point(fam, degree));
       basis::tabulate_1d<T>(fam, degree, var, p, o);
     }
     return nb::none();
   }
   basis::detail::check_degree(degree);
-  NdArray<T> result({p.size(), static_cast<std::size_t>(degree) + 1});
+  NdArray<T> result({p.size(), static_cast<std::size_t>(degree) + 1}, for_overwrite);
   {
-    const ReleaseIfParallel gil(p.size(), ops_1d(degree));
+    const ReleaseIfParallel gil(p.size(), basis::ops_per_point(fam, degree));
     basis::tabulate_1d<T>(fam, degree, var, p, result.template view<2>());
   }
   return nb::cast(to_numpy(std::move(result)));
 }
 
 std::size_t total_functions(const std::vector<int>& degrees) {
-  std::size_t n = 1;
+  std::vector<std::size_t> counts;
+  counts.reserve(degrees.size());
   for (const int d : degrees) {
     basis::detail::check_degree(d);
-    n *= static_cast<std::size_t>(d) + 1;
+    counts.push_back(static_cast<std::size_t>(d) + 1);
   }
-  return n;
+  return checked_product(counts);
 }
 
 template <class T>
-nb::object tabulate_lattice(int family, const std::vector<int>& degrees, int variant,
+nb::object tabulate_lattice(int family, const std::vector<long long>& degrees_in, int variant,
                             const quad::PointsLattice<T>& lattice, int order,
                             std::optional<Out2D<T>> out) {
+  const std::vector<int> degrees = saturate_degrees(degrees_in);
   const basis::Family fam = basis::to_family(family);
   const basis::LagrangeVariant var = basis::to_lagrange_variant(variant);
   const Order ord = order == 0 ? Order::C : Order::F;
@@ -91,7 +92,7 @@ nb::object tabulate_lattice(int family, const std::vector<int>& degrees, int var
   if (out) {
     o = mdview<T, 2>(out->data(), out->shape(0), out->shape(1));
   } else {
-    result.emplace(std::vector<std::size_t>{n_pts, n_fun});
+    result.emplace(std::vector<std::size_t>{n_pts, n_fun}, for_overwrite);
     o = result->template view<2>();
   }
   {
@@ -102,8 +103,9 @@ nb::object tabulate_lattice(int family, const std::vector<int>& degrees, int var
 }
 
 template <class T>
-nb::object tabulate_points(int family, const std::vector<int>& degrees, int variant,
+nb::object tabulate_points(int family, const std::vector<long long>& degrees_in, int variant,
                            const In2D<T>& pts, int order, std::optional<Out2D<T>> out) {
+  const std::vector<int> degrees = saturate_degrees(degrees_in);
   const basis::Family fam = basis::to_family(family);
   const basis::LagrangeVariant var = basis::to_lagrange_variant(variant);
   const Order ord = order == 0 ? Order::C : Order::F;
@@ -120,7 +122,7 @@ nb::object tabulate_points(int family, const std::vector<int>& degrees, int vari
   if (out) {
     o = mdview<T, 2>(out->data(), out->shape(0), out->shape(1));
   } else {
-    result.emplace(std::vector<std::size_t>{p.extent(0), n_fun});
+    result.emplace(std::vector<std::size_t>{p.extent(0), n_fun}, for_overwrite);
     o = result->template view<2>();
   }
   {
@@ -144,7 +146,9 @@ std::vector<T> gather(const AnyStride1D<T>& a) {
 }
 
 template <class T>
-void kernel_bernstein_1d(int degree, const AnyStride1D<T>& pts, AnyStride2D<T>& out) {
+void kernel_bernstein_1d(long long degree_in, const AnyStride1D<T>& pts, AnyStride2D<T>& out) {
+  const int degree = saturate_degree(degree_in);
+  basis::detail::check_degree(degree);  // before the work estimate, which assumes it
   const std::vector<T> p = gather(pts);
   const std::size_t rows = out.shape(0);
   const std::size_t cols = out.shape(1);
@@ -156,7 +160,7 @@ void kernel_bernstein_1d(int degree, const AnyStride1D<T>& pts, AnyStride2D<T>& 
     dst = tmp.data();
   }
   {
-    const ReleaseIfParallel gil(p.size(), ops_1d(degree));
+    const ReleaseIfParallel gil(p.size(), basis::detail::bernstein_ops_per_point(degree));
     basis::tabulate_bernstein_1d<T>(degree, p, mdview<T, 2>(dst, rows, cols));
   }
   if (!contiguous) {
@@ -170,8 +174,13 @@ void kernel_bernstein_1d(int degree, const AnyStride1D<T>& pts, AnyStride2D<T>& 
 }
 
 template <class T>
-void kernel_bernstein_derivatives_1d(int degree, const AnyStride1D<T>& pts, int n_deriv,
+void kernel_bernstein_derivatives_1d(long long degree_in, const AnyStride1D<T>& pts, int n_deriv,
                                      AnyStride3D<T>& out) {
+  const int degree = saturate_degree(degree_in);
+  basis::detail::check_degree(degree);  // before the work estimate, which assumes them
+  if (n_deriv < 0) {
+    throw value_error("n_deriv must be non-negative");
+  }
   const std::vector<T> p = gather(pts);
   const std::size_t s0 = out.shape(0);
   const std::size_t s1 = out.shape(1);
@@ -185,9 +194,8 @@ void kernel_bernstein_derivatives_1d(int degree, const AnyStride1D<T>& pts, int 
     dst = tmp.data();
   }
   {
-    const double ops = (static_cast<double>(degree) + 1.0) * (static_cast<double>(degree) + 1.0) *
-                       (static_cast<double>(n_deriv) + 2.0);
-    const ReleaseIfParallel gil(p.size(), ops);
+    const ReleaseIfParallel gil(
+        p.size(), basis::detail::bernstein_derivatives_ops_per_point(degree, n_deriv));
     basis::tabulate_bernstein_derivatives_1d<T>(degree, p, n_deriv, mdview<T, 3>(dst, s0, s1, s2));
   }
   if (!contiguous) {
@@ -210,39 +218,43 @@ void register_basis(nb::module_& m) {
       "on node family `variant`) of `degree` at `pts`, into `out` when given (then returning "
       "None).";
   m.def("tabulate_1d", &tabulate_1d<double>, nb::arg("family"), nb::arg("degree"),
-        nb::arg("variant"), nb::arg("pts"), nb::arg("out").none(), tab_doc);
+        nb::arg("variant"), nb::arg("pts"), nb::arg("out").none().noconvert(), tab_doc);
   m.def("tabulate_1d", &tabulate_1d<float>, nb::arg("family"), nb::arg("degree"),
-        nb::arg("variant"), nb::arg("pts"), nb::arg("out").none(), tab_doc);
+        nb::arg("variant"), nb::arg("pts"), nb::arg("out").none().noconvert(), tab_doc);
   const char* lat_doc =
       "Tabulate the tensor-product basis of `family` with `degrees` on a lattice, points and "
       "functions in `order` (0 C, 1 F), into `out` when given (then returning None).";
   m.def("tabulate_lattice", &tabulate_lattice<double>, nb::arg("family"), nb::arg("degrees"),
-        nb::arg("variant"), nb::arg("lattice"), nb::arg("order"), nb::arg("out").none(), lat_doc);
+        nb::arg("variant"), nb::arg("lattice"), nb::arg("order"), nb::arg("out").none().noconvert(),
+        lat_doc);
   m.def("tabulate_lattice", &tabulate_lattice<float>, nb::arg("family"), nb::arg("degrees"),
-        nb::arg("variant"), nb::arg("lattice"), nb::arg("order"), nb::arg("out").none(), lat_doc);
+        nb::arg("variant"), nb::arg("lattice"), nb::arg("order"), nb::arg("out").none().noconvert(),
+        lat_doc);
   const char* pts_doc =
       "Tabulate the tensor-product basis of `family` with `degrees` at scattered points "
       "`(n, dim)`, functions in `order` (0 C, 1 F), into `out` when given (then returning None).";
   m.def("tabulate_points", &tabulate_points<double>, nb::arg("family"), nb::arg("degrees"),
-        nb::arg("variant"), nb::arg("pts"), nb::arg("order"), nb::arg("out").none(), pts_doc);
+        nb::arg("variant"), nb::arg("pts"), nb::arg("order"), nb::arg("out").none().noconvert(),
+        pts_doc);
   m.def("tabulate_points", &tabulate_points<float>, nb::arg("family"), nb::arg("degrees"),
-        nb::arg("variant"), nb::arg("pts"), nb::arg("order"), nb::arg("out").none(), pts_doc);
+        nb::arg("variant"), nb::arg("pts"), nb::arg("order"), nb::arg("out").none().noconvert(),
+        pts_doc);
 }
 
 void register_kernels(nb::module_& m) {
   const char* b_doc =
       "Write the Bernstein basis of `degree` at `pts` into `out` (any strides, same dtype).";
   m.def("tabulate_bernstein_1d", &kernel_bernstein_1d<double>, nb::arg("degree"), nb::arg("pts"),
-        nb::arg("out"), b_doc);
+        nb::arg("out").noconvert(), b_doc);
   m.def("tabulate_bernstein_1d", &kernel_bernstein_1d<float>, nb::arg("degree"), nb::arg("pts"),
-        nb::arg("out"), b_doc);
+        nb::arg("out").noconvert(), b_doc);
   const char* d_doc =
       "Write the Bernstein derivatives of orders 0..n_deriv at `pts` into `out` "
       "(n, n_deriv + 1, degree + 1), any strides, same dtype.";
   m.def("tabulate_bernstein_derivatives_1d", &kernel_bernstein_derivatives_1d<double>,
-        nb::arg("degree"), nb::arg("pts"), nb::arg("n_deriv"), nb::arg("out"), d_doc);
+        nb::arg("degree"), nb::arg("pts"), nb::arg("n_deriv"), nb::arg("out").noconvert(), d_doc);
   m.def("tabulate_bernstein_derivatives_1d", &kernel_bernstein_derivatives_1d<float>,
-        nb::arg("degree"), nb::arg("pts"), nb::arg("n_deriv"), nb::arg("out"), d_doc);
+        nb::arg("degree"), nb::arg("pts"), nb::arg("n_deriv"), nb::arg("out").noconvert(), d_doc);
 }
 
 }  // namespace pantr::bindings

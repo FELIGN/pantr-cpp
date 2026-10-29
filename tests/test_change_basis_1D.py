@@ -8,6 +8,12 @@ import numpy.typing as npt
 import pytest
 
 from pantr import _testing
+from pantr._testing import (
+    _cached_cardinal_to_bernstein_matrix,
+    _cached_cardinal_to_legendre_matrix,
+    _cached_lagrange_to_bernstein_matrix,
+    _cached_legendre_to_cardinal_matrix,
+)
 from pantr.basis import (
     LagrangeVariant,
     tabulate_bernstein_1d,
@@ -16,10 +22,6 @@ from pantr.basis import (
     tabulate_legendre_1d,
 )
 from pantr.change_basis import (
-    _cached_cardinal_to_bernstein_matrix,
-    _cached_cardinal_to_legendre_matrix,
-    _cached_lagrange_to_bernstein_matrix,
-    _cached_legendre_to_cardinal_matrix,
     compute_bernstein_to_cardinal_1d,
     compute_bernstein_to_lagrange_1d,
     compute_cardinal_dual_legendre_coeffs_1d,
@@ -845,6 +847,14 @@ def _gram_bernstein(degree: int) -> npt.NDArray[np.float64]:
             for i in range(p + 1)
         ]
     )
+
+
+def test_degree_beyond_the_native_integer_is_refused_by_the_domain() -> None:
+    """A degree outside the C++ int is refused as past the domain, a ValueError."""
+    with pytest.raises(ValueError, match="outside the supported domain"):
+        compute_cardinal_to_bernstein_1d(2**40)
+    with pytest.raises(ValueError, match="Degree must be non-negative"):
+        compute_cardinal_to_bernstein_1d(-(2**40))
 
 
 class TestCachedChangeBasisMatrices:

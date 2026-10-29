@@ -687,7 +687,9 @@ def _tabulate_Bspline_basis_Bernstein_like_deriv_1D(
         raise ValueError("B-spline does not have Bézier-like knots.")
 
     k0, k1 = spline.domain
-    pts_normalized = (pts - k0) / (k1 - k0)  # map to [0, 1]
+    # Map to [0, 1]; the space's domain may be float64 while the points (and out_deriv) are
+    # float32, and the kernel takes points and output of one dtype.
+    pts_normalized = ((pts - k0) / (k1 - k0)).astype(out_deriv.dtype, copy=False)
 
     _kernels.tabulate_bernstein_derivatives_1d(
         int(spline.degree), pts_normalized, n_deriv, out_deriv

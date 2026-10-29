@@ -507,8 +507,9 @@ def test_snapping_keeps_knots_the_format_can_resolve() -> None:
 
 
 def test_lagrange_tabulation_is_reproducible() -> None:
-    # FIXED by passing a fixed seed to the scipy interpolator
-    # (`_basis_lagrange._BARYCENTRIC_SEED`). Kept as a regression guard with its original
+    # FIXED by passing a fixed seed to the scipy interpolator, then superseded by the C++
+    # barycentric formula, whose weights involve no random permutation at all
+    # (include/pantr/basis/lagrange.hpp). Kept as a regression guard with its original
     # triggering data, per this repository's convention that the fix PR un-xfails the
     # tests it closes.
     #

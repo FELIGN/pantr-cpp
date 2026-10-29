@@ -2,8 +2,8 @@
 
 This package provides high-level functions for tabulating basis functions
 (Bernstein, Lagrange, cardinal B-spline, Legendre) in 1D and multi-dimensional
-settings. It handles input normalization and dispatches to specialized Layer 2
-and Layer 3 implementations.
+settings. It handles input normalization and dispatches to the C++ library's
+tabulations (``pantr._pantr.basis``).
 
 - :class:`LagrangeVariant`: Lagrange polynomial node variants.
 - :func:`tabulate_bernstein_1d`, :func:`tabulate_cardinal_bspline_1d`,

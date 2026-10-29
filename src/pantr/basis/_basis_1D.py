@@ -8,7 +8,8 @@ through ``pantr._pantr.basis``.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Final, cast
+from enum import IntEnum
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -24,18 +25,22 @@ from ._basis_utils import (
 if TYPE_CHECKING:
     from . import LagrangeVariant
 
-_BERNSTEIN: Final[int] = 0
-"""Wire value of the Bernstein family in ``pantr._pantr.basis``."""
-_CARDINAL_BSPLINE: Final[int] = 1
-"""Wire value of the cardinal B-spline family in ``pantr._pantr.basis``."""
-_LEGENDRE: Final[int] = 2
-"""Wire value of the shifted Legendre family in ``pantr._pantr.basis``."""
-_LAGRANGE: Final[int] = 3
-"""Wire value of the Lagrange family in ``pantr._pantr.basis``."""
+
+class _Family(IntEnum):
+    """Basis family, with the wire values of ``pantr::basis::Family`` in the C++ library."""
+
+    BERNSTEIN = 0
+    """Bernstein polynomials."""
+    CARDINAL_BSPLINE = 1
+    """Central cardinal B-splines."""
+    LEGENDRE = 2
+    """Orthonormal shifted Legendre polynomials."""
+    LAGRANGE = 3
+    """Lagrange polynomials on a node family."""
 
 
 def _tabulate_basis_1D_impl_helper(
-    family: int,
+    family: _Family,
     n: int,
     t: npt.ArrayLike,
     out: npt.NDArray[np.float32 | np.float64] | None = None,
@@ -47,7 +52,7 @@ def _tabulate_basis_1D_impl_helper(
     tabulate into a C-contiguous buffer.
 
     Args:
-        family (int): The basis family's wire value (``_BERNSTEIN``, ...).
+        family (_Family): The basis family.
         n (int): Degree of the basis polynomials. Must be non-negative.
         t (npt.ArrayLike): Evaluation points. Can be a scalar, list, or numpy array.
             Types different from float32 or float64 are automatically converted to float64.
@@ -74,14 +79,19 @@ def _tabulate_basis_1D_impl_helper(
     else:  # scalar
         input_shape = ()
 
-    pts = np.ascontiguousarray(_normalize_points_1D(t))
-    if out is None or n < 0:
-        # A negative degree is refused by the C++ call, before any output is looked at.
-        # The binding is overloaded on the dtype; ``pts`` is either, so it is passed untyped.
-        result = cast(
-            npt.NDArray[np.float32 | np.float64],
-            ext.basis.tabulate_1d(family, n, variant, cast(Any, pts), None),
+    # The binding is overloaded on the dtype; ``pts`` is either, so it is passed untyped.
+    pts: Any = np.ascontiguousarray(_normalize_points_1D(t))
+    if n < 0:
+        # Refused by the C++ call (with the message the suite matches) before any output is
+        # sized or looked at; it raises.
+        ext.basis.tabulate_1d(family.value, n, variant, pts, None)
+    if out is None:
+        # Allocated here rather than by the binding: an uninitialized NumPy array is the cheaper
+        # hand-off for the one-point calls whose cost is all overhead.
+        result: npt.NDArray[np.float32 | np.float64] = np.empty(
+            (pts.shape[0], n + 1), dtype=pts.dtype
         )
+        ext.basis.tabulate_1d(family.value, n, variant, pts, cast(Any, result))
         return result.reshape(_compute_final_output_shape_1D(input_shape, n + 1))
 
     expected_final_shape = _compute_final_output_shape_1D(input_shape, n + 1)
@@ -89,7 +99,7 @@ def _tabulate_basis_1D_impl_helper(
     buffer, copy_back = _reshaped_out(out, (pts.shape[0], n + 1))
     # The C++ call writes C-contiguous memory; a strided view gets a temporary, copied in after.
     target = buffer if buffer.flags.c_contiguous else np.empty(buffer.shape, buffer.dtype)
-    ext.basis.tabulate_1d(family, n, variant, cast(Any, pts), cast(Any, target))
+    ext.basis.tabulate_1d(family.value, n, variant, pts, cast(Any, target))
     if target is not buffer:
         buffer[...] = target
     if copy_back:
@@ -129,7 +139,7 @@ def _tabulate_Bernstein_basis_1D_impl(
         ... )
         True
     """
-    return _tabulate_basis_1D_impl_helper(_BERNSTEIN, n, t, out)
+    return _tabulate_basis_1D_impl_helper(_Family.BERNSTEIN, n, t, out)
 
 
 def _tabulate_cardinal_Bspline_basis_1D_impl(
@@ -177,7 +187,7 @@ def _tabulate_cardinal_Bspline_basis_1D_impl(
         >>> np.allclose(vals, [[0.5, 0.5, 0.0], [0.125, 0.75, 0.125], [0.0, 0.5, 0.5]])
         True
     """
-    return _tabulate_basis_1D_impl_helper(_CARDINAL_BSPLINE, n, t, out)
+    return _tabulate_basis_1D_impl_helper(_Family.CARDINAL_BSPLINE, n, t, out)
 
 
 def _tabulate_Lagrange_basis_1D_impl(
@@ -219,7 +229,7 @@ def _tabulate_Lagrange_basis_1D_impl(
     # Lazy import: the enum's module imports this one.
     from ._basis_tabulate import _variant_code  # noqa: PLC0415
 
-    return _tabulate_basis_1D_impl_helper(_LAGRANGE, n, t, out, _variant_code(variant))
+    return _tabulate_basis_1D_impl_helper(_Family.LAGRANGE, n, t, out, _variant_code(variant))
 
 
 def _tabulate_Legendre_basis_1D_impl(
@@ -244,7 +254,7 @@ def _tabulate_Legendre_basis_1D_impl(
         ValueError: If degree is negative, or if `out` is provided and has incorrect
             shape or dtype.
     """
-    return _tabulate_basis_1D_impl_helper(_LEGENDRE, n, t, out)
+    return _tabulate_basis_1D_impl_helper(_Family.LEGENDRE, n, t, out)
 
 
 __all__ = [

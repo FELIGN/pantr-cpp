@@ -60,13 +60,15 @@ NdArray<T> build(int builder, int degree, basis::LagrangeVariant v) {
 template <class T>
 void def_dtype(nb::module_& m, const std::string& suffix) {
   m.def(("build" + suffix).c_str(),
-        [](int builder, int degree, int variant) {
-          return to_numpy(build<T>(builder, degree, basis::to_lagrange_variant(variant)));
+        [](int builder, long long degree, int variant) {
+          return to_numpy(
+              build<T>(builder, saturate_degree(degree), basis::to_lagrange_variant(variant)));
         },
         nb::arg("builder"), nb::arg("degree"), nb::arg("variant"),
         "Build a change-of-basis matrix (a fresh array).");
   m.def(("cached" + suffix).c_str(),
-        [](int kind, int degree, int variant) {
+        [](int kind, long long degree_in, int variant) {
+          const int degree = saturate_degree(degree_in);
           if (kind < 0 || kind > 5) {
             throw value_error("no change-of-basis table has the value " + std::to_string(kind));
           }

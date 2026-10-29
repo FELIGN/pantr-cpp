@@ -917,3 +917,17 @@ def test_generator_degrees_same_as_list(basis_type: BasisType) -> None:
         "Likely the degrees generator was consumed before the evaluator loop."
     )
     nptest.assert_allclose(result_gen, result_list, atol=1e-14)
+
+
+def test_degree_beyond_the_native_integer_is_a_value_error() -> None:
+    """A negative degree outside the C++ int still reaches the C++ refusal, as a ValueError."""
+    with pytest.raises(ValueError, match="degree must be non-negative"):
+        tabulate_bernstein_1d(-(2**40), [0.5])
+
+
+def test_non_native_byte_order_points_are_converted() -> None:
+    """Big-endian scattered points tabulate as their native float64 copy does."""
+    pts = np.array([[0.25, 0.5], [0.75, 1.0]])
+    nptest.assert_array_equal(
+        tabulate_bernstein([2, 1], pts.astype(">f8")), tabulate_bernstein([2, 1], pts)
+    )

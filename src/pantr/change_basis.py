@@ -70,6 +70,7 @@ asserted.
 """
 
 from collections.abc import Mapping
+from enum import IntEnum
 from types import MappingProxyType
 from typing import Final, NamedTuple
 
@@ -173,26 +174,32 @@ matrix pantr actually forms rather than an idealized one.
 """
 
 
-_LAGRANGE_TO_BERNSTEIN: Final[int] = 0
-"""Wire value of the Lagrange-to-Bernstein builder and process table."""
-_BERNSTEIN_TO_LAGRANGE: Final[int] = 1
-"""Wire value of the Bernstein-to-Lagrange builder and process table."""
-_BERNSTEIN_TO_CARDINAL: Final[int] = 2
-"""Wire value of the Bernstein-to-cardinal builder and process table."""
-_CARDINAL_TO_BERNSTEIN: Final[int] = 3
-"""Wire value of the cardinal-to-Bernstein builder and process table."""
-_LEGENDRE_TO_CARDINAL: Final[int] = 4
-"""Wire value of the Legendre-to-cardinal builder and process table."""
-_CARDINAL_TO_LEGENDRE: Final[int] = 5
-"""Wire value of the cardinal-to-Legendre builder and process table."""
-_CARDINAL_DUAL_LEGENDRE: Final[int] = 6
-"""Wire value of the cardinal-dual Legendre builder."""
-_MONOMIAL_TO_BERNSTEIN: Final[int] = 7
-"""Wire value of the monomial-to-Bernstein builder."""
+class _Builder(IntEnum):
+    """Change-of-basis builders and process tables, with the C++ library's wire values.
+
+    The first six are also ``pantr::change_basis::Kind``, the tables' keys.
+    """
+
+    LAGRANGE_TO_BERNSTEIN = 0
+    """Lagrange to Bernstein."""
+    BERNSTEIN_TO_LAGRANGE = 1
+    """Bernstein to Lagrange."""
+    BERNSTEIN_TO_CARDINAL = 2
+    """Bernstein to cardinal B-spline."""
+    CARDINAL_TO_BERNSTEIN = 3
+    """Cardinal B-spline to Bernstein."""
+    LEGENDRE_TO_CARDINAL = 4
+    """Legendre to cardinal B-spline."""
+    CARDINAL_TO_LEGENDRE = 5
+    """Cardinal B-spline to Legendre."""
+    CARDINAL_DUAL_LEGENDRE = 6
+    """The cardinal-dual functionals in the Legendre basis (no table)."""
+    MONOMIAL_TO_BERNSTEIN = 7
+    """Monomial to Bernstein (no table)."""
 
 
 def _build(
-    builder: int,
+    builder: _Builder,
     degree: int,
     dtype: npt.DTypeLike,
     out: npt.NDArray[np.float32 | np.float64] | None,
@@ -204,7 +211,7 @@ def _build(
     then is ``out`` validated and written, so a refused call leaves it untouched.
 
     Args:
-        builder (int): The builder's wire value.
+        builder (_Builder): The builder.
         degree (int): Polynomial degree.
         dtype (npt.DTypeLike): Output dtype; must be ``float32`` or ``float64``.
         out (npt.NDArray[np.float32 | np.float64] | None): Caller-provided output array to
@@ -221,7 +228,7 @@ def _build(
             ``out`` has the wrong shape, dtype, or is not writeable.
     """
     build = ext.change_basis.build_f32 if _is_float32(dtype) else ext.change_basis.build
-    result: npt.NDArray[np.float32 | np.float64] = build(builder, degree, variant)
+    result: npt.NDArray[np.float32 | np.float64] = build(builder.value, degree, variant)
     if out is None:
         return result
     out = _allocate_or_validate_out(out, (degree + 1, degree + 1), dtype)
@@ -230,12 +237,12 @@ def _build(
 
 
 def _cached(
-    kind: int, degree: int, dtype: npt.DTypeLike, variant: int = 0
+    kind: _Builder, degree: int, dtype: npt.DTypeLike, variant: int = 0
 ) -> npt.NDArray[np.float32 | np.float64]:
     """Get a change-of-basis matrix from the C++ library's process table.
 
     Args:
-        kind (int): The table's wire value.
+        kind (_Builder): The table (one of the first six builders).
         degree (int): Polynomial degree.
         dtype (npt.DTypeLike): ``float32`` or ``float64``.
         variant (int): The Lagrange node family's wire value, for the Lagrange tables.
@@ -248,7 +255,7 @@ def _cached(
         ValueError: As the matching builder.
     """
     table = ext.change_basis.cached_f32 if _is_float32(dtype) else ext.change_basis.cached
-    matrix: npt.NDArray[np.float32 | np.float64] = table(kind, degree, variant)
+    matrix: npt.NDArray[np.float32 | np.float64] = table(kind.value, degree, variant)
     return matrix
 
 
@@ -289,7 +296,9 @@ def compute_lagrange_to_bernstein_1d(
         ValueError: If degree is lower than 1, dtype is not float32 or float64, or if `out` is
             provided and has incorrect shape or dtype.
     """
-    return _build(_LAGRANGE_TO_BERNSTEIN, degree, dtype, out, _variant_code(lagrange_variant))
+    return _build(
+        _Builder.LAGRANGE_TO_BERNSTEIN, degree, dtype, out, _variant_code(lagrange_variant)
+    )
 
 
 def compute_bernstein_to_lagrange_1d(
@@ -361,7 +370,9 @@ def compute_bernstein_to_lagrange_1d(
             still accurate; see the module docstring for the derivation, and the
             ``Warning:`` above for the accuracy attained inside it.
     """
-    return _build(_BERNSTEIN_TO_LAGRANGE, degree, dtype, out, _variant_code(lagrange_variant))
+    return _build(
+        _Builder.BERNSTEIN_TO_LAGRANGE, degree, dtype, out, _variant_code(lagrange_variant)
+    )
 
 
 def compute_bernstein_to_cardinal_1d(
@@ -418,7 +429,7 @@ def compute_bernstein_to_cardinal_1d(
             still accurate; see the module docstring for the derivation, and the
             ``Warning:`` above for the accuracy attained inside it.
     """
-    return _build(_BERNSTEIN_TO_CARDINAL, degree, dtype, out)
+    return _build(_Builder.BERNSTEIN_TO_CARDINAL, degree, dtype, out)
 
 
 def compute_cardinal_to_bernstein_1d(
@@ -505,7 +516,7 @@ def compute_cardinal_to_bernstein_1d(
         >>> np.allclose(A @ B, np.eye(4), atol=1e-13)
         True
     """
-    return _build(_CARDINAL_TO_BERNSTEIN, degree, dtype, out)
+    return _build(_Builder.CARDINAL_TO_BERNSTEIN, degree, dtype, out)
 
 
 def compute_legendre_to_cardinal_1d(
@@ -558,7 +569,7 @@ def compute_legendre_to_cardinal_1d(
         >>> np.allclose(A, [[0.5, -0.28867513], [0.5, 0.28867513]])
         True
     """
-    return _build(_LEGENDRE_TO_CARDINAL, degree, dtype, out)
+    return _build(_Builder.LEGENDRE_TO_CARDINAL, degree, dtype, out)
 
 
 def compute_cardinal_to_legendre_1d(
@@ -631,7 +642,7 @@ def compute_cardinal_to_legendre_1d(
         >>> np.allclose(A @ W, np.eye(4), atol=1e-13)
         True
     """
-    return _build(_CARDINAL_TO_LEGENDRE, degree, dtype, out)
+    return _build(_Builder.CARDINAL_TO_LEGENDRE, degree, dtype, out)
 
 
 def compute_cardinal_dual_legendre_coeffs_1d(
@@ -703,7 +714,7 @@ def compute_cardinal_dual_legendre_coeffs_1d(
         >>> np.allclose(D, W.T)
         True
     """
-    return _build(_CARDINAL_DUAL_LEGENDRE, degree, dtype, out)
+    return _build(_Builder.CARDINAL_DUAL_LEGENDRE, degree, dtype, out)
 
 
 def compute_monomial_to_bernstein_1d(
@@ -744,7 +755,7 @@ def compute_monomial_to_bernstein_1d(
         ValueError: If degree is negative, dtype is not float32 or float64, or if `out`
             is provided and has incorrect shape or dtype.
     """
-    return _build(_MONOMIAL_TO_BERNSTEIN, degree, dtype, out)
+    return _build(_Builder.MONOMIAL_TO_BERNSTEIN, degree, dtype, out)
 
 
 def _cached_lagrange_to_bernstein_matrix(
@@ -777,7 +788,7 @@ def _cached_lagrange_to_bernstein_matrix(
         npt.NDArray[np.float32 | np.float64]: Read-only ``(degree+1, degree+1)``
             transformation matrix such that ``C @ lagrange_values = bernstein_values``.
     """
-    return _cached(_LAGRANGE_TO_BERNSTEIN, degree, dtype, _variant_code(lagrange_variant))
+    return _cached(_Builder.LAGRANGE_TO_BERNSTEIN, degree, dtype, _variant_code(lagrange_variant))
 
 
 def _cached_cardinal_to_bernstein_matrix(
@@ -808,7 +819,7 @@ def _cached_cardinal_to_bernstein_matrix(
         npt.NDArray[np.float32 | np.float64]: Read-only ``(degree+1, degree+1)``
             transformation matrix such that ``C @ cardinal_values = bernstein_values``.
     """
-    return _cached(_CARDINAL_TO_BERNSTEIN, degree, dtype)
+    return _cached(_Builder.CARDINAL_TO_BERNSTEIN, degree, dtype)
 
 
 def _cached_legendre_to_cardinal_matrix(
@@ -838,7 +849,7 @@ def _cached_legendre_to_cardinal_matrix(
         npt.NDArray[np.float32 | np.float64]: Read-only ``(degree+1, degree+1)``
             transformation matrix such that ``A @ legendre_values = cardinal_values``.
     """
-    return _cached(_LEGENDRE_TO_CARDINAL, degree, dtype)
+    return _cached(_Builder.LEGENDRE_TO_CARDINAL, degree, dtype)
 
 
 def _cached_cardinal_to_legendre_matrix(
@@ -868,7 +879,7 @@ def _cached_cardinal_to_legendre_matrix(
         npt.NDArray[np.float32 | np.float64]: Read-only ``(degree+1, degree+1)``
             transformation matrix such that ``W @ cardinal_values = legendre_values``.
     """
-    return _cached(_CARDINAL_TO_LEGENDRE, degree, dtype)
+    return _cached(_Builder.CARDINAL_TO_LEGENDRE, degree, dtype)
 
 
 __all__ = [

@@ -477,6 +477,22 @@ class TestBernsteinDerivCore:
 class TestBezierFastPath:
     """Tests verifying the Bézier fast path matches the general A2.3 kernel."""
 
+    def test_float32_points_on_float64_space(self) -> None:
+        """float32 points on a float64 Bezier-like space give the float64 values, rounded.
+
+        The points are mapped onto [0, 1] with the space's float64 domain, so the kernel used to
+        receive float64 points beside a float32 output and wrote nothing into it: the caller read
+        uninitialized memory. The reference is the same call with float64 points; the two agree to
+        float32's resolution of the values (|B''| <= 2 for degree 2 on [0, 1]).
+        """
+        space = BsplineSpace1D(np.array([0.0, 0.0, 0.0, 1.0, 1.0, 1.0]), 2)
+        pts = np.array([0.1, 0.5, 0.9])
+        got, _ = space.tabulate_basis_derivatives(pts.astype(np.float32), 2)
+        expected, _ = space.tabulate_basis_derivatives(pts, 2)
+        assert got.dtype == np.float32
+        eps32 = float(np.finfo(np.float32).eps)
+        np.testing.assert_allclose(got, expected, rtol=0, atol=16 * eps32 * 2.0)
+
     @pytest.mark.parametrize("degree", [1, 2, 3, 4])
     def test_bezier_matches_general_kernel(self, degree: int) -> None:
         """Fast path and general kernel agree for Bézier-like knots on [0,1]."""

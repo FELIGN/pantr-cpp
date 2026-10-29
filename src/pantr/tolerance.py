@@ -56,6 +56,7 @@ boundedness, and the guard needs no tolerance and no bitwise-identical knots.
 
 from __future__ import annotations
 
+import contextlib
 from functools import cache
 from typing import Any, Final, TypedDict
 
@@ -173,9 +174,10 @@ def _machine_epsilon(dtype: npt.DTypeLike) -> float:
     except (KeyError, TypeError):  # not seen yet, or not hashable (then never stored)
         pass
     eps = float(np.finfo(_ensure_float_dtype(dtype)).eps)
-    # Every dtype-like naming a supported format is hashable (a type, a string, a np.dtype); an
-    # unhashable one (a structured-dtype spec) was refused just above.
-    _EPS_BY_DTYPE_LIKE[dtype] = eps
+    # An object exposing a ``.dtype`` attribute names a supported format and may be unhashable:
+    # such an argument is served, just not remembered.
+    with contextlib.suppress(TypeError):
+        _EPS_BY_DTYPE_LIKE[dtype] = eps
     return eps
 
 

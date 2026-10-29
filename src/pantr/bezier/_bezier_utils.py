@@ -28,8 +28,8 @@ def _tabulate_bernstein_1d_fast(
 
     Thin Layer 2 wrapper around the C++ Bernstein kernel (``pantr._pantr._kernels``).
     Inputs are assumed already validated: ``degree >= 0``, ``pts`` is 1-D, and
-    ``pts.dtype`` matches ``dtype`` exactly (a mismatch is refused by the binding with a
-    ``TypeError``).
+    ``pts.dtype`` matches ``dtype`` exactly (an output of another dtype is refused by the
+    binding with a ``TypeError``; points of another dtype are converted).
 
     Args:
         degree (int): Polynomial degree.

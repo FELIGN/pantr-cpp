@@ -653,3 +653,30 @@ class TestGaussLegendreQuadrature:
     def test_validation(self, ndim: int, npts: int | list[int], match: str) -> None:
         with pytest.raises(ValueError, match=match):
             gauss_legendre_quadrature(ndim, npts)
+
+
+class TestWrapperArgumentConversion:
+    """Arguments the Python wrappers convert before the C++ library sees them."""
+
+    def test_zero_dimensional_weights_are_refused(self) -> None:
+        """A 0-d weight array is not promoted to 1-d on the way in."""
+        with pytest.raises(ValueError, match="weights must be 1D"):
+            QuadratureRule([[0.5]], 1.0)
+        with pytest.raises(ValueError, match="nodes and weights must be 1D"):
+            tensor_product_quadrature([(0.5, 1.0)])
+
+    def test_non_native_byte_order_coordinates(self) -> None:
+        """Big-endian coordinates are converted to native float64, as any other dtype."""
+        lattice = PointsLattice([np.arange(3, dtype=">f8") / 2.0])
+        assert lattice.dtype == np.float64
+        nptest.assert_array_equal(lattice.pts_per_dir[0], [0.0, 0.5, 1.0])
+
+    def test_complex_coordinates_are_refused(self) -> None:
+        """Complex coordinates are refused rather than losing their imaginary part."""
+        with pytest.raises(ValueError, match="must be real"):
+            PointsLattice([np.array([0.0, 1.0j])])
+
+    def test_a_float_count_is_refused(self) -> None:
+        """A non-integer point count is refused, not truncated."""
+        with pytest.raises(TypeError):
+            create_lagrange_points_lattice(LagrangeVariant.EQUISPACES, [2.7])  # type: ignore[list-item]

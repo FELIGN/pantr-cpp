@@ -8,7 +8,10 @@ module.
 - The Bernstein recurrences at one point, the degree up to which the unmirrored one runs, and
   the Bernstein derivative tabulation (no public function returns derivatives).
 - The generic Gram projection behind the change-of-basis builders.
-- The change-of-basis process tables: their degree bound, size and reset.
+- The change-of-basis process tables: their degree bound, size and reset, and the private
+  wrappers over them the extraction code uses (``_cached_*``).
+- The change-of-basis degree domains (``_*_MAX_DEGREE``, ``_DegreeLimit``) and the Lagrange nodes
+  (``_get_lagrange_points``), which the domain derivation rebuilds in exact arithmetic.
 """
 
 from __future__ import annotations
@@ -16,6 +19,19 @@ from __future__ import annotations
 from typing import Final
 
 from ._ext import ext
+from .basis._basis_1D import _Family
+from .basis._basis_lagrange import _get_lagrange_points
+from .change_basis import (
+    _BERNSTEIN_TO_CARDINAL_MAX_DEGREE,
+    _BERNSTEIN_TO_LAGRANGE_MAX_DEGREE,
+    _CARDINAL_TO_BERNSTEIN_MAX_DEGREE,
+    _CARDINAL_TO_LEGENDRE_MAX_DEGREE,
+    _cached_cardinal_to_bernstein_matrix,
+    _cached_cardinal_to_legendre_matrix,
+    _cached_lagrange_to_bernstein_matrix,
+    _cached_legendre_to_cardinal_matrix,
+    _DegreeLimit,
+)
 
 _t = ext._testing
 
@@ -42,12 +58,12 @@ CHANGE_BASIS_CACHE_MAX_DEGREE: Final[int] = _t.change_basis_cache_max_degree
 change_basis_cache_size = _t.change_basis_cache_size
 change_basis_cache_clear = _t.change_basis_cache_clear
 
-BERNSTEIN: Final[int] = 0
-"""Wire value of the Bernstein family, for :data:`gram_projection`."""
-CARDINAL_BSPLINE: Final[int] = 1
-"""Wire value of the cardinal B-spline family, for :data:`gram_projection`."""
-LEGENDRE: Final[int] = 2
-"""Wire value of the shifted Legendre family, for :data:`gram_projection`."""
+BERNSTEIN: Final = _Family.BERNSTEIN
+"""The Bernstein family, for :data:`gram_projection`."""
+CARDINAL_BSPLINE: Final = _Family.CARDINAL_BSPLINE
+"""The cardinal B-spline family, for :data:`gram_projection`."""
+LEGENDRE: Final = _Family.LEGENDRE
+"""The shifted Legendre family, for :data:`gram_projection`."""
 
 __all__ = [
     "BERNSTEIN",
@@ -56,6 +72,16 @@ __all__ = [
     "CARDINAL_BSPLINE",
     "CHANGE_BASIS_CACHE_MAX_DEGREE",
     "LEGENDRE",
+    "_BERNSTEIN_TO_CARDINAL_MAX_DEGREE",
+    "_BERNSTEIN_TO_LAGRANGE_MAX_DEGREE",
+    "_CARDINAL_TO_BERNSTEIN_MAX_DEGREE",
+    "_CARDINAL_TO_LEGENDRE_MAX_DEGREE",
+    "_DegreeLimit",
+    "_cached_cardinal_to_bernstein_matrix",
+    "_cached_cardinal_to_legendre_matrix",
+    "_cached_lagrange_to_bernstein_matrix",
+    "_cached_legendre_to_cardinal_matrix",
+    "_get_lagrange_points",
     "bernstein_derivatives_point",
     "bernstein_derivatives_point_f32",
     "bernstein_row_mirrored",

@@ -2548,6 +2548,10 @@ class TestKnotPredicateCaching:
         assert not sp.has_Bezier_like_knots()
 
 
+@pytest.mark.skipif(
+    pantr.get_num_threads() < 2,
+    reason="one CPU: one thread and every thread are the same setting",
+)
 class TestBernsteinSerialParallelTwins:
     """Bernstein tabulation must not depend on the thread count (M7).
 

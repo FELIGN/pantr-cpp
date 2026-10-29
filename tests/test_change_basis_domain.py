@@ -32,15 +32,17 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
-from pantr.basis import LagrangeVariant
-from pantr.basis._basis_lagrange import _get_lagrange_points
-from pantr.change_basis import (
+from pantr._testing import (
     _BERNSTEIN_TO_CARDINAL_MAX_DEGREE,
     _BERNSTEIN_TO_LAGRANGE_MAX_DEGREE,
     _CARDINAL_TO_BERNSTEIN_MAX_DEGREE,
     _CARDINAL_TO_LEGENDRE_MAX_DEGREE,
     _cached_cardinal_to_bernstein_matrix,
     _DegreeLimit,
+    _get_lagrange_points,
+)
+from pantr.basis import LagrangeVariant
+from pantr.change_basis import (
     compute_bernstein_to_cardinal_1d,
     compute_bernstein_to_lagrange_1d,
     compute_cardinal_dual_legendre_coeffs_1d,
