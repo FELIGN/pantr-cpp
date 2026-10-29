@@ -115,3 +115,39 @@ class TestPublicReExports:
     def test_num_threads_reexported(self) -> None:
         """pantr.num_threads is the same function as _parallel.num_threads."""
         assert pantr.num_threads is num_threads
+
+
+class TestDrivesTheCppPool:
+    """``set_num_threads`` drives the C++ pool as well as Numba until Numba is removed (DR-19)."""
+
+    def test_setting_reaches_the_cpp_pool(self) -> None:
+        """The calling thread's C++ setting follows, and bounds the threads a C++ loop uses."""
+        from pantr._ext import ext  # noqa: PLC0415
+
+        if ext.max_threads() < 3:
+            pytest.skip("needs a C++ pool capacity of at least 3")
+        set_num_threads(2)
+        assert ext.get_num_threads() == 2
+        assert ext._testing.count_threads_used(64, 2000) == 2
+        set_num_threads(1)
+        assert ext._testing.count_threads_used(64, 200) == 1
+
+    def test_cpp_setting_is_capped_at_the_pool_capacity(self) -> None:
+        """Numba's maximum may exceed the CPUs the process may use; the C++ side never does."""
+        import numba as nb  # noqa: PLC0415
+
+        from pantr._ext import ext  # noqa: PLC0415
+
+        numba_max: int = nb.config.NUMBA_NUM_THREADS
+        set_num_threads(numba_max)
+        assert get_num_threads() == numba_max
+        assert ext.get_num_threads() == min(numba_max, ext.max_threads())
+
+    def test_context_manager_restores_the_cpp_setting(self) -> None:
+        """``num_threads`` restores both pools on exit."""
+        from pantr._ext import ext  # noqa: PLC0415
+
+        set_num_threads(1)
+        with num_threads(2):
+            assert ext.get_num_threads() == min(2, ext.max_threads())
+        assert ext.get_num_threads() == 1

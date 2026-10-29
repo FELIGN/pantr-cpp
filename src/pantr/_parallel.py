@@ -1,8 +1,17 @@
 """Thread-count control for PaNTr's parallel kernels.
 
-Provides a thin wrapper around Numba's thread-pool configuration so that
-users can limit (or disable) the parallelism used by PaNTr without
-touching environment variables or Numba internals directly.
+Provides a thin wrapper around the thread-pool configuration so that users can
+limit (or disable) the parallelism used by PaNTr without touching environment
+variables or Numba internals directly.
+
+While the C++ port is under way, PaNTr's parallel kernels run on two pools:
+Numba's and the C++ pool of the compiled extension. One setting drives both
+(:func:`set_num_threads`); the value reported and validated is Numba's until
+its last kernel is removed. The C++ side receives the same count, capped at
+its pool's capacity: Numba's maximum (``NUMBA_NUM_THREADS``) defaults to the
+machine's CPU count, which can exceed the CPUs this process may run on, and the
+C++ pool never runs more threads than those (``pantr._ext.ext.max_threads()``,
+the affinity CPU count, lowered by ``PANTR_NUM_THREADS``).
 
 Typical usage::
 
@@ -32,6 +41,8 @@ from typing import Any, Final
 import numba as nb
 from threadpoolctl import threadpool_limits
 
+from pantr._ext import ext
+
 _user_configured: Final[threading.Event] = threading.Event()
 """Set by the public setters; queried by default policies (e.g. the per-rank MPI
 default in :mod:`pantr.mpi`) so they never override an explicit user decision."""
@@ -52,21 +63,26 @@ def _set_num_threads_raw(n: int) -> None:
     Internal hook for default policies (e.g. the per-rank default applied by
     :mod:`pantr.mpi`): performs the same validation as :func:`set_num_threads`
     but leaves the explicit-configuration flag untouched, so a policy-applied
-    value remains distinguishable from a user decision.
+    value remains distinguishable from a user decision. Sets Numba's count and the
+    C++ pool's setting for the calling thread, the latter capped at the C++ pool's
+    capacity (see the module docstring).
 
     Args:
         n (int): Desired thread count.  Must be >= 1 and at most
             ``numba.config.NUMBA_NUM_THREADS``.
 
     Raises:
-        ValueError: If *n* is less than 1 or exceeds the maximum.
+        ValueError: If *n* is less than 1 or exceeds the maximum, or if the
+            ``PANTR_NUM_THREADS`` environment variable is not a positive integer.
     """
     max_threads: int = nb.config.NUMBA_NUM_THREADS
     if n < 1:
         raise ValueError(f"n must be >= 1, got {n}")
     if n > max_threads:
         raise ValueError(f"n must be <= NUMBA_NUM_THREADS ({max_threads}), got {n}")
+    cpp_capacity = ext.max_threads()
     nb.set_num_threads(n)
+    ext.set_num_threads(min(n, cpp_capacity))
 
 
 def set_num_threads(n: int) -> None:
