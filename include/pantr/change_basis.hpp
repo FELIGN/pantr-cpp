@@ -37,6 +37,7 @@
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -115,6 +116,22 @@ void check_domain(int degree, DegreeLimit limit, const std::string& builder) {
                     "singular to working precision, so the error bound on the result reaches "
                     "100% and guarantees no correct digit; see the pantr.change_basis module "
                     "docstring for the derivation.");
+}
+
+/// Refuse a degree whose `(degree + 1, degree + 1)` result cannot be allocated, before any
+/// work (or any intermediate table) is sized from it: NdArray's own rule, applied up front.
+///
+/// Raises:
+///     capacity_error: `(degree + 1)^2 sizeof(T)` bytes exceed the largest `std::ptrdiff_t`.
+template <StorageFloat T>
+void check_matrix_fits(int degree) {
+  const auto m = static_cast<std::size_t>(degree) + 1;
+  constexpr auto max_elements =
+      static_cast<std::size_t>((std::numeric_limits<std::ptrdiff_t>::max)()) / sizeof(T);
+  if (m > max_elements / m) {
+    throw capacity_error("a (" + std::to_string(m) + ", " + std::to_string(m) +
+                         ") matrix has more elements than fit in memory");
+  }
 }
 
 inline void check_non_negative(int degree) {
@@ -207,7 +224,8 @@ NdArray<T> gram_projection(int degree, long long n_quad, NewEval new_eval, OldEv
 template <StorageFloat T>
 [[nodiscard]] NdArray<T> lagrange_to_bernstein(int degree, LagrangeVariant variant) {
   detail::check_at_least_one(degree);
-  const NdArray<T> x = basis::lagrange_points<T>(variant, degree + 1);
+  detail::check_matrix_fits<T>(degree);
+  const NdArray<T> x = basis::lagrange_points<T>(variant, static_cast<long long>(degree) + 1);
   const NdArray<T> b = basis::tabulate_bernstein_1d<T>(degree, x.flat());  // b[k, i] = B_i(x_k)
   const std::size_t m = x.size();
   NdArray<T> out({m, m});
@@ -244,7 +262,7 @@ template <StorageFloat T>
   detail::check_domain<T>(degree, bernstein_to_cardinal_max_degree,
                           "compute_bernstein_to_cardinal_1d");
   return detail::gram_projection<T>(
-      degree, degree + 1,
+      degree, static_cast<long long>(degree) + 1,
       [](int d, std::span<const T> p) { return basis::tabulate_bernstein_1d<T>(d, p); },
       [](int d, std::span<const T> p) { return basis::tabulate_cardinal_bspline_1d<T>(d, p); });
 }
@@ -271,8 +289,9 @@ template <StorageFloat T>
 template <StorageFloat T>
 [[nodiscard]] NdArray<T> legendre_to_cardinal(int degree) {
   detail::check_non_negative(degree);
+  detail::check_matrix_fits<T>(degree);
   return detail::gram_projection<T>(
-      degree, degree + 1,
+      degree, static_cast<long long>(degree) + 1,
       [](int d, std::span<const T> p) { return basis::tabulate_legendre_1d<T>(d, p); },
       [](int d, std::span<const T> p) { return basis::tabulate_cardinal_bspline_1d<T>(d, p); });
 }
@@ -325,6 +344,7 @@ template <StorageFloat T>
 template <StorageFloat T>
 [[nodiscard]] NdArray<T> monomial_to_bernstein(int degree) {
   detail::check_non_negative(degree);
+  detail::check_matrix_fits<T>(degree);
   const auto m = static_cast<std::size_t>(degree) + 1;
   NdArray<T> out({m, m});
   // C(d, floor(d / 2)) <= 2^53 up to d = 56: every binomial of the table is then exact in double.

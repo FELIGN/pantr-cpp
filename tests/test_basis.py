@@ -923,6 +923,9 @@ def test_degree_beyond_the_native_integer_is_a_value_error() -> None:
     """A negative degree outside the C++ int still reaches the C++ refusal, as a ValueError."""
     with pytest.raises(ValueError, match="degree must be non-negative"):
         tabulate_bernstein_1d(-(2**40), [0.5])
+    # A positive one is refused rather than tabulated at a clamped degree.
+    with pytest.raises(ValueError, match="exceeds the largest supported degree"):
+        tabulate_bernstein([2**31], np.array([[0.5]]))
 
 
 def test_non_native_byte_order_points_are_converted() -> None:

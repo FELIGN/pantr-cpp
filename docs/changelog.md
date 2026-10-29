@@ -49,11 +49,13 @@
 - **Complex `PointsLattice` coordinates are refused** (`ValueError`), and a non-integer
   point count given to `create_lagrange_points_lattice` raises `TypeError` instead of being
   truncated. A complex lattice used to keep its dtype, which no tabulation could use.
-- **An unknown Lagrange variant is refused** by `tabulate_lagrange_1d`, `tabulate_lagrange`
-  and `create_lagrange_points_lattice` with a `ValueError` (`'...' is not a valid
-  LagrangeVariant`). Any value that was not one of the five used to select the Chebyshev
-  second-kind nodes silently. The variant is now converted once, for the C++ library, which
-  knows the five families and nothing else.
+- **An unknown Lagrange variant is refused** by `tabulate_lagrange_1d`, `tabulate_lagrange`,
+  `create_lagrange_points_lattice` and `compute_lagrange_to_bernstein_1d` with a `ValueError`
+  (`'...' is not a valid LagrangeVariant`). Any value that was not one of the five used to select
+  the Chebyshev second-kind nodes silently. The variant is now converted once, for the C++
+  library, which knows the five families and nothing else; except in `tabulate_lagrange`, which
+  still checks its degrees first, it is checked before the count or degree
+  (`compute_bernstein_to_lagrange_1d` already refused it).
 
 ### Changed
 - **pantr needs Python 3.12 or later.** pantr is becoming a C++ library with a compiled
@@ -79,8 +81,10 @@
   thread before its first call, which avoids a process abort when a call races the warmup.
 - **Quadrature, tolerance, basis tabulation and change of basis run in pantr's C++
   library** (`pantr.quad`, `pantr.tolerance`, `pantr.basis`, `pantr.change_basis` are thin
-  wrappers over it; names, signatures, defaults and messages are unchanged). Floating-point
-  results can move in the last bits: Gauss-Legendre and Gauss-Lobatto nodes come from
+  wrappers over it; names, signatures and defaults are unchanged, and messages too except as
+  listed below). Floating-point results can move in the last bits, and an ill-conditioned
+  change-of-basis matrix by up to the accuracy bound its builder documents (past degree 10 in
+  float64 for the cardinal-to-Bernstein one, a bound above 100%): Gauss-Legendre and Gauss-Lobatto nodes come from
   Newton's iteration on the Legendre recurrence instead of NumPy's eigenvalue route, the
   tanh-sinh step from a Lambert W evaluation of pantr's own, and the change-of-basis
   matrices from Eigen's LU instead of LAPACK's. `compute_monomial_to_bernstein_1d` is
@@ -99,12 +103,37 @@
   to keep its dtype, and no tabulation could use it.
 - **`PointsLattice` and `QuadratureRule` pickle and copy through their constructor**
   (`__reduce__`), since they now hold a C++ value that Python cannot pickle by itself.
-- When both the size (`n_pts` or `degree`) and `dtype` are invalid, the quadrature functions and
-  the change-of-basis builders report the `dtype` first; each is reported as before when it is
-  the only invalid argument. A degree too large for a C++ `int` is reported as that limit's
-  value in the change-of-basis domain message.
+- `PointsLattice.get_all_points("C")` returns a C-contiguous array (it was a transposed,
+  F-contiguous view); the values are unchanged.
+- **Counts and degrees outside the annotated types or past memory** may be refused with another
+  exception or message than before. In the 1D rules, `create_lagrange_points_lattice`, the 1D
+  tabulations and the change-of-basis builders, a count or degree that is not an integer (a
+  float, even `2.0`, a string, `None`) or an integer outside the int64 range is a `TypeError` from
+  the compiled binding; the previous release raised assorted `ValueError`, `OverflowError`,
+  `IndexError`, `MemoryError` and `TypeError`s, and some rules accepted it (a float count in the
+  Lobatto and Chebyshev rules, `2**63` and `2**63 - 1` in the two Chebyshev ones). A `bool` is
+  accepted as the integer it is. A degree above `2**31 - 1` is a `ValueError` ("exceeds the
+  largest supported degree"), a change-of-basis matrix too large to allocate a `ValueError`
+  ("... more elements than fit in memory") raised before any work, an allocation that fails a
+  `MemoryError` reading "std::bad_alloc", and a rule of `2**62` points a `ValueError` naming the
+  C++ container's limit where NumPy raised "array is too big" or a `MemoryError`.
+  `gauss_legendre_quadrature` still converts its counts with `int()`, and the tensor tabulations
+  still refuse a non-integer degree with "All degrees must be non-negative integers". The 1D
+  tabulations convert their points before checking the degree, so a call with both invalid
+  reports the points.
+- `tensor_product_quadrature` accepts any iterable of `(nodes, weights)` pairs (an iterator
+  used to raise `TypeError` for want of `len`).
+- When both the size (`n_pts`, `degree` or a lattice's counts) and `dtype` are invalid, the
+  quadrature functions and the change-of-basis builders report the `dtype` first; each is
+  reported as before when it is the only invalid argument. The private imports `pantr.quad` and
+  `pantr.change_basis` used to re-export by accident (NumPy's `chebyshev` and `legendre`,
+  `functools`, `comb`, `Callable`, a few pantr functions) are gone from their namespaces.
 
 ### Fixed
+- Multi-dimensional tabulations at zero points in three or more dimensions return an empty
+  `(0, n_functions)` array; they raised a NumPy reshape error.
+- `get_modified_chebyshev_nodes_1d` honors `dtype` when `n_pts` is a NumPy integer; it returned
+  float64.
 - High-order Bernstein derivatives (reached by `Bezier.evaluate_derivatives` and the
   Bezier-like B-spline paths) are now correct where the scaling `degree! / (degree - k)!`
   passes 2^63, for example from order 14 at degree 30. The scaling

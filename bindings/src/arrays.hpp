@@ -3,6 +3,7 @@
 // the pool.
 #pragma once
 
+#include "pantr/core/errors.hpp"
 #include "pantr/core/ndarray.hpp"
 #include "pantr/parallel/work_model.hpp"
 
@@ -14,6 +15,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -64,22 +66,28 @@ NumpyView<T> view_of(const T* data, std::span<const std::size_t> shape,
   return NumpyView<T>(data, shape.size(), shape.data(), owner);
 }
 
-/// Narrow a degree from Python's unbounded `int` to the C++ API's `int`, saturating.
+/// Narrow a degree from the binding's 64-bit integer to the C++ API's `int`.
 ///
-/// A degree outside `int` is far outside every domain: saturating keeps the C++ refusal (a
-/// negative degree, a degree past a builder's domain, an output too large to allocate), all
-/// `ValueError`s, where a narrowing argument would fail the binding's type check with a
-/// `TypeError` first. Only the degree a refusal message quotes is the saturated one.
+/// A negative degree outside `int` becomes `INT_MIN`, which every C++ entry point refuses as
+/// negative with its own message; a positive one is refused here. Saturating it instead would let
+/// a tabulation succeed at the wrong degree.
 ///
 /// Args:
 ///     degree (long long): The degree as given.
 ///
 /// Returns:
-///     int: `degree`, clamped to `[INT_MIN, INT_MAX]`.
+///     int: `degree`, or `INT_MIN` for a negative degree outside `int`.
+///
+/// Raises:
+///     capacity_error: `degree` exceeds `INT_MAX`.
 inline int saturate_degree(long long degree) {
   constexpr long long lo = (std::numeric_limits<int>::min)();
   constexpr long long hi = (std::numeric_limits<int>::max)();
-  return static_cast<int>(degree < lo ? lo : (degree > hi ? hi : degree));
+  if (degree > hi) {
+    throw capacity_error("degree " + std::to_string(degree) +
+                         " exceeds the largest supported degree " + std::to_string(hi));
+  }
+  return static_cast<int>(degree < lo ? lo : degree);
 }
 
 /// Narrow a list of degrees as `saturate_degree` does.

@@ -853,12 +853,18 @@ def _gram_bernstein(degree: int) -> npt.NDArray[np.float64]:
     )
 
 
-def test_degree_beyond_the_native_integer_is_refused_by_the_domain() -> None:
-    """A degree outside the C++ int is refused as past the domain, a ValueError."""
-    with pytest.raises(ValueError, match="outside the supported domain"):
+def test_degree_beyond_the_native_integer_is_refused() -> None:
+    """A degree outside the C++ int is refused (a ValueError), never clamped."""
+    with pytest.raises(ValueError, match="exceeds the largest supported degree"):
         compute_cardinal_to_bernstein_1d(2**40)
     with pytest.raises(ValueError, match="Degree must be non-negative"):
         compute_cardinal_to_bernstein_1d(-(2**40))
+    # Builders with no domain refuse a matrix too large to allocate, before any work.
+    for builder in (compute_legendre_to_cardinal_1d, compute_monomial_to_bernstein_1d):
+        with pytest.raises(ValueError, match="more elements than fit in memory"):
+            builder(2**31 - 1)
+    with pytest.raises(ValueError, match="more elements than fit in memory"):
+        compute_lagrange_to_bernstein_1d(2**31 - 1)
 
 
 class TestCachedChangeBasisMatrices:
