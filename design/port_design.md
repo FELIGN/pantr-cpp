@@ -3,7 +3,7 @@
 The architecture of the C++ port, approved with the plan (`design/port_plan.md`). The claims it
 rests on were checked independently before approval (section 18), and the results are folded into
 the sections they touch. Identifiers: R0-R11 (rulings), AC1-AC13 (acceptance criteria), DR-n
-(decision records), Di1-Di6 and QB1-QB11 are defined in `design/port_plan.md`; M1-M7 (mirror tests),
+(decision records), Di1-Di6 and QB1-QB11 (QB3 unused) are defined in `design/port_plan.md`; M1-M7 (mirror tests),
 U1-U9 (unverified items) and V1-V12 (verified claims) are defined here. "Lesson 1", "lesson 2" and
 "lessons 3.n" are sections 1, 2 and 3.n of `design/lessons_first_port.md`, what a first port attempt
 learned. Where this design was later
@@ -478,7 +478,7 @@ template <class P = Builtin, class T> RootSet<T> find_roots(const Bezier<T>&, Fi
   Bernstein polynomial on `[0, 1]` (for a rational Bezier, of its first homogeneous component, as today). `certified`
   means the provider proved existence and uniqueness of a root in `[x - param_tol, x + param_tol]`; `computed` claims
   nothing beyond "returned by the algorithm".
-- **Weakest producer** (certified-numerics 12): `Builtin` emits only `computed`; its completeness is `complete` unless
+- **Weakest producer** (a result is only as certified as the weakest step that produced it): `Builtin` emits only `computed`; its completeness is `complete` unless
   a cap fired (2.7). The BeRF-FR adapter maps BeRF-FR's per-row certificate and result level through **one exhaustive
   `switch` with no default** (*a closed set needs exhaustive dispatch*): a BeRF-FR certificate maps to `certified`
   only where its documented claim is existence-and-uniqueness for that row; everything else maps to `computed`; any
@@ -497,7 +497,7 @@ template <class P = Builtin, class T> RootSet<T> find_roots(const Bezier<T>&, Fi
   `pantr.bezier.set_root_provider("builtin"|"berf")`, `get_root_provider()`, initial value from `PANTR_ROOT_PROVIDER`,
   default `berf` when `pantr_berf` imports, else `builtin` (AC7's "switch both ways"; new public API, changelog).
   `find_roots(..., return_claims=True)`-style access to claims is on the later list.
-- **Dedup** (certified-numerics 15): the pair-classes of duplicates (adjacent subintervals sharing an endpoint, a
+- **Dedup** (merging duplicate roots must not merge distinct ones): the pair-classes of duplicates (adjacent subintervals sharing an endpoint, a
   multiple root found by two clip branches, a root at 0 or 1 found as an endpoint and by Newton) are tabulated against
   the layer that kills each in the `roots/` design note; the provider contract test asserts distinctness for each class.
 - **Contract suite**: one templated C++ test suite over `RootProvider`, run for `Builtin` and (with
@@ -967,16 +967,17 @@ pool thread per rank under `pantr.mpi`).
 | `AnyCommunicator` + capsule C ABI | strong: vtable opaque | medium: versioned struct, version checked at conversion | high: the only way fakes and MPI share one algorithm | medium: a wrong payload size is caught at the collective, not at compile time | enforcement: `Gathered<T>` validates counts sum to data length at construction |
 | Python wrappers (`Bspline`, ...) | medium: `_h` is private by convention only | low: Python cannot express immutability of `_h`; `in_place` swaps are by design | high: R5 needs exactly this hole | medium: every mutation path is a method that rebuilds `_h` through a validating C++ constructor | encapsulation: `__slots__` plus a `__setattr__` that refuses `_h` outside the class's own methods would raise it; lesson 1 called that wrapper memo "dual"; not chosen unless a test needs it |
 
-Standards applied, with grades: *an abstraction earns its place by a contract* [argued] (the root and partition
-seams each have a second implementor, BeRF-FR and METIS, before they are built; `Communicator` has three: fake, MPI,
-in-process C++ test); *hide the decision most likely to change* [argued] (the three changes most likely in a year:
-a new root provider touches `providers/` only; a new MPI family touches `_pantr_mpi` only; a new fitting variant
-touches the staged fitting API and its wrapper only); *make a speed mutation unobservable* [proved] (the handle swap
-mutates only the wrapper, never a value another holder sees); *a closed set needs exhaustive dispatch* [house] (the
-BeRF-FR claim mapping); *convert a foreign interface at a boundary* [proved] (mpi4py communicator, pymetis output,
-scipy.sparse are converted at one seam each); *cross a boundary once* [measured, transfer argued] (callables
-evaluated once per batch; arrays, not objects, between extensions). Fleet labels: the [proved] ones translate to
-PROVED as to mechanism, the rest to ARGUED or SUPPORTED as the skill's table says.
+Design rules applied, each with how strongly the case for it is made here: *an abstraction earns its
+place by a contract*, argued (the root and partition seams each have a second implementor, BeRF-FR
+and METIS, before they are built; `Communicator` has three: fake, MPI, in-process C++ test); *hide
+the decision most likely to change*, argued (the three changes most likely in a year: a new root
+provider touches `providers/` only; a new MPI family touches `_pantr_mpi` only; a new fitting
+variant touches the staged fitting API and its wrapper only); *make a speed mutation unobservable*,
+proved as to mechanism (the handle swap mutates only the wrapper, never a value another holder
+sees); *a closed set needs exhaustive dispatch*, a house rule (the BeRF-FR claim mapping); *convert
+a foreign interface at a boundary*, proved as to mechanism (mpi4py communicator, pymetis output,
+scipy.sparse are converted at one seam each); *cross a boundary once*, measured elsewhere with the
+transfer argued (callables evaluated once per batch; arrays, not objects, between extensions).
 
 ## 18. Verified claims (V1 to V12, checked independently before approval)
 

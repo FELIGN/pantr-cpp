@@ -183,7 +183,8 @@ class Pool {
 
   /// Run every chunk of `job`, on the calling thread and up to `job.max_workers` workers.
   ///
-  /// Returns after every chunk has run and every worker has left the job.
+  /// Returns after every claimed chunk has run (after a throw, unstarted chunks are skipped) and
+  /// every worker has left the job.
   ///
   /// Args:
   ///     job (detail::Job&): The loop; must outlive the call.

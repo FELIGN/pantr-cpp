@@ -8,7 +8,7 @@ below:
 - **R0-R11** are the maintainer's rulings, listed under "Rulings" below.
 - **AC1-AC13** are the acceptance criteria of the whole port, listed under "Acceptance criteria".
 - **DR-n** are this plan's decision records (end of file); **Di1-Di6** are directives inferred while
-  planning and approved with the plan (R11); **QB1-QB11** are defaults the plan proceeds on unless
+  planning and approved with the plan (R11); **QB1-QB11** (QB3 unused) are defaults the plan proceeds on unless
   overruled; **P0a, P0b, P1, ...** are the build items; **S0-S9** the stages.
 
 ## Rulings
@@ -81,8 +81,8 @@ below:
 ## How every stage runs
 - One worktree for the branch, off `main` 11ab436, in the `pantr-cpp` conda environment; the
   extension is built in place with `make ext` (no editable install, §1.9).
-- Stages are sequential (dependencies between them, and a cap on concurrent build agents). Each
-  build item is built by one agent that runs its own review loop and commits on the branch.
+- Stages are sequential (dependencies between them, and a cap on concurrent builds). Each build
+  item is built in one piece, with its own review loop, and committed on the branch.
 - A stage is done when: its components are built; every Numba kernel whose last caller it ports is
   deleted (DR-2: kernels with unported callers survive, listed per stage); its tests pass
   with every changed assertion in one of the four AC1 categories (derived tolerance, independent
