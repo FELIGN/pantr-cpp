@@ -104,28 +104,52 @@
 - **`PointsLattice` and `QuadratureRule` pickle and copy through their constructor**
   (`__reduce__`), since they now hold a C++ value that Python cannot pickle by itself.
 - `PointsLattice.get_all_points("C")` returns a C-contiguous array (it was a transposed,
-  F-contiguous view); the values are unchanged.
+  F-contiguous view); the values are unchanged. The C++ lattice builds the points in the order
+  asked for, so no transpose is left to return.
+- **Results are NumPy arrays that do not own their data**: a tabulation, rule or matrix is a C++
+  buffer handed to NumPy without a copy (`flags.owndata` is `False`), so `ndarray.resize` raises
+  on it where it used to work; copy the array first.
+- **Dtype arguments in another byte order** (`">f8"`, `np.dtype(">f4")`) give native-order
+  results; the C++ library computes in native `float` or `double`, and the previous release cast
+  to the requested order. `compute_lagrange_to_bernstein_1d` and
+  `compute_bernstein_to_lagrange_1d` now accept such a dtype, which they refused with
+  "Output array has dtype ...".
+- **Integer-like counts and degrees are accepted**: an object with `__index__` (or a 0-d integer
+  array) is converted as an integer by the compiled binding, where the previous release raised
+  `TypeError` or NumPy's "Series must have maximum degree of at least 1".
+- **No `RuntimeWarning` from the tabulations** at infinite or subnormal points: the values are
+  the same, computed in C++ rather than through NumPy operations that warned.
+- **A `PointsLattice` of strings is refused** ("could not convert string to float"); it used to
+  be built with a string dtype no tabulation could use (non-float coordinates are converted to
+  float64, see above).
 - **Counts and degrees outside the annotated types or past memory** may be refused with another
-  exception or message than before. In the 1D rules, `create_lagrange_points_lattice`, the 1D
-  tabulations and the change-of-basis builders, a count or degree that is not an integer (a
-  float, even `2.0`, a string, `None`) or an integer outside the int64 range is a `TypeError` from
-  the compiled binding; the previous release raised assorted `ValueError`, `OverflowError`,
-  `IndexError`, `MemoryError` and `TypeError`s, and some rules accepted it (a float count in the
-  Lobatto and Chebyshev rules, `2**63` and `2**63 - 1` in the two Chebyshev ones). A `bool` is
-  accepted as the integer it is. A degree above `2**31 - 1` is a `ValueError` ("exceeds the
-  largest supported degree"), a change-of-basis matrix too large to allocate a `ValueError`
-  ("... more elements than fit in memory") raised before any work, an allocation that fails a
-  `MemoryError` reading "std::bad_alloc", and a rule of `2**62` points a `ValueError` naming the
-  C++ container's limit where NumPy raised "array is too big" or a `MemoryError`.
-  `gauss_legendre_quadrature` still converts its counts with `int()`, and the tensor tabulations
-  still refuse a non-integer degree with "All degrees must be non-negative integers". The 1D
-  tabulations convert their points before checking the degree, so a call with both invalid
-  reports the points.
+  exception or message than before, because the C++ library's binding and allocation now see
+  them first. In the 1D rules, `create_lagrange_points_lattice`, the 1D tabulations and the
+  change-of-basis builders, a count or degree that is not an integer (a float, even `2.0`, a
+  string, `None`) or an integer outside the int64 range is a `TypeError` from the compiled
+  binding; the previous release raised assorted `ValueError`, `OverflowError`, `IndexError`,
+  `MemoryError` and `TypeError`s, and some rules accepted it (a float count in the Lobatto and
+  Chebyshev rules, `2**63` and `2**63 - 1` in the two Chebyshev ones). A `bool` is accepted as
+  the integer it is. A degree above `2**31 - 1`, the C++ `int`, is a `ValueError` ("exceeds the
+  largest supported degree") in the 1D and tensor tabulations and the builders; a
+  change-of-basis matrix too large to allocate is a `ValueError` ("... more elements than fit in
+  memory") raised before any work; an allocation that fails is a `MemoryError` reading
+  "std::bad_alloc"; and a rule of `2**62` points is a `ValueError` naming the C++ container's
+  limit where NumPy raised "array is too big" or a `MemoryError`. `gauss_legendre_quadrature`
+  still converts its counts with `int()` and checks `ndim` first (a `bool` `ndim` is now quoted
+  as `1` in its message), and the tensor tabulations still refuse a non-integer degree with "All
+  degrees must be non-negative integers". The 1D tabulations convert their points before
+  checking the degree, so a call with both invalid reports the points.
+- **An invalid `funcs_order`** in the tensor tabulations is a `ValueError` ("funcs_order must be
+  'C' or 'F'") checked first; it used to be NumPy's `einsum` error, raised after the 1D
+  evaluations.
 - `tensor_product_quadrature` accepts any iterable of `(nodes, weights)` pairs (an iterator
-  used to raise `TypeError` for want of `len`).
+  used to raise `TypeError` for want of `len`): the pairs are converted once, in order, for the
+  C++ call.
 - When both the size (`n_pts`, `degree` or a lattice's counts) and `dtype` are invalid, the
-  quadrature functions and the change-of-basis builders report the `dtype` first; each is
-  reported as before when it is the only invalid argument. The private imports `pantr.quad` and
+  quadrature functions and the change-of-basis builders report the `dtype` first, because the
+  wrapper selects the `float` or `double` C++ function before calling it; each is reported as
+  before when it is the only invalid argument. The private imports `pantr.quad` and
   `pantr.change_basis` used to re-export by accident (NumPy's `chebyshev` and `legendre`,
   `functools`, `comb`, `Callable`, a few pantr functions) are gone from their namespaces.
 
