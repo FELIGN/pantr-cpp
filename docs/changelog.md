@@ -175,8 +175,11 @@
   (`pantr.geometry`, `pantr.transform` and `pantr.bezier.Bezier` are thin wrappers over it;
   names, signatures, defaults and messages are unchanged except as listed below). Results can
   move in the last bits: Bézier contractions are summed point by point in C++ instead of by
-  `einsum`/`tensordot`, the 1D evaluation seeds its recurrence with an exact integer power
-  instead of `pow`, and affine maps and transforms are applied by plain loops instead of BLAS.
+  `einsum`/`tensordot` (on a lattice, in whichever order of directions writes fewer values),
+  the 1D evaluation seeds its recurrence with an exact integer power instead of `pow`, a
+  polynomial curve's derivative is evaluated on its hodograph (the forward differences of its
+  control points, a Bézier of lower degree) instead of the derivative basis, which is several
+  times faster, and affine maps and transforms are applied by plain loops instead of BLAS.
   Evaluation releases the GIL while it runs on pantr's thread pool.
 - **A `Bezier` is immutable**, as the C++ values are (they are shared rather than copied, which
   is what makes them cheap to pass and safe across threads): the constructor copies the control

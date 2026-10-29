@@ -174,13 +174,55 @@ void contract_points(std::span<const T> ctrl, std::span<const std::size_t> shape
       });
 }
 
-/// Contract the control points with one basis matrix per direction on a lattice: direction 0
-/// first, then direction 1 on the result (`tensordot(basis_d, result, axes=([1], [d]))` with the
-/// new axis moved back to position `d`), each sum ascending in the contracted index and
-/// accumulated in `T`.
+/// One mode product of `contract_lattice`: `out(o, a, :) = sum_k basis(a, k) src(o, k, :)` for
+/// `o < outer`, `a < m`, over rows of `inner` contiguous values; each row is one parallel item and
+/// each output value the sum over `k` in ascending order.
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed).
+template <StorageFloat T>
+void lattice_stage(const T* src, BasisRef<T> basis, std::size_t outer, std::size_t n, std::size_t m,
+                   std::size_t inner, T* out) {
+  // One output row costs a multiply-add per contracted index and value.
+  const double ops = 2.0 * static_cast<double>(n) * static_cast<double>(inner);
+  parallel::parallel_for(outer * m, parallel::WorkEstimate{(std::max)(ops, 1.0)},
+                         [&](std::size_t begin, std::size_t end) {
+                           std::size_t o = begin / m;
+                           std::size_t a = begin - o * m;
+                           for (std::size_t r = begin; r < end; ++r) {
+                             T* row = out + r * inner;
+                             const T* base = src + o * n * inner;
+                             const T* coeff = basis.data + a * basis.row_stride;
+                             const T c0 = coeff[0];
+                             for (std::size_t i = 0; i < inner; ++i) {
+                               row[i] = c0 * base[i];
+                             }
+                             for (std::size_t k = 1; k < n; ++k) {
+                               const T ck = coeff[k];
+                               const T* sk = base + k * inner;
+                               for (std::size_t i = 0; i < inner; ++i) {
+                                 row[i] = row[i] + ck * sk[i];
+                               }
+                             }
+                             if (++a == m) {
+                               a = 0;
+                               ++o;
+                             }
+                           }
+                         });
+}
+
+/// Contract the control points with one basis matrix per direction on a lattice.
+///
+/// One mode product per direction (`lattice_stage`), in the order of directions that writes the
+/// fewer intermediate and output values: first to last, where stage `d` turns
+/// `(m_0..m_{d-1}, n_d..n_{dim-1}, cp)` into `(m_0..m_d, n_{d+1}.., cp)` (NumPy's `tensordot` order
+/// in the previous release), or last to first, where it turns `(n_0..n_d, m_{d+1}.., cp)` into
+/// `(n_0..n_{d-1}, m_d.., cp)`. The two orders sum the same products in another order, so they
+/// differ only by rounding; the choice depends on the extents alone, never on the thread count.
 ///
 /// Args:
-///     ctrl (std::span<const T>): Control points over `shape`.
+///     ctrl (std::span<const T>): Control points, row-major over `shape`.
 ///     shape (std::span<const std::size_t>): `(n_0, ..., n_{dim-1}, cp)`.
 ///     bases (const std::vector<BasisRef<T>>&): One basis matrix per direction, `counts[d]` rows.
 ///     counts (std::span<const std::size_t>): Points per direction.
@@ -194,56 +236,45 @@ void contract_lattice(std::span<const T> ctrl, std::span<const std::size_t> shap
                       T* dst) {
   const std::size_t dim = shape.size() - 1;
   const std::size_t cp = shape.back();
-  // Stage d turns (m_0..m_{d-1}, n_d, n_{d+1}..n_{dim-1}, cp) into (m_0..m_d, n_{d+1}.., cp).
-  std::vector<std::size_t> out_size(dim);
+  // Values written by the stage of direction d, in either order: the directions already
+  // contracted carry their point counts, the others their coefficient counts.
+  const auto written = [&](std::size_t d, bool forward) {
+    std::size_t v = cp;
+    for (std::size_t e = 0; e < dim; ++e) {
+      const bool done = forward ? e <= d : e >= d;
+      v *= done ? counts[e] : shape[e];
+    }
+    return v;
+  };
+  double cost_forward = 0.0;
+  double cost_backward = 0.0;
   std::size_t scratch = 0;
   for (std::size_t d = 0; d < dim; ++d) {
-    std::size_t s = cp;
-    for (std::size_t e = 0; e < dim; ++e) {
-      s *= e <= d ? counts[e] : shape[e];
-    }
-    out_size[d] = s;
-    if (d + 1 < dim) {
-      scratch = (std::max)(scratch, s);
-    }
+    cost_forward += static_cast<double>(written(d, true));
+    cost_backward += static_cast<double>(written(d, false));
   }
-  std::vector<T> buf0(scratch);
-  std::vector<T> buf1(scratch);
+  const bool forward = cost_forward < cost_backward;
+  for (std::size_t s = 0; s + 1 < dim; ++s) {
+    const std::size_t d = forward ? s : dim - 1 - s;
+    scratch = (std::max)(scratch, written(d, forward));
+  }
+  // Intermediates alternate between two buffers; with two directions only one is needed.
+  NdArray<T> buf0({dim > 1 ? scratch : 0}, for_overwrite);
+  NdArray<T> buf1({dim > 2 ? scratch : 0}, for_overwrite);
   const T* src = ctrl.data();
-  std::size_t outer = 1;
-  for (std::size_t d = 0; d < dim; ++d) {
+  for (std::size_t s = 0; s < dim; ++s) {
+    const std::size_t d = forward ? s : dim - 1 - s;
+    std::size_t outer = 1;
     std::size_t inner = cp;
-    for (std::size_t e = d + 1; e < dim; ++e) {
-      inner *= shape[e];
+    for (std::size_t e = 0; e < d; ++e) {
+      outer *= forward ? counts[e] : shape[e];
     }
-    const std::size_t n = shape[d];
-    const std::size_t m = counts[d];
-    T* out = d + 1 == dim ? dst : (d % 2 == 0 ? buf0.data() : buf1.data());
-    const BasisRef<T> bm = bases[d];
-    // One output row (an `inner`-long run) costs a multiply-add per contracted index.
-    const double ops = 2.0 * static_cast<double>(n) * static_cast<double>(inner);
-    const T* stage_src = src;
-    parallel::parallel_for(outer * m, parallel::WorkEstimate{(std::max)(ops, 1.0)},
-                           [&](std::size_t begin, std::size_t end) {
-                             for (std::size_t r = begin; r < end; ++r) {
-                               const std::size_t o = r / m;
-                               const std::size_t a = r % m;
-                               T* row = out + r * inner;
-                               for (std::size_t i = 0; i < inner; ++i) {
-                                 row[i] = static_cast<T>(0);
-                               }
-                               const T* base = stage_src + o * n * inner;
-                               for (std::size_t k = 0; k < n; ++k) {
-                                 const T coeff = bm.data[a * bm.row_stride + k];
-                                 const T* s = base + k * inner;
-                                 for (std::size_t i = 0; i < inner; ++i) {
-                                   row[i] = row[i] + coeff * s[i];
-                                 }
-                               }
-                             }
-                           });
+    for (std::size_t e = d + 1; e < dim; ++e) {
+      inner *= forward ? shape[e] : counts[e];
+    }
+    T* out = s + 1 == dim ? dst : (s % 2 == 0 ? buf0.data() : buf1.data());
+    lattice_stage<T>(src, bases[d], outer, shape[d], counts[d], inner, out);
     src = out;
-    outer *= m;
   }
 }
 
@@ -307,6 +338,49 @@ void evaluate_1d_into(const Bezier<T>& b, std::span<const T> pts, T* out) {
   std::vector<T> raw(pts.size() * cp);
   evaluate_1d_kernel<T>(ctrl, pts, mdview<T, 2>(raw.data(), pts.size(), cp));
   project_rational<T>(raw.data(), pts.size(), b.rank(), out);
+}
+
+/// Evaluate the derivative of order `order` of a polynomial (non-rational) curve, into `out`
+/// (`(pts.size(), cp)`).
+///
+/// The `k`-th derivative of a degree-`p` Bezier is `p! / (p - k)!` times the degree-`(p - k)`
+/// Bezier whose control points are the `k`-th forward differences of the original's (the
+/// hodograph taken `k` times), so it is evaluated by the fused value kernel: `O(p)` per point
+/// instead of the `O(p^2)` derivative table, which the rational quotient rule still needs (it uses
+/// every lower order). Above the degree the derivative is exactly zero. The differences and the
+/// factor are formed in double and stored in `T` once, as the table's factor was.
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed).
+template <StorageFloat T>
+void polynomial_derivative_1d_into(const Bezier<T>& b, std::span<const T> pts, std::size_t order,
+                                   T* out) {
+  const std::size_t p = b.degree(0);
+  const std::size_t cp = b.cp_size();
+  if (order > p) {
+    std::fill(out, out + pts.size() * cp, static_cast<T>(0));
+    return;
+  }
+  const std::span<const T> src = b.control_points();
+  std::vector<double> diff(src.begin(), src.end());
+  for (std::size_t k = 1; k <= order; ++k) {
+    for (std::size_t i = 0; i + k <= p; ++i) {
+      for (std::size_t c = 0; c < cp; ++c) {
+        diff[i * cp + c] = diff[(i + 1) * cp + c] - diff[i * cp + c];
+      }
+    }
+  }
+  double fac = 1.0;
+  for (std::size_t k = 0; k < order; ++k) {
+    fac *= static_cast<double>(p - k);
+  }
+  const std::size_t rows = p - order + 1;
+  std::vector<T> hodo(rows * cp);
+  for (std::size_t i = 0; i < hodo.size(); ++i) {
+    hodo[i] = static_cast<T>(fac * diff[i]);
+  }
+  evaluate_1d_kernel<T>(mdview<const T, 2>(hodo.data(), rows, cp), pts,
+                        mdview<T, 2>(out, pts.size(), cp));
 }
 
 /// Advance a multi-index in lexicographic order (last component fastest) within `bounds`
@@ -410,20 +484,25 @@ void derivatives_into(const Bezier<T>& b, const EvalPoints<T>& pts,
   const std::size_t cp = b.cp_size();
   const std::size_t rank = b.rank();
   const std::size_t count = pts.count;
+  if (!b.rational()) {
+    for (std::size_t d = 0; d < dim; ++d) {
+      if (static_cast<std::size_t>(orders[d]) > b.degree(d)) {
+        // Exactly zero, with no table built (an order of a billion would ask for gigabytes).
+        std::fill(out, out + count * cp, static_cast<T>(0));
+        return;
+      }
+    }
+  }
+  if (dim == 1 && !b.rational()) {
+    polynomial_derivative_1d_into<T>(b, pts.dirs[0], static_cast<std::size_t>(orders[0]), out);
+    return;
+  }
   if (dim == 1) {
     const auto nd1 = static_cast<std::size_t>(orders[0]) + 1;
     const mdview<const T, 2> ctrl(b.control_points().data(), b.shape()[0], cp);
     NdArray<T> table({count, nd1, cp}, for_overwrite);
     evaluate_derivatives_1d_kernel<T>(ctrl, pts.dirs[0], static_cast<int>(orders[0]),
                                       table.template view<3>());
-    if (!b.rational()) {
-      for (std::size_t j = 0; j < count; ++j) {
-        for (std::size_t c = 0; c < cp; ++c) {
-          out[j * cp + c] = table.data()[(j * nd1 + nd1 - 1) * cp + c];
-        }
-      }
-      return;
-    }
     std::vector<HomRef<T>> hom;
     for (std::size_t k = 0; k < nd1; ++k) {
       hom.push_back({table.data() + k * cp, nd1 * cp});
@@ -627,9 +706,11 @@ void evaluate(const Bezier<T>& b, const quad::PointsLattice<T>& lattice, mdview<
 
 /// Evaluate a partial derivative of a Bezier at arbitrary parametric points.
 ///
-/// Orders above the degree give zero. For a rational Bezier the homogeneous derivatives of every
-/// order up to `orders` are formed and the quotient rule (Piegl and Tiller's Algorithm A4.2, in
-/// several variables) gives the derivative of the projected map.
+/// For a polynomial (non-rational) Bezier an order above the degree in some direction gives
+/// exactly zero, and a curve's derivative is evaluated on its hodograph. For a rational Bezier
+/// the homogeneous derivatives of every order up to `orders` are formed and the quotient rule
+/// (Piegl and Tiller's Algorithm A4.2, in several variables) gives the derivative of the projected
+/// map.
 ///
 /// Args:
 ///     b (const Bezier<T>&): The Bezier.

@@ -565,6 +565,9 @@ TEST_CASE_TEMPLATE("bezier derivatives: a rational surface against 1 / ((1 + u)(
       f, lattice.all_points(pantr::Order::C).template view<2>(), orders);
   REQUIRE(on_lattice.size() == on_points.size());
   for (std::size_t i = 0; i < on_points.size(); ++i) {
+    // The same sums in two orders (the lattice contracts the last direction first, the points
+    // the first): each is n eps sum|terms| with n = (p + 1)^2 terms of magnitude <= 1 here, so the
+    // two differ by at most twice that; 64 eps covers degree (3, 3).
     CHECK(std::fabs(static_cast<double>(on_lattice.data()[i]) -
                     static_cast<double>(on_points.data()[i])) <= 64.0 * eps);
   }
@@ -690,5 +693,43 @@ TEST_CASE("bezier evaluate: the parallel result equals the serial one within the
     }
     CAPTURE(k);
     CHECK(worst <= bound[k]);
+  }
+}
+
+TEST_CASE_TEMPLATE("bezier: the constructor refuses a size that does not match the shape", T, float,
+                   double) {
+  const std::vector<T> five = cast_all<T>({1.0, 2.0, 3.0, 4.0, 5.0});
+  const std::vector<T> three = cast_all<T>({1.0, 2.0, 3.0});
+  CHECK_THROWS_WITH_AS(make_bezier<T>(five, {2, 2}),
+                       "control points hold 5 values, but the shape (2, 2) needs 4",
+                       pantr::value_error);
+  CHECK_THROWS_AS(make_bezier<T>(three, {2, 2}), pantr::value_error);
+}
+
+TEST_CASE_TEMPLATE("bezier evaluate: a degree-0 curve is its control point everywhere", T, float,
+                   double) {
+  const std::vector<T> c = cast_all<T>({2.5, -1.0});
+  const pb::Bezier<T> f = make_bezier<T>(c, {1, 2});
+  const std::vector<T> ts = cast_all<T>({0.0, 0.3, 0.7, 1.0});
+  const NdArray<T> v = pb::evaluate<T>(f, view2<T>(ts, ts.size(), 1));
+  for (std::size_t j = 0; j < ts.size(); ++j) {
+    const T x = v.data()[2 * j];
+    const T y = v.data()[2 * j + 1];
+    CHECK(x == c[0]);  // copied, not computed
+    CHECK(y == c[1]);
+  }
+}
+
+TEST_CASE_TEMPLATE("bezier derivatives: an order far above the degree is zero, with no table", T,
+                   float, double) {
+  // A table for this order would need gigabytes; the polynomial result is exactly zero.
+  const std::vector<T> c = cast_all<T>({1.0, -2.0, 4.0});
+  const pb::Bezier<T> f = make_bezier<T>(c, {3, 1});
+  const std::vector<T> ts = cast_all<T>({0.25, 0.75});
+  const std::vector<long long> huge = {1000000000};
+  const NdArray<T> d = pb::evaluate_derivatives<T>(f, view2<T>(ts, ts.size(), 1), huge);
+  for (std::size_t j = 0; j < ts.size(); ++j) {
+    const T v = d.data()[j];
+    CHECK(v == static_cast<T>(0));
   }
 }
