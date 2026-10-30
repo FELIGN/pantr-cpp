@@ -717,6 +717,16 @@ def _s4_bspline_cases() -> list[Case]:  # noqa: PLR0915
 
         add("bspline_evaluate_2d_lattice", size, f"evaluate({side}x{side} lattice)", setup_lattice)
 
+    volume_space = BsplineSpace([space_1d] * 3)
+    volume = Bspline(volume_space, np.random.default_rng(1234).random((*volume_space.num_basis, 1)))
+    for size, side in {"tiny": 1, "medium": 10, "large": 64}.items():
+
+        def setup_lattice_3d(side: int = side) -> Callable[[], Any]:
+            lattice = PointsLattice([_points(side)] * 3)
+            return lambda: volume.evaluate(lattice)
+
+        add("bspline_evaluate_3d_lattice", size, f"evaluate({side}^3 lattice)", setup_lattice_3d)
+
     for size, n in nd_points.items():
 
         def setup_derivs(n: int = n) -> Callable[[], Any]:
