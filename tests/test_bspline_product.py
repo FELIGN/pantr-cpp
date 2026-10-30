@@ -7,9 +7,9 @@ import numpy.typing as npt
 import pytest
 
 from pantr.bspline import Bspline, BsplineSpace, BsplineSpace1D, create_uniform_periodic_knots
-from pantr.bspline._bspline_basis_core import _compute_basis_nurbs_book_impl
 from pantr.bspline._bspline_knots import _get_unique_knots_and_multiplicity_impl
 from pantr.bspline._bspline_product import _product_multiplicities
+from tests.oracles import bspline_exact
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -367,11 +367,13 @@ def _make_periodic(
 
 
 def _eval_periodic_correct(f: Bspline, pts: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
-    """Evaluate a periodic B-spline using the mathematically correct algorithm.
+    """Evaluate a periodic B-spline by its definition, in exact arithmetic.
 
-    Uses the unclamped ``first_basis = knot_id - degree`` index with modulo-wrapped
-    control point lookup, which is the standard mathematical definition of a periodic
-    B-spline. This differs from ``f.evaluate()`` which uses a clamped first_basis.
+    The oracle is :mod:`tests.oracles.bspline_exact`: the Cox-de Boor recursion from the
+    definition on the unwrapped knot vector, with the control point of basis function ``i`` read
+    at ``i % n_stored`` (the standard definition of a periodic B-spline), summed over the local
+    functions in exact rational arithmetic and rounded once. It shares no code or formula with
+    the library's evaluation.
 
     Args:
         f (Bspline): A 1D periodic B-spline.
@@ -382,24 +384,11 @@ def _eval_periodic_correct(f: Bspline, pts: npt.NDArray[np.float64]) -> npt.NDAr
         npt.NDArray[np.float64]: Evaluated values at the given points.
     """
     space_1d = f.space.spaces[0]
-    knots = space_1d.knots
-    p = space_1d.degree
-    tol = float(space_1d.tolerance)
-    n_stored = f.space.num_total_basis
-    ctrl = f._control_points  # shape (n_stored, rank)
-
-    basis_out = np.zeros((len(pts), p + 1), dtype=np.float64)
-    first_basis_arr = np.zeros(len(pts), dtype=np.int64)
-    _compute_basis_nurbs_book_impl(knots, p, False, tol, pts, basis_out, first_basis_arr)
-
-    rank = ctrl.shape[1]
-    result = np.zeros((len(pts), rank), dtype=np.float64)
-    for i in range(len(pts)):
-        s = int(first_basis_arr[i])
-        for j in range(p + 1):
-            idx = (s + j) % n_stored
-            result[i] += basis_out[i, j] * ctrl[idx]
-
+    ctrl = f.control_points  # shape (n_stored, rank)
+    rows = [
+        bspline_exact.derivative([space_1d.knots], [space_1d.degree], ctrl, [float(x)]) for x in pts
+    ]
+    result: npt.NDArray[np.float64] = bspline_exact.to_float_array(rows)
     return result.squeeze()
 
 

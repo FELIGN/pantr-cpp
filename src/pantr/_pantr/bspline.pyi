@@ -487,3 +487,193 @@ def uniform_periodic_knots_f32(
 
 def cardinal_knots_f32(num_intervals: int, degree: int) -> NDArray[numpy.float32]:
     """The cardinal B-spline knot vector."""
+
+class BsplineF64:
+    """An immutable B-spline map (a space and control points in a shared, read-only buffer)."""
+
+    def __init__(
+        self,
+        space: BsplineSpaceF64,
+        control_points: Annotated[
+            NDArray[numpy.float64], dict(order="C", device="cpu", writable=False)
+        ],
+        rational: bool,
+    ) -> None:
+        """Validate and copy the control points (any shape: only their number is read)."""
+
+    @staticmethod
+    def cp_size_for(space: BsplineSpaceF64, count: int) -> int:
+        """The coordinates per control point that `count` values make in `space`, or the ValueError of a count that is not a multiple of the number of basis functions."""
+
+    @property
+    def shape(self) -> list[int]:
+        """The control-point extents (*num_basis, cp_size)."""
+
+    @property
+    def cp_size(self) -> int:
+        """The coordinates per control point."""
+
+    @property
+    def rank(self) -> int:
+        """The output rank, the weight excluded."""
+
+    @property
+    def is_rational(self) -> bool:
+        """Whether the last coordinate is a weight."""
+
+    @property
+    def space(self) -> BsplineSpaceF64:
+        """The space."""
+
+    @property
+    def control_points(self) -> Annotated[NDArray[numpy.float64], dict(writable=False)]:
+        """Read-only view of the control points."""
+
+    def same_rep(self, other: BsplineF64) -> bool:
+        """Whether both share one representation."""
+
+    def evaluate(
+        self,
+        pts: Annotated[
+            NDArray[numpy.float64],
+            dict(shape=(None, None), order="C", device="cpu", writable=False),
+        ],
+        out: Annotated[NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu")],
+    ) -> None:
+        """Write the values at (n, dim) points into `out` (n, cp_size); the weight column of a rational spline stays."""
+
+    def evaluate_derivatives(
+        self,
+        pts: Annotated[
+            NDArray[numpy.float64],
+            dict(shape=(None, None), order="C", device="cpu", writable=False),
+        ],
+        orders: Sequence[int],
+        out: Annotated[NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu")],
+    ) -> None:
+        """Write a mixed partial derivative at (n, dim) points into `out` (n, rank)."""
+
+    @overload
+    def evaluate_lattice(
+        self,
+        lattice: pantr._pantr.quad.PointsLatticeF64,
+        out: Annotated[NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu")],
+    ) -> None: ...
+    @overload
+    def evaluate_lattice(
+        self,
+        lattice: pantr._pantr.quad.PointsLatticeF32,
+        out: Annotated[NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu")],
+    ) -> None:
+        """Write the values on a lattice (C order) into `out` (num_points, cp_size); the weight column of a rational spline stays."""
+
+    @overload
+    def evaluate_derivatives_lattice(
+        self,
+        lattice: pantr._pantr.quad.PointsLatticeF64,
+        orders: Sequence[int],
+        out: Annotated[NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu")],
+    ) -> None: ...
+    @overload
+    def evaluate_derivatives_lattice(
+        self,
+        lattice: pantr._pantr.quad.PointsLatticeF32,
+        orders: Sequence[int],
+        out: Annotated[NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu")],
+    ) -> None:
+        """Write a mixed partial derivative on a lattice into `out` (num_points, rank)."""
+
+class BsplineF32:
+    """An immutable B-spline map (a space and control points in a shared, read-only buffer)."""
+
+    def __init__(
+        self,
+        space: BsplineSpaceF32,
+        control_points: Annotated[
+            NDArray[numpy.float32], dict(order="C", device="cpu", writable=False)
+        ],
+        rational: bool,
+    ) -> None:
+        """Validate and copy the control points (any shape: only their number is read)."""
+
+    @staticmethod
+    def cp_size_for(space: BsplineSpaceF32, count: int) -> int:
+        """The coordinates per control point that `count` values make in `space`, or the ValueError of a count that is not a multiple of the number of basis functions."""
+
+    @property
+    def shape(self) -> list[int]:
+        """The control-point extents (*num_basis, cp_size)."""
+
+    @property
+    def cp_size(self) -> int:
+        """The coordinates per control point."""
+
+    @property
+    def rank(self) -> int:
+        """The output rank, the weight excluded."""
+
+    @property
+    def is_rational(self) -> bool:
+        """Whether the last coordinate is a weight."""
+
+    @property
+    def space(self) -> BsplineSpaceF32:
+        """The space."""
+
+    @property
+    def control_points(self) -> Annotated[NDArray[numpy.float32], dict(writable=False)]:
+        """Read-only view of the control points."""
+
+    def same_rep(self, other: BsplineF32) -> bool:
+        """Whether both share one representation."""
+
+    def evaluate(
+        self,
+        pts: Annotated[
+            NDArray[numpy.float32],
+            dict(shape=(None, None), order="C", device="cpu", writable=False),
+        ],
+        out: Annotated[NDArray[numpy.float32], dict(shape=(None, None), order="C", device="cpu")],
+    ) -> None:
+        """Write the values at (n, dim) points into `out` (n, cp_size); the weight column of a rational spline stays."""
+
+    def evaluate_derivatives(
+        self,
+        pts: Annotated[
+            NDArray[numpy.float32],
+            dict(shape=(None, None), order="C", device="cpu", writable=False),
+        ],
+        orders: Sequence[int],
+        out: Annotated[NDArray[numpy.float32], dict(shape=(None, None), order="C", device="cpu")],
+    ) -> None:
+        """Write a mixed partial derivative at (n, dim) points into `out` (n, rank)."""
+
+    @overload
+    def evaluate_lattice(
+        self,
+        lattice: pantr._pantr.quad.PointsLatticeF64,
+        out: Annotated[NDArray[numpy.float32], dict(shape=(None, None), order="C", device="cpu")],
+    ) -> None: ...
+    @overload
+    def evaluate_lattice(
+        self,
+        lattice: pantr._pantr.quad.PointsLatticeF32,
+        out: Annotated[NDArray[numpy.float32], dict(shape=(None, None), order="C", device="cpu")],
+    ) -> None:
+        """Write the values on a lattice (C order) into `out` (num_points, cp_size); the weight column of a rational spline stays."""
+
+    @overload
+    def evaluate_derivatives_lattice(
+        self,
+        lattice: pantr._pantr.quad.PointsLatticeF64,
+        orders: Sequence[int],
+        out: Annotated[NDArray[numpy.float32], dict(shape=(None, None), order="C", device="cpu")],
+    ) -> None: ...
+    @overload
+    def evaluate_derivatives_lattice(
+        self,
+        lattice: pantr._pantr.quad.PointsLatticeF32,
+        orders: Sequence[int],
+        out: Annotated[NDArray[numpy.float32], dict(shape=(None, None), order="C", device="cpu")],
+    ) -> None:
+        """Write a mixed partial derivative on a lattice into `out` (num_points, rank)."""

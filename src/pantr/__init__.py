@@ -79,16 +79,12 @@ if not TYPE_CHECKING:
             logger = logging.getLogger(__name__)
             logger.debug("Starting Numba JIT warmup...")
             from .bspline import (  # noqa: PLC0415
-                _bspline_basis_core,
-                _bspline_eval,
                 _bspline_extraction,
                 _bspline_knot_insertion_core,
                 _bspline_knot_removal_core,
                 _bspline_knots,
             )
 
-            _bspline_basis_core._warmup_numba_functions()
-            _bspline_eval._warmup_numba_functions()
             _bspline_extraction._warmup_numba_functions()
             _bspline_knot_insertion_core._warmup_numba_functions()
             _bspline_knot_removal_core._warmup_numba_functions()

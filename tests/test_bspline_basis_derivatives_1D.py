@@ -10,11 +10,8 @@ import pytest
 
 from pantr import _testing
 from pantr.basis import tabulate_bernstein_1d
-from pantr.bspline import BsplineSpace1D
-from pantr.bspline._bspline_basis_core import (
-    _compute_basis_deriv_nurbs_book_impl,
-    _compute_basis_nurbs_book_impl,
-)
+from pantr.bspline import BsplineSpace1D, create_uniform_periodic_knots
+from tests.oracles import bspline_exact
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -46,29 +43,28 @@ def cubic_two_span() -> BsplineSpace1D:
 
 
 # ---------------------------------------------------------------------------
-# Layer 3 kernel: _compute_basis_deriv_nurbs_book_impl
+# A2.3 through the public tabulation (the Numba kernel it replaced is gone)
 # ---------------------------------------------------------------------------
 
 
 class TestComputeBasisDerivNurbsBook:
-    """Direct tests of the Numba kernel _compute_basis_deriv_nurbs_book_impl."""
+    """Tests of the derivative recurrence (A2.3) through ``tabulate_basis_derivatives``.
 
-    def _call(  # noqa: PLR0913
+    These called the Numba kernel ``_compute_basis_deriv_nurbs_book_impl`` directly; the same
+    recurrence runs in C++ behind the public method. A single-span (Bézier-like) space takes the
+    Bernstein path there, which the properties below hold for as well.
+    """
+
+    def _call(
         self,
         knots: npt.NDArray[np.float32 | np.float64],
         degree: int,
         pts: npt.NDArray[np.float32 | np.float64],
         n_deriv: int,
         periodic: bool = False,
-        tol: float = 1e-10,
     ) -> tuple[npt.NDArray[np.float32 | np.float64], npt.NDArray[np.int_]]:
-        n_pts = pts.size
-        order = degree + 1
-        out_deriv = np.empty((n_pts, n_deriv + 1, order), dtype=knots.dtype)
-        out_first = np.empty(n_pts, dtype=np.int_)
-        _compute_basis_deriv_nurbs_book_impl(
-            knots, degree, periodic, tol, n_deriv, pts, out_deriv, out_first
-        )
+        space = BsplineSpace1D(knots, degree, periodic=periodic)
+        out_deriv, out_first = space.tabulate_basis_derivatives(pts, n_deriv)
         return out_deriv, out_first
 
     def test_0th_slice_matches_a22(self) -> None:
@@ -76,12 +72,7 @@ class TestComputeBasisDerivNurbsBook:
         knots = np.array([0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0], dtype=np.float64)
         degree = 2
         pts = np.array([0.1, 0.3, 0.6, 0.9], dtype=np.float64)
-        n_pts = pts.size
-        order = degree + 1
-
-        out_a22 = np.empty((n_pts, order), dtype=np.float64)
-        first_a22 = np.empty(n_pts, dtype=np.int_)
-        _compute_basis_nurbs_book_impl(knots, degree, False, 1e-10, pts, out_a22, first_a22)
+        out_a22, first_a22 = BsplineSpace1D(knots, degree).tabulate_basis(pts)
 
         out_deriv, first_deriv = self._call(knots, degree, pts, n_deriv=2)
 
@@ -140,7 +131,7 @@ class TestComputeBasisDerivNurbsBook:
 
     def test_periodic_knots(self) -> None:
         """Partition of unity and zero derivative sum hold for periodic knots."""
-        knots = np.array([-1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0], dtype=np.float64)
+        knots = create_uniform_periodic_knots(4, 2)
         pts = np.array([0.0, 0.25, 0.5, 0.75, 1.0], dtype=np.float64)
         out_deriv, _ = self._call(knots, 2, pts, n_deriv=1, periodic=True)
         np.testing.assert_allclose(out_deriv[:, 0, :].sum(axis=1), 1.0, atol=1e-13)
@@ -491,7 +482,12 @@ class TestBezierFastPath:
 
     @pytest.mark.parametrize("degree", [1, 2, 3, 4])
     def test_bezier_matches_general_kernel(self, degree: int) -> None:
-        """Fast path and general kernel agree for Bézier-like knots on [0,1]."""
+        """The Bernstein fast path equals the exact Cox-de Boor derivatives for Bézier-like knots.
+
+        The oracle is the exact-rational recursion of :mod:`tests.oracles.bspline_exact` (the
+        definition, differentiated by Leibniz's rule), which replaces the A2.3 kernel the fast
+        path used to be compared with.
+        """
         knots = np.array([0.0] * (degree + 1) + [1.0] * (degree + 1), dtype=np.float64)
         spline = BsplineSpace1D(knots, degree)
         pts = np.linspace(0.02, 0.98, 20)
@@ -499,18 +495,12 @@ class TestBezierFastPath:
 
         d_fast, first_fast = spline.tabulate_basis_derivatives(pts, n_deriv=n_deriv)
 
-        # Force the general path by using a non-Bézier spline with the same knot structure
-        # (we compare against the A2.3 kernel called directly with the same knot vector)
-        n_pts = pts.size
-        order = degree + 1
-        d_general = np.empty((n_pts, n_deriv + 1, order), dtype=np.float64)
-        first_general = np.empty(n_pts, dtype=np.int_)
-        _compute_basis_deriv_nurbs_book_impl(
-            knots, degree, False, 1e-10, n_deriv, pts, d_general, first_general
-        )
-
-        np.testing.assert_allclose(d_fast, d_general, atol=1e-13)
-        np.testing.assert_array_equal(first_fast, first_general)
+        for i, x in enumerate(pts):
+            basis = bspline_exact.ExactBasis(knots, degree, x)
+            for k in range(n_deriv + 1):
+                for j, want in enumerate(basis.local(k)):
+                    assert bspline_exact.within(d_fast[i, k, j], want, 1e-13)
+        np.testing.assert_array_equal(first_fast, 0)
 
     def test_bezier_non_unit_domain(self) -> None:
         """Chain-rule scaling is applied correctly for domain [2, 5]."""

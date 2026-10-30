@@ -14,9 +14,9 @@ from pantr.bspline import (
     create_from_bezier,
     create_uniform_periodic_knots,
 )
-from pantr.bspline._bspline_basis_core import _compute_basis_nurbs_book_impl
 from pantr.bspline._bspline_to_beziers import _first_basis_per_element
 from pantr.bspline.spanwise_element_extraction import SpanwiseElementExtraction
+from tests.oracles import bspline_exact
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -50,11 +50,13 @@ def _make_periodic_bspline(
 
 
 def _eval_periodic_correct(f: Bspline, pts: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
-    """Evaluate a periodic B-spline using the mathematically correct algorithm.
+    """Evaluate a periodic B-spline by its definition, in exact arithmetic.
 
-    Uses the unclamped ``first_basis = knot_id - degree`` index with modulo-wrapped
-    control point lookup, which is the standard mathematical definition of a periodic
-    B-spline. This differs from ``f.evaluate()`` which uses a clamped first_basis.
+    The oracle is :mod:`tests.oracles.bspline_exact`: the Cox-de Boor recursion from the
+    definition on the unwrapped knot vector, with the control point of basis function ``i`` read
+    at ``i % n_stored`` (the standard definition of a periodic B-spline), summed over the local
+    functions in exact rational arithmetic and rounded once. It shares no code or formula with
+    the library's evaluation.
 
     Args:
         f (Bspline): A 1D periodic B-spline.
@@ -64,25 +66,11 @@ def _eval_periodic_correct(f: Bspline, pts: npt.NDArray[np.float64]) -> npt.NDAr
         np.ndarray: Evaluated values at the given points.
     """
     space_1d = f.space.spaces[0]
-    knots = space_1d.knots
-    p = space_1d.degree
-    tol = float(space_1d.tolerance)
-    n_stored = f.space.num_total_basis
-    ctrl = f._control_points  # shape (n_stored, rank)
-
-    # Compute knot spans using the non-periodic (unclamped) algorithm
-    basis_out = np.zeros((len(pts), p + 1), dtype=np.float64)
-    first_basis_arr = np.zeros(len(pts), dtype=np.int64)
-    _compute_basis_nurbs_book_impl(knots, p, False, tol, pts, basis_out, first_basis_arr)
-
-    rank = ctrl.shape[1]
-    result = np.zeros((len(pts), rank), dtype=np.float64)
-    for i in range(len(pts)):
-        s = int(first_basis_arr[i])
-        for j in range(p + 1):
-            idx = (s + j) % n_stored
-            result[i] += basis_out[i, j] * ctrl[idx]
-
+    ctrl = f.control_points  # shape (n_stored, rank)
+    rows = [
+        bspline_exact.derivative([space_1d.knots], [space_1d.degree], ctrl, [float(x)]) for x in pts
+    ]
+    result: npt.NDArray[np.float64] = bspline_exact.to_float_array(rows)
     return result.squeeze()
 
 
@@ -685,11 +673,16 @@ class TestFromBezier:
         assert not np.shares_memory(bez.control_points, bs.control_points)
 
     def test_from_bezier_copy_false(self) -> None:
-        """Test that from_bezier with copy=False shares the control point array."""
+        """Test that from_bezier with copy=False builds a B-spline with the same points.
+
+        The B-spline constructor copies its control points in, so the interim sharing of
+        ``copy=False`` ended with the port of ``Bspline`` (changelog).
+        """
         cp = np.array([[1.0], [2.0], [3.0]], dtype=np.float64)
         bez = Bezier(cp)
         bs = create_from_bezier(bez, copy=False)
-        assert np.shares_memory(bez.control_points, bs.control_points)
+        assert not np.shares_memory(bez.control_points, bs.control_points)
+        np.testing.assert_array_equal(bs.control_points, bez.control_points)
 
     def test_from_bezier_rational(self) -> None:
         """Test from_bezier preserves rationality."""

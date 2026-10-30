@@ -62,6 +62,7 @@ NB_MODULE(PANTR_EXT_MODULE_NAME, m) {
   pantr::bindings::register_roots(roots);
   nb::module_ bspline = m.def_submodule("bspline", "B-spline spaces and knot vectors (private).");
   pantr::bindings::register_bspline(bspline);
+  pantr::bindings::register_bspline_ops(bspline);
   nb::module_ kernels = m.def_submodule(
       "_kernels", "Ported kernels for Python callers not yet ported (private, interim).");
   pantr::bindings::register_bezier_kernels(kernels);

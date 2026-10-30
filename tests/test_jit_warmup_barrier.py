@@ -24,7 +24,6 @@ from collections.abc import Callable
 from typing import Any, NamedTuple
 
 import numpy as np
-import numpy.typing as npt
 import pytest
 
 from pantr.bezier import Bezier
@@ -89,10 +88,6 @@ def _hierarchical_grid_2d() -> Any:
     return grid
 
 
-_PTS: npt.NDArray[np.float64] = np.linspace(0.0, 1.0, 5)
-"""Parametric points shared by the evaluation drivers."""
-
-
 # ---------------------------------------------------------------------------
 # The census: one case per Layer 2 entry point
 # ---------------------------------------------------------------------------
@@ -141,21 +136,9 @@ _CASES: tuple[_BarrierCase, ...] = (
         lambda: _hierarchical_grid_2d().collect_cell_bounds(),
     ),
     # -- pantr.bspline -----------------------------------------------------
-    # The basis tabulation (BsplineSpace1D.tabulate_basis and its derivatives) moved to C++
-    # (whose pool is safe against concurrent callers), so it carries no barrier and has no
-    # case here.
-    _BarrierCase(
-        "_bspline_eval._evaluate_Bspline_1D",
-        "pantr.bspline._bspline_eval",
-        "_evaluate_Bspline_basis_combine_1D",
-        lambda: _bspline_1d().evaluate(_PTS),
-    ),
-    _BarrierCase(
-        "_bspline_eval._evaluate_Bspline_deriv_1D",
-        "pantr.bspline._bspline_eval",
-        "_evaluate_Bspline_deriv_1D_non_rational",
-        lambda: _bspline_1d().evaluate_derivatives(_PTS, [1]),
-    ),
+    # The basis tabulation (BsplineSpace1D.tabulate_basis and its derivatives) and the evaluation
+    # of a Bspline (evaluate, evaluate_derivatives) moved to C++ (whose pool is safe against
+    # concurrent callers), so they carry no barrier and have no case here.
     _BarrierCase(
         "_bspline_to_beziers._to_beziers_impl",
         "pantr.bspline._bspline_to_beziers",

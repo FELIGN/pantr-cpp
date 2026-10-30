@@ -32,7 +32,8 @@ set(_pantr_test_sources
     test_bspline_knots.cpp
     test_bspline_basis_1d.cpp
     test_bspline_space.cpp
-    test_bspline_space_nd.cpp)
+    test_bspline_space_nd.cpp
+    test_bspline.cpp)
 add_executable(pantr_tests ${_pantr_test_sources})
 target_link_libraries(pantr_tests PRIVATE pantr::pantr pantr_native_arch pantr_doctest
                                           pantr_cxx_warnings)

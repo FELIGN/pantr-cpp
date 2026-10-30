@@ -9,8 +9,8 @@ pinned here, one regression per test:
 * ``Bezier`` stores ``float32`` as ``float32`` and every other real dtype as ``float64``;
 * all three pickle and copy by value, a subclass keeps its class and attributes, and a ``Bezier``
   or ``AffineTransform`` pickled by the previous release still loads;
-* ``copy=False`` conversions from a B-spline share its array only when that is safe, and keep it
-  alive;
+* ``copy=False`` conversions from a B-spline share the B-spline's own read-only array, and keep
+  it alive;
 * ``AffineTransform`` leaves the caller's arrays alone, refuses absurd dimensions, and applies to
   points of any leading shape at any thread count;
 * ``AABB.union`` returns the non-empty operand itself.
@@ -830,13 +830,18 @@ def test_copy_false_shares_a_contiguous_array_read_only(
 def test_copy_false_bezier_outlives_the_bspline_and_its_array(
     convert: Callable[[Bspline], Bezier], dtype: type
 ) -> None:
-    """The Bézier keeps the shared array alive; dropping it (the last reference) releases it."""
+    """The Bézier keeps the B-spline's array alive; dropping it (the last reference) releases it.
+
+    The array shared is the B-spline's own read-only copy of the control points (the constructor
+    copies), not the caller's.
+    """
     cp = _curve(dtype)
     expected = cp.copy()
-    array_alive = weakref.ref(cp)
     bs = _bspline_over(cp)
+    shared = bs.control_points
+    array_alive = weakref.ref(shared)
     bez = convert(bs)
-    del bs, cp
+    del bs, cp, shared
     gc.collect()
 
     assert array_alive() is not None  # a Bézier that did not hold it would have let it go
@@ -857,9 +862,11 @@ def test_copy_false_bezier_dropped_on_another_thread(convert: Callable[[Bspline]
     """The last reference may go on a thread that is not the one that made the Bézier."""
     for _ in range(8):
         cp = _curve()
-        array_alive = weakref.ref(cp)
-        holders = [[convert(_bspline_over(cp))] for _ in range(4)]
-        del cp
+        bs = _bspline_over(cp)
+        shared = bs.control_points
+        array_alive = weakref.ref(shared)
+        holders = [[convert(bs)] for _ in range(4)]
+        del cp, bs, shared
         gc.collect()
         threads = [threading.Thread(target=h.clear) for h in holders]
         for thread in threads:
@@ -896,34 +903,49 @@ def _column_strided(a: _Array) -> _Array:
 def test_copy_false_does_not_share_an_array_of_another_layout(
     convert: Callable[[Bspline], Bezier], layout: Callable[[_Array], _Array]
 ) -> None:
-    """A reversed view (say) is converted, so the Bézier shares nothing with the B-spline."""
+    """A reversed view (say) is copied in by the B-spline, so the Bézier shares nothing of it.
+
+    The B-spline holds its own C-contiguous read-only copy; the Bézier shares that copy, and
+    neither the caller's array nor a write to it reaches either of them.
+    """
     raw = _curve()
     view = layout(raw.copy())
+    assert not view.flags.c_contiguous  # the case is not vacuous
     bs = _bspline_over(view)
-    assert not bs.control_points.flags.c_contiguous  # the case is not vacuous
     seen = view.copy()
 
     bez = convert(bs)
 
-    assert not np.shares_memory(bez.control_points, bs.control_points)
+    assert bs.control_points.flags.c_contiguous
+    assert not np.shares_memory(bez.control_points, view)
     np.testing.assert_array_equal(bez.control_points, seen)
-    bs.control_points[...] = -777.0  # a write to the B-spline cannot reach the Bézier
+    with pytest.raises(ValueError, match="read-only"):
+        bs.control_points[...] = -777.0  # the B-spline's array is read-only
+    if view.flags.writeable:
+        view[...] = -777.0  # a write to the caller's array cannot reach the Bézier
     np.testing.assert_array_equal(bez.control_points, seen)
 
 
-def test_to_bspline_copy_false_holds_the_read_only_view() -> None:
-    """``Bezier.to_bspline(copy=False)`` shares the points and refuses an in-place change."""
+def test_to_bspline_copy_false_no_longer_shares_and_an_in_place_change_replaces_the_value() -> None:
+    """``Bezier.to_bspline`` builds a B-spline, and a B-spline copies its control points in.
+
+    The interim ``copy=False`` sharing ended with the port of ``Bspline``: its constructor copies,
+    its points are read-only, and ``reverse(in_place=True)`` replaces the value it holds (so it
+    neither raises nor reaches the Bézier).
+    """
     cp = _curve()
     b = Bezier(cp.copy())
 
-    shared = b.to_bspline(copy=False)
+    converted = b.to_bspline(copy=False)
     independent = b.to_bspline()
 
-    assert np.shares_memory(shared.control_points, b.control_points)
-    assert not shared.control_points.flags.writeable
-    with pytest.raises(ValueError, match="read-only"):
-        shared.reverse(in_place=True)
+    assert not np.shares_memory(converted.control_points, b.control_points)
     assert not np.shares_memory(independent.control_points, b.control_points)
+    assert not converted.control_points.flags.writeable
+    before = converted.control_points
+    converted.reverse(in_place=True)
+    np.testing.assert_array_equal(before, cp)  # an earlier view keeps the old values
+    np.testing.assert_array_equal(converted.control_points, cp[::-1])
     np.testing.assert_array_equal(b.control_points, cp)
 
 

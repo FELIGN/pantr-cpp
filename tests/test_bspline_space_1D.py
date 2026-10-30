@@ -20,7 +20,6 @@ from pantr.bspline import (
     create_uniform_open_knots,
     create_uniform_periodic_knots,
 )
-from pantr.bspline._bspline_basis_core import _compute_basis_nurbs_book_impl
 from pantr.bspline._bspline_extraction import (
     _tabulate_Bspline_Bezier_1D_extraction_impl,
     _tabulate_Bspline_cardinal_1D_extraction_impl,
@@ -704,19 +703,18 @@ class TestLastKnotSmallerEqualSpan:
 
 
 class TestEvaluateBasisBasisFuncs:
-    """Test the _compute_basis_nurbs_book_impl function."""
+    """Test the Cox-de Boor tabulation (A2.2) through the public ``tabulate_basis``.
+
+    The Numba kernel these tests used to call directly (``_compute_basis_nurbs_book_impl``) is
+    gone; the same recurrence runs in C++ behind ``BsplineSpace1D.tabulate_basis``.
+    """
 
     def test_bezier_like_evaluation(self) -> None:
         """Test evaluation for Bézier-like knot vector."""
         knots = np.array([0.0, 0.0, 0.0, 1.0, 1.0, 1.0], dtype=np.float64)
-        degree = 2
-        periodic = False
-        tol = 1e-10
         pts = np.array([0.0, 0.5, 1.0], dtype=np.float64)
 
-        basis = np.empty((3, 3), dtype=np.float64)
-        first_basis = np.empty(3, dtype=np.int_)
-        _compute_basis_nurbs_book_impl(knots, degree, periodic, tol, pts, basis, first_basis)
+        basis, first_basis = BsplineSpace1D(knots, 2).tabulate_basis(pts)
 
         # Check shape
         assert basis.shape == (3, 3)
@@ -729,14 +727,9 @@ class TestEvaluateBasisBasisFuncs:
     def test_general_knot_vector(self) -> None:
         """Test evaluation for general knot vector."""
         knots = np.array([0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0], dtype=np.float64)
-        degree = 2
-        periodic = False
-        tol = 1e-10
         pts = np.array([0.25, 0.75], dtype=np.float64)
 
-        basis = np.empty((2, 3), dtype=np.float64)
-        first_basis = np.empty(2, dtype=np.int_)
-        _compute_basis_nurbs_book_impl(knots, degree, periodic, tol, pts, basis, first_basis)
+        basis, first_basis = BsplineSpace1D(knots, 2).tabulate_basis(pts)
 
         # Check shape
         assert basis.shape == (2, 3)
@@ -748,15 +741,10 @@ class TestEvaluateBasisBasisFuncs:
 
     def test_periodic_evaluation(self) -> None:
         """Test evaluation for periodic knot vector."""
-        knots = np.array([-1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0], dtype=np.float64)
-        degree = 2
-        periodic = True
-        tol = 1e-10
+        knots = create_uniform_periodic_knots(4, 2)
         pts = np.array([0.0, 0.5, 1.0], dtype=np.float64)
 
-        basis = np.empty((3, 3), dtype=np.float64)
-        first_basis = np.empty(3, dtype=np.int_)
-        _compute_basis_nurbs_book_impl(knots, degree, periodic, tol, pts, basis, first_basis)
+        basis, first_basis = BsplineSpace1D(knots, 2, periodic=True).tabulate_basis(pts)
 
         # Check shape
         assert basis.shape == (3, 3)
@@ -767,28 +755,19 @@ class TestEvaluateBasisBasisFuncs:
         np.testing.assert_array_almost_equal(sums, np.ones_like(sums))
 
     def test_out_parameter(self) -> None:
-        """Test that C-style output parameters work correctly."""
+        """Test that the outputs take the knots' dtype, and that float32 agrees with float64."""
         knots = np.array([0.0, 0.0, 0.0, 1.0, 1.0, 1.0], dtype=np.float64)
-        degree = 2
-        periodic = False
-        tol = 1e-10
         pts = np.array([0.0, 0.5, 1.0], dtype=np.float64)
 
         # Test with float64
-        basis1 = np.empty((3, 3), dtype=np.float64)
-        first_basis1 = np.empty(3, dtype=np.int_)
-        _compute_basis_nurbs_book_impl(knots, degree, periodic, tol, pts, basis1, first_basis1)
+        basis1, first_basis1 = BsplineSpace1D(knots, 2).tabulate_basis(pts)
         assert basis1.shape == (3, 3)
         assert basis1.dtype == np.float64
         assert first_basis1.shape == (3,)
 
         # Test with float32
-        knots_f32 = knots.astype(np.float32)
-        pts_f32 = pts.astype(np.float32)
-        basis2 = np.empty((3, 3), dtype=np.float32)
-        first_basis2 = np.empty(3, dtype=np.int_)
-        _compute_basis_nurbs_book_impl(
-            knots_f32, degree, periodic, tol, pts_f32, basis2, first_basis2
+        basis2, first_basis2 = BsplineSpace1D(knots.astype(np.float32), 2).tabulate_basis(
+            pts.astype(np.float32)
         )
         assert basis2.dtype == np.float32
 

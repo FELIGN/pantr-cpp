@@ -5,7 +5,7 @@ import numpy.typing as npt
 import pytest
 
 from pantr.bspline import Bspline, BsplineSpace, BsplineSpace1D, create_uniform_periodic_knots
-from pantr.bspline._bspline_basis_core import _compute_basis_nurbs_book_impl
+from tests.oracles import bspline_exact
 
 
 class TestBsplineEvaluation:
@@ -259,11 +259,12 @@ def _make_periodic_bspline(
 
 
 def _eval_periodic_correct(f: Bspline, pts: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
-    """Evaluate a periodic B-spline using the mathematically correct algorithm.
+    """Evaluate a periodic B-spline by its definition, in exact arithmetic.
 
-    Uses the unclamped ``first_basis = knot_id - degree`` index with modulo-wrapped
-    control point lookup, which is the standard mathematical definition of a periodic
-    B-spline. This differs from ``f.evaluate()`` which uses a clamped first_basis.
+    The oracle is :mod:`tests.oracles.bspline_exact`: the Cox-de Boor recursion from the
+    definition on the unwrapped knot vector, with the control point of basis function ``i`` read
+    at ``i % n_stored``, summed over the local functions in exact rational arithmetic and rounded
+    once. It shares no code or formula with the library's evaluation.
 
     Args:
         f (Bspline): A 1D periodic B-spline.
@@ -273,25 +274,11 @@ def _eval_periodic_correct(f: Bspline, pts: npt.NDArray[np.float64]) -> npt.NDAr
         np.ndarray: Evaluated values at the given points.
     """
     space_1d = f.space.spaces[0]
-    knots = space_1d.knots
-    p = space_1d.degree
-    tol = float(space_1d.tolerance)
-    n_stored = f.space.num_total_basis
-    ctrl = f._control_points  # shape (n_stored, rank)
-
-    # Compute knot spans using the non-periodic (unclamped) algorithm
-    basis_out = np.zeros((len(pts), p + 1), dtype=np.float64)
-    first_basis_arr = np.zeros(len(pts), dtype=np.int64)
-    _compute_basis_nurbs_book_impl(knots, p, False, tol, pts, basis_out, first_basis_arr)
-
-    rank = ctrl.shape[1]
-    result = np.zeros((len(pts), rank), dtype=np.float64)
-    for i in range(len(pts)):
-        s = int(first_basis_arr[i])
-        for j in range(p + 1):
-            idx = (s + j) % n_stored
-            result[i] += basis_out[i, j] * ctrl[idx]
-
+    ctrl = f.control_points  # shape (n_stored, rank)
+    rows = [
+        bspline_exact.derivative([space_1d.knots], [space_1d.degree], ctrl, [float(x)]) for x in pts
+    ]
+    result: npt.NDArray[np.float64] = bspline_exact.to_float_array(rows)
     return result.squeeze()
 
 
@@ -426,3 +413,96 @@ class TestPeriodicBsplineEvaluation:
             fd,
             atol=1e-5,
         )
+
+
+class TestPeriodicAgainstTheExactDefinition:
+    """The library's periodic evaluation against the exact Cox-de Boor definition.
+
+    Oracle: :mod:`tests.oracles.bspline_exact`, an exact-rational recursion from the definition on
+    the unwrapped knot vector (not the NURBS-book triangle the library runs), plus two properties
+    that need no oracle: the periodic function takes one value at both ends of its domain, and its
+    basis is a partition of unity.
+    """
+
+    @pytest.mark.parametrize("degree", [1, 2, 3])
+    @pytest.mark.parametrize("continuity", [None, 0])
+    @pytest.mark.parametrize("derivative", [0, 1, 2])
+    def test_values_and_derivatives_equal_the_exact_sum(
+        self, degree: int, continuity: int | None, derivative: int
+    ) -> None:
+        """evaluate_derivatives equals the exact derivative of the wrapped sum, to a derived bound.
+
+        Bound: the weight of each of the ``p + 1`` local functions is within ``16 (p + 1) eps
+        (2 p / h)^k`` of exact (``h = 1/4`` the interval length, ``k`` the order, the margin of
+        the 1D basis tests), each control point is at most ``n`` in magnitude, and the sum adds
+        ``p + 1`` roundings of the sum of magnitudes.
+        """
+        if derivative > degree:
+            pytest.skip("identically zero")
+        f = _make_periodic_bspline(4, degree, continuity=continuity)
+        if continuity == 0 and derivative > 0:
+            pytest.skip("the derivative jumps at the knots; the points below avoid them")
+        pts = np.array([0.03, 0.11, 0.27, 0.4, 0.51, 0.62, 0.77, 0.9, 0.99])
+        eps = float(np.finfo(np.float64).eps)
+        h = 0.25
+        n = float(f.space.num_total_basis)
+        mag = (2.0 * degree / h) ** derivative
+        bound = n * (degree + 1) * (16.0 * (degree + 1) * eps * mag + eps * mag * (degree + 1))
+        got = f.evaluate_derivatives(pts, [derivative])
+        knots = f.space.spaces[0].knots
+        for x, g in zip(pts, got, strict=True):
+            want = bspline_exact.derivative(
+                [knots], [degree], f.control_points, [float(x)], [derivative]
+            )
+            assert bspline_exact.within(g, want[0], bound)
+
+    @pytest.mark.parametrize("degree", [2, 3])
+    @pytest.mark.parametrize("continuity", [None, 0, 1])
+    @pytest.mark.parametrize("num_intervals", [4, 8])
+    def test_the_function_and_its_smooth_derivatives_agree_at_both_ends_of_the_period(
+        self, degree: int, continuity: int | None, num_intervals: int
+    ) -> None:
+        """f(a) = f(b), and so are the derivatives up to the continuity: exact and in the library.
+
+        The unwrapped knot vector only defines the function over the domain, so the period can
+        be tested at its two ends (the same control points are read modulo ``n_stored`` at both).
+        The exact oracle takes equal values there for the orders up to the continuity; the
+        library must reproduce that to the derived bound below.
+        """
+        if continuity is not None and continuity >= degree:
+            pytest.skip("continuity must be below the degree")
+        f = _make_periodic_bspline(num_intervals, degree, continuity=continuity)
+        space_1d = f.space.spaces[0]
+        a, b = float(space_1d.domain[0]), float(space_1d.domain[1])
+        knots = space_1d.knots
+        c = degree - 1 if continuity is None else continuity
+        eps = float(np.finfo(np.float64).eps)
+        h = (b - a) / num_intervals
+        n = float(f.space.num_total_basis)
+        for k in range(c + 1):
+            at_a = bspline_exact.derivative([knots], [degree], f.control_points, [a], [k])
+            at_b = bspline_exact.derivative([knots], [degree], f.control_points, [b], [k])
+            assert at_a == at_b
+            mag = (2.0 * degree / h) ** k
+            bound = 2 * n * (degree + 1) * (17.0 * (degree + 1) * eps * mag)
+            got = f.evaluate_derivatives(np.array([a, b]), [k])
+            assert abs(got[0] - got[1]) <= bound
+
+    @pytest.mark.parametrize("degree", [1, 2, 3, 4])
+    @pytest.mark.parametrize("continuity", [None, 0])
+    def test_the_basis_is_a_partition_of_unity(self, degree: int, continuity: int | None) -> None:
+        """All-ones control points give 1: exactly in the oracle, within a bound in the library.
+
+        Bound: ``p + 1`` non-negative weights, each within ``8 p eps`` (relative) of exact, summing
+        to one, and ``p + 1`` roundings of their sum: ``(9 p + 1) eps`` and one more for the store.
+        """
+        knots = create_uniform_periodic_knots(8, degree, continuity=continuity)
+        space = BsplineSpace([BsplineSpace1D(knots, degree, periodic=True)])
+        f = Bspline(space, np.ones(space.num_total_basis))
+        pts = np.linspace(0.0, 1.0, 17)
+        eps = float(np.finfo(np.float64).eps)
+        got = f.evaluate(pts)
+        for x, g in zip(pts, got, strict=True):
+            want = bspline_exact.derivative([knots], [degree], f.control_points, [float(x)])
+            assert want == [1]
+            assert abs(float(g) - 1.0) <= (9.0 * degree + 2.0) * eps

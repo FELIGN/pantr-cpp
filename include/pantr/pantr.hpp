@@ -34,6 +34,8 @@
 #include "pantr/basis/legendre.hpp"
 #include "pantr/basis/tabulate.hpp"
 
+#include "pantr/bspline/bspline.hpp"
+#include "pantr/bspline/evaluate.hpp"
 #include "pantr/bspline/knot_factories.hpp"
 #include "pantr/bspline/knots.hpp"
 #include "pantr/bspline/space.hpp"
