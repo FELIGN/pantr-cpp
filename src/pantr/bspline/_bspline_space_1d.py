@@ -1030,13 +1030,25 @@ class BsplineSpace1D:
         Raises:
             ValueError: If ``n_subdivisions < 2``.
             ValueError: If ``regularity`` is outside ``[-1, degree - 1]``.
+            TypeError: If ``n_subdivisions`` or ``regularity`` is not an integer (a float, for
+                instance).
         """
+        from ._bspline import _index  # noqa: PLC0415
+
         f32 = self._knots.dtype == np.float32
+        # The arguments are normalised as `Bspline.subdivide` normalises them, so that both entry
+        # points raise the same exceptions for the same input.
         new_knots = (
             _cpp.compute_uniform_subdivision_knots_f32
             if f32
             else _cpp.compute_uniform_subdivision_knots
-        )(self._knots, self._degree, self._tol, n_subdivisions, regularity)
+        )(
+            self._knots,
+            self._degree,
+            self._tol,
+            _index(n_subdivisions),
+            None if regularity is None else _index(regularity),
+        )
         return self.insert_knots(new_knots)
 
     def restrict(

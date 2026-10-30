@@ -293,17 +293,6 @@ def oslo_rows(
 ) -> tuple[NDArray[numpy.float64], NDArray[numpy.int64]]:
     """The banded rows of the Oslo matrix: (alphas (m + 1, degree + 1), first_col (m + 1,))."""
 
-def oslo_matrix(
-    degree: int,
-    old_knots: Annotated[
-        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
-    ],
-    new_knots: Annotated[
-        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
-    ],
-) -> NDArray[numpy.float64]:
-    """The dense Oslo refinement matrix (m + 1, n + 1)."""
-
 def evaluate_blossom_1d(
     knots: Annotated[
         NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
@@ -338,17 +327,6 @@ def oslo_rows_f32(
     ],
 ) -> tuple[NDArray[numpy.float32], NDArray[numpy.int64]]:
     """The banded rows of the Oslo matrix: (alphas (m + 1, degree + 1), first_col (m + 1,))."""
-
-def oslo_matrix_f32(
-    degree: int,
-    old_knots: Annotated[
-        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
-    ],
-    new_knots: Annotated[
-        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
-    ],
-) -> NDArray[numpy.float32]:
-    """The dense Oslo refinement matrix (m + 1, n + 1)."""
 
 def evaluate_blossom_1d_f32(
     knots: Annotated[

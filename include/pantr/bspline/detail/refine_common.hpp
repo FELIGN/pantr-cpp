@@ -16,7 +16,6 @@
 #include "pantr/core/scalar.hpp"
 
 #include <algorithm>
-#include <charconv>
 #include <cmath>
 #include <concepts>
 #include <cstddef>
@@ -41,25 +40,6 @@ struct KnotsAndCtrl {
 
 namespace detail {
 
-/// Spell a double as Python's `format(x, '.2e')` does.
-///
-/// Args:
-///     x (double): The value.
-///
-/// Returns:
-///     std::string: E.g. `5.62e-01`; `nan`, `inf` or `-inf` for the special values.
-[[nodiscard]] inline std::string format_exp2(double x) {
-  if (std::isnan(x)) {
-    return "nan";
-  }
-  if (std::isinf(x)) {
-    return x > 0 ? "inf" : "-inf";
-  }
-  char buf[64];
-  const auto res = std::to_chars(buf, buf + sizeof(buf), x, std::chars_format::scientific, 2);
-  return {buf, static_cast<std::size_t>(res.ptr - buf)};
-}
-
 /// Spell a storage-type value as NumPy spells an element of an array of that dtype in a message:
 /// the shortest decimal string that reads back to the same value in that type.
 ///
@@ -71,15 +51,10 @@ namespace detail {
 template <StorageFloat T>
 [[nodiscard]] std::string repr_of(T v) {
   if constexpr (std::same_as<T, float>) {
-    if (std::isfinite(v)) {
-      char buf[64];
-      const auto res = std::to_chars(buf, buf + sizeof(buf), v, std::chars_format::scientific);
-      double widened = 0.0;
-      std::from_chars(buf, res.ptr, widened);
-      return py_repr(widened);
-    }
+    return py_repr_f32(v);
+  } else {
+    return py_repr(v);
   }
-  return py_repr(static_cast<double>(v));
 }
 
 /// Get the largest multiplicity of a knot vector, without building the classes.
@@ -140,14 +115,60 @@ template <class T>
 ///     degree (int): The degree.
 ///
 /// Raises:
-///     value_error: `rows != num_knots - degree - 1` (or fewer than `degree + 2` knots).
+///     value_error: `degree < 0`; or `rows != num_knots - degree - 1` (or fewer than `degree + 2`
+///         knots).
 inline void check_net_matches(const char* what, std::size_t rows, std::size_t num_knots,
                               int degree) {
+  if (degree < 0) {
+    throw value_error("degree must be non-negative");
+  }
   const auto d = static_cast<std::size_t>(degree);
   if (num_knots < d + 2 || rows != num_knots - d - 1) {
     throw value_error(std::string(what) + ": " + std::to_string(rows) +
                       " control-point rows do not match " + std::to_string(num_knots) +
                       " knots at degree " + std::to_string(degree) + ".");
+  }
+}
+
+/// Check that a knot vector can hold a domain at a degree, before any index derived from them.
+///
+/// The domain endpoints sit at `knots[degree]` and `knots[size - degree - 1]`, which are in range
+/// (and ordered) exactly when `size >= 2 * degree + 2`.
+///
+/// Args:
+///     num_knots (std::size_t): The knots.
+///     degree (int): The degree.
+///
+/// Raises:
+///     value_error: `degree < 0`, or fewer than `2 * degree + 2` knots (the messages
+///         `BsplineSpace1D` gives).
+inline void check_domain_indexable(std::size_t num_knots, int degree) {
+  if (degree < 0) {
+    throw value_error("degree must be non-negative");
+  }
+  if (num_knots / 2 < static_cast<std::size_t>(degree) + 1) {
+    throw value_error("knots must have at least 2*degree+2 elements");
+  }
+}
+
+/// Check the arguments of an Oslo kernel: a degree and two knot vectors that can hold it.
+///
+/// Args:
+///     degree (int): The degree.
+///     num_old (std::size_t): The knots of the original vector.
+///     num_new (std::size_t): The knots of the refined vector.
+///
+/// Raises:
+///     value_error: `degree < 0`, or a knot vector with fewer than `degree + 2` knots.
+inline void check_oslo_sizes(int degree, std::size_t num_old, std::size_t num_new) {
+  if (degree < 0) {
+    throw value_error("degree must be non-negative");
+  }
+  const auto min_size = static_cast<std::size_t>(degree) + 2;
+  if (num_old < min_size || num_new < min_size) {
+    throw value_error("Both knot vectors need at least degree + 2 = " + std::to_string(min_size) +
+                      " knots, got " + std::to_string(num_old) + " and " + std::to_string(num_new) +
+                      ".");
   }
 }
 

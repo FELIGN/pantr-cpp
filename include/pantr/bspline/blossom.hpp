@@ -38,6 +38,11 @@ namespace detail {
 /// range for a parameter past the domain of a non-clamped knot vector. A NaN is ordered after every
 /// knot, as NumPy orders it, so it lands past the last span.
 ///
+/// Known defect, inherited: for a clamped knot vector, a `u_last` just below the domain start
+/// (within the tolerance the public entry point accepts) belongs to the first span, and this
+/// returns the last one. The port keeps the behavior of the code it replaced; the test "inherited:
+/// blossom span below a clamped start" pins the correct value as an expected failure.
+///
 /// Args:
 ///     knots (std::span<const T>): Non-decreasing knot vector.
 ///     u_last (T): The largest of the blossom's parameter values.
@@ -151,9 +156,9 @@ template <StorageFloat T>
 ///     std::vector<T>: The blossom value, `rank` entries.
 ///
 /// Raises:
-///     value_error: `u_values.size() != degree`; an entry lies outside
-///         `[knots[degree], knots[size - degree - 1]]` by more than `tol`; or the control points do
-///         not match the knots.
+///     value_error: `u_values.size() != degree`; `degree < 0`; the control points do not match the
+///         knots; fewer than `2 * degree + 2` knots; or an entry lies outside
+///         `[knots[degree], knots[size - degree - 1]]` by more than `tol`.
 template <StorageFloat T>
 [[nodiscard]] std::vector<T> blossom(std::span<const T> knots, int degree,
                                      mdview<const T, 2> control_points, std::span<const T> u_values,

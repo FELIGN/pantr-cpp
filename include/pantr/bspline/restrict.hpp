@@ -4,16 +4,24 @@
 /// Both insert knots at the new boundaries until they reach multiplicity `degree + 1`, then cut the
 /// knot vector and the control points; a periodic direction is converted to open form first.
 ///
-/// Tolerance policy. Restriction introduces **no tolerance of its own**, and that is the policy
-/// rather than an omission. Every comparison it makes is between two parametric coordinates of one
-/// knot vector (a requested bound against a domain endpoint, against an existing knot, against the
-/// refined vector), so every one of them is the question `knot_tolerance` already answers: are
-/// these two values the same knot? The single `tol` threaded through this file is
-/// `BsplineSpace1D::tolerance()`, the absolute parametric length `8 eps max(span, |knots[0]|,
-/// |knots[-1]|)` the space derived once at construction. A second number here would be a second
-/// notion of knot identity for the same vector.
+/// Tolerance policy. Restriction introduces **no tolerance of its own**: the single `tol` threaded
+/// through this file is `BsplineSpace1D::tolerance()`, the absolute parametric length `8 eps
+/// max(span, |knots[0]|, |knots[-1]|)` the space derived once at construction, and every comparison
+/// it makes (a requested bound against a domain endpoint, against an existing knot, against the
+/// refined vector) is the question `knot_tolerance` answers: are these two values the same knot?
 ///
-/// Three properties of that inheritance are load-bearing.
+/// The comparisons do not all form their difference the same way, which is an inherited defect and
+/// not a design. The count of knots already at a boundary (`count_within`) rounds the bound to the
+/// storage type and forms `knot - bound` in it, as NumPy did for a Python float; the snapping to a
+/// domain endpoint and the cut of the sub-vector (`first_not_below`) compare in `double`. For
+/// `float` knots a bound a few units of the format's resolution from a knot can be that knot by
+/// one test and a different one by the other, and the restriction or split then refuses with
+/// "knots must have at least 2*degree+2 elements" where `double` knots succeed. The tests
+/// "inherited: restrict with a float32 bound near a knot" and "inherited: split of a float32
+/// spline at a value near a knot" pin the correct behavior as expected failures; the defect is
+/// held for a later review and is not fixed here.
+///
+/// Three properties of the shared `tol` are load-bearing.
 ///
 /// **The scale does not move between the stages.** `tol` is derived from the input knot vector,
 /// then applied to the *refined* one after boundary insertion. Knot insertion never changes the
@@ -114,10 +122,12 @@ template <StorageFloat T>
 ///     Bounds: The snapped bounds.
 ///
 /// Raises:
-///     value_error: `lo >= hi`, or a bound outside the domain by more than `tol`.
+///     value_error: `degree < 0` or fewer than `2 * degree + 2` knots; `lo >= hi`; or a bound
+///         outside the domain by more than `tol`.
 template <StorageFloat T>
 [[nodiscard]] Bounds validate_restrict_bounds(std::span<const T> knots, int degree, double tol,
                                               Bounds bounds) {
+  detail::check_domain_indexable(knots.size(), degree);
   const auto d = static_cast<std::size_t>(degree);
   const auto a = static_cast<double>(knots[d]);
   const auto b = static_cast<double>(knots[knots.size() - d - 1]);
@@ -161,10 +171,12 @@ template <StorageFloat T>
 ///     std::vector<T>: The knot values to insert (possibly empty).
 ///
 /// Raises:
-///     value_error: The bounds match the full domain and the direction is already open.
+///     value_error: `degree < 0` or fewer than `2 * degree + 2` knots; or the bounds match the full
+///         domain and the direction is already open.
 template <StorageFloat T>
 [[nodiscard]] std::vector<T> compute_boundary_knots_to_insert(std::span<const T> knots, int degree,
                                                               double tol, Bounds bounds) {
+  detail::check_domain_indexable(knots.size(), degree);
   const auto p = static_cast<std::size_t>(degree);
   const auto a = static_cast<double>(knots[p]);
   const auto b = static_cast<double>(knots[knots.size() - p - 1]);
@@ -222,6 +234,9 @@ template <StorageFloat T>
                                           Bounds bounds) {
   const auto p = static_cast<std::size_t>(degree);
   const std::size_t cols = ctrl.extent(1);
+  if (!periodic) {
+    detail::check_net_matches("restrict", ctrl.extent(0), knots.size(), degree);
+  }
   const Bounds snapped = validate_restrict_bounds<T>(knots, degree, tol, bounds);
 
   // A periodic direction is converted to open form first.
@@ -232,8 +247,6 @@ template <StorageFloat T>
     open = to_open_1d<T>(knots, degree, ctrl, true, tol);
     k = open.knots;
     c = open.ctrl.template view<2>();
-  } else {
-    detail::check_net_matches("restrict", ctrl.extent(0), knots.size(), degree);
   }
 
   const std::vector<T> to_insert = compute_boundary_knots_to_insert<T>(k, degree, tol, snapped);
@@ -251,8 +264,9 @@ template <StorageFloat T>
   // file note).
   const std::size_t i_start = detail::first_not_below<T>(refined.knots, snapped.lo - tol);
   const std::size_t past_end = detail::first_not_below<T>(refined.knots, snapped.hi + tol);
-  if (past_end == 0 || past_end - 1 < i_start + p || past_end > refined.knots.size() ||
-      past_end - 1 - p > refined.ctrl.shape()[0]) {
+  // `past_end <= size` (a search position), and the rows of a result are `size - p - 1`, so
+  // `past_end - 1 - p` cannot exceed them: only an empty or short window is left to refuse.
+  if (past_end == 0 || past_end - 1 < i_start + p) {
     throw value_error("The restriction found no complete sub-vector of the refined knot vector.");
   }
   const std::size_t i_end = past_end - 1;
@@ -356,7 +370,8 @@ template <StorageFloat T>
 
   // The split index: the value now has multiplicity p + 1.
   const std::size_t i_split = detail::first_not_below<T>(refined.knots, value - tol);
-  if (i_split + p + 1 > refined.knots.size() || i_split > refined.ctrl.shape()[0]) {
+  // The rows of a result are `size - p - 1`, so `i_split + p + 1 <= size` bounds `i_split` by them.
+  if (i_split + p + 1 > refined.knots.size()) {
     throw value_error("The split found no index in the refined knot vector.");
   }
   const std::size_t rows = refined.ctrl.shape()[0];

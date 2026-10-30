@@ -517,6 +517,110 @@ TEST_CASE_TEMPLATE("to_periodic: the round trip of a periodic spline returns its
   }
 }
 
+TEST_CASE_TEMPLATE("to_periodic: ghost knots outside a clamped domain take the second Oslo step", T,
+                   double, float) {
+  // The input is a B-spline whose knot vector is the clamped one of a periodic spline with `p`
+  // extra knots outside the domain on each side: boundary multiplicity `p + 1`, but not open
+  // (`knots[0] != knots[p]`). It has more knots than the periodic vector the conversion builds, so
+  // the change of basis is the product of two Oslo steps (the trimmed intermediate to the input
+  // knots) and not one. The existing round trips pass through `to_open_bspline` and so never
+  // reach it.
+  //
+  // Oracle, independent of both steps, for everything the domain sees. The function on the domain
+  // is that of the clamped spline `O` (control points `P`), and the stored control points of the
+  // periodic spline it came from are the expected result. The coefficients of the `p` basis
+  // functions at each end that are wholly outside the domain do not change that function, but the
+  // conversion fits all of them, so the input must give them the values it expects. At the right
+  // end that is the blossom of the last polynomial piece continued past the domain at the
+  // function's `p` inner knots: for `p = 1` it is `P_n`; for `p = 2` the two are `P_n` and
+  // `f[b, h] = P_n + (h - b)(P_{n-1} - P_n) / (t_n - b)`, `h` the ghost knot nearest the domain
+  // and `t_n` the last knot before `b` (the blossom is affine in each argument and
+  // `f[t_n, b] = P_{n-1}`). At the left end it is zero, not the continuation: the conversion
+  // treats those functions as absent, as the pure-Python implementation it replaces did (a
+  // continuation there is refused with a closure residual, on both).
+  struct Layout {
+    int degree;
+    int continuity;
+  };
+  for (const Layout lay : {Layout{1, 0}, Layout{2, 0}, Layout{2, 1}}) {
+    const int p = lay.degree;
+    CAPTURE(p);
+    CAPTURE(lay.continuity);
+    const long long n_int = 2 * p + 3;
+    const std::vector<T> kt = bs::uniform_periodic_knots<T>(n_int, p, lay.continuity,
+                                                            static_cast<T>(0), static_cast<T>(1));
+    const std::vector<double> knots(kt.begin(), kt.end());
+    const bs::BsplineSpace1D<T> ps(sp(kt), p, true);
+    const auto n_stored = static_cast<std::size_t>(ps.num_basis());
+    const std::vector<double> stored = values(n_stored, 41 + static_cast<unsigned>(p));
+    const bs::Bspline<T> open = bs::to_open_bspline<T>(curve<T>(knots, p, stored, true));
+    const auto os = open.space().spaces()[0];
+    const std::vector<T> ok(os.knots().begin(), os.knots().end());
+    const std::vector<double> clamped_pts(open.control_points().begin(),
+                                          open.control_points().end());
+    const std::size_t n_open = clamped_pts.size();
+    const auto up = static_cast<std::size_t>(p);
+
+    // The input: p ghost knots on each side, spaced as the first and last spans.
+    const double a = static_cast<double>(ok[up]);
+    const double b = static_cast<double>(ok[ok.size() - up - 1]);
+    const double tn = static_cast<double>(ok[ok.size() - up - 2]);
+    std::vector<T> v;
+    for (std::size_t j = 0; j < up; ++j) {
+      v.push_back(static_cast<T>(a - 0.25 * static_cast<double>(up - j)));
+    }
+    v.insert(v.end(), ok.begin(), ok.end());
+    for (std::size_t j = 0; j < up; ++j) {
+      v.push_back(static_cast<T>(b + 0.25 * static_cast<double>(j + 1)));
+    }
+    std::vector<double> u_pts(up, 0.0);
+    u_pts.insert(u_pts.end(), clamped_pts.begin(), clamped_pts.end());
+    u_pts.push_back(clamped_pts[n_open - 1]);
+    if (p == 2) {
+      const double h = b + 0.25;
+      u_pts.push_back(clamped_pts[n_open - 1] +
+                      (h - b) * (clamped_pts[n_open - 2] - clamped_pts[n_open - 1]) / (tn - b));
+    }
+    REQUIRE(u_pts.size() == v.size() - up - 1);
+    const std::vector<T> u_cast = cast_all<T>(u_pts);
+
+    const double knot_tol = bs::BsplineSpace1D<T>(sp(v), p).tolerance();
+    const bs::KnotsAndCtrl<T> per =
+        bs::to_periodic_1d<T>(sp(v), p, mdview<const T, 2>(u_cast.data(), u_cast.size(), 1),
+                              p - lay.continuity, knot_tol);
+    // The second step ran: the periodic vector the conversion builds is not the input's size.
+    CHECK(per.knots.size() != v.size());
+    REQUIRE(per.ctrl.shape()[0] == n_stored);
+
+    // The stored control points come back, within the conservative tier the closure budget uses
+    // (values are at most 1 in magnitude).
+    const double tier = static_cast<double>(pantr::tolerance::get_conservative<T>());
+    double worst = 0.0;
+    for (std::size_t i = 0; i < n_stored; ++i) {
+      worst = (std::max)(worst, std::abs(static_cast<double>(per.ctrl.data()[i]) - stored[i]));
+    }
+    CHECK(worst <= tier);
+
+    // The periodic result equals the input on the domain: the exact curves, the input over its
+    // own knots and the result over its ghost-extended knots with its points wrapped.
+    const std::vector<double> vk(v.begin(), v.end());
+    const std::vector<double> rk(per.knots.begin(), per.knots.end());
+    const std::vector<double> rp(per.ctrl.data(), per.ctrl.data() + n_stored);
+    const ExactNet input_net =
+        exact_net(vk, p, std::vector<double>(u_cast.begin(), u_cast.end()), 1);
+    const ExactNet result_net = exact_net(rk, p, rp, 1);
+    const double curve_tol = 8.0 * 3.0 * unit_roundoff<T>() + tier;
+    for (int j = 0; j <= 20; ++j) {
+      const Rational x = oracle::exact(a + (b - a) * static_cast<double>(j) / 20.0 * 0.999);
+      Rational d = exact_curve(input_net, x)[0] - exact_curve(result_net, x, n_stored)[0];
+      if (d < 0) {
+        d = -d;
+      }
+      CHECK(static_cast<double>(d) <= curve_tol);
+    }
+  }
+}
+
 TEST_CASE("to_periodic: refusals and their messages") {
   const std::vector<double> k = clamped(2, {0.25, 0.5, 0.75}, 1.0);
   const std::size_t n = k.size() - 3;
@@ -759,6 +863,74 @@ TEST_CASE("restrict and split: refusals and their messages") {
                        pantr::value_error);
 }
 
+TEST_CASE("knot kernels refuse a degree the knot vector cannot hold, before indexing it") {
+  // Six knots, exactly sized: an index past them is a heap overread that AddressSanitizer reports.
+  // Degree 9 needs 20 knots, degree -1 has no meaning; both used to index `knots[degree]` and
+  // `knots[size - degree - 1]` unchecked.
+  const std::vector<double> k{0.0, 0.0, 0.0, 1.0, 1.0, 1.0};
+  const std::vector<double> add{0.5};
+  const std::vector<double> cp = values(3, 8);
+  const mdview<const double, 2> ctrl(cp.data(), 3, 1);
+  const std::string too_few = "knots must have at least 2*degree+2 elements";
+  const std::string negative = "degree must be non-negative";
+  const bs::Bounds bounds{0.25, 0.75};
+
+  const auto refused = [&](auto&& call, const std::string& message) {
+    CHECK_THROWS_WITH_AS(static_cast<void>(call()), message.c_str(), pantr::value_error);
+  };
+  for (const int degree : {9, 3}) {
+    // Three is the first degree for which six knots are too few (2 * 3 + 2 = 8).
+    refused([&] { return bs::compute_inserted_knot_vector<double>(sp(k), degree, sp(add), 1e-12); },
+            too_few);
+    refused([&] { return bs::validate_restrict_bounds<double>(sp(k), degree, 1e-12, bounds); },
+            too_few);
+    refused(
+        [&] { return bs::compute_boundary_knots_to_insert<double>(sp(k), degree, 1e-12, bounds); },
+        too_few);
+  }
+  refused([&] { return bs::compute_inserted_knot_vector<double>(sp(k), -1, sp(add), 1e-12); },
+          negative);
+  refused([&] { return bs::validate_restrict_bounds<double>(sp(k), -1, 1e-12, bounds); }, negative);
+  refused([&] { return bs::compute_boundary_knots_to_insert<double>(sp(k), -1, 1e-12, bounds); },
+          negative);
+  // Exactly 2 * degree + 2 knots is accepted: degree 2 on six knots.
+  CHECK_NOTHROW(
+      static_cast<void>(bs::compute_inserted_knot_vector<double>(sp(k), 2, sp(add), 1e-12)));
+  CHECK_NOTHROW(static_cast<void>(bs::validate_restrict_bounds<double>(sp(k), 2, 1e-12, bounds)));
+
+  // The whole-direction entry points, which check the control net first.
+  for (const int degree : {9, -1}) {
+    const std::string& message = degree < 0 ? negative : too_few;
+    // A net that matches no knot vector at that degree is refused as a mismatch (degree 9), and a
+    // negative degree is refused outright, in either case before the bounds or the value are read.
+    CHECK_THROWS_AS(static_cast<void>(bs::restrict_1d<double>(sp(k), degree, ctrl, false, 1e-12,
+                                                              bs::Bounds{0.75, 0.25})),
+                    pantr::value_error);
+    CHECK_THROWS_AS(static_cast<void>(bs::split_1d<double>(sp(k), degree, ctrl, false, 1e-12, 0.5)),
+                    pantr::value_error);
+    // A periodic direction skips the net check, so the knot vector's own size is what refuses.
+    refused(
+        [&] {
+          return bs::restrict_1d<double>(sp(k), degree, ctrl, true, 1e-12, bs::Bounds{0.25, 0.5});
+        },
+        message);
+  }
+  // The net is checked before the bounds: a mismatched net and bounds out of order report the net.
+  const std::vector<double> few(2, 0.0);
+  CHECK_THROWS_WITH_AS((static_cast<void>(bs::restrict_1d<double>(
+                           sp(k), 2, mdview<const double, 2>(few.data(), 2, 1), false, 1e-12,
+                           bs::Bounds{0.75, 0.25}))),
+                       "restrict: 2 control-point rows do not match 6 knots at degree 2.",
+                       pantr::value_error);
+  // The Oslo kernels' sizes.
+  CHECK_THROWS_WITH_AS((bs::detail::check_oslo_sizes(-1, 6, 6)), "degree must be non-negative",
+                       pantr::value_error);
+  CHECK_THROWS_WITH_AS((bs::detail::check_oslo_sizes(2, 3, 6)),
+                       "Both knot vectors need at least degree + 2 = 4 knots, got 3 and 6.",
+                       pantr::value_error);
+  CHECK_NOTHROW(bs::detail::check_oslo_sizes(2, 4, 4));
+}
+
 TEST_CASE("restrict and split: a two-direction B-spline keeps its other direction") {
   const std::vector<double> k = clamped(2, {0.5}, 1.0);
   std::vector<bs::BsplineSpace1D<double>> spaces;
@@ -867,12 +1039,99 @@ TEST_CASE("blossom: refusals, degree zero and the span search") {
       sp(kn_open), 2, mdview<const double, 2>(cp_open.data(), 4, 1), sp(edge), 1e-9);
   const std::vector<double> got_in = bs::blossom<double>(
       sp(kn_open), 2, mdview<const double, 2>(cp_open.data(), 4, 1), sp(inside), 1e-9);
-  CHECK(std::abs(got_edge[0] - got_in[0]) <= 1e-9);
-  // The span of the largest value: the last knot not above it, the rightmost span out of range.
+  // The two values are the curve at parameters 1e-13 apart, so they differ by at most that shift
+  // times the largest slope, plus rounding. Slope: the derivative of a degree-p B-spline is
+  // p (P_i - P_{i-1}) / (t_{i+p} - t_i) on its pieces; here p = 2, consecutive points differ by 1
+  // and the knots are 1 apart, so it is at most 2 * 1 / 2 = 1. Rounding: the recurrence forms two
+  // levels of convex combinations of points of magnitude at most 4, taken as 8 * 4 units of
+  // roundoff.
+  constexpr double shift = 1e-13;
+  constexpr double max_slope = 1.0;
+  CHECK(std::abs(got_edge[0] - got_in[0]) <=
+        max_slope * shift + 8.0 * 4.0 * unit_roundoff<double>());
+  // The span of the largest value: the last knot not above it, the rightmost span past the end.
   const std::vector<double> kn{0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0};
   CHECK(bs::detail::blossom_span<double>(sp(kn), 0.25, 3) == 2);
   CHECK(bs::detail::blossom_span<double>(sp(kn), 0.5, 3) == 3);
   CHECK(bs::detail::blossom_span<double>(sp(kn), 1.0, 3) == 3);
-  CHECK(bs::detail::blossom_span<double>(sp(kn), -1.0, 3) == 3);
   CHECK(bs::detail::blossom_span<double>(sp(kn), std::numeric_limits<double>::quiet_NaN(), 3) == 3);
+  // The value below the start of a clamped vector is not asserted here: it is the inherited
+  // defect pinned by "inherited: blossom span below a clamped start".
+}
+
+// ---- inherited defects, pinned (parity pins)
+// -----------------------------------------------------
+//
+// The tests below are parity pins. Each states the CORRECT behavior and is marked
+// `doctest::should_fail`, so it is reported as an expected failure while the defect stands and
+// fails the suite loudly the day the defect is fixed (then drop the decorator). The same defect is
+// in the pure-Python implementation this code replaces, and the port keeps its behavior: the
+// project holds such defects for a later review, and none is fixed in the port.
+
+TEST_CASE("inherited: blossom span below a clamped start" * doctest::should_fail()) {
+  // The first span of a clamped vector holds the parameters below its start (the blossom of a
+  // value within the tolerance below the domain start must be that of the start), which is the
+  // span `degree`, here 2. The search returns the last span instead.
+  const std::vector<double> kn{0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0};
+  CHECK(bs::detail::blossom_span<double>(sp(kn), -8.9e-16, 3) == 2);
+  CHECK(bs::detail::blossom_span<double>(sp(kn), -1.0, 3) == 2);
+}
+
+TEST_CASE("inherited: blossom value below a clamped start" * doctest::should_fail()) {
+  // Control points 1..4 of a clamped quadratic: a parameter 4 eps below the start (accepted with a
+  // tolerance of 8 eps) must give the value at the start, 1, up to the shift times the slope plus
+  // rounding. Slope at most p * max|dP| / min span = 2 * 1 / 0.5 = 4; rounding 8 * 4 units of
+  // roundoff for points of magnitude at most 4. The last span's polynomial gives 2.
+  const std::vector<double> kn{0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0};
+  const std::vector<double> cp{1.0, 2.0, 3.0, 4.0};
+  const double eps = std::numeric_limits<double>::epsilon();
+  const double u = -8.9e-16;
+  const std::vector<double> at_start = {0.0, 0.0};
+  const std::vector<double> below = {u, u};
+  const mdview<const double, 2> ctrl(cp.data(), 4, 1);
+  const std::vector<double> want = bs::blossom<double>(sp(kn), 2, ctrl, sp(at_start), 8.0 * eps);
+  const std::vector<double> got = bs::blossom<double>(sp(kn), 2, ctrl, sp(below), 8.0 * eps);
+  CHECK(want[0] == 1.0);
+  CHECK(std::abs(got[0] - want[0]) <= 4.0 * std::abs(u) + 8.0 * 4.0 * unit_roundoff<double>());
+}
+
+namespace {
+
+/// A float quadratic on [0, 1] with one interior knot at 0.5, and a bound 2^-20 + 2e-8 above it.
+/// The space's tolerance is 8 eps(float) = 2^-20 (span 1), so in `float` the bound rounds to
+/// 0.5 + 2^-20, which is within the tolerance of the knot, while in `double` it is 2e-8 beyond it.
+constexpr double kNearKnot = 0.5 + 0x1p-20 + 2e-8;
+
+bs::Bspline<float> near_knot_curve() {
+  return curve<float>(clamped(2, {0.5}, 1.0), 2, {1.0, 2.0, 3.0, 4.0});
+}
+
+}  // namespace
+
+TEST_CASE("restrict and split: the near-knot float32 bound is the knot by one test only") {
+  // The control of the pins below: the mechanism, and that double knots succeed.
+  const bs::Bspline<float> bf = near_knot_curve();
+  CHECK(bf.space().spaces()[0].tolerance() == 0x1p-20);
+  CHECK(static_cast<double>(static_cast<float>(kNearKnot) - 0.5F) <=
+        bf.space().spaces()[0].tolerance());
+  CHECK(kNearKnot - 0.5 > bf.space().spaces()[0].tolerance());
+  const bs::Bspline<double> bd = curve<double>(clamped(2, {0.5}, 1.0), 2, {1.0, 2.0, 3.0, 4.0});
+  CHECK_NOTHROW(static_cast<void>(bs::restrict<double>(
+      bd, std::vector<std::optional<bs::Bounds>>{bs::Bounds{kNearKnot, 0.9}})));
+  CHECK_NOTHROW(static_cast<void>(bs::split<double>(bd, 0, kNearKnot)));
+}
+
+TEST_CASE("inherited: restrict with a float32 bound near a knot" * doctest::should_fail()) {
+  // The restriction of a float spline at a bound that the multiplicity count takes for the knot
+  // 0.5 (float difference within the tolerance) and the cut takes for a different value (double
+  // difference beyond it) must succeed, as it does for double. It refuses with "knots must have at
+  // least 2*degree+2 elements".
+  const bs::Bspline<float> bf = near_knot_curve();
+  CHECK_NOTHROW(static_cast<void>(
+      bs::restrict<float>(bf, std::vector<std::optional<bs::Bounds>>{bs::Bounds{kNearKnot, 0.9}})));
+}
+
+TEST_CASE("inherited: split of a float32 spline at a value near a knot" * doctest::should_fail()) {
+  const bs::Bspline<float> bf = near_knot_curve();
+  CHECK_NOTHROW(static_cast<void>(bs::split<float>(bf, 0, kNearKnot)));
 }

@@ -19,36 +19,18 @@
 
 namespace pantr {
 
-/// Spell a double as Python's `repr(float)` does.
-///
-/// The digits are the shortest decimal string that reads back to the same double (as
-/// `std::to_chars` produces them); the layout follows CPython's `float_repr`: with the value
-/// written as `0.D * 10**decpt`, positional notation when `-4 < decpt <= 16`, otherwise
-/// exponential with a signed, at-least-two-digit exponent; an integral positional value keeps a
-/// trailing `.0`. Special values are `nan` (whatever the sign bit), `inf`, `-inf`; zero keeps its
-/// sign (`-0.0`).
+namespace detail {
+
+/// Lay out the shortest round-trip digits of a finite value as `repr(float)` does.
 ///
 /// Args:
-///     x (double): The value.
+///     sci (std::string_view): The digits in `std::to_chars` scientific form,
+///         `[-]d[.ddd]e(+|-)dd[d]`, with no trailing zero in the mantissa.
 ///
 /// Returns:
-///     std::string: The spelling, e.g. `3.0`, `0.1`, `1e-05`, `1.5e+16`, `-0.0`, `inf`, `nan`.
-///
-/// Example:
-///     py_repr(1e-5) == "1e-05"; py_repr(100.0) == "100.0"; py_repr(1e16) == "1e+16"
-[[nodiscard]] inline std::string py_repr(double x) {
-  if (std::isnan(x)) {
-    return "nan";
-  }
-  if (std::isinf(x)) {
-    return x > 0 ? "inf" : "-inf";
-  }
-  // Shortest round-trip digits in scientific form: [-]d[.ddd]e(+|-)dd[d]. The longest such
-  // double is 24 characters, so the conversion into 64 bytes cannot run out of room.
-  char buf[64];
-  const auto res = std::to_chars(buf, buf + sizeof(buf), x, std::chars_format::scientific);
-  const std::string_view sci(buf, static_cast<std::size_t>(res.ptr - buf));
-
+///     std::string: The CPython layout: positional when `-4 < decpt <= 16` (the value written as
+///     `0.D * 10**decpt`), otherwise exponential with a signed, at-least-two-digit exponent.
+[[nodiscard]] inline std::string layout_repr(std::string_view sci) {
   std::string_view rest = sci;
   const bool negative = !rest.empty() && rest.front() == '-';
   if (negative) {
@@ -104,6 +86,66 @@ namespace pantr {
   return out;
 }
 
+}  // namespace detail
+
+/// Spell a double as Python's `repr(float)` does.
+///
+/// The digits are the shortest decimal string that reads back to the same double (as
+/// `std::to_chars` produces them); the layout follows CPython's `float_repr`: with the value
+/// written as `0.D * 10**decpt`, positional notation when `-4 < decpt <= 16`, otherwise
+/// exponential with a signed, at-least-two-digit exponent; an integral positional value keeps a
+/// trailing `.0`. Special values are `nan` (whatever the sign bit), `inf`, `-inf`; zero keeps its
+/// sign (`-0.0`).
+///
+/// Args:
+///     x (double): The value.
+///
+/// Returns:
+///     std::string: The spelling, e.g. `3.0`, `0.1`, `1e-05`, `1.5e+16`, `-0.0`, `inf`, `nan`.
+///
+/// Example:
+///     py_repr(1e-5) == "1e-05"; py_repr(100.0) == "100.0"; py_repr(1e16) == "1e+16"
+[[nodiscard]] inline std::string py_repr(double x) {
+  if (std::isnan(x)) {
+    return "nan";
+  }
+  if (std::isinf(x)) {
+    return x > 0 ? "inf" : "-inf";
+  }
+  // Shortest round-trip digits in scientific form: [-]d[.ddd]e(+|-)dd[d]. The longest such
+  // double is 24 characters, so the conversion into 64 bytes cannot run out of room.
+  char buf[64];
+  const auto res = std::to_chars(buf, buf + sizeof(buf), x, std::chars_format::scientific);
+  return detail::layout_repr(std::string_view(buf, static_cast<std::size_t>(res.ptr - buf)));
+}
+
+/// Spell a float as Python spells `repr(float(x))` of the double nearest to the float's shortest
+/// round-trip decimal string, which is how NumPy spells a `float32` element in a message.
+///
+/// The shortest `float` string has at most 9 significant digits, and two distinct decimals of at
+/// most 15 significant digits denote distinct doubles, so that string is also the shortest string
+/// of the double it reads as: laying out the `float` digits gives `repr` of that double without
+/// reading the string back (floating-point `std::from_chars` is missing from some standard
+/// libraries).
+///
+/// Args:
+///     x (float): The value.
+///
+/// Returns:
+///     std::string: The spelling, e.g. `0.1` for `0.1f`; `nan`, `inf`, `-inf` for the special
+///     values.
+[[nodiscard]] inline std::string py_repr_f32(float x) {
+  if (std::isnan(x)) {
+    return "nan";
+  }
+  if (std::isinf(x)) {
+    return x > 0 ? "inf" : "-inf";
+  }
+  char buf[64];
+  const auto res = std::to_chars(buf, buf + sizeof(buf), x, std::chars_format::scientific);
+  return detail::layout_repr(std::string_view(buf, static_cast<std::size_t>(res.ptr - buf)));
+}
+
 /// Spell a double as Python's `format(x, '.<precision>g')` or `format(x, '.<precision>f')` does.
 ///
 /// `std::to_chars` in `general` or `fixed` form with a precision follows C's `%g` and `%f`, which
@@ -134,6 +176,33 @@ namespace pantr {
     // A precision of several hundred digits (fewer for a large value in fixed form) runs out of
     // room.
     throw value_error("py_format: precision " + std::to_string(precision) + " is too large");
+  }
+  return {buf, static_cast<std::size_t>(res.ptr - buf)};
+}
+
+/// Spell a double as Python's `format(x, '.<precision>e')` does.
+///
+/// Args:
+///     x (double): The value.
+///     precision (int): Digits after the point, `>= 0`.
+///
+/// Returns:
+///     std::string: E.g. `5.62e-01` for `(0.5617, 2)`; `nan`, `inf` or `-inf` for the special
+///     values.
+[[nodiscard]] inline std::string py_format_exp(double x, int precision) {
+  if (std::isnan(x)) {
+    return "nan";
+  }
+  if (std::isinf(x)) {
+    return x > 0 ? "inf" : "-inf";
+  }
+  // One digit, the point, the digits, the exponent: a precision of several hundred runs out of
+  // room, as for `py_format`.
+  char buf[400];
+  const auto res =
+      std::to_chars(buf, buf + sizeof(buf), x, std::chars_format::scientific, precision);
+  if (res.ec != std::errc{}) {
+    throw value_error("py_format_exp: precision " + std::to_string(precision) + " is too large");
   }
   return {buf, static_cast<std::size_t>(res.ptr - buf)};
 }

@@ -1,6 +1,7 @@
 // _pantr.bspline: knot insertion, conversion to open and periodic form, subdivision, restriction
 // and splitting of a Bspline; the two knot-vector functions BsplineSpace1D shares; the 1D kernels
-// the Python callers not yet ported reach (_kernels); and the blossom (_testing).
+// the Python callers not yet ported reach (_kernels, which includes the Oslo matrix; _testing
+// re-exports it through pantr._testing); and the blossom and the banded Oslo rows (_testing).
 //
 // This translation unit reaches Eigen (the periodic conversion's QR), which the module's
 // vectorization settings already cover for every unit (EIGEN_DONT_VECTORIZE on MSVC's v4 rung).
@@ -180,8 +181,8 @@ void def_blossom(nb::module_& m, const std::string& suffix) {
   m.def(("oslo_rows" + suffix).c_str(),
         [](long long degree, const In1D<T>& old_knots, const In1D<T>& new_knots) {
           const int p = saturate_degree(degree);
-          // The kernel reads at least degree + 2 knots of each vector (the dense matrix checks).
-          static_cast<void>(bspline::oslo_matrix<T>(p, as_span(old_knots), as_span(new_knots)));
+          // The kernel reads at least degree + 2 knots of each vector.
+          bspline::detail::check_oslo_sizes(p, old_knots.shape(0), new_knots.shape(0));
           bspline::detail::OsloRows<T> rows =
               bspline::detail::oslo_rows<T>(p, as_span(old_knots), as_span(new_knots));
           NdArray<std::int64_t> first({rows.first_col.size()}, for_overwrite);
@@ -190,13 +191,6 @@ void def_blossom(nb::module_& m, const std::string& suffix) {
         },
         nb::arg("degree"), nb::arg("old_knots").noconvert(), nb::arg("new_knots").noconvert(),
         "The banded rows of the Oslo matrix: (alphas (m + 1, degree + 1), first_col (m + 1,)).");
-  m.def(("oslo_matrix" + suffix).c_str(),
-        [](long long degree, const In1D<T>& old_knots, const In1D<T>& new_knots) {
-          return to_numpy(bspline::oslo_matrix<T>(saturate_degree(degree), as_span(old_knots),
-                                                  as_span(new_knots)));
-        },
-        nb::arg("degree"), nb::arg("old_knots").noconvert(), nb::arg("new_knots").noconvert(),
-        "The dense Oslo refinement matrix (m + 1, n + 1).");
   m.def(("evaluate_blossom_1d" + suffix).c_str(),
         [](const In1D<T>& knots, long long degree, const In2D<T>& ctrl, const In1D<T>& u_values,
            double tol) {

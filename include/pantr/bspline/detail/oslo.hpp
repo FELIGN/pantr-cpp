@@ -213,6 +213,21 @@ template <StorageFloat T>
   return out;
 }
 
+/// `row[r] += weight * in[r]` for `r` in `[0, cols)`.
+///
+/// A `noexcept` function of its own so that GCC vectorises the loop: written inside a body that may
+/// throw (the allocation of the result), GCC 14 with `-ffp-contract=on` treats the contracted `fma`
+/// as a statement that can throw and leaves the loop scalar.
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed).
+template <StorageFloat T>
+void accumulate_scaled(T* row, const T* in, T weight, std::size_t cols) noexcept {
+  for (std::size_t r = 0; r < cols; ++r) {
+    row[r] += weight * in[r];
+  }
+}
+
 /// Apply the Oslo algorithm: the control points of the refined space.
 ///
 /// The refinement matrix is never materialised: each new control point is the combination of the
@@ -256,11 +271,7 @@ template <StorageFloat T>
     for (std::size_t l = 0; l < width; ++l) {
       const std::int64_t col = base + static_cast<std::int64_t>(l);
       if (0 <= col && col < n1) {
-        const T weight = band[l];
-        const T* in = src + static_cast<std::size_t>(col) * cols;
-        for (std::size_t r = 0; r < cols; ++r) {
-          row[r] += weight * in[r];
-        }
+        accumulate_scaled<T>(row, src + static_cast<std::size_t>(col) * cols, band[l], cols);
       }
     }
   }

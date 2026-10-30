@@ -143,9 +143,9 @@ def test_an_interior_knot_that_swallows_the_domain_is_refused_too(
 def test_periodic_and_unsnapped_construction_are_covered_as_well() -> None:
     """Neither ``periodic=True`` nor ``snap_knots=False`` is a way back in.
 
-    ``snap_knots=False`` matters because the library uses it internally
-    (``_bspline_split``, ``_bspline_restrict``, ``_bspline_roots``); had the check
-    ridden on snapping, those paths would have kept the hole open.
+    ``snap_knots=False`` matters because the library uses it internally (the C++ ``restrict``
+    and ``split`` in ``include/pantr/bspline/restrict.hpp``, and ``_bspline_roots``); had the
+    check ridden on snapping, those paths would have kept the hole open.
     """
     with pytest.raises(ValueError, match=_NO_INTERVAL):
         BsplineSpace1D(np.full(4, 5.0), 1, periodic=True)

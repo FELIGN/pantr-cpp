@@ -1257,72 +1257,51 @@ auto on_one_and_all_threads(F&& f) {
   return std::make_pair(std::move(one), std::move(all));
 }
 
+/// The number of entries of two equally sized arrays that are not equal (compared as values).
+std::size_t differing(const NdArray<double>& a, const NdArray<double>& b) {
+  REQUIRE(a.size() == b.size());
+  std::size_t count = 0;
+  for (std::size_t i = 0; i < a.size(); ++i) {
+    count += a.data()[i] == b.data()[i] ? 0U : 1U;
+  }
+  return count;
+}
+
 }  // namespace
 
 TEST_CASE("bspline: a result does not depend on the number of threads") {
-  // Bound. A value is computed from its own table rows and control points by the same instructions
-  // on whichever thread claims the chunk that holds it: the chunks are a function of the problem
-  // alone, each value is written by one parallel item, and no loop reduces across items. The
-  // difference between one thread and all is zero by construction. The test asserts what a result
-  // is held to in any case, the derived bound of two summation orders of the same products
-  // (`reorder_bound`, `derivative_bound`): it fails for a dependence on the thread count that
-  // matters and not for a last bit a toolchain may move. The one exception is the derivative of a
-  // rational B-spline, whose quotient rule has no closed bound here: its path is the scattered
-  // one, point by point with no sum across points, and the test asserts the identical operations
-  // it shows, equality.
+  // Exact equality, not a bound. A value is computed from its own table rows and control points by
+  // the same instructions on whichever thread claims the chunk that holds it: the chunks are a
+  // function of the problem alone, each value is written by one parallel item, and no loop reduces
+  // across items. Both runs are in one process, so they execute the same code (the same
+  // instruction-set rung, the same contraction) over the same chunks, and the difference between
+  // one thread and all is zero by construction. A bound for two summation orders
+  // (`reorder_bound`) would admit a dependence on the thread count that this test exists to
+  // refuse. Equality across toolchains is a different claim and is not made here.
   const Big big = make_big();
   const auto [v1, vk] = on_one_and_all_threads([&] { return evaluate_big(big); });
-  CHECK(exceeding(v1, vk, reorder_bound<double, double>(big.b, big.pts, big.n)) == 0);
+  CHECK(differing(v1, vk) == 0);
   // Not a B-spline of the same value: the same space with polynomial control points.
   const auto poly = make_bspline<double>({kQuad, periodic_dir(1)}, 2, false, 33);
   const Big pbig{poly, big.pts, big.n};
   const auto [p1, pk] = on_one_and_all_threads([&] { return differentiate_big(pbig); });
-  const std::vector<std::vector<double>> columns = {[&] {
-                                                      std::vector<double> c(big.n);
-                                                      for (std::size_t i = 0; i < big.n; ++i) {
-                                                        c[i] = big.pts[i * 2];
-                                                      }
-                                                      return c;
-                                                    }(),
-                                                    [&] {
-                                                      std::vector<double> c(big.n);
-                                                      for (std::size_t i = 0; i < big.n; ++i) {
-                                                        c[i] = big.pts[i * 2 + 1];
-                                                      }
-                                                      return c;
-                                                    }()};
-  const std::vector<double> per_column = derivative_bound<double, double>(poly, columns, {1, 1});
-  std::vector<double> bound(p1.size());
-  for (std::size_t i = 0; i < bound.size(); ++i) {
-    bound[i] = per_column[i % poly.rank()];
-  }
-  CHECK(exceeding(p1, pk, bound) == 0);
+  CHECK(differing(p1, pk) == 0);
+  // A rational B-spline, whose derivative is the quotient rule.
   const auto [d1, dk] = on_one_and_all_threads([&] { return differentiate_big(big); });
-  REQUIRE(d1.size() == dk.size());
-  std::size_t differing = 0;
-  for (std::size_t i = 0; i < d1.size(); ++i) {
-    differing += d1.data()[i] == dk.data()[i] ? 0U : 1U;
-  }
-  CHECK(differing == 0);
+  CHECK(differing(d1, dk) == 0);
 
   // The sum-factorised lattice: tiles are cut by the extents alone.
   const auto vol = make_bspline<double>({kQuad, periodic_dir(1), kNonOpen}, 3, true, 35);
   const auto axes = uniform_axes<double, double>(vol, {40, 40, 40});
   const pantr::quad::PointsLattice<double> lat(axes);
-  const std::vector<double> grid = product_rows<double>(axes);
   const auto [l1, lk] =
       on_one_and_all_threads([&] { return bs::evaluate<double, double>(vol, lat); });
-  CHECK(exceeding(l1, lk, reorder_bound<double, double>(vol, grid, grid.size() / 3)) == 0);
+  CHECK(differing(l1, lk) == 0);
   const auto pvol = make_bspline<double>({kQuad, periodic_dir(1), kNonOpen}, 2, false, 37);
   const auto [ld1, ldk] = on_one_and_all_threads([&] {
     return bs::evaluate_derivatives<double, double>(pvol, lat, std::vector<int>{1, 0, 2}).values;
   });
-  const std::vector<double> lcol = derivative_bound<double, double>(pvol, axes, {1, 0, 2});
-  std::vector<double> lbound(ld1.size());
-  for (std::size_t i = 0; i < lbound.size(); ++i) {
-    lbound[i] = lcol[i % pvol.rank()];
-  }
-  CHECK(exceeding(ld1, ldk, lbound) == 0);
+  CHECK(differing(ld1, ldk) == 0);
 }
 
 TEST_CASE("bspline: concurrent evaluations of one value from several threads agree") {

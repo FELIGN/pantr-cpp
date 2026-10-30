@@ -270,12 +270,14 @@ def test_out_of_domain_points_are_rejected_at_large_knot_magnitude() -> None:
     # space's stated tolerance is 1e-15.
     #
     # It was one root cause with 26 sites: every `np.isclose(..., atol=tol)` in
-    # `pantr.bspline` leaves `rtol` at its default, across `_bspline_restrict.py` (10),
+    # `pantr.bspline` leaves `rtol` at its default, across the Python restriction module (10),
     # `_bspline_knots.py` (5), `_bspline_knot_insertion.py` (4),
     # `_bspline_knot_removal.py` (2), `_bspline_product.py` (2),
-    # `_bspline_space_1d.py` (2) and `_bspline_split.py` (1) -- not one of them passed
-    # `rtol`. (A 27th call, in `_bspline_quasi_interpolation.py`, is inside a doctest and
-    # so not a library site.) Consequences measured at the time, all at |knot| ~ 1e6:
+    # `_bspline_space_1d.py` (2) and the Python splitting module (1) -- not one of them passed
+    # `rtol`. (Restriction and splitting are now C++, `include/pantr/bspline/restrict.hpp`; the
+    # counts are those of the Python modules at the time.) (A 27th call, in
+    # `_bspline_quasi_interpolation.py`, is inside a doctest and so not a library site.)
+    # Consequences measured at the time, all at |knot| ~ 1e6:
     # `tabulate_basis` accepted a point 10 units outside a unit-length domain and returned
     # a polynomial extrapolation (max|B| = 640 at degree 2, 4.3e43 at degree 62) instead of
     # raising; `remove_knots` refused to remove the interior knot 1000000.3125, calling it
@@ -849,8 +851,8 @@ def test_restrict_spans_the_requested_window() -> None:
     # worth as much as the bug: `Bspline.restrict` carried no invariant in the sweep, so
     # the case was graded only on whether it raised.
     #
-    # `_restrict_bspline_impl` (`_bspline_restrict.py`, the extraction step) locates the
-    # end of the restricted knot vector with
+    # The extraction step of `Bspline.restrict` (then Python, now `restrict_1d` in
+    # `include/pantr/bspline/restrict.hpp`) located the end of the restricted knot vector with
     #
     #     i_end = int(np.searchsorted(refined_knots, b_new + tol)) - 1
     #

@@ -78,3 +78,45 @@ TEST_CASE("py_repr(shape): matches the spelling of a Python tuple of ints") {
   CHECK(pantr::py_repr(std::span<const std::size_t>(two)) == "(3, 4)");
   CHECK(pantr::py_repr(std::span<const std::size_t>(three)) == "(0, 1, 12)");
 }
+
+TEST_CASE("py_repr_f32: spells a float as repr of the double of its shortest decimal string") {
+  // Oracle: CPython's repr(float(str(numpy.float32(x)))) for the floats written in hexadecimal
+  // (NumPy's str is the shortest string that reads back in float32), an implementation
+  // independent of pantr's.
+  struct F32Case {
+    float value;
+    const char* repr;
+  };
+  constexpr std::array<F32Case, 11> cases{{
+      {0x1.99999ap-4F, "0.1"},
+      {-0x1.99999ap-4F, "-0.1"},
+      {0x1.4f8b58p-17F, "1e-05"},
+      {0x1.000000p+24F, "16777216.0"},
+      {0x1.fffffep+23F, "16777215.0"},
+      {0x1.fffffep+127F, "3.4028235e+38"},
+      {0x1.000000p-126F, "1.1754944e-38"},
+      {0x1.0p+0F, "1.0"},
+      {0x1.8p+1F, "3.0"},
+      {0x1.6a09e6p+0F, "1.4142135"},
+      {0x1.000000p+60F, "1.1529215e+18"},
+  }};
+  for (const F32Case& c : cases) {
+    CAPTURE(c.repr);
+    CHECK(pantr::py_repr_f32(c.value) == c.repr);
+  }
+  CHECK(pantr::py_repr_f32(std::numeric_limits<float>::infinity()) == "inf");
+  CHECK(pantr::py_repr_f32(-std::numeric_limits<float>::infinity()) == "-inf");
+  CHECK(pantr::py_repr_f32(std::numeric_limits<float>::quiet_NaN()) == "nan");
+}
+
+TEST_CASE("py_format_exp: matches Python's format(x, '.<p>e')") {
+  // Oracle: CPython's format on the doubles written here.
+  CHECK(pantr::py_format_exp(0.5617, 2) == "5.62e-01");
+  CHECK(pantr::py_format_exp(1234567.0, 2) == "1.23e+06");
+  CHECK(pantr::py_format_exp(1e-300, 2) == "1.00e-300");
+  CHECK(pantr::py_format_exp(-0.0, 2) == "-0.00e+00");
+  CHECK(pantr::py_format_exp(std::numeric_limits<double>::infinity(), 2) == "inf");
+  CHECK(pantr::py_format_exp(-std::numeric_limits<double>::infinity(), 2) == "-inf");
+  CHECK(pantr::py_format_exp(std::numeric_limits<double>::quiet_NaN(), 2) == "nan");
+  CHECK_THROWS_AS(static_cast<void>(pantr::py_format_exp(1.0, 1000)), pantr::value_error);
+}

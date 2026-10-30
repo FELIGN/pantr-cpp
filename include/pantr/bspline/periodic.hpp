@@ -440,7 +440,7 @@ template <StorageFloat T>
     const double c0_dev = detail::max_abs_propagating<T>(diff);
     if (c0_dev > c0_tol) {
       throw value_error("Function values do not match at the domain endpoints (max deviation " +
-                        detail::format_exp2(c0_dev) + ", tolerance " + detail::format_exp2(c0_tol) +
+                        py_format_exp(c0_dev, 2) + ", tolerance " + py_format_exp(c0_tol, 2) +
                         "). The B-spline is not periodic.");
     }
   }
@@ -539,8 +539,8 @@ template <StorageFloat T>
   }
   const double residual_tol = closure_deviation_budget<T>(ctrl_flat, per_flat, tol_deviation);
   if (residual > residual_tol) {
-    throw value_error("Residual " + detail::format_exp2(residual) + " exceeds tolerance " +
-                      detail::format_exp2(residual_tol) +
+    throw value_error("Residual " + py_format_exp(residual, 2) + " exceeds tolerance " +
+                      py_format_exp(residual_tol, 2) +
                       ". The B-spline does not have sufficient smoothness at the seam for the "
                       "requested periodic regularity.");
   }

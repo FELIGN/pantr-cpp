@@ -96,7 +96,11 @@ class TestRestrictArguments:
         The pure-Python implementation refused ``np.float16`` and ``np.float32`` bounds with an
         unrelated ``ValueError`` ("knots must have at least 2*degree+2 elements"): their
         arithmetic stayed in the narrow type and the cut fell in the wrong place. Bounds are now
-        read as Python floats, which is the behavior ``np.float64`` and ``float`` always had.
+        read as Python floats whatever their NumPy type, so one value is treated the same way
+        under every bound type: where it is compared with a knot of a ``float32`` spline by
+        difference, it is rounded to the spline's dtype first. That differs from the pure-Python
+        implementation for a ``float32`` spline, which compared an ``np.float64`` bound in
+        ``float64`` and a Python ``float`` in ``float32``.
         """
         lo, hi = scalar(0.25), scalar(0.75)
         out = _curve().restrict((lo, hi))
@@ -200,6 +204,48 @@ class TestSubdivideArguments:
         """No array could hold the knots; the request is refused, not attempted."""
         with pytest.raises(ValueError):
             _curve().subdivide(10**30)
+
+
+class TestSpaceSubdivideArguments:
+    """``BsplineSpace1D.subdivide`` normalises its arguments as ``Bspline.subdivide`` does."""
+
+    @pytest.mark.parametrize(
+        ("count", "regularity", "error"),
+        [
+            (2.0, None, TypeError),
+            (2, 1.0, TypeError),
+            (2**70, None, ValueError),
+            (2, 2**70, ValueError),
+            (-(2**70), None, ValueError),
+        ],
+    )
+    def test_the_space_and_the_spline_raise_the_same_exception(
+        self,
+        count: Any,
+        regularity: Any,
+        error: type[Exception],
+    ) -> None:
+        """A float or a 64-bit-overflowing integer is a plain ``TypeError`` or ``ValueError``.
+
+        Raw Python values used to reach the compiled function, which refused them with its own
+        "incompatible function arguments" ``TypeError`` listing every overload.
+        """
+        curve = _curve()
+        space = curve.space.spaces[0]
+        with pytest.raises(error) as from_space:
+            space.subdivide(count, regularity)
+        with pytest.raises(error) as from_spline:
+            curve.subdivide(count, regularity)
+        assert "incompatible function arguments" not in str(from_space.value)
+        assert type(from_space.value) is type(from_spline.value)
+
+    def test_a_numpy_integer_is_a_count(self) -> None:
+        """Anything with ``__index__`` is an integer count or regularity."""
+        space = _curve().space.spaces[0]
+        # The annotations say ``int``; a NumPy integer is accepted at run time, as it is by
+        # ``Bspline.subdivide``'s regularity.
+        from_numpy = space.subdivide(np.int64(2), np.int64(1))  # type: ignore[arg-type]
+        assert from_numpy.knots.size == space.subdivide(2, 1).knots.size
 
 
 class TestToPeriodicArguments:

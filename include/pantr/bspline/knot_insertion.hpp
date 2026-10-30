@@ -50,15 +50,7 @@ namespace pantr::bspline {
 template <StorageFloat T>
 [[nodiscard]] NdArray<T> oslo_matrix(int degree, std::span<const T> old_knots,
                                      std::span<const T> new_knots) {
-  if (degree < 0) {
-    throw value_error("degree must be non-negative");
-  }
-  const auto min_size = static_cast<std::size_t>(degree) + 2;
-  if (old_knots.size() < min_size || new_knots.size() < min_size) {
-    throw value_error("Both knot vectors need at least degree + 2 = " + std::to_string(min_size) +
-                      " knots, got " + std::to_string(old_knots.size()) + " and " +
-                      std::to_string(new_knots.size()) + ".");
-  }
+  detail::check_oslo_sizes(degree, old_knots.size(), new_knots.size());
   return detail::oslo_matrix_dense<T>(degree, old_knots, new_knots);
 }
 
@@ -74,12 +66,15 @@ template <StorageFloat T>
 ///     std::vector<T>: The merged, sorted knot vector.
 ///
 /// Raises:
-///     value_error: `new_knots` is empty; a value lies outside the domain (up to `tol`); or a
-///         knot's resulting multiplicity would exceed `degree + 1`.
+///     value_error: `degree < 0` or fewer than `2 * degree + 2` knots; `new_knots` is empty; a
+///     value
+///         lies outside the domain (up to `tol`); or a knot's resulting multiplicity would exceed
+///         `degree + 1`.
 template <StorageFloat T>
 [[nodiscard]] std::vector<T> compute_inserted_knot_vector(std::span<const T> knots, int degree,
                                                           std::span<const T> new_knots,
                                                           double tol) {
+  detail::check_domain_indexable(knots.size(), degree);
   if (new_knots.empty()) {
     throw value_error("new_knots_to_insert must not be empty.");
   }
