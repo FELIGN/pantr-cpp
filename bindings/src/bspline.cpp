@@ -3,6 +3,7 @@
 #include "arrays.hpp"
 #include "interface.hpp"
 
+#include "pantr/bspline/knot_factories.hpp"
 #include "pantr/bspline/knots.hpp"
 #include "pantr/bspline/space.hpp"
 #include "pantr/bspline/space_1d.hpp"
@@ -21,7 +22,6 @@
 #include <limits>
 #include <optional>
 #include <span>
-#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -98,14 +98,16 @@ void tabulate_derivs_1d(const bspline::BsplineSpace1D<T>& s, const In1D<P>& pts,
   }
   const std::span<const P> p = as_span(pts);
   const mdview<P, 3> o(out->data(), out->shape(0), out->shape(1), out->shape(2));
-  try {
+  bool complete = false;
+  {
     const ReleaseIfParallel gil(p.size(),
                                 bspline::detail::derivs_ops_per_point(s.degree(), n_deriv));
-    s.template tabulate_basis_derivatives<P>(
+    complete = s.template tabulate_basis_derivatives<P>(
         p, n_deriv, o, std::span<std::int64_t>(first->data(), first->shape(0)), validate);
-  } catch (const std::domain_error&) {
+  }
+  if (!complete) {
     // A zero divisor in the derivative recurrence: the error Python's float division raises, as
-    // the previous implementation raised it.
+    // the previous implementation raised it (for fewer than 4096 points).
     PyErr_SetString(PyExc_ZeroDivisionError, "division by zero");
     throw nb::python_error();
   }
@@ -148,10 +150,9 @@ void def_space_1d(nb::module_& m, const char* name) {
       .def(
           "unique_knots_and_multiplicity",
           [](const S& s, bool in_domain) {
-            const auto& c = s.unique_knots_and_multiplicity(in_domain);
-            return std::make_pair(
-                view_1d<T, T>(std::span<const T>(c.knots), s.rep()),
-                view_1d<std::int64_t, T>(std::span<const std::int64_t>(c.multiplicities), s.rep()));
+            const auto [ks, ms] = s.unique_knots_and_multiplicity(in_domain);
+            return std::make_pair(view_1d<T, T>(ks, s.rep()),
+                                  view_1d<std::int64_t, T>(ms, s.rep()));
           },
           nb::arg("in_domain"), "Read-only views of the distinct knots and their multiplicities.")
       .def(
@@ -204,11 +205,22 @@ void def_space_1d(nb::module_& m, const char* name) {
            "Write the basis derivatives of orders 0..n_deriv at `pts` into `out` and `first`.");
 }
 
+/// Operations one tensor-product point costs: the product (two per function) and, at most, each
+/// direction's 1D recurrence (a lattice shares those across points, so this overestimates it).
+template <class T>
+double tensor_ops_per_point(const bspline::BsplineSpace<T>& s) {
+  double ops = 2.0 * static_cast<double>(s.num_local_functions());
+  for (const auto& d : s.spaces()) {
+    ops += bspline::detail::basis_ops_per_point(d.degree());
+  }
+  return ops;
+}
+
 template <class T, class P>
 void tabulate_points(const bspline::BsplineSpace<T>& s, const In2D<P>& pts, OutND<T, 2>& out,
                      OutFirst2D& first) {
   const mdview<const P, 2> p(pts.data(), pts.shape(0), pts.shape(1));
-  const ReleaseIfParallel gil(pts.shape(0), 2.0 * static_cast<double>(s.num_local_functions()));
+  const ReleaseIfParallel gil(pts.shape(0), tensor_ops_per_point(s));
   s.template tabulate_basis<P>(
       p, mdview<T, 2>(out.data(), out.shape(0), out.shape(1)),
       mdview<std::int64_t, 2>(first.data(), first.shape(0), first.shape(1)));
@@ -217,8 +229,7 @@ void tabulate_points(const bspline::BsplineSpace<T>& s, const In2D<P>& pts, OutN
 template <class T, class L>
 void tabulate_lattice(const bspline::BsplineSpace<T>& s, const quad::PointsLattice<L>& lattice,
                       OutND<L, 2>& out, OutFirst2D& first) {
-  const ReleaseIfParallel gil(lattice.num_points(),
-                              2.0 * static_cast<double>(s.num_local_functions()));
+  const ReleaseIfParallel gil(lattice.num_points(), tensor_ops_per_point(s));
   s.template tabulate_basis<L>(
       lattice, mdview<L, 2>(out.data(), out.shape(0), out.shape(1)),
       mdview<std::int64_t, 2>(first.data(), first.shape(0), first.shape(1)));
@@ -297,19 +308,30 @@ void def_factories(nb::module_& m, const std::string& suffix) {
         nb::arg("num_intervals"), nb::arg("degree"), "The cardinal B-spline knot vector.");
 }
 
+/// Refuse an empty knot vector, which the knot helpers read the ends of.
+template <class T>
+std::vector<T> non_empty(std::vector<T> v) {
+  if (v.empty()) {
+    throw value_error("the knot vector is empty");
+  }
+  return v;
+}
+
 template <class T>
 void def_knot_kernels(nb::module_& m) {
   m.def(
-      "knot_scale", [](const AnyStride1D<T>& k) { return bspline::knot_scale<T>(gather(k)); },
+      "knot_scale",
+      [](const AnyStride1D<T>& k) { return bspline::knot_scale<T>(non_empty(gather(k))); },
       nb::arg("knots"), "max(span, |knots[0]|, |knots[-1]|) of a non-empty knot vector.");
   m.def(
       "knot_tolerance",
-      [](const AnyStride1D<T>& k) { return bspline::knot_tolerance<T>(gather(k)); },
+      [](const AnyStride1D<T>& k) { return bspline::knot_tolerance<T>(non_empty(gather(k))); },
       nb::arg("knots"), "The absolute parametric tolerance of a non-empty knot vector.");
   m.def(
       "check_snapping_kept_an_interval",
       [](const AnyStride1D<T>& raw, const AnyStride1D<T>& snapped, double tol) {
-        bspline::check_snapping_kept_an_interval<T>(gather(raw), gather(snapped), tol);
+        bspline::check_snapping_kept_an_interval<T>(non_empty(gather(raw)),
+                                                    non_empty(gather(snapped)), tol);
       },
       nb::arg("raw"), nb::arg("snapped"), nb::arg("tol"),
       "Refuse a knot vector that snapping collapsed onto one point.");

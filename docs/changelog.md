@@ -375,10 +375,16 @@
 - **`degree=True` or `False` is the integer it is** (`1` or `0`) in `BsplineSpace1D`; the previous
   release failed in Numba's typing (`TypingError`) on most knot vectors.
 - **A `float32` point array on a `float64` Bézier-like space** (`BsplineSpace1D.tabulate_basis`,
-  `tabulate_basis_derivatives`), and points of a dtype other than the space's in a one-direction
-  `BsplineSpace.tabulate_basis`, are accepted and tabulated in the points' dtype (respectively the
-  space's): the previous release refused them with "Output array has dtype ...". A list of points
-  (or any array-like) is accepted by `BsplineSpace.tabulate_basis`, which raised `AttributeError`.
+  `tabulate_basis_derivatives`, and `BsplineSpace.tabulate_basis` with such a direction), and
+  points of a dtype other than the space's in a one-direction `BsplineSpace.tabulate_basis`, are
+  accepted and tabulated in the points' dtype (respectively the space's): the previous release
+  refused them with "Output array has dtype ...". A list of points (or any array-like) is accepted
+  by `BsplineSpace.tabulate_basis`, which raised `AttributeError`.
+- **`tabulate_basis_derivatives` raises `ZeroDivisionError` at every batch size** when the
+  derivative recurrence divides by zero, which a basis function of empty support produces (a
+  knot repeated more than `degree + 1` times within a point's support, at order `n_deriv >= 1`).
+  The previous release raised it below 4096 points and returned non-finite values for a larger
+  batch.
 - **No `RuntimeWarning` from `create_uniform_open_knots` or `create_uniform_periodic_knots`** at an
   infinite domain end; the knot vectors are the same.
 - **Inputs outside the annotated types** in `BsplineSpace1D` and the knot factories raise another

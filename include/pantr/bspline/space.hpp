@@ -98,7 +98,7 @@ class BsplineSpace {
   [[nodiscard]] double tolerance() const noexcept {
     double t = spaces_[0].tolerance();
     for (const auto& s : spaces_) {
-      t = std::max(t, s.tolerance());
+      t = (std::max)(t, s.tolerance());
     }
     return t;
   }

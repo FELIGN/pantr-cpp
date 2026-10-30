@@ -4,7 +4,8 @@
 ///
 /// The knots are of type `K` and the points and outputs of type `P`, which may differ. Each
 /// quantity is held in the type the Numba kernels this replaces held it in: the knot differences
-/// in `K`, the basis values in `P`, and every mixed operation in `std::common_type_t<K, P>`.
+/// in `K`, the values of A2.2 in `P` (A2.3 holds its values in `K` and stores them in `P`), and
+/// every mixed operation in `std::common_type_t<K, P>`.
 #pragma once
 
 #include "pantr/basis/detail/tabulate_1d.hpp"
@@ -12,10 +13,10 @@
 #include "pantr/core/scalar.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <span>
-#include <stdexcept>
 #include <type_traits>
 #include <vector>
 
@@ -47,11 +48,11 @@ template <StorageFloat K, StorageFloat P>
                                    [](W v, K k) { return v < static_cast<W>(k); });
   const auto raw = static_cast<std::ptrdiff_t>(it - knots.begin()) - 1;
   const auto max_id = static_cast<std::ptrdiff_t>(knots.size()) - degree - 2;
-  std::ptrdiff_t id = std::min(raw, max_id);
-  id = std::max(id, static_cast<std::ptrdiff_t>(degree));
+  std::ptrdiff_t id = (std::min)(raw, max_id);
+  id = (std::max)(id, static_cast<std::ptrdiff_t>(degree));
   std::int64_t first = id - degree;
   if (!periodic) {
-    first = std::min<std::int64_t>(first, num_basis - degree - 1);
+    first = (std::min<std::int64_t>)(first, num_basis - degree - 1);
   }
   return {static_cast<std::size_t>(id), first};
 }
@@ -210,8 +211,10 @@ template <StorageFloat K, StorageFloat P>
       std::swap(s1, s2);
     }
   }
-  // Row k times degree! / (degree - k)!, an integer product (wrapping as a 64-bit integer would,
-  // far past any degree in use) applied in double; zero from k = degree + 1 on.
+  // Row k times degree! / (degree - k)!, a 64-bit integer product applied in double; zero from
+  // k = degree + 1 on. The product wraps as the Numba kernel's did once it exceeds 2^63, which
+  // degree! / (degree - k)! can from degree 21 on (21! > 2^63): rows of order 21 and above are then
+  // wrong, as they were before.
   std::uint64_t fac = static_cast<std::uint64_t>(static_cast<std::int64_t>(degree));
   for (int k = 1; k <= n_deriv; ++k) {
     const auto f = static_cast<double>(static_cast<std::int64_t>(fac));
@@ -224,14 +227,16 @@ template <StorageFloat K, StorageFloat P>
 }
 
 /// Operations one point of the value recurrence costs: about `2 (p + 1)^2` for the triangle plus
-/// the span search's `log2` of the knot count, rounded up to a constant.
+/// the span search's `log2` of the knot count, taken as an admitted constant of 16 (a binary
+/// search over up to 65536 knots), not derived from the vector at hand.
 inline double basis_ops_per_point(int degree) {
   const double ord = static_cast<double>(degree) + 1.0;
   return 2.0 * ord * ord + 16.0;
 }
 
 /// Operations one point of the derivative recurrence costs: the `(p + 1)^2` triangle and
-/// `(p + 1)(n_deriv + 1)` rows of `O(p + 1)` work.
+/// `(p + 1)(n_deriv + 1)` rows of `O(p + 1)` work, about `(p + 1)^2 (2 n_deriv + 3)` with the
+/// constant factors an admitted estimate, plus the span search as in `basis_ops_per_point`.
 inline double derivs_ops_per_point(int degree, int n_deriv) {
   const double ord = static_cast<double>(degree) + 1.0;
   return ord * ord * (2.0 * static_cast<double>(n_deriv) + 3.0) + 16.0;
@@ -261,17 +266,19 @@ void tabulate_basis_kernel(std::span<const K> knots, int degree, bool periodic, 
 
 /// The derivatives and first indices at every point (general knots), over the pool where it pays.
 ///
-/// Raises:
-///     std::domain_error: A point's derivative rows met a zero divisor (see `basis_derivs_point`).
+/// Returns:
+///     bool: False when a point's derivative rows met a zero divisor (see `basis_derivs_point`);
+///     the output is then incomplete.
 ///
 /// Note:
 ///     Inputs are assumed to be correct (no validation performed).
 template <StorageFloat K, StorageFloat P>
-void tabulate_derivs_kernel(std::span<const K> knots, int degree, bool periodic,
-                            long long num_basis, int n_deriv, std::span<const P> pts, P* out,
-                            std::int64_t* first) {
+[[nodiscard]] bool tabulate_derivs_kernel(std::span<const K> knots, int degree, bool periodic,
+                                          long long num_basis, int n_deriv, std::span<const P> pts,
+                                          P* out, std::int64_t* first) {
   const std::size_t block =
       (static_cast<std::size_t>(degree) + 1) * (static_cast<std::size_t>(n_deriv) + 1);
+  std::atomic<bool> complete{true};
   pantr::basis::detail::for_each_chunk(
       pts.size(), derivs_ops_per_point(degree, n_deriv), sizeof(P) * block + sizeof(std::int64_t),
       [&](std::size_t begin, std::size_t end) {
@@ -281,12 +288,12 @@ void tabulate_derivs_kernel(std::span<const K> knots, int degree, bool periodic,
           first[i] = sf.first;
           if (!basis_derivs_point<K, P>(knots.data(), degree, n_deriv, sf.knot_id, pts[i],
                                         out + i * block, scratch)) {
-            throw std::domain_error(
-                "division by zero: the derivative recurrence met a basis function of empty "
-                "support (a knot repeated more than degree + 1 times)");
+            complete.store(false, std::memory_order_relaxed);
+            return;
           }
         }
       });
+  return complete.load(std::memory_order_relaxed);
 }
 
 }  // namespace pantr::bspline::detail

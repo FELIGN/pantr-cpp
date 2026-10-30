@@ -5,6 +5,7 @@
 #include "pantr/basis/bernstein.hpp"
 #include "pantr/basis/detail/tabulate_1d.hpp"
 #include "pantr/bspline/detail/basis_kernels.hpp"
+#include "pantr/bspline/knot_factories.hpp"
 #include "pantr/bspline/knots.hpp"
 #include "pantr/config.hpp"
 #include "pantr/core/errors.hpp"
@@ -37,7 +38,8 @@ namespace detail {
 ///     tol (double): Absolute parametric tolerance (`knot_tolerance` of the knots as given).
 ///     num_basis (long long): Number of basis functions.
 ///     classes (KnotClasses<T>): Every knot class.
-///     domain_classes (KnotClasses<T>): The classes from the first domain knot's to the last's.
+///     lo_class (std::size_t): The class holding the first domain knot.
+///     hi_class (std::size_t): The class holding the last domain knot.
 ///     first_basis (std::vector<std::int64_t>): First supported function of each interval.
 ///     left_open (bool): The first `degree + 1` knots are one knot (never for a periodic space).
 ///     right_open (bool): The last `degree + 1` knots are one knot (never for a periodic space).
@@ -50,7 +52,8 @@ struct BsplineSpace1DRep {
   double tol = 0.0;
   long long num_basis = 0;
   KnotClasses<T> classes;
-  KnotClasses<T> domain_classes;
+  std::size_t lo_class = 0;
+  std::size_t hi_class = 0;
   std::vector<std::int64_t> first_basis;
   bool left_open = false;
   bool right_open = false;
@@ -78,6 +81,20 @@ void check_knots_and_degree(std::span<const T> knots, int degree) {
 }
 
 }  // namespace detail
+
+/// The basis derivatives at points, and whether they are complete.
+///
+/// Attributes:
+///     values (NdArray<P>): `(n, n_deriv + 1, degree + 1)` derivatives.
+///     first (NdArray<std::int64_t>): `(n,)` first supported function per point.
+///     complete (bool): False when the recurrence met a zero divisor (see
+///         `BsplineSpace1D::tabulate_basis_derivatives`); `values` is then incomplete.
+template <StorageFloat P>
+struct [[nodiscard]] BasisDerivatives {
+  NdArray<P> values;
+  NdArray<std::int64_t> first;
+  bool complete;
+};
 
 /// A 1D B-spline space: a non-decreasing knot vector and a degree, possibly periodic.
 ///
@@ -148,11 +165,22 @@ class BsplineSpace1D {
   [[nodiscard]] long long num_basis() const noexcept { return rep_->num_basis; }
   /// The number of in-domain intervals, at least 1.
   [[nodiscard]] long long num_intervals() const noexcept {
-    return static_cast<long long>(rep_->domain_classes.knots.size()) - 1;
+    return static_cast<long long>(rep_->hi_class - rep_->lo_class);
   }
-  /// The distinct knots and multiplicities, all of them or only the domain's classes.
-  [[nodiscard]] const KnotClasses<T>& unique_knots_and_multiplicity(bool in_domain) const noexcept {
-    return in_domain ? rep_->domain_classes : rep_->classes;
+  /// The distinct knots (each class's first) and their multiplicities, all of them or only the
+  /// classes from the first domain knot's to the last's (whole classes).
+  ///
+  /// Returns:
+  ///     std::pair<std::span<const T>, std::span<const std::int64_t>>: Views into the space.
+  [[nodiscard]] std::pair<std::span<const T>, std::span<const std::int64_t>>
+  unique_knots_and_multiplicity(bool in_domain) const noexcept {
+    const std::span<const T> k(rep_->classes.knots);
+    const std::span<const std::int64_t> m(rep_->classes.multiplicities);
+    if (!in_domain) {
+      return {k, m};
+    }
+    const std::size_t count = rep_->hi_class - rep_->lo_class + 1;
+    return {k.subspan(rep_->lo_class, count), m.subspan(rep_->lo_class, count)};
   }
   /// The domain `(knots[degree], knots[size - degree - 1])`.
   [[nodiscard]] std::pair<T, T> domain() const noexcept {
@@ -291,14 +319,19 @@ class BsplineSpace1D {
   ///     first (std::span<std::int64_t>): `pts.size()` entries.
   ///     validate (bool): Refuse points outside the domain. Defaults to true.
   ///
+  /// Returns:
+  ///     bool: True when every point was evaluated; false when the derivative recurrence met a zero
+  ///     divisor, which a basis function of empty support produces (a knot repeated more than
+  ///     `degree + 1` times in a point's support). `out` is then incomplete. A2.3 divides there
+  ///     unguarded; the previous implementation raised `ZeroDivisionError`.
+  ///
   /// Raises:
   ///     value_error: `n_deriv < 0` (first), `validate` and a point outside the domain, `out` or
   ///         `first` of another size.
-  ///     std::domain_error: The recurrence divided by zero, which a basis function of empty
-  ///         support produces (a knot repeated more than `degree + 1` times in a point's support).
   template <StorageFloat P>
-  void tabulate_basis_derivatives(std::span<const P> pts, int n_deriv, mdview<P, 3> out,
-                                  std::span<std::int64_t> first, bool validate = true) const {
+  [[nodiscard]] bool tabulate_basis_derivatives(std::span<const P> pts, int n_deriv,
+                                                mdview<P, 3> out, std::span<std::int64_t> first,
+                                                bool validate = true) const {
     check_n_deriv(n_deriv);
     basis::detail::check_out<P, 3>(out, {pts.size(), static_cast<std::size_t>(n_deriv) + 1,
                                          static_cast<std::size_t>(degree()) + 1});
@@ -306,17 +339,17 @@ class BsplineSpace1D {
     if (validate) {
       check_in_domain<P>(pts);
     }
-    tabulate_derivatives_unchecked<P>(pts, n_deriv, out.data_handle(), first.data());
+    return tabulate_derivatives_unchecked<P>(pts, n_deriv, out.data_handle(), first.data());
   }
 
   /// Evaluate the derivatives at each point (see the `out` overload).
   ///
   /// Returns:
-  ///     std::pair<NdArray<P>, NdArray<std::int64_t>>: Values `(n, n_deriv + 1, degree + 1)` and
-  ///     first indices `(n,)`.
+  ///     BasisDerivatives<P>: Values `(n, n_deriv + 1, degree + 1)`, first indices `(n,)` and
+  ///     whether every point was evaluated.
   template <StorageFloat P>
-  [[nodiscard]] std::pair<NdArray<P>, NdArray<std::int64_t>> tabulate_basis_derivatives(
-      std::span<const P> pts, int n_deriv, bool validate = true) const {
+  [[nodiscard]] BasisDerivatives<P> tabulate_basis_derivatives(std::span<const P> pts, int n_deriv,
+                                                               bool validate = true) const {
     check_n_deriv(n_deriv);
     if (validate) {
       check_in_domain<P>(pts);
@@ -325,8 +358,9 @@ class BsplineSpace1D {
         {pts.size(), static_cast<std::size_t>(n_deriv) + 1, static_cast<std::size_t>(degree()) + 1},
         for_overwrite);
     NdArray<std::int64_t> first({pts.size()}, for_overwrite);
-    tabulate_derivatives_unchecked<P>(pts, n_deriv, values.data(), first.data());
-    return {std::move(values), std::move(first)};
+    const bool complete =
+        tabulate_derivatives_unchecked<P>(pts, n_deriv, values.data(), first.data());
+    return {std::move(values), std::move(first), complete};
   }
 
   /// The windowed sub-space over the intervals `[lo, hi)`: a slice of this space's knots (never
@@ -354,7 +388,7 @@ class BsplineSpace1D {
           "restrict: require 0 <= interval_lo < interval_hi <= " + std::to_string(n_int) +
           "; got [" + std::to_string(lo) + ", " + std::to_string(hi) + ").");
     }
-    const std::vector<T>& u = rep_->domain_classes.knots;
+    const std::span<const T> u = unique_knots_and_multiplicity(true).first;
     const auto ulo = static_cast<std::size_t>(lo);
     const auto uhi = static_cast<std::size_t>(hi);
     const T half = static_cast<T>(0.5);
@@ -437,8 +471,8 @@ class BsplineSpace1D {
   }
 
   template <StorageFloat P>
-  void tabulate_derivatives_unchecked(std::span<const P> pts, int n_deriv, P* out,
-                                      std::int64_t* first) const {
+  [[nodiscard]] bool tabulate_derivatives_unchecked(std::span<const P> pts, int n_deriv, P* out,
+                                                    std::int64_t* first) const {
     const int p = degree();
     if (rep_->bezier_like) {
       const std::vector<P> u = to_unit<P>(pts);
@@ -465,10 +499,10 @@ class BsplineSpace1D {
       for (std::size_t i = 0; i < pts.size(); ++i) {
         first[i] = 0;
       }
-      return;
+      return true;
     }
-    detail::tabulate_derivs_kernel<T, P>(knots(), p, periodic(), num_basis(), n_deriv, pts, out,
-                                         first);
+    return detail::tabulate_derivs_kernel<T, P>(knots(), p, periodic(), num_basis(), n_deriv, pts,
+                                                out, first);
   }
 
   static std::shared_ptr<const Rep> build(std::span<const T> raw, int degree, bool periodic,
@@ -483,23 +517,25 @@ class BsplineSpace1D {
     rep->periodic = periodic;
     rep->tol = raw_tol;
     rep->knots.assign(raw.begin(), raw.end());
+    // One classification serves the snapping and the space: snapping writes each class's first
+    // knot over its members, and the snapped vector's classes are the raw vector's (the step
+    // between two representatives is at least the step that separated their classes, rounding
+    // being monotone, and a class's members become equal), as `unique_knots_and_multiplicity`'s
+    // idempotence states.
+    KnotClassification<T> cls = classify_knots<T>(raw, degree, rep->tol);
     if (snap_knots) {
-      const KnotClasses<T> cls =
-          bspline::unique_knots_and_multiplicity<T>(raw, degree, rep->tol, false);
-      std::vector<T> snapped;
-      snapped.reserve(raw.size());
-      for (std::size_t c = 0; c < cls.knots.size(); ++c) {
-        snapped.insert(snapped.end(), static_cast<std::size_t>(cls.multiplicities[c]),
-                       cls.knots[c]);
+      auto it = rep->knots.begin();
+      for (std::size_t c = 0; c < cls.classes.knots.size(); ++c) {
+        it = std::fill_n(it, cls.classes.multiplicities[c], cls.classes.knots[c]);
       }
-      rep->knots = std::move(snapped);
       check_snapping_kept_an_interval<T>(raw, rep->knots, rep->tol);
     }
     const std::span<const T> k(rep->knots);
-    rep->classes = bspline::unique_knots_and_multiplicity<T>(k, degree, rep->tol, false);
-    rep->domain_classes = bspline::unique_knots_and_multiplicity<T>(k, degree, rep->tol, true);
-    check_space_has_an_interval<T>(
-        k, degree, static_cast<long long>(rep->domain_classes.knots.size()) - 1, rep->tol);
+    rep->classes = std::move(cls.classes);
+    rep->lo_class = cls.lo_class;
+    rep->hi_class = cls.hi_class;
+    check_space_has_an_interval<T>(k, degree, static_cast<long long>(rep->hi_class - rep->lo_class),
+                                   rep->tol);
     if (degree > 0 && rep->classes.multiplicities.back() > degree + 1LL) {
       throw value_error("the last knot may repeat at most " + std::to_string(degree + 1) +
                         " times");

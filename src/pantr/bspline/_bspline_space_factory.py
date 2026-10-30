@@ -24,9 +24,15 @@ from ._bspline_space_nd import BsplineSpace
 _cpp: Any = ext.bspline
 """The compiled knot factories (private)."""
 
+_OPEN: tuple[Any, Any] = (_cpp.uniform_open_knots, _cpp.uniform_open_knots_f32)
+"""The compiled uniform open knot builders, for float64 and float32 knots."""
+
+_PERIODIC: tuple[Any, Any] = (_cpp.uniform_periodic_knots, _cpp.uniform_periodic_knots_f32)
+"""The compiled uniform periodic knot builders, for float64 and float32 knots."""
+
 
 def _uniform_knots(  # noqa: PLR0913
-    kind: str,
+    builders: tuple[Any, Any],
     num_intervals: int,
     degree: int,
     continuity: int,
@@ -41,7 +47,9 @@ def _uniform_knots(  # noqa: PLR0913
     than ``float32`` and ``float64`` is refused after them.
 
     Args:
-        kind (str): ``"open"`` or ``"periodic"``.
+        builders (tuple[Any, Any]): The compiled builder for ``float64`` knots and the one for
+            ``float32`` knots (``uniform_open_knots`` or ``uniform_periodic_knots`` and their
+            ``_f32`` twins).
         num_intervals (int): Number of intervals.
         degree (int): Degree.
         continuity (int): Continuity at the interior knots.
@@ -55,8 +63,7 @@ def _uniform_knots(  # noqa: PLR0913
     Raises:
         ValueError: If an argument is out of range or the dtype is not supported.
     """
-    suffix = "_f32" if dtype == np.float32 else ""
-    builder = getattr(_cpp, f"uniform_{kind}_knots{suffix}")
+    builder = builders[1] if dtype == np.float32 else builders[0]
     if dtype not in (np.float32, np.float64):
         # Checked in double first, so a value error is reported before the dtype one.
         builder(num_intervals, degree, continuity, float(start), float(end))
@@ -117,7 +124,7 @@ def create_uniform_open_knots(
     start, end, dtype = _get_knots_ends_and_dtype(start_value, end_value, dtype)
 
     continuity = degree - 1 if continuity is None else continuity
-    return _uniform_knots("open", num_intervals, degree, continuity, start, end, dtype)
+    return _uniform_knots(_OPEN, num_intervals, degree, continuity, start, end, dtype)
 
 
 def create_uniform_periodic_knots(
@@ -169,7 +176,7 @@ def create_uniform_periodic_knots(
 
     start, end, dtype = _get_knots_ends_and_dtype(start_value, end_value, dtype)
     continuity = degree - 1 if continuity is None else continuity
-    return _uniform_knots("periodic", num_intervals, degree, continuity, start, end, dtype)
+    return _uniform_knots(_PERIODIC, num_intervals, degree, continuity, start, end, dtype)
 
 
 def create_cardinal_knots(

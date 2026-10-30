@@ -16,9 +16,10 @@ import numpy as np
 from numpy import typing as npt
 
 from .._ext import ext
+from ..basis._basis_utils import _allocate_or_validate_out
 from ..quad import PointsLattice
 from ._bspline_cell_supports import _cell_supports_impl
-from ._bspline_space_1d import _kernel_buffer, _prepared_out
+from ._bspline_space_1d import _FIRST_DTYPE, _first_out, _kernel_buffer
 
 if TYPE_CHECKING:
     from ._bspline_space_1d import BsplineSpace1D
@@ -294,14 +295,17 @@ class BsplineSpace:
         first_shape = (*pts_shape, self.dim)
         if out_basis is None and out_first_basis is None:
             values = np.empty((num_pts, num_local), dtype=dtype)
-            first = np.empty((num_pts, self.dim), dtype=np.int_)
+            first = np.empty((num_pts, self.dim), dtype=_FIRST_DTYPE)
             call(values, first)
-            return values.reshape(values_shape), first.reshape(first_shape)
-        out_basis = _prepared_out(out_basis, values_shape, dtype)
-        out_first_basis = _prepared_out(out_first_basis, first_shape, np.int_)
+            return (
+                values.reshape(values_shape),
+                first.astype(np.int_, copy=False).reshape(first_shape),
+            )
+        out_basis = _allocate_or_validate_out(out_basis, values_shape, dtype)
+        out_first_basis = _first_out(out_first_basis, first_shape)
         with (
             _kernel_buffer(out_basis, (num_pts, num_local)) as values,
-            _kernel_buffer(out_first_basis, (num_pts, self.dim)) as first,
+            _kernel_buffer(out_first_basis, (num_pts, self.dim), _FIRST_DTYPE) as first,
         ):
             call(values, first)
         return out_basis, out_first_basis

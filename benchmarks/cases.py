@@ -608,7 +608,9 @@ def _s4_space_cases() -> list[Case]:
         space = BsplineSpace([space_1d] * dim)
         for size, n in nd_points.items():
 
-            def setup_nd(n: int = n, dim: int = dim, space: Any = space) -> Callable[[], Any]:
+            def setup_nd(
+                n: int = n, dim: int = dim, space: BsplineSpace = space
+            ) -> Callable[[], Any]:
                 pts = np.random.default_rng(1234).random((n, dim))
                 return lambda: space.tabulate_basis(pts)
 

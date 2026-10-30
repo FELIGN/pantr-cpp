@@ -7,6 +7,7 @@
 #pragma once
 
 #include "pantr/config.hpp"
+#include "pantr/core/errors.hpp"
 
 #include <charconv>
 #include <cmath>
@@ -14,6 +15,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <system_error>
 
 namespace pantr {
 
@@ -128,6 +130,10 @@ namespace pantr {
   char buf[400];
   const auto fmt = fixed ? std::chars_format::fixed : std::chars_format::general;
   const auto res = std::to_chars(buf, buf + sizeof(buf), x, fmt, precision);
+  if (res.ec != std::errc{}) {
+    // Only a fixed spelling with a precision of about 90 or more digits runs out of room.
+    throw value_error("py_format: precision " + std::to_string(precision) + " is too large");
+  }
   return {buf, static_cast<std::size_t>(res.ptr - buf)};
 }
 

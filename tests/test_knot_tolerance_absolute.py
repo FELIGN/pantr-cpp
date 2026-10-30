@@ -567,11 +567,12 @@ class TestDerivedKnotTolerance:
     @staticmethod
     @pytest.mark.parametrize("dtype", [np.float32, np.float64])
     def test_classes_partition_the_knot_vector(dtype: type[np.floating]) -> None:
-        """``np.repeat(unique, mults)`` rebuilds the whole vector, which ``_snap_knots`` needs.
+        """``np.repeat(unique, mults)`` rebuilds the whole vector, as snapping needs.
 
-        ``BsplineSpace1D._snap_knots`` *is* that ``np.repeat``, so if the
-        multiplicities stopped summing to ``knots.size`` the space would silently
-        change length. Checked directly on the kernel, with ``in_domain=False``.
+        The Numba kernel still serving the unported B-spline modules must group exactly as
+        the C++ space snaps (each class onto its first knot), so if the multiplicities
+        stopped summing to ``knots.size`` a vector rebuilt from them would change length.
+        Checked directly on the kernel, with ``in_domain=False``.
         """
         raw = np.asarray([0.0, 0.0, 0.0, 0.25, 0.5, 0.5, 0.75, 1.0, 1.0, 1.0], dtype=dtype)
         space = BsplineSpace1D(raw, 2)

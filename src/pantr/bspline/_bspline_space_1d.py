@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import contextlib
 import copy as _copy
+import functools
 from collections.abc import Iterator
 from typing import Any
 
@@ -24,6 +25,7 @@ from numpy import typing as npt
 from .._ext import ext
 from ..basis import LagrangeVariant
 from ..basis._basis_utils import (
+    _allocate_or_validate_out,
     _compute_final_output_shape_1D,
     _compute_final_output_shape_1D_deriv,
     _normalize_points_1D,
@@ -80,45 +82,51 @@ def _as_knot_array(knots: npt.ArrayLike) -> npt.NDArray[np.float32 | np.float64]
     return np.ascontiguousarray(arr)
 
 
-def _prepared_out(
-    out: npt.NDArray[Any] | None, shape: tuple[int, ...], dtype: npt.DTypeLike
-) -> npt.NDArray[Any]:
-    """Allocate an output array, or validate the caller's with the messages the suite matches.
+_FIRST_DTYPE: np.dtype[np.int64] = np.dtype(np.int64)
+"""The dtype the C++ library writes first-basis indices in (``np.int_`` is that on NumPy 2)."""
+
+
+def _first_out(out: npt.NDArray[np.int_] | None, shape: tuple[int, ...]) -> npt.NDArray[np.int_]:
+    """Allocate a first-basis index array, or validate the caller's as the previous release did.
 
     Args:
-        out (npt.NDArray[Any] | None): The caller's array, or None.
+        out (npt.NDArray[np.int_] | None): The caller's array, or None.
         shape (tuple[int, ...]): The shape it must have.
-        dtype (npt.DTypeLike): The dtype it must have (spelled in the message as given).
 
     Returns:
-        npt.NDArray[Any]: ``out``, or a fresh array.
+        npt.NDArray[np.int_]: ``out``, or a fresh ``np.int_`` array.
 
     Raises:
-        ValueError: If ``out`` has another shape or dtype, or is not writeable.
+        ValueError: If ``out`` has another shape or dtype than ``np.int_``, or is not writeable.
     """
     if out is None:
-        return np.empty(shape, dtype=dtype)
-    _validate_out_array(out, shape, dtype)
+        return np.empty(shape, dtype=np.int_)
+    _validate_out_array(out, shape, np.int_)
     return out
 
 
 @contextlib.contextmanager
-def _kernel_buffer(out: npt.NDArray[Any], shape: tuple[int, ...]) -> Iterator[npt.NDArray[Any]]:
+def _kernel_buffer(
+    out: npt.NDArray[Any], shape: tuple[int, ...], dtype: npt.DTypeLike | None = None
+) -> Iterator[npt.NDArray[Any]]:
     """Give the C++ call a C-contiguous array of ``shape`` that ends up in ``out``.
 
-    ``out`` is used directly when it reshapes to a C-contiguous view; otherwise a
-    temporary is handed out and copied into ``out`` once the block completes (not when
-    it raises).
+    ``out`` is used directly when it reshapes to a C-contiguous view of the dtype the
+    call writes; otherwise a temporary is handed out and copied into ``out`` once the
+    block completes (not when it raises).
 
     Args:
         out (npt.NDArray[Any]): The validated output array.
         shape (tuple[int, ...]): The shape the C++ call writes.
+        dtype (npt.DTypeLike | None): The dtype the C++ call writes; ``out``'s when None.
 
     Yields:
         npt.NDArray[Any]: The array to write into.
     """
     buffer, copy_back = _reshaped_out(out, shape)
-    target = buffer if buffer.flags.c_contiguous else np.empty(shape, dtype=buffer.dtype)
+    kernel_dtype = buffer.dtype if dtype is None else np.dtype(dtype)
+    direct = buffer.flags.c_contiguous and buffer.dtype == kernel_dtype
+    target = buffer if direct else np.empty(shape, dtype=kernel_dtype)
     yield target
     if target is not buffer:
         buffer[...] = target
@@ -153,7 +161,6 @@ class BsplineSpace1D:
         _periodic (bool): Whether the B-spline is periodic.
         _num_basis (int): Number of basis functions.
         _num_intervals (int): Number of intervals.
-        _cache (dict[str, Any]): The arrays handed out by accessors, built on first use.
     """
 
     _h: Any
@@ -163,7 +170,6 @@ class BsplineSpace1D:
     _periodic: bool
     _num_basis: int
     _num_intervals: int
-    _cache: dict[str, Any]
 
     def __init__(
         self,
@@ -220,7 +226,6 @@ class BsplineSpace1D:
         self._tol = float(handle.tolerance)
         self._num_basis = int(handle.num_basis)
         self._num_intervals = int(handle.num_intervals)
-        self._cache = {}
 
     @classmethod
     def _from_handle(cls, handle: Any) -> BsplineSpace1D:  # noqa: ANN401
@@ -385,13 +390,34 @@ class BsplineSpace1D:
             (unique_knots, multiplicities) where unique_knots contains the distinct knot values
             and multiplicities contains the corresponding multiplicity counts.
         """
-        key = "unique_in_domain" if in_domain else "unique"
-        result: tuple[npt.NDArray[np.float32 | np.float64], npt.NDArray[np.int_]] | None = (
-            self._cache.get(key)
+        return self._unique_in_domain if in_domain else self._unique_all
+
+    @functools.cached_property
+    def _unique_all(self) -> tuple[npt.NDArray[np.float32 | np.float64], npt.NDArray[np.int_]]:
+        """Read-only views of every distinct knot and its multiplicity (cached).
+
+        Returns:
+            tuple[npt.NDArray[np.float32 | np.float64], npt.NDArray[np.int_]]: The knots and
+            multiplicities.
+        """
+        result: tuple[npt.NDArray[np.float32 | np.float64], npt.NDArray[np.int_]] = (
+            self._h.unique_knots_and_multiplicity(False)
         )
-        if result is None:
-            result = self._h.unique_knots_and_multiplicity(bool(in_domain))
-            self._cache[key] = result
+        return result
+
+    @functools.cached_property
+    def _unique_in_domain(
+        self,
+    ) -> tuple[npt.NDArray[np.float32 | np.float64], npt.NDArray[np.int_]]:
+        """Read-only views of the domain's distinct knots and their multiplicities (cached).
+
+        Returns:
+            tuple[npt.NDArray[np.float32 | np.float64], npt.NDArray[np.int_]]: The knots and
+            multiplicities.
+        """
+        result: tuple[npt.NDArray[np.float32 | np.float64], npt.NDArray[np.int_]] = (
+            self._h.unique_knots_and_multiplicity(True)
+        )
         return result
 
     @property
@@ -431,14 +457,23 @@ class BsplineSpace1D:
             >>> space.first_basis_per_interval().tolist()
             [0, 1, 3]
         """
-        result: npt.NDArray[np.int64] | None = self._cache.get("first_basis")
-        if result is None:
-            # Raises for a periodic space, with the message the suite matches.
-            result = self._h.first_basis_per_interval()
-            self._cache["first_basis"] = result
+        return self._first_basis
+
+    @functools.cached_property
+    def _first_basis(self) -> npt.NDArray[np.int64]:
+        """Read-only view of the first supported function of each interval (cached).
+
+        Returns:
+            npt.NDArray[np.int64]: Shape ``(num_intervals,)``.
+
+        Raises:
+            ValueError: If the space is periodic (from the C++ call, with the message the
+                suite matches); nothing is cached then.
+        """
+        result: npt.NDArray[np.int64] = self._h.first_basis_per_interval()
         return result
 
-    @property
+    @functools.cached_property
     def domain(self) -> tuple[np.float32 | np.float64, np.float32 | np.float64]:
         """Get the knot vector domain.
 
@@ -452,13 +487,7 @@ class BsplineSpace1D:
             >>> float(start), float(end)
             (0.0, 2.0)
         """
-        result: tuple[np.float32 | np.float64, np.float32 | np.float64] | None = self._cache.get(
-            "domain"
-        )
-        if result is None:
-            result = (self._knots[self._degree], self._knots[self._knots.size - self._degree - 1])
-            self._cache["domain"] = result
-        return result
+        return (self._knots[self._degree], self._knots[self._knots.size - self._degree - 1])
 
     def has_left_end_open(self) -> bool:
         """Check if the left end of the B-spline is open.
@@ -680,19 +709,19 @@ class BsplineSpace1D:
             # Allocated here rather than by the binding: an uninitialized NumPy array is the
             # cheaper hand-off for the one-point calls whose cost is all overhead.
             values = np.empty((num_pts, order), dtype=p.dtype)
-            first = np.empty(num_pts, dtype=np.int_)
+            first = np.empty(num_pts, dtype=_FIRST_DTYPE)
             self._h.tabulate_basis(p, values, first, False)
             return (
                 values.reshape(_compute_final_output_shape_1D(input_shape, order)),
-                first.reshape(input_shape),
+                first.astype(np.int_, copy=False).reshape(input_shape),
             )
-        out_basis = _prepared_out(
+        out_basis = _allocate_or_validate_out(
             out_basis, _compute_final_output_shape_1D(input_shape, order), p.dtype
         )
-        out_first_basis = _prepared_out(out_first_basis, input_shape, np.int_)
+        out_first_basis = _first_out(out_first_basis, input_shape)
         with (
             _kernel_buffer(out_basis, (num_pts, order)) as values,
-            _kernel_buffer(out_first_basis, (num_pts,)) as first,
+            _kernel_buffer(out_first_basis, (num_pts,), _FIRST_DTYPE) as first,
         ):
             self._h.tabulate_basis(p, values, first, False)
         return out_basis, out_first_basis
@@ -767,19 +796,19 @@ class BsplineSpace1D:
         kernel_shape = (num_pts, n_deriv + 1, order)
         if out_deriv is None and out_first_basis is None:
             values = np.empty(kernel_shape, dtype=p.dtype)
-            first = np.empty(num_pts, dtype=np.int_)
+            first = np.empty(num_pts, dtype=_FIRST_DTYPE)
             self._h.tabulate_basis_derivatives(p, n_deriv, values, first, False)
             return (
                 values.reshape(_compute_final_output_shape_1D_deriv(input_shape, n_deriv, order)),
-                first.reshape(input_shape),
+                first.astype(np.int_, copy=False).reshape(input_shape),
             )
-        out_deriv = _prepared_out(
+        out_deriv = _allocate_or_validate_out(
             out_deriv, _compute_final_output_shape_1D_deriv(input_shape, n_deriv, order), p.dtype
         )
-        out_first_basis = _prepared_out(out_first_basis, input_shape, np.int_)
+        out_first_basis = _first_out(out_first_basis, input_shape)
         with (
             _kernel_buffer(out_deriv, kernel_shape) as values,
-            _kernel_buffer(out_first_basis, (num_pts,)) as first,
+            _kernel_buffer(out_first_basis, (num_pts,), _FIRST_DTYPE) as first,
         ):
             self._h.tabulate_basis_derivatives(p, n_deriv, values, first, False)
         return out_deriv, out_first_basis
