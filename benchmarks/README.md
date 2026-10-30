@@ -39,6 +39,7 @@ OpenMP run on one thread, and `NUMBA_NUM_THREADS` is the thread setting.
 | `results/2026-10-29-s2a-ac6-rerun2` | the same at 042003f with `--filter '^S2\.bezier_(split\|evaluate_lattice\|slice\|restrict)\.'`, after the contracted loops moved out of the chunk bodies: every case the change reaches, measured fresh |
 | `results/2026-10-29-s2b-ac6` | `compare.py --side main=<scratch>/main-11ab436/src --side branch=<this tree at 3396699>/src --k 10 --threads 1 8 --cpus 0-7 --filter '^S2\.(bezier_reduce\|bezier_minimize\|interpolate\|fit_\|find_)'`: the reduction, fitting and root-finding cases (C2.3, C2.4) |
 | `results/2026-10-29-s2b-ac6-at-d7cf952` | the same at d7cf952, after the Python review round changed the wrappers; the shared machine was heavily loaded by other users during this run, so both sides read slower than in the run above |
+| `results/2026-10-30-s4a-ac6` | `compare.py --side main=<scratch>/main-11ab436/src --side branch=<this tree at 4fda1ac>/src --k 10 --threads 1 8 --cpus 0-7 --filter '^S4\.'`: the B-spline space cases of C4.1 (construction, 1D, 2D, 3D and lattice tabulation); no case flagged, so no re-run was needed. Only `summary.md` and `summary.json` are kept: the latter holds every process median, from which the statistic is recomputed |
 
 Each holds `summary.md` (the statistic and range per side and case, and the flags), `summary.json`
 (the same with every process median, the protocol, the commits and the machine) and `raw/` (each

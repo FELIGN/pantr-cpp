@@ -1,0 +1,1287 @@
+{
+ "protocol": {
+  "k": 10,
+  "repeats": 30,
+  "threads": [
+   1,
+   8
+  ],
+  "cpus": "0-7",
+  "reference": "main",
+  "argv": [
+   "benchmarks/compare.py",
+   "--out-dir",
+   "benchmarks/results/2026-10-30-s4a-ac6",
+   "--side",
+   "main=<main src>",
+   "--side",
+   "branch=<branch src>",
+   "--k",
+   "10",
+   "--threads",
+   "1",
+   "8",
+   "--cpus",
+   "0-7",
+   "--filter",
+   "^S4\\."
+  ]
+ },
+ "sides": {
+  "main": {
+   "commit": "11ab436abd94edf8f414d1ec2d9ed0bf77e38e89",
+   "extension": "none"
+  },
+  "branch": {
+   "commit": "4fda1ac36c24a7adca1e3bb2b9f893583160bff4",
+   "extension": "pantr._pantr_v4 (v4, _pantr_v4.abi3.so)"
+  }
+ },
+ "machine": {
+  "cpu": "Intel(R) Xeon(R) Gold 6148 CPU @ 2.40GHz",
+  "platform": "Linux-5.15.0-144-generic-x86_64-with-glibc2.35",
+  "affinity": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7
+  ],
+  "governor": "schedutil"
+ },
+ "cases": {
+  "S4.bspline_space_1d_construct.tiny@t1": {
+   "what": {
+    "main": "BsplineSpace1D(open knots of 1 intervals, 3)",
+    "branch": "BsplineSpace1D(open knots of 1 intervals, 3)"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 36572.569664404225,
+     "range_ns": 5983.395769230767,
+     "process_medians_ns": [
+      36006.70370370371,
+      34820.894230769234,
+      39622.897058823524,
+      37906.950980392154,
+      37963.46296296296,
+      36142.11320754717,
+      35472.28846153846,
+      36848.74509803922,
+      36296.394230769234,
+      40804.29
+     ]
+    },
+    "branch": {
+     "statistic_ns": 3526.6923390383045,
+     "range_ns": 8222.33843811056,
+     "process_medians_ns": [
+      3444.3241758241757,
+      3461.5212314225055,
+      11640.902597402597,
+      4342.880341880342,
+      3418.5641592920356,
+      3795.5649867374004,
+      3624.5339805825242,
+      3495.051344743276,
+      3558.3333333333335,
+      3438.0782710280373
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_space_1d_construct.medium@t1": {
+   "what": {
+    "main": "BsplineSpace1D(open knots of 1000 intervals, 3)",
+    "branch": "BsplineSpace1D(open knots of 1000 intervals, 3)"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 51503.35118243244,
+     "range_ns": 5755.24620962426,
+     "process_medians_ns": [
+      49279.15,
+      48738.90243902439,
+      54494.14864864865,
+      52368.21621621621,
+      51857.36486486487,
+      50147.385714285716,
+      51149.3375,
+      50161.2,
+      51861.41025641026,
+      53781.95945945946
+     ]
+    },
+    "branch": {
+     "statistic_ns": 11966.691455696202,
+     "range_ns": 4403.517857142859,
+     "process_medians_ns": [
+      11326.232142857141,
+      11749.98,
+      15729.75,
+      12905.3671875,
+      11658.839743589744,
+      12237.372262773722,
+      12007.632911392404,
+      11658.748387096774,
+      12017.979166666668,
+      11925.75
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_space_1d_construct.large@t1": {
+   "what": {
+    "main": "BsplineSpace1D(open knots of 1000000 intervals, 3)",
+    "branch": "BsplineSpace1D(open knots of 1000000 intervals, 3)"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 39929653.5,
+     "range_ns": 2138695.5,
+     "process_medians_ns": [
+      41214387.0,
+      41475338.0,
+      39678616.5,
+      40028844.5,
+      39830462.5,
+      41414731.5,
+      39800325.5,
+      39336642.5,
+      41347047.5,
+      39520188.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 38317064.0,
+     "range_ns": 3903656.0,
+     "process_medians_ns": [
+      37481328.5,
+      35648631.0,
+      38241140.0,
+      39552287.0,
+      37904935.0,
+      38989410.5,
+      38938890.0,
+      38625253.5,
+      37748340.5,
+      38392988.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_tabulate_basis_1d.tiny@t1": {
+   "what": {
+    "main": "BsplineSpace1D.tabulate_basis(1 points), degree 3, 10 intervals",
+    "branch": "BsplineSpace1D.tabulate_basis(1 points), degree 3, 10 intervals"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 11101.085430968727,
+     "range_ns": 953.594083645019,
+     "process_medians_ns": [
+      10734.52011494253,
+      10690.664739884392,
+      11644.258823529412,
+      10844.475757575758,
+      10999.595808383234,
+      11062.021739130436,
+      11140.149122807017,
+      11331.863636363636,
+      11221.552325581395,
+      11231.252976190477
+     ]
+    },
+    "branch": {
+     "statistic_ns": 3470.179136543843,
+     "range_ns": 196.2927536859429,
+     "process_medians_ns": [
+      3390.061497326203,
+      3576.8991935483873,
+      3425.654901960784,
+      3549.6222222222223,
+      3475.759765625,
+      3585.1656565656567,
+      3410.8905325443784,
+      3464.5985074626865,
+      3586.354251012146,
+      3417.786427145709
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_tabulate_basis_1d.medium@t1": {
+   "what": {
+    "main": "BsplineSpace1D.tabulate_basis(1000 points), degree 3, 10 intervals",
+    "branch": "BsplineSpace1D.tabulate_basis(1000 points), degree 3, 10 intervals"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 142520.43333333335,
+     "range_ns": 26346.88717948718,
+     "process_medians_ns": [
+      137599.6,
+      136485.76666666666,
+      142210.90000000002,
+      137636.9,
+      142829.96666666667,
+      141820.65384615387,
+      144705.9,
+      162832.65384615384,
+      154100.89285714284,
+      144085.7
+     ]
+    },
+    "branch": {
+     "statistic_ns": 32696.075887978142,
+     "range_ns": 1933.424754098356,
+     "process_medians_ns": [
+      32590.95901639344,
+      33497.16666666667,
+      32671.25833333333,
+      34457.81,
+      32635.237704918032,
+      33521.10655737705,
+      32720.893442622953,
+      32524.38524590164,
+      33370.86666666667,
+      32626.909836065573
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_tabulate_basis_1d.large@t1": {
+   "what": {
+    "main": "BsplineSpace1D.tabulate_basis(1000000 points), degree 3, 10 intervals",
+    "branch": "BsplineSpace1D.tabulate_basis(1000000 points), degree 3, 10 intervals"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 43350906.0,
+     "range_ns": 2916080.5,
+     "process_medians_ns": [
+      42674037.5,
+      43626173.5,
+      43133358.0,
+      43144369.0,
+      45590118.0,
+      43507084.5,
+      43626192.5,
+      43363232.0,
+      43059341.0,
+      43338580.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 33982075.5,
+     "range_ns": 2192696.5,
+     "process_medians_ns": [
+      33705134.5,
+      33749046.5,
+      33951140.5,
+      35897831.0,
+      34333998.0,
+      33973703.0,
+      34466325.5,
+      33926666.5,
+      33990448.0,
+      34000102.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_tabulate_basis_2d.tiny@t1": {
+   "what": {
+    "main": "BsplineSpace.tabulate_basis(1 x 2 points), degree 3",
+    "branch": "BsplineSpace.tabulate_basis(1 x 2 points), degree 3"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 56219.04096638656,
+     "range_ns": 10757.109090909085,
+     "process_medians_ns": [
+      56731.31428571428,
+      54391.3,
+      61115.92307692308,
+      54470.52777777778,
+      65148.40909090909,
+      55893.71428571429,
+      60769.046875,
+      55701.5,
+      54717.63888888889,
+      56544.367647058825
+     ]
+    },
+    "branch": {
+     "statistic_ns": 6265.051551256714,
+     "range_ns": 663.9164485849105,
+     "process_medians_ns": [
+      5939.938066465256,
+      6044.832167832168,
+      6216.908026755853,
+      6452.95,
+      6082.7037037037035,
+      6363.664473684211,
+      6496.755033557047,
+      6313.195075757576,
+      6603.854515050167,
+      6170.459459459459
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_tabulate_basis_2d.medium@t1": {
+   "what": {
+    "main": "BsplineSpace.tabulate_basis(1000 x 2 points), degree 3",
+    "branch": "BsplineSpace.tabulate_basis(1000 x 2 points), degree 3"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 411996.2,
+     "range_ns": 93465.02500000002,
+     "process_medians_ns": [
+      403167.6,
+      412846.0,
+      409936.1666666666,
+      421464.2,
+      496632.625,
+      410566.2,
+      432413.0,
+      411146.4,
+      414834.2,
+      408280.6
+     ]
+    },
+    "branch": {
+     "statistic_ns": 110200.83771929824,
+     "range_ns": 21325.888888888905,
+     "process_medians_ns": [
+      106245.0,
+      106155.94444444444,
+      113105.77777777778,
+      127481.83333333334,
+      108972.76315789475,
+      110044.83333333334,
+      112488.21052631579,
+      109818.27777777778,
+      110356.84210526315,
+      112659.11111111111
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_tabulate_basis_2d.large@t1": {
+   "what": {
+    "main": "BsplineSpace.tabulate_basis(100000 x 2 points), degree 3",
+    "branch": "BsplineSpace.tabulate_basis(100000 x 2 points), degree 3"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 16522662.0,
+     "range_ns": 3047733.0,
+     "process_medians_ns": [
+      16004695.5,
+      16925617.0,
+      16380839.0,
+      16653558.0,
+      18162655.0,
+      15114922.0,
+      15856126.5,
+      17156192.0,
+      16391766.0,
+      16751852.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 11248759.25,
+     "range_ns": 1319495.5,
+     "process_medians_ns": [
+      10670363.5,
+      11178729.5,
+      11415141.0,
+      11989859.0,
+      11555017.5,
+      11317558.0,
+      11116584.0,
+      11016379.5,
+      11179960.5,
+      11566448.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_tabulate_basis_3d.tiny@t1": {
+   "what": {
+    "main": "BsplineSpace.tabulate_basis(1 x 3 points), degree 3",
+    "branch": "BsplineSpace.tabulate_basis(1 x 3 points), degree 3"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 79640.89884615384,
+     "range_ns": 9350.69481605351,
+     "process_medians_ns": [
+      79154.14,
+      76498.32692307692,
+      80557.45238095238,
+      84537.34,
+      81034.88461538462,
+      77313.0,
+      79753.23999999999,
+      78572.38,
+      79528.55769230769,
+      85849.02173913043
+     ]
+    },
+    "branch": {
+     "statistic_ns": 6645.364806732385,
+     "range_ns": 637.5330660292493,
+     "process_medians_ns": [
+      6408.776094276094,
+      6504.368421052632,
+      6742.654255319149,
+      6837.113240418119,
+      6708.7697594501715,
+      6581.959854014598,
+      6576.485915492958,
+      6990.655462184874,
+      7046.3091603053435,
+      6499.83277027027
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_tabulate_basis_3d.medium@t1": {
+   "what": {
+    "main": "BsplineSpace.tabulate_basis(1000 x 3 points), degree 3",
+    "branch": "BsplineSpace.tabulate_basis(1000 x 3 points), degree 3"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 805976.1666666667,
+     "range_ns": 155862.33333333337,
+     "process_medians_ns": [
+      779137.3333333333,
+      756854.8333333334,
+      770038.3333333334,
+      807389.3333333334,
+      830915.1666666667,
+      796332.0,
+      912717.1666666667,
+      818980.1666666667,
+      804563.0,
+      821273.6666666667
+     ]
+    },
+    "branch": {
+     "statistic_ns": 206893.3409090909,
+     "range_ns": 28369.604166666657,
+     "process_medians_ns": [
+      199941.85,
+      194166.33333333334,
+      209857.15,
+      221596.5,
+      207328.68181818182,
+      206458.0,
+      222535.9375,
+      205967.2,
+      215211.65,
+      199257.15
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_tabulate_basis_3d.large@t1": {
+   "what": {
+    "main": "BsplineSpace.tabulate_basis(100000 x 3 points), degree 3",
+    "branch": "BsplineSpace.tabulate_basis(100000 x 3 points), degree 3"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 56300398.25,
+     "range_ns": 2009531.0,
+     "process_medians_ns": [
+      55159460.5,
+      56048382.0,
+      55286982.5,
+      56323871.0,
+      56276925.5,
+      56149276.5,
+      56939976.0,
+      57168991.5,
+      57099726.5,
+      56633671.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 34840591.0,
+     "range_ns": 2187089.5,
+     "process_medians_ns": [
+      34893423.5,
+      35640429.0,
+      34946665.5,
+      34787758.5,
+      36047975.5,
+      34433515.5,
+      35274518.5,
+      33860886.0,
+      34085791.5,
+      34627517.5
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_tabulate_basis_2d_lattice.tiny@t1": {
+   "what": {
+    "main": "BsplineSpace.tabulate_basis(1x1 lattice), degree 3",
+    "branch": "BsplineSpace.tabulate_basis(1x1 lattice), degree 3"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 72151.0625,
+     "range_ns": 8098.780970625783,
+     "process_medians_ns": [
+      71310.57407407407,
+      70420.79310344829,
+      78519.57407407407,
+      71714.60714285713,
+      71303.05172413793,
+      72154.66071428571,
+      73146.76785714286,
+      74108.55555555556,
+      72147.46428571429,
+      74378.11111111111
+     ]
+    },
+    "branch": {
+     "statistic_ns": 12323.174342105263,
+     "range_ns": 2015.0806467661696,
+     "process_medians_ns": [
+      12221.319078947368,
+      12292.70134228188,
+      12294.74832214765,
+      12792.061688311689,
+      11994.706666666667,
+      12343.424342105263,
+      14009.787313432837,
+      12302.924342105263,
+      12663.381294964029,
+      12350.61888111888
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_tabulate_basis_2d_lattice.medium@t1": {
+   "what": {
+    "main": "BsplineSpace.tabulate_basis(32x32 lattice), degree 3",
+    "branch": "BsplineSpace.tabulate_basis(32x32 lattice), degree 3"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 167352.36363636365,
+     "range_ns": 19481.966666666674,
+     "process_medians_ns": [
+      158524.5833333333,
+      160114.7083333333,
+      164973.22727272726,
+      178006.55,
+      171259.96153846153,
+      170720.84999999998,
+      166292.22727272726,
+      168412.5,
+      163798.4583333333,
+      170362.27272727274
+     ]
+    },
+    "branch": {
+     "statistic_ns": 48183.481450719824,
+     "range_ns": 3783.9841731266206,
+     "process_medians_ns": [
+      47017.33720930232,
+      46108.41860465116,
+      48399.558139534885,
+      49892.40277777778,
+      47967.40476190476,
+      47448.8125,
+      48802.587499999994,
+      47111.639534883725,
+      48633.25,
+      48828.98809523809
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_tabulate_basis_2d_lattice.large@t1": {
+   "what": {
+    "main": "BsplineSpace.tabulate_basis(512x512 lattice), degree 3",
+    "branch": "BsplineSpace.tabulate_basis(512x512 lattice), degree 3"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 24418362.0,
+     "range_ns": 2490343.0,
+     "process_medians_ns": [
+      22921408.0,
+      24384204.5,
+      24452519.5,
+      24892534.5,
+      24971779.0,
+      23974265.0,
+      24200824.0,
+      24643529.5,
+      24302376.0,
+      25411751.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 9907160.0,
+     "range_ns": 1199774.5,
+     "process_medians_ns": [
+      9286061.5,
+      9337187.0,
+      9888173.5,
+      10435627.5,
+      10485836.0,
+      9878002.5,
+      9856011.0,
+      9926146.5,
+      10214729.0,
+      10110221.5
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_space_1d_construct.tiny@t8": {
+   "what": {
+    "main": "BsplineSpace1D(open knots of 1 intervals, 3)",
+    "branch": "BsplineSpace1D(open knots of 1 intervals, 3)"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 42962.54700854701,
+     "range_ns": 25188.00962566845,
+     "process_medians_ns": [
+      36293.06363636364,
+      36398.34821428571,
+      60631.882352941175,
+      50808.6875,
+      35906.13157894737,
+      60064.61111111111,
+      35443.87272727273,
+      48622.205128205125,
+      37302.88888888889,
+      58664.59375
+     ]
+    },
+    "branch": {
+     "statistic_ns": 3615.739860349856,
+     "range_ns": 3147.075368404664,
+     "process_medians_ns": [
+      3357.5821205821203,
+      3483.3433874709976,
+      3632.0854214123005,
+      3807.866666666667,
+      3652.331223628692,
+      3359.346618357488,
+      3495.0360824742265,
+      3651.204485488127,
+      6504.657488986784,
+      3599.394299287411
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_space_1d_construct.medium@t8": {
+   "what": {
+    "main": "BsplineSpace1D(open knots of 1000 intervals, 3)",
+    "branch": "BsplineSpace1D(open knots of 1000 intervals, 3)"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 51723.552243589744,
+     "range_ns": 22165.023391812858,
+     "process_medians_ns": [
+      51467.179487179485,
+      49354.17105263158,
+      51264.484375,
+      71519.19444444444,
+      51979.925,
+      53783.75,
+      51357.48684210527,
+      68284.78571428571,
+      52913.30555555556,
+      50173.846153846156
+     ]
+    },
+    "branch": {
+     "statistic_ns": 12371.377647714604,
+     "range_ns": 2062.4978614200154,
+     "process_medians_ns": [
+      12200.117647058823,
+      11709.938271604937,
+      13615.857142857141,
+      12527.7119205298,
+      12935.487421383648,
+      12475.667785234898,
+      11874.843949044585,
+      12333.601449275362,
+      12409.153846153846,
+      11553.359281437126
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_space_1d_construct.large@t8": {
+   "what": {
+    "main": "BsplineSpace1D(open knots of 1000000 intervals, 3)",
+    "branch": "BsplineSpace1D(open knots of 1000000 intervals, 3)"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 41375842.75,
+     "range_ns": 4525195.0,
+     "process_medians_ns": [
+      39468036.5,
+      40779323.0,
+      41663325.5,
+      42012823.5,
+      43779753.0,
+      41348912.0,
+      41402773.5,
+      43993231.5,
+      40555171.5,
+      39809035.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 38021641.5,
+     "range_ns": 4897694.5,
+     "process_medians_ns": [
+      37683732.5,
+      37885770.5,
+      37772965.5,
+      36854236.5,
+      38227145.0,
+      38157512.5,
+      36537308.5,
+      41435003.0,
+      38663029.0,
+      38185396.5
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_tabulate_basis_1d.tiny@t8": {
+   "what": {
+    "main": "BsplineSpace1D.tabulate_basis(1 points), degree 3, 10 intervals",
+    "branch": "BsplineSpace1D.tabulate_basis(1 points), degree 3, 10 intervals"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 11230.650662959795,
+     "range_ns": 955.3279195798332,
+     "process_medians_ns": [
+      11087.588414634145,
+      11565.766467065867,
+      10949.17441860465,
+      10610.438547486034,
+      11298.236526946108,
+      11264.122754491018,
+      11079.596491228069,
+      11413.347305389221,
+      11197.178571428572,
+      11272.184210526317
+     ]
+    },
+    "branch": {
+     "statistic_ns": 3528.304571649448,
+     "range_ns": 225.280283566467,
+     "process_medians_ns": [
+      3449.9081237911023,
+      3515.4838709677415,
+      3594.084775086505,
+      3502.141758241758,
+      3548.925396825397,
+      3645.205014749263,
+      3544.7836676217767,
+      3541.1252723311545,
+      3477.5333988212183,
+      3419.9247311827958
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_tabulate_basis_1d.medium@t8": {
+   "what": {
+    "main": "BsplineSpace1D.tabulate_basis(1000 points), degree 3, 10 intervals",
+    "branch": "BsplineSpace1D.tabulate_basis(1000 points), degree 3, 10 intervals"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 143060.2880952381,
+     "range_ns": 12505.880952380947,
+     "process_medians_ns": [
+      136833.3333333333,
+      139703.09999999998,
+      147311.23333333334,
+      147061.0416666667,
+      149339.21428571426,
+      141883.93333333335,
+      141810.6666666667,
+      148176.41666666666,
+      144236.64285714284,
+      139185.92857142858
+     ]
+    },
+    "branch": {
+     "statistic_ns": 32713.443852459015,
+     "range_ns": 736.1111590451474,
+     "process_medians_ns": [
+      32695.737704918032,
+      32731.15,
+      33185.04098360655,
+      32674.754098360656,
+      32750.199999999997,
+      32864.79508196721,
+      32690.557377049183,
+      32837.5,
+      32662.466666666667,
+      32448.929824561405
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_tabulate_basis_1d.large@t8": {
+   "what": {
+    "main": "BsplineSpace1D.tabulate_basis(1000000 points), degree 3, 10 intervals",
+    "branch": "BsplineSpace1D.tabulate_basis(1000000 points), degree 3, 10 intervals"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 12936170.75,
+     "range_ns": 4441844.0,
+     "process_medians_ns": [
+      11700242.5,
+      13701004.0,
+      12703791.0,
+      12700009.0,
+      13422742.0,
+      13467054.0,
+      12906201.0,
+      16142086.5,
+      12966140.5,
+      12372713.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 7379542.75,
+     "range_ns": 3599292.0,
+     "process_medians_ns": [
+      7314043.5,
+      10381440.0,
+      6782148.0,
+      7606431.0,
+      7276052.0,
+      8045061.0,
+      7398670.0,
+      7649424.0,
+      7117731.5,
+      7360415.5
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_tabulate_basis_2d.tiny@t8": {
+   "what": {
+    "main": "BsplineSpace.tabulate_basis(1 x 2 points), degree 3",
+    "branch": "BsplineSpace.tabulate_basis(1 x 2 points), degree 3"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 69696.83041958042,
+     "range_ns": 25645.924404761914,
+     "process_medians_ns": [
+      56262.885714285716,
+      55798.68571428572,
+      76347.61538461538,
+      77286.61538461539,
+      78815.94,
+      63046.045454545456,
+      56158.181818181816,
+      55633.47142857143,
+      81279.39583333334,
+      77649.95999999999
+     ]
+    },
+    "branch": {
+     "statistic_ns": 6114.046022889503,
+     "range_ns": 878.9014457686762,
+     "process_medians_ns": [
+      5676.621580547113,
+      6029.650316455696,
+      6457.749128919861,
+      6258.340390879479,
+      6255.842105263158,
+      6555.523026315789,
+      6198.441729323308,
+      6025.777597402597,
+      5928.576677316294,
+      5968.6265625
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_tabulate_basis_2d.medium@t8": {
+   "what": {
+    "main": "BsplineSpace.tabulate_basis(1000 x 2 points), degree 3",
+    "branch": "BsplineSpace.tabulate_basis(1000 x 2 points), degree 3"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 481684.0375,
+     "range_ns": 161049.9583333333,
+     "process_medians_ns": [
+      398412.9166666667,
+      405344.0,
+      555410.25,
+      543867.875,
+      546799.25,
+      414820.80000000005,
+      419500.19999999995,
+      413753.9,
+      559462.875,
+      545775.875
+     ]
+    },
+    "branch": {
+     "statistic_ns": 112178.53418803419,
+     "range_ns": 11282.156410256415,
+     "process_medians_ns": [
+      107500.76666666666,
+      110012.58333333333,
+      118782.92307692308,
+      115513.41666666666,
+      111843.22222222222,
+      112746.08333333334,
+      112683.16666666666,
+      112513.84615384616,
+      110092.92105263157,
+      108220.65789473684
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_tabulate_basis_2d.large@t8": {
+   "what": {
+    "main": "BsplineSpace.tabulate_basis(100000 x 2 points), degree 3",
+    "branch": "BsplineSpace.tabulate_basis(100000 x 2 points), degree 3"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 12281303.0,
+     "range_ns": 2810633.5,
+     "process_medians_ns": [
+      10787509.0,
+      10907951.5,
+      12314855.5,
+      12365101.0,
+      13598142.5,
+      12359149.5,
+      12129657.5,
+      12247750.5,
+      12748638.5,
+      11666734.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 3994220.5,
+     "range_ns": 1796192.0,
+     "process_medians_ns": [
+      4093643.5,
+      3989906.5,
+      4751669.0,
+      3762583.5,
+      5253534.5,
+      3993098.5,
+      3854250.5,
+      5558775.5,
+      3970141.0,
+      3995342.5
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_tabulate_basis_3d.tiny@t8": {
+   "what": {
+    "main": "BsplineSpace.tabulate_basis(1 x 3 points), degree 3",
+    "branch": "BsplineSpace.tabulate_basis(1 x 3 points), degree 3"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 78852.41,
+     "range_ns": 11425.142500000002,
+     "process_medians_ns": [
+      78883.22,
+      77003.92,
+      85236.09090909091,
+      78372.47916666666,
+      78473.88461538462,
+      88429.0625,
+      86140.48,
+      78821.6,
+      81147.89583333334,
+      77185.71153846153
+     ]
+    },
+    "branch": {
+     "statistic_ns": 6847.898599254822,
+     "range_ns": 6803.90226892319,
+     "process_medians_ns": [
+      6121.67667844523,
+      6399.222996515679,
+      12925.57894736842,
+      6806.181318681319,
+      7011.748275862068,
+      7315.2852112676055,
+      6889.615879828327,
+      6727.911073825503,
+      6789.5428082191775,
+      7241.799242424242
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_tabulate_basis_3d.medium@t8": {
+   "what": {
+    "main": "BsplineSpace.tabulate_basis(1000 x 3 points), degree 3",
+    "branch": "BsplineSpace.tabulate_basis(1000 x 3 points), degree 3"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 810313.4166666666,
+     "range_ns": 72672.83333333326,
+     "process_medians_ns": [
+      778687.1666666667,
+      759080.0,
+      831752.8333333333,
+      786388.5,
+      827361.6666666667,
+      812608.3333333333,
+      817868.0,
+      808018.5,
+      814589.6666666667,
+      766767.1666666667
+     ]
+    },
+    "branch": {
+     "statistic_ns": 207166.43181818182,
+     "range_ns": 71891.71428571426,
+     "process_medians_ns": [
+      196106.0,
+      200898.9090909091,
+      267997.71428571426,
+      208141.31818181818,
+      206191.54545454547,
+      213820.3,
+      203274.54545454547,
+      205904.35,
+      208647.3333333333,
+      209919.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_tabulate_basis_3d.large@t8": {
+   "what": {
+    "main": "BsplineSpace.tabulate_basis(100000 x 3 points), degree 3",
+    "branch": "BsplineSpace.tabulate_basis(100000 x 3 points), degree 3"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 49291716.25,
+     "range_ns": 4431910.5,
+     "process_medians_ns": [
+      48044960.5,
+      49212566.0,
+      49320356.0,
+      50938039.0,
+      50333535.0,
+      49263076.5,
+      48412672.5,
+      49724737.5,
+      49766363.0,
+      46506128.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 15009298.0,
+     "range_ns": 3384042.5,
+     "process_medians_ns": [
+      16087463.0,
+      14566010.5,
+      16865370.0,
+      13828373.5,
+      15010112.5,
+      15008483.5,
+      14593964.5,
+      17212416.0,
+      16088069.0,
+      14300980.5
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_tabulate_basis_2d_lattice.tiny@t8": {
+   "what": {
+    "main": "BsplineSpace.tabulate_basis(1x1 lattice), degree 3",
+    "branch": "BsplineSpace.tabulate_basis(1x1 lattice), degree 3"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 73808.17592592593,
+     "range_ns": 6677.561428571411,
+     "process_medians_ns": [
+      74158.83333333334,
+      76167.33333333334,
+      70738.67857142858,
+      72076.875,
+      74486.60869565218,
+      76233.37037037036,
+      72432.25,
+      73457.51851851851,
+      77416.23999999999,
+      71881.78571428571
+     ]
+    },
+    "branch": {
+     "statistic_ns": 12889.727785339295,
+     "range_ns": 4646.213779214886,
+     "process_medians_ns": [
+      11573.445512820512,
+      12105.187943262412,
+      12862.658273381294,
+      12830.680555555555,
+      13645.521428571428,
+      12524.439999999999,
+      16095.765765765766,
+      13282.84496124031,
+      16219.659292035398,
+      12916.797297297297
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_tabulate_basis_2d_lattice.medium@t8": {
+   "what": {
+    "main": "BsplineSpace.tabulate_basis(32x32 lattice), degree 3",
+    "branch": "BsplineSpace.tabulate_basis(32x32 lattice), degree 3"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 165548.91826923075,
+     "range_ns": 17448.266025641,
+     "process_medians_ns": [
+      158216.6923076923,
+      175664.9583333333,
+      159168.23076923075,
+      166130.96153846153,
+      168872.0,
+      170748.7,
+      162442.42307692306,
+      170340.375,
+      164966.875,
+      158381.61538461538
+     ]
+    },
+    "branch": {
+     "statistic_ns": 48638.380523255815,
+     "range_ns": 17058.12115528882,
+     "process_medians_ns": [
+      46168.104651162794,
+      47458.3625,
+      49948.600000000006,
+      47890.68604651163,
+      49386.075,
+      47141.131578947374,
+      46220.671875,
+      49858.970588235294,
+      63226.22580645161,
+      51954.34523809524
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_tabulate_basis_2d_lattice.large@t8": {
+   "what": {
+    "main": "BsplineSpace.tabulate_basis(512x512 lattice), degree 3",
+    "branch": "BsplineSpace.tabulate_basis(512x512 lattice), degree 3"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 23941849.5,
+     "range_ns": 2814745.5,
+     "process_medians_ns": [
+      23852322.5,
+      25201631.0,
+      24904464.0,
+      24110915.0,
+      23804370.5,
+      23525087.5,
+      23508527.5,
+      24031376.5,
+      24284290.0,
+      22386885.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 2132302.25,
+     "range_ns": 595203.0,
+     "process_medians_ns": [
+      2298544.5,
+      2056441.0,
+      2133711.0,
+      1922926.5,
+      2029151.0,
+      2303773.0,
+      2201461.5,
+      2518129.5,
+      2130893.5,
+      2004673.5
+     ],
+     "flagged": false
+    }
+   }
+  }
+ }
+}
