@@ -5,7 +5,9 @@ that is timed. Cases call pantr's public API, so the same case measures ``main``
 branch alike (design/port_design.md, section 9.1; each stage adds the cases of what it ports).
 
 Sizes: ``tiny`` is one point or one object (the per-call overhead regime), ``medium`` 1e3 items,
-``large`` 1e6 points for the 1D tabulations and a 512 x 512 lattice for the ND ones.
+``large`` 1e6 points for the 1D tabulations and a 512 x 512 lattice for the ND ones; the B-spline
+tabulations at scattered ND points take 1e5 points as ``large`` (a 3D degree-3 result is 64 values
+per point).
 
 The ``r6`` group is the stage-0 stable-ABI check (section 9.4): the per-call cost of the compiled
 binding on ``tiny`` inputs. Since the quadrature/basis stage it times the same public operations on
@@ -555,16 +557,101 @@ def _r6_cases() -> list[Case]:
     ]
 
 
+def _s4_space_cases() -> list[Case]:
+    """The B-spline space cases of the S4 stage (C4.1): construction and basis tabulation."""
+    from pantr.bspline import BsplineSpace, BsplineSpace1D  # noqa: PLC0415
+    from pantr.quad import PointsLattice  # noqa: PLC0415
+
+    cases: list[Case] = []
+    degree = 3
+
+    def open_knots(num_intervals: int) -> np.ndarray:
+        inner = np.linspace(0.0, 1.0, num_intervals + 1)
+        return np.concatenate([np.zeros(degree), inner, np.ones(degree)])
+
+    for size, n in SIZES.items():
+
+        def setup_construct(n: int = n) -> Callable[[], Any]:
+            knots = open_knots(n)
+            return lambda: BsplineSpace1D(knots, degree)
+
+        cases.append(
+            Case(
+                f"S4.bspline_space_1d_construct.{size}",
+                "S4",
+                size,
+                f"BsplineSpace1D(open knots of {n} intervals, {degree})",
+                setup_construct,
+            )
+        )
+
+    # Ten intervals, so the general (Cox-de Boor) kernel runs, not the Bezier-like one.
+    space_1d = BsplineSpace1D(open_knots(10), degree)
+    for size, n in SIZES.items():
+
+        def setup_1d(n: int = n) -> Callable[[], Any]:
+            x = _points(n)
+            return lambda: space_1d.tabulate_basis(x)
+
+        cases.append(
+            Case(
+                f"S4.bspline_tabulate_basis_1d.{size}",
+                "S4",
+                size,
+                f"BsplineSpace1D.tabulate_basis({n} points), degree {degree}, 10 intervals",
+                setup_1d,
+            )
+        )
+
+    nd_points = {"tiny": 1, "medium": 1_000, "large": 100_000}
+    for dim in (2, 3):
+        space = BsplineSpace([space_1d] * dim)
+        for size, n in nd_points.items():
+
+            def setup_nd(n: int = n, dim: int = dim, space: Any = space) -> Callable[[], Any]:
+                pts = np.random.default_rng(1234).random((n, dim))
+                return lambda: space.tabulate_basis(pts)
+
+            cases.append(
+                Case(
+                    f"S4.bspline_tabulate_basis_{dim}d.{size}",
+                    "S4",
+                    size,
+                    f"BsplineSpace.tabulate_basis({n} x {dim} points), degree {degree}",
+                    setup_nd,
+                )
+            )
+
+    space_2d = BsplineSpace([space_1d, space_1d])
+    for size, side in ND_SIDE.items():
+
+        def setup_lattice(side: int = side) -> Callable[[], Any]:
+            lattice = PointsLattice([_points(side), _points(side)])
+            return lambda: space_2d.tabulate_basis(lattice)
+
+        cases.append(
+            Case(
+                f"S4.bspline_tabulate_basis_2d_lattice.{size}",
+                "S4",
+                size,
+                f"BsplineSpace.tabulate_basis({side}x{side} lattice), degree {degree}",
+                setup_lattice,
+            )
+        )
+    return cases
+
+
 def all_cases() -> list[Case]:
     """Return every case this tree can run.
 
     Returns:
-        list[Case]: The S1 cases, the S2 cases, then the r6 cases.
+        list[Case]: The S1 cases, the S2 cases, the S4 cases, then the r6 cases.
     """
     return (
         _s1_cases()
         + _s2_geometry_cases()
         + _s2_bezier_cases()
         + _s2_approx_roots_cases()
+        + _s4_space_cases()
         + _r6_cases()
     )
