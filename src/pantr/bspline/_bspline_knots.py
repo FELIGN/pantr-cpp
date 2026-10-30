@@ -1,222 +1,28 @@
-"""B-spline knot vector utilities and analysis.
+"""B-spline knot vector kernels still used by B-spline code not yet ported to C++.
 
-This module provides functions for validating, analyzing, and querying
-B-spline knot vectors including multiplicity computation, domain checks,
-cardinal interval identification, and knot vector generation utilities.
+The knot classes, domain test, basis count and knot search here are the Numba
+kernels the unported modules (evaluation, knot insertion and removal, extraction,
+products, derivatives, degree change, slicing) still call; the spaces, the knot
+tolerance, the snapping and interval checks, the cardinal intervals and the knot
+factories are C++ (``include/pantr/bspline/knots.hpp``). Each kernel is deleted with
+its last caller (the coexistence rule of the C++ port).
 
 Every ``tol`` argument in this module is an **absolute** parametric length, in the
-units of the knot vector itself. :func:`_knot_tolerance` is what turns the
-dimensionless presets of :mod:`pantr.tolerance` into one, by multiplying by the
-knot vector's own magnitude; :class:`~pantr.bspline.BsplineSpace1D` calls it once
-at construction and hands the result to everything below.
+units of the knot vector itself: the tolerance ``pantr::bspline::knot_tolerance``
+derives from the knot vector's own magnitude, which
+:class:`~pantr.bspline.BsplineSpace1D` exposes as
+:attr:`~pantr.bspline.BsplineSpace1D.tolerance`.
 """
 
 from __future__ import annotations
 
-from typing import Any, Final, cast
+from typing import Any, cast
 
 import numpy as np
 import numpy.typing as npt
 
 from .._numba_compat import nb_jit
-from ..basis._basis_utils import _validate_float_dtype, _validate_out_array
-from ..tolerance import get_strict
-
-_KNOT_MERGE_SAFETY: Final[float] = 2.0
-"""Extra factor on the strict tier for deciding that two knots are the same knot.
-
-The quantity to cover is how far apart two knots a caller *means* to be equal can
-land when they are obtained by different routes -- a uniform ``a + i * (b - a) / n``
-against a barycentric ``(a * (n - i) + b * i) / n``, a refinement, a
-reparametrization, a Bezier split. Write ``u = eps / 2`` for the unit roundoff and
-``scale`` for what :func:`_knot_scale` returns.
-
-Each route is four floating-point operations and neither amplifies. The uniform
-one: ``b - a`` carries an absolute error at most ``u * |b - a| <= u * scale``; the
-division and the multiplication each add ``u`` relative on a quantity bounded by
-``scale``; the final sum adds ``u * scale``. Four terms of ``u * scale``, so the
-computed knot is within ``4u * scale = 2 * eps * scale`` of the exact one. The
-barycentric one is the same count and comes out slightly smaller, because the two
-products are divided by ``n`` after being added. By the triangle inequality two
-routes differ by at most ``4 * eps * scale``.
-
-Eight is that bound doubled, and the doubling buys the things the count does not
-see: an FMA contraction (which removes a rounding but changes the value), a
-different vector width, and one further rounding upstream of the two routes.
-:func:`~pantr.tolerance.get_strict` is four epsilons, so the factor here is two.
-
-The bound is not tight, which is the intent. Measured over 200000 random
-``(a, b, n, i)`` with ``|a|`` and the span drawn across 1e-3 to 1e7, the largest
-observed ``|route_A - route_B| / (eps * scale)`` is 1.74, against the derived 4 and
-the applied 8.
-"""
-
-
-def _knot_scale(knots: npt.NDArray[np.float32 | np.float64]) -> float:
-    """Get the magnitude a parametric comparison on a knot vector is relative to.
-
-    The span alone is not enough: on a knot vector based at 1e6 a knot difference
-    is formed from two coordinates of that size, so it carries an absolute error
-    of ``eps * 1e6`` however short the span is. The coordinate magnitudes are
-    therefore taken alongside the span, and the largest wins.
-
-    No floor is applied. A floor of 1.0 would be a physical choice this module is
-    not entitled to make, and it would destroy scale covariance on a domain
-    smaller than one unit -- exactly the case (``[0, 1e-6]``) where the previous
-    absolute tolerance merged every knot in the vector.
-
-    Args:
-        knots (npt.NDArray[np.float32 | np.float64]): Non-decreasing knot vector.
-
-    Returns:
-        float: ``max(span, |knots[0]|, |knots[-1]|)``, zero only for a knot vector
-        that is identically zero.
-    """
-    lo, hi = float(knots[0]), float(knots[-1])
-    return max(hi - lo, abs(lo), abs(hi))
-
-
-def _knot_tolerance(knots: npt.NDArray[np.float32 | np.float64]) -> float:
-    """Get the absolute tolerance for comparing parametric coordinates of a knot vector.
-
-    ``_KNOT_MERGE_SAFETY * get_strict(dtype) * _knot_scale(knots)``, i.e.
-    ``8 * eps * scale``. Every parametric comparison the B-spline layer makes --
-    are these two knots one knot, is this point inside the domain, are these two
-    knot intervals the same length -- is a comparison of quantities of that
-    magnitude, so they all share this one number.
-
-    Args:
-        knots (npt.NDArray[np.float32 | np.float64]): Non-decreasing knot vector.
-
-    Returns:
-        float: Absolute parametric tolerance, in the units of ``knots``.
-
-    Raises:
-        ValueError: If the knot dtype is not a supported floating-point type.
-    """
-    return _KNOT_MERGE_SAFETY * get_strict(knots.dtype) * _knot_scale(knots)
-
-
-def _check_snapping_kept_an_interval(
-    raw: npt.NDArray[np.float32 | np.float64],
-    snapped: npt.NDArray[np.float32 | np.float64],
-    tol: float,
-) -> None:
-    """Reject a knot vector that snapping collapsed onto a single point.
-
-    This function refuses one specific cause -- the knots *were* distinct, and the
-    merge rule found none of them distinguishable at their own magnitude -- so that
-    the caller is told the thing they could not see coming. A vector that arrived
-    already flat is not this function's case and passes through it untouched; it is
-    refused a step later by :func:`_check_space_has_an_interval`, which owns the
-    *consequence* both causes share. Keeping the two apart is what lets each message
-    be true: "this mesh is finer than float32 resolves here" is actionable, and false
-    of a vector the caller supplied flat.
-
-    This is reachable, and the arithmetic that makes it so is not a defect. Two knots
-    obtained by different routes differ by up to ``4 * eps * scale``, so telling them
-    apart needs a tolerance at least that wide; a mesh of ``n`` intervals over a span
-    ``s`` at offset ``x`` survives only while ``s / n > 8 * eps * max(s, |x|)``. When
-    ``|x|`` dominates, that fails once ``|x| / s`` reaches ``1 / (8 * eps * n)`` --
-    about ``5.2e5 / n`` in float32 and ``5.6e14 / n`` in float64. Past it no threshold
-    satisfies both requirements at once, because an interior knot is then uncertain by
-    a sizeable fraction of the span. Saying so is the only honest answer.
-
-    Args:
-        raw (npt.NDArray[np.float32 | np.float64]): The knot vector as supplied,
-            non-decreasing, before snapping.
-        snapped (npt.NDArray[np.float32 | np.float64]): The same vector afterwards.
-        tol (float): The absolute tolerance snapping used, from :func:`_knot_tolerance`.
-
-    Raises:
-        ValueError: If ``raw`` held more than one distinct knot while ``snapped``
-            holds only one.
-    """
-    # Both vectors are non-decreasing, so "all knots identical" is exactly
-    # "first equals last", tested bitwise and needing no tolerance of its own.
-    if raw[0] == raw[-1] or snapped[0] != snapped[-1]:
-        return
-
-    name = raw.dtype.name
-    scale = _knot_scale(raw)
-    ulp = float(np.spacing(raw.dtype.type(scale)))
-    gaps = np.diff(np.asarray(raw, dtype=np.float64))
-    closest = float(gaps[gaps > 0.0].min())
-    # Widening the format is only a remedy if there is a wider one to move to.
-    remedy = (
-        "Use float64, move the domain nearer the origin, or coarsen the mesh."
-        if raw.dtype.type is np.float32
-        else "Move the domain nearer the origin, or coarsen the mesh."
-    )
-    raise ValueError(
-        f"knot snapping collapsed every knot onto {float(snapped[0])!r}: in {name} at "
-        f"|coordinate| ~ {scale:.3g} two knots are the same knot unless they differ by "
-        f"more than {tol:.3g} ({tol / ulp:.0f} ulp there), and the closest pair in "
-        f"[{float(raw[0])!r}, {float(raw[-1])!r}] is {closest:.3g} apart. This mesh is "
-        f"finer than {name} resolves at that magnitude. {remedy}"
-    )
-
-
-def _check_space_has_an_interval(
-    knots: npt.NDArray[np.float32 | np.float64],
-    degree: int,
-    num_intervals: int,
-    tol: float,
-) -> None:
-    """Reject a knot vector whose domain is a single point.
-
-    A space with no interval has no cell, and every operation defined over its cells
-    is therefore undefined on it. It was accepted until issue #320, and each consumer
-    then met the degeneracy on its own terms: ``tensor_product_grid`` named the
-    breakpoints, ``Bspline.locate`` surfaced ``numpy``'s zero-size ``min``,
-    ``tabulate_basis_derivatives`` divided by zero, and -- worse than any error --
-    ``Bspline.evaluate`` returned ``0.0`` while ``tabulate_basis`` and
-    ``evaluate_derivatives`` returned ``NaN``. Those three returned a value, so a
-    survey of what *raised* would not have found them, which is why the rule lives
-    here at the one place a space comes into being rather than at each consumer. It
-    is also the rule ``create_cardinal_knots`` has always applied, as
-    ``num_intervals must be at least 1``.
-
-    The predicate is the interval count, not "every knot is the same value". The
-    family is wider than it looks: ``[0, 1, 1, 1, 2]`` at degree 1 holds three
-    distinct values and still has a domain of ``(1.0, 1.0)``, because the domain runs
-    from ``knots[degree]`` to ``knots[-degree-1]`` and an interior knot of high enough
-    multiplicity swallows it whole. Counting intervals catches that case and the flat
-    one together, and it introduces no threshold of its own -- the count is decided by
-    the same knot grouping the space uses everywhere else.
-
-    That grouping splits on ``knots[i] - knots[i-1] > tol``, so it chains: the two
-    domain ends can be further apart than ``tol`` and still fall in one class, through
-    knots between them. The message therefore reports what is actually true of every
-    case it fires on -- each consecutive step across the domain is at most ``tol`` --
-    rather than claiming the two ends are within ``tol`` of each other, which they need
-    not be.
-
-    Args:
-        knots (npt.NDArray[np.float32 | np.float64]): The knot vector, non-decreasing
-            and already snapped if snapping was requested.
-        degree (int): Polynomial degree, which fixes where the domain starts and ends.
-        num_intervals (int): The space's interval count, one less than the number of
-            distinct in-domain knots.
-        tol (float): The absolute tolerance the count was taken at, from
-            :func:`_knot_tolerance`.
-
-    Raises:
-        ValueError: If ``num_intervals`` is zero.
-    """
-    if num_intervals > 0:
-        return
-
-    last = knots.size - degree - 1
-    lo, hi = float(knots[degree]), float(knots[last])
-    raise ValueError(
-        f"knot vector spans no interval: at degree {degree} the domain runs from "
-        f"knots[{degree}] = {lo!r} to knots[{last}] = {hi!r}, and every step between "
-        f"them is at most this vector's tolerance of {tol:.3g}, so its in-domain knots "
-        f"are all one knot, the space has no cell, and nothing can be evaluated, "
-        f"tabulated or located on it. The domain needs two consecutive knots more than "
-        f"{tol:.3g} apart."
-    )
+from ..basis._basis_utils import _validate_out_array
 
 
 @nb_jit(
@@ -315,8 +121,8 @@ def _get_unique_knots_and_multiplicity_impl(
         knots (npt.NDArray[np.float32 | np.float64]): B-spline knot vector.
         degree (int): B-spline degree.
         tol (float): **Absolute** parametric tolerance: consecutive knots closer
-            than this are one knot. See :func:`_knot_tolerance` for how it is
-            derived from the knot vector's own magnitude.
+            than this are one knot. See :attr:`~pantr.bspline.BsplineSpace1D.tolerance`
+            for how it is derived from the knot vector's own magnitude.
         in_domain (bool): If True, only consider knots in the domain.
             Defaults to False.
 
@@ -408,30 +214,6 @@ def _is_in_domain_impl(
         (knot_begin < pts) | (np.abs(knot_begin - pts) <= tol),
         (pts < knot_end) | (np.abs(pts - knot_end) <= tol),
     )
-
-
-@nb_jit(
-    nopython=True,
-    cache=True,
-    parallel=False,
-)
-def _get_last_knot_smaller_equal_impl(
-    knots: npt.NDArray[np.float32 | np.float64],
-    pts: npt.NDArray[np.float32 | np.float64],
-) -> npt.NDArray[np.int_]:
-    """Get the index of the last knot which is less than or equal to each point in pts.
-
-    Args:
-        knots (npt.NDArray[np.float32 | np.float64]): B-spline knot vector (must be non-decreasing).
-        pts (npt.NDArray[np.float32 | np.float64]): Points (1D array) to find knot indices for.
-
-    Returns:
-        npt.NDArray[np.int_]: Array of computed indices, one for each point in pts.
-
-    Note:
-        Inputs are assumed to be correct (no validation performed).
-    """
-    return np.searchsorted(knots, pts, side="right") - 1
 
 
 @nb_jit(
@@ -592,42 +374,6 @@ def _get_Bspline_cardinal_intervals_1D_impl(
     _get_Bspline_cardinal_intervals_1D_core(knots, degree, tol, out)
 
     return out
-
-
-def _validate_knot_input(
-    num_intervals: int,
-    degree: int,
-    continuity: int,
-    domain: tuple[np.float32 | np.float64, np.float32 | np.float64],
-    dtype: npt.DTypeLike,
-) -> None:
-    """Validate input parameters for knot vector generation.
-
-    Args:
-        num_intervals (int): Number of intervals in the domain. Must be at least 1:
-            a mesh of zero intervals has no cell, so nothing is defined over it.
-        degree (int): B-spline degree.
-        continuity (int): Continuity level at interior knots.
-        domain (tuple[np.float32 | np.float64, np.float32 | np.float64]):
-            Domain boundaries as (start, end).
-        dtype (np.dtype): Data type for the knot vector.
-
-    Raises:
-        ValueError: If any parameter is invalid.
-    """
-    if domain[0] >= domain[1]:
-        raise ValueError("domain[0] must be less than domain[1]")
-
-    if num_intervals < 1:
-        raise ValueError("num_intervals must be at least 1")
-
-    if degree < 0:
-        raise ValueError("degree must be non-negative")
-
-    if continuity < -1 or continuity >= degree:
-        raise ValueError(f"Continuity must be between -1 and {degree - 1} for degree {degree}.")
-
-    _validate_float_dtype(dtype)
 
 
 def _ensure_scalar_arrays(
@@ -892,7 +638,6 @@ def _warmup_numba_functions() -> None:
     _get_unique_knots_and_multiplicity_impl(knots_dummy, degree_dummy, tol_dummy, False)
     _is_in_domain_impl(knots_dummy, degree_dummy, pts_dummy, tol_dummy)
     _get_Bspline_num_basis_1D_impl(knots_dummy, degree_dummy, False, tol_dummy)
-    _get_last_knot_smaller_equal_impl(knots_dummy, pts_dummy)
     # For cardinal intervals: with knots [0,0,0,1,1,1] and degree 2, we have 1 interval
     out_cardinal_dummy = np.empty(1, dtype=np.bool_)
     _get_Bspline_cardinal_intervals_1D_core(
@@ -905,8 +650,6 @@ def _warmup_numba_functions() -> None:
 
 
 __all__ = [
-    "_check_snapping_kept_an_interval",
-    "_check_space_has_an_interval",
     "_check_spline_info",
     "_count_multiplicity",
     "_find_knot_index_and_multiplicity",
@@ -914,11 +657,7 @@ __all__ = [
     "_get_Bspline_cardinal_intervals_1D_impl",
     "_get_Bspline_num_basis_1D_impl",
     "_get_knots_ends_and_dtype",
-    "_get_last_knot_smaller_equal_impl",
     "_get_multiplicity_of_first_knot_in_domain_impl",
     "_get_unique_knots_and_multiplicity_impl",
     "_is_in_domain_impl",
-    "_knot_scale",
-    "_knot_tolerance",
-    "_validate_knot_input",
 ]

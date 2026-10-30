@@ -49,8 +49,8 @@ import numpy.typing as npt
 import pytest
 
 from pantr._numba_compat import wait_for_jit_warmup
+from pantr._testing import knot_tolerance
 from pantr.bspline import Bspline, BsplineSpace, BsplineSpace1D
-from pantr.bspline._bspline_knots import _knot_tolerance
 
 wait_for_jit_warmup()
 
@@ -194,7 +194,7 @@ def test_the_message_stays_true_when_the_domain_ends_are_not_close() -> None:
     assert "every step between them is at most" in message, message
     # The premise of the test: the ends are genuinely further apart than the
     # tolerance the message quotes, so a span-based claim would have been wrong.
-    assert hi - lo > _knot_tolerance(raw)
+    assert hi - lo > knot_tolerance(raw)
 
 
 def test_a_space_with_a_single_interval_is_untouched() -> None:

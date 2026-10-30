@@ -14,13 +14,57 @@ from typing import Any
 import numpy as np
 from numpy import typing as npt
 
+from .._array_utils import _validate_float_dtype
+from .._ext import ext
 from ..quad import PointsLattice
-from ._bspline_knots import (
-    _get_knots_ends_and_dtype,
-    _validate_knot_input,
-)
+from ._bspline_knots import _get_knots_ends_and_dtype
 from ._bspline_space_1d import BsplineSpace1D
 from ._bspline_space_nd import BsplineSpace
+
+_cpp: Any = ext.bspline
+"""The compiled knot factories (private)."""
+
+
+def _uniform_knots(  # noqa: PLR0913
+    kind: str,
+    num_intervals: int,
+    degree: int,
+    continuity: int,
+    start: np.floating[Any],
+    end: np.floating[Any],
+    dtype: np.dtype[np.floating[Any]],
+) -> npt.NDArray[np.float32 | np.float64]:
+    """Build a uniform open or periodic knot vector in C++.
+
+    The values are checked by the C++ library (domain, interval count, degree,
+    continuity, in that order) before the dtype, as they always were; a dtype other
+    than ``float32`` and ``float64`` is refused after them.
+
+    Args:
+        kind (str): ``"open"`` or ``"periodic"``.
+        num_intervals (int): Number of intervals.
+        degree (int): Degree.
+        continuity (int): Continuity at the interior knots.
+        start (np.floating[Any]): Domain start, of ``dtype``.
+        end (np.floating[Any]): Domain end, of ``dtype``.
+        dtype (np.dtype[np.floating[Any]]): The knot dtype.
+
+    Returns:
+        npt.NDArray[np.float32 | np.float64]: The knot vector.
+
+    Raises:
+        ValueError: If an argument is out of range or the dtype is not supported.
+    """
+    suffix = "_f32" if dtype == np.float32 else ""
+    builder = getattr(_cpp, f"uniform_{kind}_knots{suffix}")
+    if dtype not in (np.float32, np.float64):
+        # Checked in double first, so a value error is reported before the dtype one.
+        builder(num_intervals, degree, continuity, float(start), float(end))
+        _validate_float_dtype(dtype)
+    knots: npt.NDArray[np.float32 | np.float64] = builder(
+        num_intervals, degree, continuity, float(start), float(end)
+    )
+    return knots
 
 
 def create_uniform_open_knots(
@@ -73,25 +117,7 @@ def create_uniform_open_knots(
     start, end, dtype = _get_knots_ends_and_dtype(start_value, end_value, dtype)
 
     continuity = degree - 1 if continuity is None else continuity
-
-    _validate_knot_input(
-        num_intervals,
-        degree,
-        continuity,
-        (start, end),
-        dtype,
-    )
-
-    unique_knots = np.linspace(start, end, num_intervals + 1, dtype=dtype)
-    knots = np.array([start] * (degree + 1), dtype)
-
-    interior_multiplicity = degree - continuity
-    for knot in unique_knots[1:-1]:
-        knots = np.append(knots, [knot] * interior_multiplicity)
-
-    knots = np.append(knots, [end] * (degree + 1))
-
-    return knots
+    return _uniform_knots("open", num_intervals, degree, continuity, start, end, dtype)
 
 
 def create_uniform_periodic_knots(
@@ -143,48 +169,7 @@ def create_uniform_periodic_knots(
 
     start, end, dtype = _get_knots_ends_and_dtype(start_value, end_value, dtype)
     continuity = degree - 1 if continuity is None else continuity
-
-    _validate_knot_input(
-        num_intervals,
-        degree,
-        continuity,
-        (start, end),
-        dtype,
-    )
-
-    # Create uniform spacing for unique interior knots
-    unique_knots = np.linspace(start, end, num_intervals + 1, dtype=dtype)
-
-    # Build knot vector with repetitions
-    knots = np.array([], dtype=dtype)
-
-    multiplicity = degree - continuity
-
-    # Starting periodic knots.
-    length = (end - start) / num_intervals
-    knots = np.linspace(
-        start - length * (degree - multiplicity + 1),
-        start,
-        degree + 2 - multiplicity,
-        dtype=dtype,
-    )[:-1]
-
-    # Interior knots with specified multiplicity
-    for knot in unique_knots:
-        knots = np.append(knots, [knot] * multiplicity)
-
-    # End periodic knots.
-    knots = np.append(
-        knots,
-        np.linspace(
-            end,
-            end + length * (degree - multiplicity + 1),
-            degree + 2 - multiplicity,
-            dtype=dtype,
-        )[1:],
-    )
-
-    return knots
+    return _uniform_knots("periodic", num_intervals, degree, continuity, start, end, dtype)
 
 
 def create_cardinal_knots(
@@ -216,36 +201,16 @@ def create_cardinal_knots(
         >>> np.allclose(create_cardinal_knots(2, 2), [-2.0, -1.0, 0.0, 1.0, 2.0, 3.0, 4.0])
         True
     """
-    # Checked here and not left to `_validate_knot_input`, which enforces the same rule
-    # for the other two factories: this one derives its domain from the count, so a zero
-    # would reach the validator as `domain=(0, 0)` and come back as "domain[0] must be
-    # less than domain[1]", naming a parameter the caller never passed.
-    if num_intervals < 1:
-        raise ValueError("num_intervals must be at least 1")
-
-    if degree < 0:
-        raise ValueError("degree must be non-negative")
-
     dtype_obj = np.dtype(dtype)
-    if dtype_obj not in (np.dtype(np.float32), np.dtype(np.float64)):
+    if dtype_obj == np.float32:
+        f32: npt.NDArray[np.float32] = _cpp.cardinal_knots_f32(num_intervals, degree)
+        return f32
+    if dtype_obj != np.float64:
+        # The count and the degree are checked first (by the C++ library), as they always were.
+        _cpp.cardinal_knots(num_intervals, degree)
         raise ValueError("dtype must be float32 or float64")
-
-    start_value: np.float32 | np.float64
-    end_value: np.float32 | np.float64
-    if dtype_obj == np.dtype(np.float64):
-        start_value = np.float64(0)
-        end_value = np.float64(num_intervals)
-    else:
-        start_value = np.float32(0)
-        end_value = np.float32(num_intervals)
-
-    return create_uniform_periodic_knots(
-        num_intervals,
-        degree,
-        continuity=degree - 1,
-        domain=(start_value, end_value),
-        dtype=dtype_obj,
-    )
+    f64: npt.NDArray[np.float64] = _cpp.cardinal_knots(num_intervals, degree)
+    return f64
 
 
 def get_greville_abscissae(
@@ -281,25 +246,7 @@ def get_greville_abscissae(
     if not isinstance(space, BsplineSpace1D):
         raise TypeError(f"Expected BsplineSpace1D, got {type(space).__name__}")
 
-    knots = space.knots
-    degree = space.degree
-    n_basis = space.num_basis
-
-    if degree == 0:
-        # For degree 0, Greville points are midpoints of knot spans.
-        greville = (knots[:n_basis] + knots[1 : n_basis + 1]) / 2
-    else:
-        greville = np.array(
-            [np.mean(knots[i + 1 : i + degree + 1]) for i in range(n_basis)],
-            dtype=knots.dtype,
-        )
-
-    if space.periodic:
-        a, b = space.domain
-        period = b - a
-        greville = a + np.mod(greville - a, period)
-        greville.sort()
-
+    greville: npt.NDArray[np.float32 | np.float64] = space._h.greville()
     return greville
 
 

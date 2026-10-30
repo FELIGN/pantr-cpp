@@ -1275,7 +1275,7 @@ def _default_tolerance(spline: Bspline, context: _LocateContext) -> _LocateThres
     *cannot be attained*, which is precisely the defect the parametric term exists to
     remove -- the same bug, relocated to the far end of the range rather than fixed. So the
     only honest answers are to serve a meaningless threshold or to say so, and this library
-    already says so elsewhere: :func:`pantr.bspline._bspline_knots._check_snapping_kept_an_interval`
+    already says so elsewhere: ``pantr::bspline::check_snapping_kept_an_interval``
     refuses a knot vector whose mesh the format cannot resolve, and names the same remedy.
 
     **Where the line is.** ``get_default(dtype) * parametric > diagonal``: the one place no

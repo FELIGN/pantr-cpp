@@ -29,7 +29,6 @@ import pytest
 
 from pantr.bezier import Bezier
 from pantr.bspline import Bspline, BsplineSpace, BsplineSpace1D
-from pantr.bspline._bspline_basis_core import _PARALLEL_MIN_NUM_PTS
 from pantr.grid import hierarchical_grid, uniform_grid
 
 # ---------------------------------------------------------------------------
@@ -58,8 +57,8 @@ def _bezier_2d() -> Bezier:
 def _general_space_1d() -> BsplineSpace1D:
     """Build a 1D space whose knots are *not* Bézier-like.
 
-    The interior knot matters: with Bézier-like knots the tabulation takes its Bernstein
-    branch and never reaches the kernel the corresponding case uses as a sentinel.
+    The interior knot matters: with Bézier-like knots the evaluation takes its Bernstein
+    branch and never reaches the kernel the corresponding cases use as a sentinel.
 
     Returns:
         ~pantr.bspline.BsplineSpace1D: A degree-2 space over ``[0, 1]`` with one interior
@@ -92,13 +91,6 @@ def _hierarchical_grid_2d() -> Any:
 
 _PTS: npt.NDArray[np.float64] = np.linspace(0.0, 1.0, 5)
 """Parametric points shared by the evaluation drivers."""
-
-_MANY_PTS: npt.NDArray[np.float64] = np.linspace(0.0, 1.0, _PARALLEL_MIN_NUM_PTS + 1)
-"""Enough points that the B-spline basis tabulation picks its ``parallel=True`` kernel.
-
-Below ``_PARALLEL_MIN_NUM_PTS`` it picks the serial twin, which is not a ``parallel=True``
-kernel, so a case driven with :data:`_PTS` would sentinel on the wrong one.
-"""
 
 
 # ---------------------------------------------------------------------------
@@ -149,18 +141,9 @@ _CASES: tuple[_BarrierCase, ...] = (
         lambda: _hierarchical_grid_2d().collect_cell_bounds(),
     ),
     # -- pantr.bspline -----------------------------------------------------
-    _BarrierCase(
-        "_bspline_basis_core._tabulate_Bspline_basis_1D_impl",
-        "pantr.bspline._bspline_basis_core",
-        "_compute_basis_nurbs_book_impl",
-        lambda: _general_space_1d().tabulate_basis(_MANY_PTS),
-    ),
-    _BarrierCase(
-        "_bspline_basis_core._tabulate_Bspline_basis_deriv_1D_impl",
-        "pantr.bspline._bspline_basis_core",
-        "_compute_basis_deriv_nurbs_book_impl",
-        lambda: _general_space_1d().tabulate_basis_derivatives(_MANY_PTS, 1),
-    ),
+    # The basis tabulation (BsplineSpace1D.tabulate_basis and its derivatives) moved to C++
+    # (whose pool is safe against concurrent callers), so it carries no barrier and has no
+    # case here.
     _BarrierCase(
         "_bspline_eval._evaluate_Bspline_1D",
         "pantr.bspline._bspline_eval",

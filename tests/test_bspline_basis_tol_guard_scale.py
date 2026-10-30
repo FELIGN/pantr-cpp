@@ -38,7 +38,6 @@ import numpy as np
 import pytest
 
 from pantr.bspline import BsplineSpace1D
-from pantr.bspline._bspline_basis_core import _compute_basis_nurbs_book_serial_impl
 from pantr.tolerance import get_strict
 
 
@@ -48,24 +47,22 @@ class TestScaleDependentDenominatorGuard:
     def test_tiny_domain_partition_of_unity(self) -> None:
         """A tiny-but-nonzero domain must still satisfy the partition of unity.
 
-        Knot spans are scaled down to ``1e-16`` while ``tol`` stays at the float64
-        strict preset (``1e-15``, see :func:`pantr.tolerance.get_strict`). Every
-        local knot span is well below ``tol`` even though it is not zero; before the
-        fix this made the guard incorrectly collapse every Cox-de Boor contribution,
-        so the basis functions no longer summed to one. ``tol`` is still a required
-        argument of the kernel (unrelated interface reasons, see
-        ``_find_spans_and_first_basis``) but no longer affects the denominator
-        guard, which is now an exact ``denom == 0.0`` test.
+        Knot spans are scaled down to ``1e-16`` while the float64 strict preset
+        (``1e-15``, see :func:`pantr.tolerance.get_strict`) stays far above them.
+        Every local knot span is well below that absolute value even though it is
+        not zero; before the fix this made the guard incorrectly collapse every
+        Cox-de Boor contribution, so the basis functions no longer summed to one.
+        The space is built with ``snap_knots=False`` so that no construction-time
+        grouping stands between the knots and the kernel, which now guards the
+        denominator with an exact ``denom == 0.0`` test.
         """
         scale = 1e-16
         knots = np.array([0.0, 0.0, 0.0, 0.25, 0.5, 0.75, 1.0, 1.0, 1.0], dtype=np.float64) * scale
         degree = 2
-        tol = get_strict(np.float64)
+        space = BsplineSpace1D(knots, degree, snap_knots=False)
         pts = np.array([0.4 * scale], dtype=np.float64)
 
-        basis = np.empty((1, degree + 1), dtype=np.float64)
-        first_basis = np.empty(1, dtype=np.int_)
-        _compute_basis_nurbs_book_serial_impl(knots, degree, False, tol, pts, basis, first_basis)
+        basis, _ = space.tabulate_basis(pts)
 
         np.testing.assert_allclose(basis.sum(axis=-1), 1.0, rtol=1e-13)
 

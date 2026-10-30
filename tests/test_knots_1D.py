@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, cast
 
 import numpy as np
@@ -14,19 +15,24 @@ from pantr.bspline import (
     create_uniform_open_knots,
     create_uniform_periodic_knots,
 )
-from pantr.bspline._bspline_knots import (
-    _get_knots_ends_and_dtype,
-    _validate_knot_input,
-)
+from pantr.bspline._bspline_knots import _get_knots_ends_and_dtype
 from pantr.tolerance import get_strict
 
+_UNIFORM_FACTORIES = [create_uniform_open_knots, create_uniform_periodic_knots]
+"""The two public factories that validate ``(num_intervals, degree, continuity, domain, dtype)``."""
 
-class TestValidateKnotInput:
-    """Tests for `_validate_knot_input`."""
 
-    def test_valid_inputs(self) -> None:
+@pytest.mark.parametrize("factory", _UNIFORM_FACTORIES)
+class TestUniformKnotArgumentValidation:
+    """Tests for the argument checks of the uniform knot factories.
+
+    These checks used to be tested on the private validator ``_validate_knot_input``; they
+    are now reached through the public factories, which apply them before building any knot.
+    """
+
+    def test_valid_inputs(self, factory: Callable[..., npt.NDArray[Any]]) -> None:
         """Accept well-formed parameters without raising."""
-        _validate_knot_input(
+        factory(
             num_intervals=2,
             degree=2,
             continuity=1,
@@ -34,10 +40,15 @@ class TestValidateKnotInput:
             dtype=np.float64,
         )
 
-    def test_domain_order_error(self) -> None:
-        """Reject domains whose start exceeds the end."""
-        with pytest.raises(ValueError, match=r"domain\[0\] must be less than domain\[1\]"):
-            _validate_knot_input(
+    def test_domain_order_error(self, factory: Callable[..., npt.NDArray[Any]]) -> None:
+        """Reject domains whose start exceeds the end.
+
+        The factory resolves the domain before the validator runs, so the message is the
+        resolver's (``end must be greater than start``), not the validator's
+        ``domain[0] must be less than domain[1]``, which no public path reaches any more.
+        """
+        with pytest.raises(ValueError, match="end must be greater than start"):
+            factory(
                 num_intervals=2,
                 degree=2,
                 continuity=1,
@@ -45,10 +56,10 @@ class TestValidateKnotInput:
                 dtype=np.float64,
             )
 
-    def test_negative_num_intervals_error(self) -> None:
+    def test_negative_num_intervals_error(self, factory: Callable[..., npt.NDArray[Any]]) -> None:
         """Reject negative interval counts."""
         with pytest.raises(ValueError, match="num_intervals must be at least 1"):
-            _validate_knot_input(
+            factory(
                 num_intervals=-1,
                 degree=2,
                 continuity=1,
@@ -56,10 +67,10 @@ class TestValidateKnotInput:
                 dtype=np.float64,
             )
 
-    def test_zero_num_intervals_error(self) -> None:
+    def test_zero_num_intervals_error(self, factory: Callable[..., npt.NDArray[Any]]) -> None:
         """Reject a zero interval count: a mesh with no cell has nothing defined over it."""
         with pytest.raises(ValueError, match="num_intervals must be at least 1"):
-            _validate_knot_input(
+            factory(
                 num_intervals=0,
                 degree=2,
                 continuity=1,
@@ -67,10 +78,10 @@ class TestValidateKnotInput:
                 dtype=np.float64,
             )
 
-    def test_negative_degree_error(self) -> None:
+    def test_negative_degree_error(self, factory: Callable[..., npt.NDArray[Any]]) -> None:
         """Reject negative spline degrees."""
         with pytest.raises(ValueError, match="degree must be non-negative"):
-            _validate_knot_input(
+            factory(
                 num_intervals=2,
                 degree=-1,
                 continuity=1,
@@ -78,10 +89,12 @@ class TestValidateKnotInput:
                 dtype=np.float64,
             )
 
-    def test_invalid_continuity_upper_bound_error(self) -> None:
+    def test_invalid_continuity_upper_bound_error(
+        self, factory: Callable[..., npt.NDArray[Any]]
+    ) -> None:
         """Reject continuity higher than degree - 1."""
         with pytest.raises(ValueError, match="Continuity must be between"):
-            _validate_knot_input(
+            factory(
                 num_intervals=2,
                 degree=2,
                 continuity=2,
@@ -89,10 +102,12 @@ class TestValidateKnotInput:
                 dtype=np.float64,
             )
 
-    def test_invalid_continuity_lower_bound_error(self) -> None:
+    def test_invalid_continuity_lower_bound_error(
+        self, factory: Callable[..., npt.NDArray[Any]]
+    ) -> None:
         """Reject continuity less than -1."""
         with pytest.raises(ValueError, match="Continuity must be between"):
-            _validate_knot_input(
+            factory(
                 num_intervals=2,
                 degree=2,
                 continuity=-2,
@@ -100,10 +115,26 @@ class TestValidateKnotInput:
                 dtype=np.float64,
             )
 
-    def test_invalid_dtype_error(self) -> None:
-        """Reject non-floating dtype requests."""
+    def test_invalid_dtype_error(self, factory: Callable[..., npt.NDArray[Any]]) -> None:
+        """Reject floating dtypes that are neither float32 nor float64."""
         with pytest.raises(ValueError, match="dtype must be float32 or float64"):
-            _validate_knot_input(
+            factory(
+                num_intervals=2,
+                degree=2,
+                continuity=1,
+                domain=(np.float16(0.0), np.float16(1.0)),
+                dtype=np.float16,
+            )
+
+    def test_non_floating_dtype_error(self, factory: Callable[..., npt.NDArray[Any]]) -> None:
+        """Reject non-floating dtype requests.
+
+        The old test passed ``np.int32`` to the validator and matched ``dtype must be
+        float32 or float64``; through the factory an integer dtype is refused earlier, with
+        ``dtype must be a floating-point type``, and ``float16`` (above) reaches the old message.
+        """
+        with pytest.raises(ValueError, match="dtype must be a floating-point type"):
+            factory(
                 num_intervals=2,
                 degree=2,
                 continuity=1,

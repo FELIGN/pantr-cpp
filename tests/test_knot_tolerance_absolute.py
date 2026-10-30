@@ -11,7 +11,7 @@ of the derived one -- which is harmless on a unit domain and catastrophic on a l
 one.
 
 (The presets in :mod:`pantr.tolerance` are dimensionless relative factors; it is
-``_bspline_knots._knot_tolerance`` that turns one into the absolute length this file
+``pantr._testing.knot_tolerance`` that turns one into the absolute length this file
 is about. ``TestDerivedKnotTolerance`` at the end pins that derivation and the
 properties the knot layer rests on.)
 
@@ -38,6 +38,7 @@ import numpy as np
 import pytest
 from numpy import typing as npt
 
+from pantr._testing import knot_tolerance
 from pantr.bspline import (
     Bspline,
     BsplineSpace,
@@ -49,7 +50,6 @@ from pantr.bspline._bspline_knots import (
     _find_knot_index_and_multiplicity,
     _get_unique_knots_and_multiplicity_impl,
     _is_in_domain_impl,
-    _knot_tolerance,
 )
 from pantr.bspline._bspline_product import _get_boundary_mults
 from pantr.bspline._bspline_restrict import (
@@ -587,21 +587,21 @@ class TestDerivedKnotTolerance:
     def test_a_knot_vector_with_no_scale_compares_exactly() -> None:
         """An identically-zero knot vector leaves no magnitude to be relative to.
 
-        ``_knot_scale`` returns 0.0 and the tolerance with it, so grouping falls back
+        ``knot_scale`` returns 0.0 and the tolerance with it, so grouping falls back
         to exact equality. That is the only defensible answer -- there is no scale to
         read off the input -- and the vector is all one knot either way. Pinned
         because a zero tolerance is the kind of degenerate value that invites a
         well-meaning floor.
 
         Exercised through the knot layer rather than through a space, because
-        ``_knot_scale`` is ``max(span, |knots[0]|, |knots[-1]|)`` and so vanishes only
+        ``knot_scale`` is ``max(span, |knots[0]|, |knots[-1]|)`` and so vanishes only
         when the whole vector is zero -- which is exactly the zero-interval case
         ``BsplineSpace1D`` refuses since issue #320. The scale-free regime is
         therefore reachable in the knot layer and nowhere above it, and that is a
         property of the derivation worth stating rather than a gap in the test.
         """
         knots = np.zeros(8, dtype=np.float64)
-        assert _knot_tolerance(knots) == 0.0
+        assert knot_tolerance(knots) == 0.0
 
         unique, mults = _get_unique_knots_and_multiplicity_impl(knots, 3, 0.0, False)
         assert unique.tolist() == [0.0]

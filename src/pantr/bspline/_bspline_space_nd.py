@@ -3,24 +3,28 @@
 This module defines :class:`BsplineSpace`, which aggregates multiple
 :class:`~pantr.bspline.BsplineSpace1D` objects to represent
 multi-dimensional parameter domains. It handles tensor-product basis evaluation
-by combining the 1D components.
+by combining the 1D components, in the C++ library (``pantr::bspline::BsplineSpace``).
 """
 
 from __future__ import annotations
 
 import functools
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import numpy as np
 from numpy import typing as npt
 
-from ._bspline_basis_multidim import _tabulate_Bspline_basis_impl
+from .._ext import ext
+from ..quad import PointsLattice
 from ._bspline_cell_supports import _cell_supports_impl
+from ._bspline_space_1d import _kernel_buffer, _prepared_out
 
 if TYPE_CHECKING:
-    from ..quad import PointsLattice
     from ._bspline_space_1d import BsplineSpace1D
+
+_cpp: Any = ext.bspline
+"""The compiled B-spline spaces (private; untyped: one class per dtype)."""
 
 
 class BsplineSpace:
@@ -33,10 +37,14 @@ class BsplineSpace:
     and access various properties of the B-spline.
 
     Attributes:
-        _spaces (Iterable[BsplineSpace1D]): List of B-spline spaces, one for each dimension.
+        _spaces (tuple[BsplineSpace1D, ...]): The B-spline spaces, one for each dimension,
+            as given (so ``space.spaces[d] is`` the object passed in).
+        _h (Any): The compiled tensor product (``BsplineSpaceF64`` or ``BsplineSpaceF32``)
+            of their compiled values; None for an empty tuple of spaces.
     """
 
     _spaces: tuple[BsplineSpace1D, ...]
+    _h: Any
 
     def __init__(
         self,
@@ -54,6 +62,30 @@ class BsplineSpace:
 
         if not all(space.dtype == self.dtype for space in self._spaces):
             raise ValueError("All B-spline spaces must have the same data type.")
+
+        # An empty tuple is accepted, as it always was, and has no compiled value (the C++ space
+        # needs a direction): its ``dtype`` raises ``IndexError`` and nothing can be tabulated.
+        self._h = None
+        if self._spaces:
+            cls = _cpp.BsplineSpaceF32 if self.dtype == np.float32 else _cpp.BsplineSpaceF64
+            self._h = cls([space._h for space in self._spaces])
+
+    def __reduce__(self) -> tuple[type[BsplineSpace], tuple[tuple[BsplineSpace1D, ...]]]:
+        """Pickle (and copy) through the constructor, from the 1D spaces.
+
+        Returns:
+            tuple[type[BsplineSpace], tuple[tuple[BsplineSpace1D, ...]]]: The class and its
+            constructor argument.
+        """
+        return (type(self), (self._spaces,))
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Load a pickle of the previous release, which stored the attributes.
+
+        Args:
+            state (dict[str, Any]): The pickled attributes (``_spaces``).
+        """
+        type(self).__init__(self, state["_spaces"])
 
     @property
     def dim(self) -> int:
@@ -219,9 +251,60 @@ class BsplineSpace:
             ValueError: If one or more points are outside the domain of the B-spline space, or if
                 `out_basis` or `out_first_basis` is provided and has incorrect shape or dtype.
         """
-        return _tabulate_Bspline_basis_impl(
-            self, pts, out_basis=out_basis, out_first_basis=out_first_basis
-        )
+        orders = tuple(degree + 1 for degree in self.degrees)
+        num_local = self._h.num_local_functions
+        if isinstance(pts, PointsLattice):
+            lattice_h = pts._h
+            dtype = np.dtype(pts.dtype)
+            # Refuses another dimension (C++, with the message the suite matches).
+            outside = self._h.first_direction_outside(lattice_h)
+            if outside >= 0:
+                raise ValueError(
+                    f"One or more values in pts.pts_per_dir[{outside}] are outside the knot "
+                    f"vector domain {self._spaces[outside].domain}"
+                )
+            pts_shape = tuple(len(p) for p in pts.pts_per_dir)
+            num_pts = int(np.prod(pts_shape))
+
+            def call(values: npt.NDArray[Any], first: npt.NDArray[Any]) -> None:
+                self._h.tabulate_lattice(lattice_h, values, first)
+        else:
+            arr = pts if isinstance(pts, np.ndarray) else np.asarray(pts)
+            if arr.ndim != 2:  # noqa: PLR2004
+                raise ValueError("pts must be a 2D array")
+            if arr.dtype not in (np.float32, np.float64):
+                arr = arr.astype(np.float64)
+            # The binding is overloaded on the dtype; ``coords`` is either, so it is untyped.
+            coords: Any = np.ascontiguousarray(arr)
+            # Refuses another column count (C++, with the message the suite matches).
+            outside = self._h.first_direction_outside(coords)
+            if outside >= 0:
+                raise ValueError(
+                    f"One or more values in pts[:, {outside}] are outside the knot vector"
+                    f" domain {self.domain}"
+                )
+            dtype = np.dtype(self.dtype)
+            pts_shape = (arr.shape[0],)
+            num_pts = arr.shape[0]
+
+            def call(values: npt.NDArray[Any], first: npt.NDArray[Any]) -> None:
+                self._h.tabulate_points(coords, values, first)
+
+        values_shape = (*pts_shape, *orders)
+        first_shape = (*pts_shape, self.dim)
+        if out_basis is None and out_first_basis is None:
+            values = np.empty((num_pts, num_local), dtype=dtype)
+            first = np.empty((num_pts, self.dim), dtype=np.int_)
+            call(values, first)
+            return values.reshape(values_shape), first.reshape(first_shape)
+        out_basis = _prepared_out(out_basis, values_shape, dtype)
+        out_first_basis = _prepared_out(out_first_basis, first_shape, np.int_)
+        with (
+            _kernel_buffer(out_basis, (num_pts, num_local)) as values,
+            _kernel_buffer(out_first_basis, (num_pts, self.dim)) as first,
+        ):
+            call(values, first)
+        return out_basis, out_first_basis
 
     def cell_supports(self, cell_ids: npt.ArrayLike) -> npt.NDArray[np.int64]:
         """Return the control points supported on each of the given cells.

@@ -20,16 +20,7 @@ from pantr.bspline import (
     create_uniform_open_knots,
     create_uniform_periodic_knots,
 )
-from pantr.bspline._bspline_basis_core import (
-    _PARALLEL_MIN_NUM_PTS,
-    _compute_basis_deriv_nurbs_book_impl,
-    _compute_basis_deriv_nurbs_book_serial_impl,
-    _compute_basis_nurbs_book_impl,
-    _compute_basis_nurbs_book_serial_impl,
-    _tabulate_Bspline_basis_1D_impl,
-    _tabulate_Bspline_basis_Bernstein_like_1D,
-    _tabulate_Bspline_basis_deriv_1D_impl,
-)
+from pantr.bspline._bspline_basis_core import _compute_basis_nurbs_book_impl
 from pantr.bspline._bspline_extraction import (
     _tabulate_Bspline_Bezier_1D_extraction_impl,
     _tabulate_Bspline_cardinal_1D_extraction_impl,
@@ -39,12 +30,10 @@ from pantr.bspline._bspline_knots import (
     _check_spline_info,
     _get_Bspline_cardinal_intervals_1D_impl,
     _get_Bspline_num_basis_1D_impl,
-    _get_last_knot_smaller_equal_impl,
     _get_multiplicity_of_first_knot_in_domain_impl,
     _get_unique_knots_and_multiplicity_impl,
     _is_in_domain_impl,
 )
-from pantr.bspline._bspline_space_1d import _cached_unique_knots_and_multiplicity
 from pantr.change_basis import compute_lagrange_to_bernstein_1d
 from pantr.tolerance import get_strict
 
@@ -152,20 +141,30 @@ class TestBsplineSpace1DProperties:
         with pytest.raises(ValueError):
             spline.knots[0] = 99.0
 
-    def test_unique_knots_cache_is_bounded(self) -> None:
-        """Test that the knot-multiplicity cache has a finite maxsize.
+    @pytest.mark.parametrize("in_domain", [False, True])
+    def test_unique_knots_are_derived_once_and_read_only(self, in_domain: bool) -> None:
+        """Repeated queries return the same read-only tuple, equal to the knot-layer result.
 
-        An unbounded cache (functools.cache) would leak memory in long-running
-        applications that construct many distinct spline spaces.  Switching to
-        lru_cache(maxsize=N) ensures old entries are evicted when the cache is
-        full.
+        The space derives its knot classes at construction and hands out the same tuple
+        object on every call (the former bounded ``lru_cache`` keyed on the knot bytes is
+        retired: nothing is cached across instances, so nothing can grow without bound).
+        The values are compared with the knot layer's own grouping on the space's knots.
         """
-        info = _cached_unique_knots_and_multiplicity.cache_info()
-        assert info.maxsize is not None, (
-            "_cached_unique_knots_and_multiplicity must use lru_cache with a "
-            "finite maxsize, not functools.cache, to avoid unbounded memory growth."
+        knots = [0.0, 0.0, 0.0, 0.25, 0.5, 0.5, 1.0, 1.0, 1.0]
+        spline = BsplineSpace1D(knots, 2)
+
+        first = spline.get_unique_knots_and_multiplicity(in_domain=in_domain)
+        second = spline.get_unique_knots_and_multiplicity(in_domain=in_domain)
+        assert second is first
+        unique, mults = first
+        assert not unique.flags.writeable
+        assert not mults.flags.writeable
+
+        expected_unique, expected_mults = _get_unique_knots_and_multiplicity_impl(
+            np.asarray(spline.knots), spline.degree, spline.tolerance, in_domain
         )
-        assert info.maxsize > 0
+        np.testing.assert_array_equal(unique, expected_unique)
+        np.testing.assert_array_equal(mults, expected_mults)
 
     def test_periodic_property(self) -> None:
         """Test periodic property."""
@@ -670,30 +669,36 @@ class TestComputeNumBasis:
         assert result == 2
 
 
-class TestGetLastKnotSmallerEqual:
-    """Test the _get_last_knot_smaller_equal_impl function."""
+class TestLastKnotSmallerEqualSpan:
+    """The span search (index of the last knot <= each point), seen through ``tabulate_basis``.
+
+    The standalone ``_get_last_knot_smaller_equal_impl`` is gone: the C++ tabulation searches
+    the span internally. For a degree-1 space the first non-zero basis function at an interior
+    point is ``span - 1``, and every vector below starts with a repeated knot, so ``first``
+    equals the index the former function returned for the unpadded vector.
+    """
 
     def test_basic_functionality(self) -> None:
         """Test basic knot index finding."""
-        knots = np.array([0.0, 0.5, 1.0, 1.5, 2.0], dtype=np.float64)
+        knots = np.array([0.0, 0.0, 0.5, 1.0, 1.5, 2.0, 2.0], dtype=np.float64)
         pts = np.array([0.3, 0.7, 1.2, 1.8], dtype=np.float64)
-        result = _get_last_knot_smaller_equal_impl(knots, pts)
+        _, result = BsplineSpace1D(knots, 1).tabulate_basis(pts)
         expected = np.array([0, 1, 2, 3])  # Indices of knots <= pts
         np.testing.assert_array_equal(result, expected)
 
     def test_knots_with_repetitions(self) -> None:
         """Test knots with repetitions index finding."""
-        knots = np.array([0.0, 0.5, 1.0, 1.0, 1.5, 2.0], dtype=np.float64)
+        knots = np.array([0.0, 0.0, 0.5, 1.0, 1.0, 1.5, 2.0, 2.0], dtype=np.float64)
         pts = np.array([0.3, 0.7, 1.2, 1.8], dtype=np.float64)
-        result = _get_last_knot_smaller_equal_impl(knots, pts)
+        _, result = BsplineSpace1D(knots, 1).tabulate_basis(pts)
         expected = np.array([0, 1, 3, 4])  # Indices of knots <= pts
         np.testing.assert_array_equal(result, expected)
 
     def test_exact_knot_matches(self) -> None:
         """Test when points exactly match knots."""
-        knots = np.array([0.0, 0.5, 1.0, 1.5, 2.0], dtype=np.float64)
+        knots = np.array([0.0, 0.0, 0.5, 1.0, 1.5, 2.0, 2.0], dtype=np.float64)
         pts = np.array([0.0, 0.5, 1.0], dtype=np.float64)
-        result = _get_last_knot_smaller_equal_impl(knots, pts)
+        _, result = BsplineSpace1D(knots, 1).tabulate_basis(pts)
         expected = np.array([0, 1, 2])
         np.testing.assert_array_equal(result, expected)
 
@@ -1590,13 +1595,21 @@ class TestAdditionalEdgeCases:
         with pytest.raises(ValueError, match="outside the knot vector domain"):
             spline.tabulate_basis([-0.1, 1.1])
 
-    def test_compute_bernstein_like_direct_raises_on_non_bezier(self) -> None:
-        """Direct Bernstein-like evaluator should assert on non-Bézier-like splines."""
+    def test_non_bezier_like_space_does_not_take_the_bernstein_path(self) -> None:
+        """A multi-span space is not tabulated as one Bernstein polynomial.
+
+        The private Bernstein-only evaluator, which refused non-Bézier-like splines, is gone;
+        what that guard protected is that the single-polynomial path (first index 0 at every
+        point) never serves a multi-span space. Observable through the public method: the
+        first-basis indices follow the span, and the values form a partition of unity.
+        """
         knots = [0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0]
         degree = 2
         spline = BsplineSpace1D(knots, degree)
-        with pytest.raises(ValueError, match="B-spline does not have Bézier-like knots"):
-            _tabulate_Bspline_basis_Bernstein_like_1D(spline, np.array([0.0, 0.5, 1.0]))
+        assert not spline.has_Bezier_like_knots()
+        basis, first = spline.tabulate_basis(np.array([0.0, 0.25, 0.75, 1.0]))
+        np.testing.assert_array_equal(first, [0, 0, 1, 1])
+        np.testing.assert_allclose(basis.sum(axis=-1), 1.0, atol=1e-14)
 
 
 class TestBsplineSpace1DCoverageTargets:
@@ -1864,16 +1877,15 @@ class TestOutParameter:
         # For Bézier-like knots, first_indices should all be 0
         np.testing.assert_array_equal(first_indices, np.array([0, 0, 0]))
 
-    def test_tabulate_Bspline_basis_Bernstein_like_1D_without_out_first_basis(self) -> None:
-        """Test _tabulate_Bspline_basis_Bernstein_like_1D without out_first_basis."""
+    def test_tabulate_basis_bezier_like_without_out_arrays(self) -> None:
+        """Test tabulate_basis on Bézier-like knots without any ``out`` array."""
         # Bézier-like knots: only two unique knots
         knots = [0.0, 0.0, 0.0, 1.0, 1.0, 1.0]
         degree = 2
         spline = BsplineSpace1D(knots, degree)
         pts = np.array([0.0, 0.5, 1.0], dtype=np.float64)
 
-        # Call directly without out_first_basis to hit line 173
-        basis, first_indices = _tabulate_Bspline_basis_Bernstein_like_1D(spline, pts)
+        basis, first_indices = spline.tabulate_basis(pts)
 
         assert basis.shape == (3, 3)
         assert first_indices.shape == (3,)
@@ -2135,8 +2147,118 @@ class TestBsplineSpace1DRestrict:
             space.restrict(0, 5)  # hi > num_intervals
 
 
-class TestSerialParallelKernelTwins:
-    """Serial twin kernels must match the parallel kernels exactly."""
+_THREAD_SIZES = [1, 3, 100, 8191, 8193, 3 * 8192 + 17]
+"""Point counts across the C++ kernel's serial/parallel threshold (about 3900 points at degree 2)
+and across its 8192-point chunk boundary."""
+
+_needs_two_threads = pytest.mark.skipif(
+    pantr.get_num_threads() < 2,
+    reason="one CPU: one thread and every thread are the same setting",
+)
+
+
+def _many_threads() -> int:
+    """Pick a thread count greater than one for exercising the parallel kernel.
+
+    Returns:
+        int: Thread count to use, capped at 4 and at the environment's maximum.
+    """
+    return max(1, min(4, pantr.get_num_threads()))
+
+
+def _assert_agree_within_roundings(
+    actual: npt.NDArray[np.floating], expected: npt.NDArray[np.floating], axis: int | None = None
+) -> None:
+    """Assert two tabulations of the same input agree within a few roundings of their size.
+
+    Both runs execute the same operations per point: the chunking is a function of the problem
+    alone and nothing is reduced across points, so they are expected to agree bitwise, and
+    bit-identity is not asserted (not a criterion on floating point). What is admitted is a
+    different rounding of the same expression, such as a contracted multiply-add in a vector
+    body versus the scalar tail a moved chunk boundary leaves. The bound is
+    ``4 * eps * max |expected|``: up to eight half-ulp roundings of an operand no larger than
+    the largest entry. The multiplier 4 is an admitted heuristic, not a derived constant; the
+    assertion exists to catch a chunk written from the wrong index, which is wrong by O(1).
+
+    Args:
+        actual (npt.NDArray[np.floating]): The result under test.
+        expected (npt.NDArray[np.floating]): The reference result, same shape and dtype.
+        axis (int | None): If given, the bound is taken per slice along this axis (the
+            derivative rows, whose magnitudes differ by powers of ``degree / h``); otherwise
+            over the whole array. Defaults to None.
+    """
+    assert actual.dtype == expected.dtype
+    assert actual.shape == expected.shape
+    eps = float(np.finfo(expected.dtype).eps)
+    if axis is None:
+        np.testing.assert_allclose(
+            actual, expected, rtol=0.0, atol=4 * eps * np.max(np.abs(expected))
+        )
+        return
+    for k in range(expected.shape[axis]):
+        exp_k = np.take(expected, k, axis=axis)
+        act_k = np.take(actual, k, axis=axis)
+        np.testing.assert_allclose(
+            act_k, exp_k, rtol=0.0, atol=4 * eps * np.max(np.abs(exp_k)), err_msg=f"row {k}"
+        )
+
+
+def _tabulate_threads(
+    sp: BsplineSpace1D, pts: npt.NDArray[np.floating], n_threads: int, n_deriv: int | None = None
+) -> tuple[npt.NDArray[np.floating], npt.NDArray[np.int_]]:
+    """Tabulate the basis (or its derivatives) with a given thread count, then restore it.
+
+    Args:
+        sp (BsplineSpace1D): The space.
+        pts (npt.NDArray[np.floating]): Points inside the domain.
+        n_threads (int): Thread count for the call.
+        n_deriv (int | None): Highest derivative order, or None for the basis alone.
+            Defaults to None.
+
+    Returns:
+        tuple[npt.NDArray[np.floating], npt.NDArray[np.int_]]: Values and first-basis indices.
+    """
+    with pantr.num_threads(n_threads):
+        if n_deriv is None:
+            return sp.tabulate_basis(pts)
+        return sp.tabulate_basis_derivatives(pts, n_deriv)
+
+
+def _assert_thread_count_independent(
+    sp: BsplineSpace1D, pts: npt.NDArray[np.floating], n_deriv: int | None = None
+) -> None:
+    """Assert the tabulation of ``pts`` on one thread and on several agree, and is a basis.
+
+    The first-basis indices are integers and must be equal. The values agree within
+    :func:`_assert_agree_within_roundings`. Since both runs share their chunks, agreement
+    cannot see a chunk left unwritten, so the values are also checked independently: every
+    basis row is a partition of unity within the recurrence's ``8 (degree + 1) eps``.
+
+    Args:
+        sp (BsplineSpace1D): The space.
+        pts (npt.NDArray[np.floating]): Points inside the domain.
+        n_deriv (int | None): Highest derivative order, or None for the basis alone.
+            Defaults to None.
+    """
+    one, first_one = _tabulate_threads(sp, pts, 1, n_deriv)
+    many, first_many = _tabulate_threads(sp, pts, _many_threads(), n_deriv)
+    np.testing.assert_array_equal(first_many, first_one)
+    _assert_agree_within_roundings(many, one, axis=None if n_deriv is None else 1)
+    rows = many if n_deriv is None else many[:, 0, :]
+    eps = float(np.finfo(many.dtype).eps)
+    assert np.all(np.abs(rows.sum(axis=-1) - 1.0) <= 8 * (sp.degree + 1) * eps)
+
+
+@_needs_two_threads
+class TestThreadCountIndependence:
+    """The C++ B-spline tabulation must not depend on the thread count (M7).
+
+    The Numba serial twins are gone with their kernels: the C++ kernel runs the same chunks on
+    one thread or many, each point computed whole by one thread with no reduction across
+    points. Each case tabulates the same points under ``pantr.num_threads(1)`` and under
+    several threads (restored on exit), across the serial/parallel threshold and a chunk
+    boundary.
+    """
 
     @staticmethod
     def _spaces() -> list[BsplineSpace1D]:
@@ -2151,310 +2273,178 @@ class TestSerialParallelKernelTwins:
         spaces.append(BsplineSpace1D(periodic_knots, 2, periodic=True))
         return spaces
 
-    @pytest.mark.parametrize("num_pts", [1, 3, 100, 5000])
+    @pytest.mark.parametrize("num_pts", _THREAD_SIZES)
     def test_basis_values_match(self, num_pts: int) -> None:
-        """Serial and parallel BasisFuncs kernels agree bitwise on all paths."""
+        """One thread and several agree on the basis values, on all paths."""
         rng = np.random.default_rng(11)
         for sp in self._spaces():
             lo, hi = (float(sp.domain[0]), float(sp.domain[1]))
             pts = lo + (hi - lo) * rng.random(num_pts)
-            order = sp.degree + 1
+            _assert_thread_count_independent(sp, pts)
 
-            basis_par = np.empty((num_pts, order), dtype=np.float64)
-            first_par = np.empty(num_pts, dtype=np.int_)
-            _compute_basis_nurbs_book_impl(
-                sp.knots, sp.degree, sp.periodic, sp.tolerance, pts, basis_par, first_par
-            )
-
-            basis_ser = np.empty((num_pts, order), dtype=np.float64)
-            first_ser = np.empty(num_pts, dtype=np.int_)
-            _compute_basis_nurbs_book_serial_impl(
-                sp.knots, sp.degree, sp.periodic, sp.tolerance, pts, basis_ser, first_ser
-            )
-
-            np.testing.assert_array_equal(basis_ser, basis_par)
-            np.testing.assert_array_equal(first_ser, first_par)
-
-    @pytest.mark.parametrize("num_pts", [1, 3, 100, 5000])
+    @pytest.mark.parametrize("num_pts", _THREAD_SIZES)
     def test_basis_derivs_match(self, num_pts: int) -> None:
-        """Serial and parallel DerBasisFuncs kernels agree bitwise on all paths."""
+        """One thread and several agree on the derivative tabulation, on all paths."""
         rng = np.random.default_rng(13)
         for sp in self._spaces():
             lo, hi = (float(sp.domain[0]), float(sp.domain[1]))
             pts = lo + (hi - lo) * rng.random(num_pts)
-            order = sp.degree + 1
             n_deriv = sp.degree + 1  # include the identically-zero row
+            _assert_thread_count_independent(sp, pts, n_deriv)
 
-            der_par = np.empty((num_pts, n_deriv + 1, order), dtype=np.float64)
-            first_par = np.empty(num_pts, dtype=np.int_)
-            _compute_basis_deriv_nurbs_book_impl(
-                sp.knots, sp.degree, sp.periodic, sp.tolerance, n_deriv, pts, der_par, first_par
-            )
-
-            der_ser = np.empty((num_pts, n_deriv + 1, order), dtype=np.float64)
-            first_ser = np.empty(num_pts, dtype=np.int_)
-            _compute_basis_deriv_nurbs_book_serial_impl(
-                sp.knots, sp.degree, sp.periodic, sp.tolerance, n_deriv, pts, der_ser, first_ser
-            )
-
-            np.testing.assert_array_equal(der_ser, der_par)
-            np.testing.assert_array_equal(first_ser, first_par)
-
-    def test_float32_supported(self) -> None:
-        """Serial twins compile and agree for float32 inputs."""
+    @pytest.mark.parametrize("num_pts", [3, 3 * 8192 + 17])
+    def test_float32_supported(self, num_pts: int) -> None:
+        """The float32 instantiation agrees across thread counts too."""
         knots = np.array([0, 0, 0, 0.25, 0.5, 0.75, 1, 1, 1], dtype=np.float32)
         sp = BsplineSpace1D(knots, 2)
-        pts = np.array([0.1, 0.4, 0.9], dtype=np.float32)
+        pts = np.random.default_rng(3).random(num_pts).astype(np.float32)
+        _assert_thread_count_independent(sp, pts)
 
-        basis_par = np.empty((3, 3), dtype=np.float32)
-        first_par = np.empty(3, dtype=np.int_)
-        _compute_basis_nurbs_book_impl(
-            sp.knots, sp.degree, sp.periodic, sp.tolerance, pts, basis_par, first_par
-        )
-        basis_ser = np.empty((3, 3), dtype=np.float32)
-        first_ser = np.empty(3, dtype=np.int_)
-        _compute_basis_nurbs_book_serial_impl(
-            sp.knots, sp.degree, sp.periodic, sp.tolerance, pts, basis_ser, first_ser
-        )
-        np.testing.assert_array_equal(basis_ser, basis_par)
-        np.testing.assert_array_equal(first_ser, first_par)
-
-    def test_float32_deriv_supported(self) -> None:
-        """Serial derivative twin compiles and agrees for float32 inputs."""
+    @pytest.mark.parametrize("num_pts", [3, 3 * 8192 + 17])
+    def test_float32_deriv_supported(self, num_pts: int) -> None:
+        """The float32 derivative instantiation agrees across thread counts too."""
         knots = np.array([0, 0, 0, 0.25, 0.5, 0.75, 1, 1, 1], dtype=np.float32)
         sp = BsplineSpace1D(knots, 2)
-        pts = np.array([0.1, 0.4, 0.9], dtype=np.float32)
-        n_deriv = 2
-        order = sp.degree + 1
+        pts = np.random.default_rng(5).random(num_pts).astype(np.float32)
+        _assert_thread_count_independent(sp, pts, 2)
 
-        der_par = np.empty((3, n_deriv + 1, order), dtype=np.float32)
-        first_par = np.empty(3, dtype=np.int_)
-        _compute_basis_deriv_nurbs_book_impl(
-            sp.knots, sp.degree, sp.periodic, sp.tolerance, n_deriv, pts, der_par, first_par
-        )
-        der_ser = np.empty((3, n_deriv + 1, order), dtype=np.float32)
-        first_ser = np.empty(3, dtype=np.int_)
-        _compute_basis_deriv_nurbs_book_serial_impl(
-            sp.knots, sp.degree, sp.periodic, sp.tolerance, n_deriv, pts, der_ser, first_ser
-        )
-        np.testing.assert_array_equal(der_ser, der_par)
-        np.testing.assert_array_equal(first_ser, first_par)
 
-    def test_layer2_dispatch_consistent_across_threshold(self) -> None:
-        """Layer-2 tabulation gives identical results below and above the threshold."""
+class TestBatchSizeIndependence:
+    """Tabulating a batch gives, for its first points, what tabulating those points alone gives.
+
+    This replaces the checks that the Layer 2 dispatch (serial twin below a point-count
+    threshold, parallel kernel above) agreed on both sides: the C++ kernel has one code path,
+    and the property worth keeping is that a point's result does not depend on how many other
+    points are tabulated with it.
+    """
+
+    @pytest.mark.parametrize("n_deriv", [None, 0, 2])
+    def test_prefix_of_a_big_batch_matches_the_small_batch(self, n_deriv: int | None) -> None:
+        """Tabulation of ``big[:8]`` equals the first eight rows of the tabulation of ``big``."""
         knots = create_uniform_open_knots(num_intervals=16, degree=3)
         sp = BsplineSpace1D(knots, 3)
-        rng = np.random.default_rng(17)
-        big = rng.random(_PARALLEL_MIN_NUM_PTS + 64)
-
-        basis_big, first_big = _tabulate_Bspline_basis_1D_impl(sp, big)
+        big = np.random.default_rng(17).random(3 * 8192 + 17)
         small = big[:8]
-        basis_small, first_small = _tabulate_Bspline_basis_1D_impl(sp, small)
-        np.testing.assert_array_equal(basis_small, basis_big[:8])
+
+        if n_deriv is None:
+            values_big, first_big = sp.tabulate_basis(big)
+            values_small, first_small = sp.tabulate_basis(small)
+        else:
+            values_big, first_big = sp.tabulate_basis_derivatives(big, n_deriv)
+            values_small, first_small = sp.tabulate_basis_derivatives(small, n_deriv)
         np.testing.assert_array_equal(first_small, first_big[:8])
+        _assert_agree_within_roundings(
+            values_small, values_big[:8], axis=None if n_deriv is None else 1
+        )
 
-        # n_deriv=2: standard case
-        der_big, dfirst_big = _tabulate_Bspline_basis_deriv_1D_impl(sp, big, 2)
-        der_small, dfirst_small = _tabulate_Bspline_basis_deriv_1D_impl(sp, small, 2)
-        np.testing.assert_array_equal(der_small, der_big[:8])
-        np.testing.assert_array_equal(dfirst_small, dfirst_big[:8])
-
-        # n_deriv=0: degenerate path — only 0th-order row is filled
-        der_big0, _ = _tabulate_Bspline_basis_deriv_1D_impl(sp, big, 0)
-        der_small0, _ = _tabulate_Bspline_basis_deriv_1D_impl(sp, small, 0)
-        np.testing.assert_array_equal(der_small0, der_big0[:8])
-
-    @pytest.mark.parametrize(
-        "num_pts", [_PARALLEL_MIN_NUM_PTS - 1, _PARALLEL_MIN_NUM_PTS, _PARALLEL_MIN_NUM_PTS + 1]
-    )
-    def test_layer2_dispatch_boundary(self, num_pts: int) -> None:
-        """Basis values are correct at, one below, and one above the dispatch threshold."""
+    @pytest.mark.parametrize("num_pts", [100, 8191, 8192, 8193])
+    def test_partition_of_unity_across_the_chunk_boundary(self, num_pts: int) -> None:
+        """Basis values are correct at, one below, and one above a chunk boundary."""
         knots = create_uniform_open_knots(num_intervals=16, degree=3)
         sp = BsplineSpace1D(knots, 3)
         rng = np.random.default_rng(42)
         pts = rng.random(num_pts)
-        basis, _ = _tabulate_Bspline_basis_1D_impl(sp, pts)
+        basis, _ = sp.tabulate_basis(pts)
         np.testing.assert_allclose(basis.sum(axis=-1), np.ones(num_pts), atol=1e-13)
 
-    def test_layer2_dispatch_periodic_small_batch(self) -> None:
-        """Serial path is used for periodic spaces below the threshold."""
+    def test_periodic_small_and_big_batches(self) -> None:
+        """Periodic spaces give a partition of unity for a small and for a multi-chunk batch."""
         periodic_knots = create_uniform_periodic_knots(num_intervals=8, degree=3)
         sp = BsplineSpace1D(periodic_knots, 3, periodic=True)
         rng = np.random.default_rng(99)
         lo, hi = float(sp.domain[0]), float(sp.domain[1])
         pts_small = lo + (hi - lo) * rng.random(8)
-        pts_big = lo + (hi - lo) * rng.random(_PARALLEL_MIN_NUM_PTS + 64)
+        pts_big = lo + (hi - lo) * rng.random(3 * 8192 + 17)
 
-        basis_small, _ = _tabulate_Bspline_basis_1D_impl(sp, pts_small)
+        basis_small, _ = sp.tabulate_basis(pts_small)
         np.testing.assert_allclose(basis_small.sum(axis=-1), np.ones(8), atol=1e-13)
 
-        basis_big, _ = _tabulate_Bspline_basis_1D_impl(sp, pts_big)
+        basis_big, _ = sp.tabulate_basis(pts_big)
         np.testing.assert_allclose(basis_big.sum(axis=-1), np.ones(len(pts_big)), atol=1e-13)
 
 
+@_needs_two_threads
 class TestParallelSpanFusionCorrectness:
-    """Regression tests for the fused span-search + Cox-de Boor prange loop (issue #255).
+    """Regression tests for the fused span search + Cox-de Boor loop (issue #255).
 
-    ``_find_span_and_first_basis_point`` is inlined into the same ``prange`` iteration
-    as the basis/derivative evaluation, replacing a separate serial span-search pass.
-    These tests force real multi-threaded execution (not just JIT compilation with the
-    default thread count) and check parity against the serial twins on both sides of the
-    ``_PARALLEL_MIN_NUM_PTS`` dispatch boundary.
+    The span search runs inside the same per-point iteration as the basis/derivative
+    evaluation, in C++ now. These tests force real multi-threaded execution (not just the
+    default thread count) and check that the result does not depend on the thread count, on
+    both sides of the serial/parallel threshold and of a chunk boundary, and that the
+    domain-end and periodic span clamps still give the right basis.
     """
 
-    @staticmethod
-    def _multithread_count() -> int:
-        """Pick a thread count greater than one for exercising the parallel kernels.
-
-        Returns:
-            int: Thread count to use, capped at 4 and at the environment's maximum.
-        """
-        import numba as nb  # noqa: PLC0415
-
-        max_threads: int = nb.config.NUMBA_NUM_THREADS
-        return max(1, min(4, max_threads))
-
-    @pytest.mark.parametrize(
-        "num_pts",
-        [
-            1,
-            _PARALLEL_MIN_NUM_PTS - 1,
-            _PARALLEL_MIN_NUM_PTS,
-            _PARALLEL_MIN_NUM_PTS + 1,
-            _PARALLEL_MIN_NUM_PTS + 5000,
-        ],
-    )
+    @pytest.mark.parametrize("num_pts", [1, 100, 8191, 8193, 3 * 8192 + 17])
     def test_basis_values_match_multithreaded(self, num_pts: int) -> None:
-        """Parallel BasisFuncs output matches the serial twin under real multithreading."""
+        """BasisFuncs output on several threads matches one thread, endpoints included."""
         knots = create_uniform_open_knots(num_intervals=32, degree=3)
         sp = BsplineSpace1D(knots, 3)
         rng = np.random.default_rng(101)
         lo, hi = float(sp.domain[0]), float(sp.domain[1])
         pts = lo + (hi - lo) * rng.random(num_pts)
         pts[0], pts[-1] = lo, hi  # exercise domain-endpoint span clamping
-        order = sp.degree + 1
 
-        basis_ser = np.empty((num_pts, order), dtype=np.float64)
-        first_ser = np.empty(num_pts, dtype=np.int_)
-        _compute_basis_nurbs_book_serial_impl(
-            sp.knots, sp.degree, sp.periodic, sp.tolerance, pts, basis_ser, first_ser
-        )
+        _assert_thread_count_independent(sp, pts)
 
-        with pantr.num_threads(self._multithread_count()):
-            basis_par = np.empty((num_pts, order), dtype=np.float64)
-            first_par = np.empty(num_pts, dtype=np.int_)
-            _compute_basis_nurbs_book_impl(
-                sp.knots, sp.degree, sp.periodic, sp.tolerance, pts, basis_par, first_par
-            )
+        # Independent oracle for the clamp: an open knot vector starts at the first function
+        # and ends at the last one.
+        basis, first = _tabulate_threads(sp, np.array([lo, hi]), _many_threads())
+        np.testing.assert_array_equal(first, [0, sp.num_basis - 4])
+        np.testing.assert_allclose(basis[0], [1.0, 0.0, 0.0, 0.0], atol=1e-15)
+        np.testing.assert_allclose(basis[-1], [0.0, 0.0, 0.0, 1.0], atol=1e-15)
 
-        np.testing.assert_array_equal(basis_par, basis_ser)
-        np.testing.assert_array_equal(first_par, first_ser)
-
-    @pytest.mark.parametrize(
-        "num_pts",
-        [
-            1,
-            _PARALLEL_MIN_NUM_PTS - 1,
-            _PARALLEL_MIN_NUM_PTS,
-            _PARALLEL_MIN_NUM_PTS + 1,
-            _PARALLEL_MIN_NUM_PTS + 5000,
-        ],
-    )
+    @pytest.mark.parametrize("num_pts", [1, 100, 8191, 8193, 3 * 8192 + 17])
     def test_basis_derivs_match_multithreaded(self, num_pts: int) -> None:
-        """Parallel DerBasisFuncs output matches the serial twin under real multithreading."""
+        """DerBasisFuncs output on several threads matches one thread, endpoints included."""
         knots = create_uniform_open_knots(num_intervals=32, degree=3)
         sp = BsplineSpace1D(knots, 3)
         rng = np.random.default_rng(103)
         lo, hi = float(sp.domain[0]), float(sp.domain[1])
         pts = lo + (hi - lo) * rng.random(num_pts)
         pts[0], pts[-1] = lo, hi
-        order = sp.degree + 1
         n_deriv = sp.degree + 1  # include the identically-zero row
 
-        der_ser = np.empty((num_pts, n_deriv + 1, order), dtype=np.float64)
-        first_ser = np.empty(num_pts, dtype=np.int_)
-        _compute_basis_deriv_nurbs_book_serial_impl(
-            sp.knots, sp.degree, sp.periodic, sp.tolerance, n_deriv, pts, der_ser, first_ser
-        )
+        _assert_thread_count_independent(sp, pts, n_deriv)
 
-        with pantr.num_threads(self._multithread_count()):
-            der_par = np.empty((num_pts, n_deriv + 1, order), dtype=np.float64)
-            first_par = np.empty(num_pts, dtype=np.int_)
-            _compute_basis_deriv_nurbs_book_impl(
-                sp.knots, sp.degree, sp.periodic, sp.tolerance, n_deriv, pts, der_par, first_par
-            )
+        # The last row is the (degree + 1)-th derivative of a cubic: identically zero.
+        der, first = _tabulate_threads(sp, np.array([lo, hi]), _many_threads(), n_deriv)
+        np.testing.assert_array_equal(first, [0, sp.num_basis - 4])
+        np.testing.assert_array_equal(der[:, n_deriv, :], 0.0)
 
-        np.testing.assert_array_equal(der_par, der_ser)
-        np.testing.assert_array_equal(first_par, first_ser)
-
-    @pytest.mark.parametrize("num_pts", [_PARALLEL_MIN_NUM_PTS - 1, _PARALLEL_MIN_NUM_PTS + 1])
+    @pytest.mark.parametrize("num_pts", [8191, 8193])
     def test_periodic_basis_values_match_multithreaded(self, num_pts: int) -> None:
-        """Periodic BasisFuncs: parallel path matches serial across the dispatch boundary."""
+        """Periodic BasisFuncs: several threads match one thread across a chunk boundary."""
         periodic_knots = create_uniform_periodic_knots(num_intervals=16, degree=3)
         sp = BsplineSpace1D(periodic_knots, 3, periodic=True)
         rng = np.random.default_rng(107)
         lo, hi = float(sp.domain[0]), float(sp.domain[1])
-        order = sp.degree + 1
         pts = lo + (hi - lo) * rng.random(num_pts)
 
-        basis_ser = np.empty((num_pts, order), dtype=np.float64)
-        first_ser = np.empty(num_pts, dtype=np.int_)
-        _compute_basis_nurbs_book_serial_impl(
-            sp.knots, sp.degree, sp.periodic, sp.tolerance, pts, basis_ser, first_ser
-        )
+        _assert_thread_count_independent(sp, pts)
 
-        with pantr.num_threads(self._multithread_count()):
-            basis_par = np.empty((num_pts, order), dtype=np.float64)
-            first_par = np.empty(num_pts, dtype=np.int_)
-            _compute_basis_nurbs_book_impl(
-                sp.knots, sp.degree, sp.periodic, sp.tolerance, pts, basis_par, first_par
-            )
-
-        np.testing.assert_array_equal(basis_par, basis_ser)
-        np.testing.assert_array_equal(first_par, first_ser)
-
-    @pytest.mark.parametrize("num_pts", [_PARALLEL_MIN_NUM_PTS - 1, _PARALLEL_MIN_NUM_PTS + 1])
+    @pytest.mark.parametrize("num_pts", [8191, 8193])
     def test_periodic_basis_derivs_match_multithreaded(self, num_pts: int) -> None:
-        """Periodic DerBasisFuncs: parallel path matches serial across the dispatch boundary.
+        """Periodic DerBasisFuncs: several threads match one thread across a chunk boundary.
 
         Mirrors ``test_periodic_basis_values_match_multithreaded`` for the derivative
-        kernel: since ``_find_span_and_first_basis_point`` is ``inline="always"``, it is
-        compiled separately into each call site, so the periodic branch needs its own
-        coverage at the derivative call site too.
+        tabulation, which reaches the periodic span clamp through its own call site.
         """
         periodic_knots = create_uniform_periodic_knots(num_intervals=16, degree=3)
         sp = BsplineSpace1D(periodic_knots, 3, periodic=True)
         rng = np.random.default_rng(109)
         lo, hi = float(sp.domain[0]), float(sp.domain[1])
-        order = sp.degree + 1
-        n_deriv = sp.degree + 1
         pts = lo + (hi - lo) * rng.random(num_pts)
 
-        der_ser = np.empty((num_pts, n_deriv + 1, order), dtype=np.float64)
-        first_ser = np.empty(num_pts, dtype=np.int_)
-        _compute_basis_deriv_nurbs_book_serial_impl(
-            sp.knots, sp.degree, sp.periodic, sp.tolerance, n_deriv, pts, der_ser, first_ser
-        )
+        _assert_thread_count_independent(sp, pts, sp.degree + 1)
 
-        with pantr.num_threads(self._multithread_count()):
-            der_par = np.empty((num_pts, n_deriv + 1, order), dtype=np.float64)
-            first_par = np.empty(num_pts, dtype=np.int_)
-            _compute_basis_deriv_nurbs_book_impl(
-                sp.knots, sp.degree, sp.periodic, sp.tolerance, n_deriv, pts, der_par, first_par
-            )
-
-        np.testing.assert_array_equal(der_par, der_ser)
-        np.testing.assert_array_equal(first_par, first_ser)
-
-    @pytest.mark.parametrize("num_pts", [_PARALLEL_MIN_NUM_PTS - 1, _PARALLEL_MIN_NUM_PTS + 1])
+    @pytest.mark.parametrize("num_pts", [8191, 8193])
     @pytest.mark.parametrize("degree", [0, 1, 2, 4])
     def test_basis_values_match_multithreaded_degree(self, degree: int, num_pts: int) -> None:
-        """BasisFuncs parallel/serial parity holds across degrees, not just degree=3.
+        """BasisFuncs thread-count independence holds across degrees, not just degree=3.
 
-        The scalar clamp in ``_find_span_and_first_basis_point`` depends directly on
-        ``degree`` (``max_knot_id``, the lower clamp, ``first_basis``), so degree=3
-        alone would miss degree-dependent off-by-ones (e.g. degree=0, where the lower
-        clamp ``knot_id < degree`` is nearly a no-op).
+        The span clamp depends directly on ``degree`` (last in-domain span, lower clamp,
+        first basis index), so degree=3 alone would miss degree-dependent off-by-ones (e.g.
+        degree=0, where the lower clamp is nearly a no-op).
         """
         knots = create_uniform_open_knots(num_intervals=16, degree=degree)
         sp = BsplineSpace1D(knots, degree)
@@ -2462,52 +2452,21 @@ class TestParallelSpanFusionCorrectness:
         lo, hi = float(sp.domain[0]), float(sp.domain[1])
         pts = lo + (hi - lo) * rng.random(num_pts)
         pts[0], pts[-1] = lo, hi
-        order = sp.degree + 1
 
-        basis_ser = np.empty((num_pts, order), dtype=np.float64)
-        first_ser = np.empty(num_pts, dtype=np.int_)
-        _compute_basis_nurbs_book_serial_impl(
-            sp.knots, sp.degree, sp.periodic, sp.tolerance, pts, basis_ser, first_ser
-        )
+        _assert_thread_count_independent(sp, pts)
 
-        with pantr.num_threads(self._multithread_count()):
-            basis_par = np.empty((num_pts, order), dtype=np.float64)
-            first_par = np.empty(num_pts, dtype=np.int_)
-            _compute_basis_nurbs_book_impl(
-                sp.knots, sp.degree, sp.periodic, sp.tolerance, pts, basis_par, first_par
-            )
-
-        np.testing.assert_array_equal(basis_par, basis_ser)
-        np.testing.assert_array_equal(first_par, first_ser)
-
-    @pytest.mark.parametrize("num_pts", [_PARALLEL_MIN_NUM_PTS - 1, _PARALLEL_MIN_NUM_PTS + 1])
+    @pytest.mark.parametrize("num_pts", [8191, 8193])
     @pytest.mark.parametrize("degree", [0, 1, 2, 4])
     def test_basis_derivs_match_multithreaded_degree(self, degree: int, num_pts: int) -> None:
-        """DerBasisFuncs parallel/serial parity holds across degrees, not just degree=3."""
+        """DerBasisFuncs thread-count independence holds across degrees, not just degree=3."""
         knots = create_uniform_open_knots(num_intervals=16, degree=degree)
         sp = BsplineSpace1D(knots, degree)
         rng = np.random.default_rng(113)
         lo, hi = float(sp.domain[0]), float(sp.domain[1])
         pts = lo + (hi - lo) * rng.random(num_pts)
         pts[0], pts[-1] = lo, hi
-        order = sp.degree + 1
-        n_deriv = sp.degree + 1
 
-        der_ser = np.empty((num_pts, n_deriv + 1, order), dtype=np.float64)
-        first_ser = np.empty(num_pts, dtype=np.int_)
-        _compute_basis_deriv_nurbs_book_serial_impl(
-            sp.knots, sp.degree, sp.periodic, sp.tolerance, n_deriv, pts, der_ser, first_ser
-        )
-
-        with pantr.num_threads(self._multithread_count()):
-            der_par = np.empty((num_pts, n_deriv + 1, order), dtype=np.float64)
-            first_par = np.empty(num_pts, dtype=np.int_)
-            _compute_basis_deriv_nurbs_book_impl(
-                sp.knots, sp.degree, sp.periodic, sp.tolerance, n_deriv, pts, der_par, first_par
-            )
-
-        np.testing.assert_array_equal(der_par, der_ser)
-        np.testing.assert_array_equal(first_par, first_ser)
+        _assert_thread_count_independent(sp, pts, sp.degree + 1)
 
 
 class TestKnotPredicateCaching:
@@ -2593,21 +2552,20 @@ class TestBernsteinSerialParallelTwins:
         eps = float(np.finfo(np.float64).eps)
         np.testing.assert_allclose(out_one, out_many, rtol=eps, atol=0.0)
 
-    def test_bezier_like_layer2_dispatch_consistent(self) -> None:
-        """Layer-2 results on a Bézier-like space agree below and above the threshold."""
+    def test_bezier_like_space_prefix_consistent(self) -> None:
+        """A small batch on a Bézier-like space matches the same prefix of a big batch."""
         sp = BsplineSpace1D(np.array([0.0, 0.0, 0.0, 1.0, 1.0, 1.0]), 2)
-        rng = np.random.default_rng(29)
-        big = rng.random(_PARALLEL_MIN_NUM_PTS + 64)
+        big = np.random.default_rng(29).random(3 * 8192 + 17)
 
-        basis_big, first_big = _tabulate_Bspline_basis_1D_impl(sp, big)
-        basis_small, first_small = _tabulate_Bspline_basis_1D_impl(sp, big[:8])
-        np.testing.assert_array_equal(basis_small, basis_big[:8])
+        basis_big, first_big = sp.tabulate_basis(big)
+        basis_small, first_small = sp.tabulate_basis(big[:8])
         np.testing.assert_array_equal(first_small, first_big[:8])
+        _assert_agree_within_roundings(basis_small, basis_big[:8])
 
-        der_big, dfirst_big = _tabulate_Bspline_basis_deriv_1D_impl(sp, big, 2)
-        der_small, dfirst_small = _tabulate_Bspline_basis_deriv_1D_impl(sp, big[:8], 2)
-        np.testing.assert_array_equal(der_small, der_big[:8])
+        der_big, dfirst_big = sp.tabulate_basis_derivatives(big, 2)
+        der_small, dfirst_small = sp.tabulate_basis_derivatives(big[:8], 2)
         np.testing.assert_array_equal(dfirst_small, dfirst_big[:8])
+        _assert_agree_within_roundings(der_small, der_big[:8], axis=1)
 
 
 class TestTabulateValidateFlag:

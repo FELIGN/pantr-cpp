@@ -434,7 +434,8 @@ def test_the_snapping_refusal_does_not_claim_a_vector_that_arrived_flat() -> Non
     """The *snapping* diagnosis fires only when snapping destroyed the mesh.
 
     A vector that arrived flat is refused too -- issue #320 moved that to
-    ``_check_space_has_an_interval``, because a space with no interval has no cell and
+    ``check_space_has_an_interval`` (C++, ``include/pantr/bspline/knots.hpp``), because a
+    space with no interval has no cell and
     three of its consumers answered ``0.0`` or ``NaN`` rather than raising. What this
     test guards is that the two keep their own messages: "this mesh is finer than
     float32 resolves here" tells a caller who supplied a flat vector something false,
@@ -466,7 +467,7 @@ def test_the_snapping_refusal_does_not_claim_a_vector_that_arrived_flat() -> Non
 
 def test_snapping_keeps_knots_the_format_can_resolve() -> None:
     # FIXED by deriving the snapping tolerance from the knot vector's own magnitude
-    # instead of from the dtype alone (`_bspline_knots._knot_tolerance`), and by grouping
+    # instead of from the dtype alone (`pantr::bspline::knot_tolerance`), and by grouping
     # knots by relative gap rather than by rounding them onto a grid. Kept as a regression
     # guard with its original triggering data, per this repository's convention that the
     # fix PR un-xfails the tests it closes.
@@ -610,7 +611,8 @@ def test_tanh_sinh_nodes_are_interior_and_distinct() -> None:
 
 
 def test_knot_factories_agree_on_zero_intervals() -> None:
-    # FIXED by requiring at least one interval in `_validate_knot_input`, the validator
+    # FIXED by requiring at least one interval in the knot factories' validator (now
+    # `validate_knot_input` in C++), the validator
     # both accepting factories already called. Kept as a regression guard with its
     # original triggering data, per this repository's convention that the fix PR
     # un-xfails the tests it closes.

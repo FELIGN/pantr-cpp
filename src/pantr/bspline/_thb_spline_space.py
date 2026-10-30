@@ -93,7 +93,7 @@ _CELL_MEMBERSHIP_SAFETY: Final[float] = 2.0
 """Extra factor on the strict tier for deciding that a point lies in a cell.
 
 Together with :func:`~pantr.tolerance.get_strict` this is ``8 * eps``, the same rule and
-the same number as :func:`~pantr.bspline._bspline_knots._knot_tolerance` -- deliberately,
+the same number as ``pantr::bspline::knot_tolerance`` -- deliberately,
 because it is the same question. A cell boundary is a parametric coordinate, and asking
 whether a point has fallen off it is asking whether two parametric coordinates are the
 same one.
@@ -106,7 +106,7 @@ quantity no larger than ``max(|lo|, |hi|)``, so the computed point sits within
 :meth:`~pantr.grid.HierarchicalGrid.cell_bounds`, which subdivides the axis by the same
 kind of arithmetic and at the same magnitude. Four epsilons cover either route and eight
 covers both plus an FMA contraction, which is the doubling
-:data:`~pantr.bspline._bspline_knots._KNOT_MERGE_SAFETY` applies for the same reason.
+``pantr::bspline::knot_merge_safety`` applies for the same reason.
 
 The magnitude it multiplies is the **cell's own**, not the axis's: see
 :func:`_cell_membership_tolerance`.
@@ -120,7 +120,7 @@ def _cell_membership_tolerance(
 
     ``_CELL_MEMBERSHIP_SAFETY * get_strict(float64) * max(|lo|, |hi|, hi - lo)`` per
     axis, i.e. ``8 * eps`` times the cell's own magnitude. The magnitude is exactly
-    what :func:`~pantr.bspline._bspline_knots._knot_scale` computes, applied to the
+    what ``pantr::bspline::knot_scale`` computes, applied to the
     two-element vector ``[lo, hi]`` rather than to a whole knot vector.
 
     The scale is the **cell's**, not the axis's, and the difference is not cosmetic.
@@ -132,12 +132,12 @@ def _cell_membership_tolerance(
     that produced the bounds cannot deliver.
 
     No floor is applied, for the reason
-    :func:`~pantr.bspline._bspline_knots._knot_scale` gives: a floor of one would be a
+    ``pantr::bspline::knot_scale`` gives: a floor of one would be a
     physical choice this layer is not entitled to make, and it destroys covariance on
     a domain smaller than one unit.
 
     The dtype is ``float64`` and not the root space's, which is where this departs from
-    :func:`~pantr.bspline._bspline_knots._knot_tolerance`'s ``get_strict(knots.dtype)``.
+    ``pantr::bspline::knot_tolerance``'s ``get_strict(knots.dtype)``.
     The reason is that it grades different objects: ``cell_bounds`` returns ``float64``
     whatever the root space is made of, and :meth:`THBSplineSpace._tabulate_orders` casts
     the query points to ``float64`` before the comparison, so ``float64`` *is* the

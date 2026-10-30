@@ -28,7 +28,8 @@ set(_pantr_test_sources
     test_bezier_fit.cpp
     test_roots.cpp
     test_geometry.cpp
-    test_transform.cpp)
+    test_transform.cpp
+    test_bspline_space.cpp)
 add_executable(pantr_tests ${_pantr_test_sources})
 target_link_libraries(pantr_tests PRIVATE pantr::pantr pantr_native_arch pantr_doctest
                                           pantr_cxx_warnings)

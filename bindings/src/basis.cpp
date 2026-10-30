@@ -1,6 +1,4 @@
-// _pantr.basis: the 1D and tensor-product basis tabulations, for pantr.basis's wrappers; and
-// _pantr._kernels: the interim surface unported Python callers reach the Bernstein kernels through
-// (deleted with the last of them, in the Numba retirement stage).
+// _pantr.basis: the 1D and tensor-product basis tabulations, for pantr.basis's wrappers.
 #include "arrays.hpp"
 #include "interface.hpp"
 
@@ -33,12 +31,6 @@ template <class T>
 using In2D = nb::ndarray<const T, nb::ndim<2>, nb::c_contig, nb::device::cpu>;
 template <class T>
 using Out2D = nb::ndarray<nb::numpy, T, nb::ndim<2>, nb::c_contig, nb::device::cpu>;
-template <class T>
-using AnyStride1D = nb::ndarray<const T, nb::ndim<1>, nb::device::cpu>;
-template <class T>
-using AnyStride2D = nb::ndarray<T, nb::ndim<2>, nb::device::cpu>;
-template <class T>
-using AnyStride3D = nb::ndarray<T, nb::ndim<3>, nb::device::cpu>;
 
 template <class T>
 nb::object tabulate_1d(int family, long long degree_in, int variant, const In1D<T>& pts,
@@ -133,84 +125,6 @@ nb::object tabulate_points(int family, const std::vector<long long>& degrees_in,
   return out ? nb::none() : nb::cast(to_numpy(std::move(*result)));
 }
 
-// --- _kernels: any-stride arrays, as the Numba kernels they replace accepted
-// ----------------------
-
-template <class T>
-std::vector<T> gather(const AnyStride1D<T>& a) {
-  std::vector<T> v(a.shape(0));
-  const auto view = a.view();
-  for (std::size_t i = 0; i < v.size(); ++i) {
-    v[i] = view(i);
-  }
-  return v;
-}
-
-template <class T>
-void kernel_bernstein_1d(long long degree_in, const AnyStride1D<T>& pts, AnyStride2D<T>& out) {
-  const int degree = saturate_degree(degree_in);
-  basis::detail::check_degree(degree);  // before the work estimate, which assumes it
-  const std::vector<T> p = gather(pts);
-  const std::size_t rows = out.shape(0);
-  const std::size_t cols = out.shape(1);
-  const bool contiguous = out.stride(1) == 1 && out.stride(0) == static_cast<std::int64_t>(cols);
-  std::vector<T> tmp;
-  T* dst = out.data();
-  if (!contiguous) {
-    tmp.resize(rows * cols);
-    dst = tmp.data();
-  }
-  {
-    const ReleaseIfParallel gil(p.size(), basis::detail::bernstein_ops_per_point(degree));
-    basis::tabulate_bernstein_1d<T>(degree, p, mdview<T, 2>(dst, rows, cols));
-  }
-  if (!contiguous) {
-    auto v = out.view();
-    for (std::size_t i = 0; i < rows; ++i) {
-      for (std::size_t j = 0; j < cols; ++j) {
-        v(i, j) = tmp[i * cols + j];
-      }
-    }
-  }
-}
-
-template <class T>
-void kernel_bernstein_derivatives_1d(long long degree_in, const AnyStride1D<T>& pts, int n_deriv,
-                                     AnyStride3D<T>& out) {
-  const int degree = saturate_degree(degree_in);
-  basis::detail::check_degree(degree);  // before the work estimate, which assumes them
-  if (n_deriv < 0) {
-    throw value_error("n_deriv must be non-negative");
-  }
-  const std::vector<T> p = gather(pts);
-  const std::size_t s0 = out.shape(0);
-  const std::size_t s1 = out.shape(1);
-  const std::size_t s2 = out.shape(2);
-  const bool contiguous = out.stride(2) == 1 && out.stride(1) == static_cast<std::int64_t>(s2) &&
-                          out.stride(0) == static_cast<std::int64_t>(s1 * s2);
-  std::vector<T> tmp;
-  T* dst = out.data();
-  if (!contiguous) {
-    tmp.resize(s0 * s1 * s2);
-    dst = tmp.data();
-  }
-  {
-    const ReleaseIfParallel gil(
-        p.size(), basis::detail::bernstein_derivatives_ops_per_point(degree, n_deriv));
-    basis::tabulate_bernstein_derivatives_1d<T>(degree, p, n_deriv, mdview<T, 3>(dst, s0, s1, s2));
-  }
-  if (!contiguous) {
-    auto v = out.view();
-    for (std::size_t i = 0; i < s0; ++i) {
-      for (std::size_t k = 0; k < s1; ++k) {
-        for (std::size_t j = 0; j < s2; ++j) {
-          v(i, k, j) = tmp[(i * s1 + k) * s2 + j];
-        }
-      }
-    }
-  }
-}
-
 }  // namespace
 
 void register_basis(nb::module_& m) {
@@ -241,22 +155,6 @@ void register_basis(nb::module_& m) {
   m.def("tabulate_points", &tabulate_points<float>, nb::arg("family"), nb::arg("degrees"),
         nb::arg("variant"), nb::arg("pts"), nb::arg("order"), nb::arg("out").none().noconvert(),
         pts_doc);
-}
-
-void register_kernels(nb::module_& m) {
-  const char* b_doc =
-      "Write the Bernstein basis of `degree` at `pts` into `out` (any strides, same dtype).";
-  m.def("tabulate_bernstein_1d", &kernel_bernstein_1d<double>, nb::arg("degree"), nb::arg("pts"),
-        nb::arg("out").noconvert(), b_doc);
-  m.def("tabulate_bernstein_1d", &kernel_bernstein_1d<float>, nb::arg("degree"), nb::arg("pts"),
-        nb::arg("out").noconvert(), b_doc);
-  const char* d_doc =
-      "Write the Bernstein derivatives of orders 0..n_deriv at `pts` into `out` "
-      "(n, n_deriv + 1, degree + 1), any strides, same dtype.";
-  m.def("tabulate_bernstein_derivatives_1d", &kernel_bernstein_derivatives_1d<double>,
-        nb::arg("degree"), nb::arg("pts"), nb::arg("n_deriv"), nb::arg("out").noconvert(), d_doc);
-  m.def("tabulate_bernstein_derivatives_1d", &kernel_bernstein_derivatives_1d<float>,
-        nb::arg("degree"), nb::arg("pts"), nb::arg("n_deriv"), nb::arg("out").noconvert(), d_doc);
 }
 
 }  // namespace pantr::bindings

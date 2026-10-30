@@ -4,19 +4,31 @@ This module exposes :class:`BsplineSpace1D`, which combines a knot vector and
 polynomial degree to define a 1D B-spline space. It provides methods for
 basis evaluation, Bézier/Lagrange/cardinal extraction operators, and several
 geometric properties (domain, intervals, cardinality).
+
+The space is a thin wrapper over the C++ value ``pantr::bspline::BsplineSpace1D``
+(``pantr._pantr.bspline``): the wrapper normalizes arguments and handles ``out=``
+arrays, and the C++ library validates, derives the knot classes and evaluates the
+basis.
 """
 
 from __future__ import annotations
 
-import functools
+import contextlib
+import copy as _copy
+from collections.abc import Iterator
+from typing import Any
 
 import numpy as np
 from numpy import typing as npt
 
+from .._ext import ext
 from ..basis import LagrangeVariant
-from ._bspline_basis_core import (
-    _tabulate_Bspline_basis_1D_impl,
-    _tabulate_Bspline_basis_deriv_1D_impl,
+from ..basis._basis_utils import (
+    _compute_final_output_shape_1D,
+    _compute_final_output_shape_1D_deriv,
+    _normalize_points_1D,
+    _reshaped_out,
+    _validate_out_array,
 )
 from ._bspline_extraction import (
     _tabulate_Bspline_Bezier_1D_extraction_impl,
@@ -27,53 +39,91 @@ from ._bspline_knot_insertion import (
     _compute_inserted_knot_vector_1d,
     _compute_uniform_subdivision_knots,
 )
-from ._bspline_knots import (
-    _check_snapping_kept_an_interval,
-    _check_space_has_an_interval,
-    _get_Bspline_cardinal_intervals_1D_impl,
-    _get_Bspline_num_basis_1D_impl,
-    _get_unique_knots_and_multiplicity_impl,
-    _knot_tolerance,
-)
+
+_cpp: Any = ext.bspline
+"""The compiled B-spline spaces (private; untyped: one class per dtype)."""
+
+_EMPTY_PTS: npt.NDArray[np.float64] = np.empty(0, dtype=np.float64)
+"""An empty point array, for a call made only to have the C++ library check an argument."""
 
 
-@functools.lru_cache(maxsize=128)
-def _cached_unique_knots_and_multiplicity(
-    knots_repr: tuple[bytes, str, int],
-    degree: int,
-    tol: float,
-    in_domain: bool = False,
-) -> tuple[npt.NDArray[np.float32 | np.float64], npt.NDArray[np.int_]]:
-    """Compute unique knots and multiplicities with memoization.
+def _as_knot_array(knots: npt.ArrayLike) -> npt.NDArray[np.float32 | np.float64]:
+    """Convert the ``knots`` argument as the previous release accepted it.
 
-    The cache is bounded to prevent unbounded memory growth in long-running
-    applications that construct many distinct spline spaces.  128 entries is
-    generous for real-world use (an adaptive simulation rarely needs more than
-    a few dozen distinct knot vectors) while still eliminating the risk of a
-    memory leak.
+    A list or a NumPy array (of any subclass) is accepted, anything else is a
+    ``TypeError``; integer knots become ``float64``; the result must be 1D and of
+    dtype ``float32`` or ``float64`` (native byte order).
 
     Args:
-        knots_repr (tuple[bytes, str, int]): Serialized knot vector bytes, dtype string, and size.
-        degree (int): B-spline degree.
-        tol (float): Tolerance value.
-        in_domain (bool): Whether to restrict to the spline domain.
+        knots (npt.ArrayLike): The knot vector as given.
 
     Returns:
-        tuple[npt.NDArray[np.float32 | np.float64], npt.NDArray[np.int_]]:
-            Unique knots and corresponding multiplicities.
+        npt.NDArray[np.float32 | np.float64]: A C-contiguous 1D array (the caller's array
+        when it already is one; the C++ space copies it).
+
+    Raises:
+        TypeError: If ``knots`` is not a list or an array, or is not 1D.
+        ValueError: If the dtype is not ``float32`` or ``float64``.
     """
-    knots_bytes, dtype_str, size = knots_repr
-    dtype = np.dtype(dtype_str)
-    knots = np.frombuffer(knots_bytes, dtype=dtype, count=size).copy()
-    # ``tol`` goes in unrounded, exactly as ``BsplineSpace1D._snap_knots`` passes it, so
-    # the space and its own accessor apply one predicate rather than two that differ in
-    # the last bits of the threshold.
-    unique, mults = _get_unique_knots_and_multiplicity_impl(knots, degree, tol, in_domain)
-    # The same arrays are returned to every caller; freeze them so a caller
-    # mutation cannot poison the cache.
-    unique.flags.writeable = False
-    mults.flags.writeable = False
-    return unique, mults
+    if isinstance(knots, list):
+        arr = np.array(knots)
+    elif isinstance(knots, np.ndarray):
+        arr = np.asarray(knots)
+    else:
+        raise TypeError("knots must be a 1D numpy array or Python list")
+    if np.issubdtype(arr.dtype, np.integer):
+        arr = arr.astype(np.float64)
+    if arr.ndim != 1:
+        raise TypeError("knots must be a 1D numpy array or Python list")
+    if arr.dtype not in (np.float32, np.float64):
+        raise ValueError("knots type must be float (32 or 64 bits)")
+    return np.ascontiguousarray(arr)
+
+
+def _prepared_out(
+    out: npt.NDArray[Any] | None, shape: tuple[int, ...], dtype: npt.DTypeLike
+) -> npt.NDArray[Any]:
+    """Allocate an output array, or validate the caller's with the messages the suite matches.
+
+    Args:
+        out (npt.NDArray[Any] | None): The caller's array, or None.
+        shape (tuple[int, ...]): The shape it must have.
+        dtype (npt.DTypeLike): The dtype it must have (spelled in the message as given).
+
+    Returns:
+        npt.NDArray[Any]: ``out``, or a fresh array.
+
+    Raises:
+        ValueError: If ``out`` has another shape or dtype, or is not writeable.
+    """
+    if out is None:
+        return np.empty(shape, dtype=dtype)
+    _validate_out_array(out, shape, dtype)
+    return out
+
+
+@contextlib.contextmanager
+def _kernel_buffer(out: npt.NDArray[Any], shape: tuple[int, ...]) -> Iterator[npt.NDArray[Any]]:
+    """Give the C++ call a C-contiguous array of ``shape`` that ends up in ``out``.
+
+    ``out`` is used directly when it reshapes to a C-contiguous view; otherwise a
+    temporary is handed out and copied into ``out`` once the block completes (not when
+    it raises).
+
+    Args:
+        out (npt.NDArray[Any]): The validated output array.
+        shape (tuple[int, ...]): The shape the C++ call writes.
+
+    Yields:
+        npt.NDArray[Any]: The array to write into.
+    """
+    buffer, copy_back = _reshaped_out(out, shape)
+    target = buffer if buffer.flags.c_contiguous else np.empty(shape, dtype=buffer.dtype)
+    yield target
+    if target is not buffer:
+        buffer[...] = target
+    if copy_back:
+        out[...] = buffer.reshape(out.shape)
 
 
 class BsplineSpace1D:
@@ -87,21 +137,33 @@ class BsplineSpace1D:
     in-domain knots all fall in one class is refused at construction, since such a
     space has no cell and nothing can be evaluated, tabulated or located on it.
 
+    The value is immutable: the knots are copied into a compiled value at
+    construction, everything derived from them is computed then, and the arrays
+    this object returns are read-only views of that value.
+
     Attributes:
+        _h (Any): The compiled value (``BsplineSpace1DF64`` or ``BsplineSpace1DF32``).
         _tol (float): Absolute tolerance for parametric comparisons on this space,
-            in the units of its knots. Derived once at construction by
-            ``_bspline_knots._knot_tolerance`` as
+            in the units of its knots. Derived once at construction as
             ``8 * eps(dtype) * max(span, |knots[0]|, |knots[-1]|)``, so it tracks
             the knot vector's own magnitude instead of being a per-dtype constant.
-        _knots (npt.NDArray[np.float32 | np.float64]): Knot vector defining the B-spline.
+        _knots (npt.NDArray[np.float32 | np.float64]): Knot vector defining the
+            B-spline, a read-only view of ``_h``.
         _degree (int): Polynomial degree of the B-spline.
         _periodic (bool): Whether the B-spline is periodic.
+        _num_basis (int): Number of basis functions.
+        _num_intervals (int): Number of intervals.
+        _cache (dict[str, Any]): The arrays handed out by accessors, built on first use.
     """
 
+    _h: Any
     _tol: float
     _knots: npt.NDArray[np.float32 | np.float64]
     _degree: int
     _periodic: bool
+    _num_basis: int
+    _num_intervals: int
+    _cache: dict[str, Any]
 
     def __init__(
         self,
@@ -136,135 +198,108 @@ class BsplineSpace1D:
                 right endpoint.
             TypeError: If knots cannot be converted to a numpy array.
         """
-        BsplineSpace1D._validate_input(knots, degree, periodic)
+        if degree < 0:
+            # Refused by the C++ call before the knots are examined, as it always was first.
+            _cpp.BsplineSpace1DF64(_EMPTY_PTS, degree, False, False)
+        arr = _as_knot_array(knots)
+        cls = _cpp.BsplineSpace1DF32 if arr.dtype.type is np.float32 else _cpp.BsplineSpace1DF64
+        self._set_handle(cls(arr, degree, bool(periodic), bool(snap_knots)))
 
-        knots_arr = np.asarray(knots)
-        if np.issubdtype(knots_arr.dtype, np.integer):
-            knots_arr = knots_arr.astype(np.float64)
-        else:
-            # Always own the storage: the vector is frozen read-only below, and
-            # freezing a caller-supplied array in place would mutate caller state.
-            knots_arr = knots_arr.copy()
-        self._knots = knots_arr
+    def _set_handle(self, handle: Any) -> None:  # noqa: ANN401
+        """Hold a compiled space and cache what its properties return.
 
-        # Derived from the knots, not from the dtype alone: the presets in
-        # ``pantr.tolerance`` are dimensionless, and the magnitude a parametric
-        # comparison on this space is relative to is the knot vector's own extent.
-        self._tol = _knot_tolerance(self._knots)
-
-        self._degree = int(degree)
-        self._periodic = bool(periodic)
-
-        if snap_knots:
-            self._snap_knots()
-            # Runs first: when snapping is what destroyed the mesh, its diagnosis is
-            # the specific one and names the remedy. The check below owns the same
-            # symptom from any other cause, including ``snap_knots=False``.
-            _check_snapping_kept_an_interval(knots_arr, self._knots, self._tol)
-
-        _check_space_has_an_interval(self._knots, self._degree, self.num_intervals, self._tol)
-
-        # Last, and deliberately: the two checks above name a mesh that has no
-        # interval at all, which is the more useful diagnosis and the one a caller can
-        # act on. This one owns what is left -- a vector whose interval structure is
-        # sound while its LAST knot repeats more than it may.
-        #
-        # The rule is exactly as wide as what was measured. At `degree + 2` copies of
-        # the last knot, `tabulate_basis` sums to 0 instead of 1 at the right endpoint
-        # and `tabulate_basis_derivatives` raises `ZeroDivisionError` there. A
-        # periodic space fails identically, so it is not exempt.
-        #
-        # Three neighbouring cases were measured and are deliberately NOT refused,
-        # because none of them shows that failure. An excess at the FIRST knot: the
-        # partition of unity holds and the derivatives are clean, and all it adds is an
-        # identically zero basis function -- which `[0, 0, 1, 1]` at degree 0 also has
-        # and this library accepts. An excess in the interior: the ordinary way to
-        # lower continuity. Degree 0 at any multiplicity: that recurrence has no
-        # denominator, so there is nothing to divide by zero.
-        #
-        # The multiplicity is read after snapping, so this and `_snap_knots` cannot
-        # disagree about which knots are the same knot.
-        if self._degree > 0:
-            max_last_multiplicity = self._degree + 1
-            last_multiplicity = int(
-                _get_unique_knots_and_multiplicity_impl(
-                    self._knots, self._degree, self._tol, False
-                )[1][-1]
-            )
-            if last_multiplicity > max_last_multiplicity:
-                raise ValueError(f"the last knot may repeat at most {max_last_multiplicity} times")
-
-        self._knots.flags.writeable = False
-
-    @staticmethod
-    def _validate_input(
-        knots: npt.ArrayLike,
-        degree: int,
-        periodic: bool = False,
-    ) -> None:
-        """Validate the B-spline input parameters.
+        The value is immutable, so what is read here never goes stale.
 
         Args:
-            knots (npt.ArrayLike): Knot vector to validate.
-            degree (int): Degree to validate.
-            periodic (bool): Whether the B-spline is periodic.
-
-        Raises:
-            ValueError: If degree is negative, knots are insufficient, or
-                knots are not non-decreasing.
-            TypeError: If knots cannot be converted to a numpy array.
+            handle (Any): The compiled space.
         """
-        if degree < 0:
-            raise ValueError("degree must be non-negative")
+        self._h = handle
+        self._knots = handle.knots
+        self._degree = int(handle.degree)
+        self._periodic = bool(handle.periodic)
+        self._tol = float(handle.tolerance)
+        self._num_basis = int(handle.num_basis)
+        self._num_intervals = int(handle.num_intervals)
+        self._cache = {}
 
-        if isinstance(knots, list):
-            knots = np.array(knots)
-        elif not isinstance(knots, np.ndarray):
-            raise TypeError("knots must be a 1D numpy array or Python list")
+    @classmethod
+    def _from_handle(cls, handle: Any) -> BsplineSpace1D:  # noqa: ANN401
+        """Wrap a compiled space built by the library (no copy, no revalidation).
 
-        if np.issubdtype(knots.dtype, np.integer):
-            knots = knots.astype(np.float64)
+        Args:
+            handle (Any): The compiled space.
 
-        if not isinstance(knots, np.ndarray) or knots.ndim != 1:
-            raise TypeError("knots must be a 1D numpy array or Python list")
-
-        if knots.dtype not in (np.float32, np.float64):
-            raise ValueError("knots type must be float (32 or 64 bits)")
-
-        if knots.size < (2 * degree + 2):
-            raise ValueError("knots must have at least 2*degree+2 elements")
-
-        if not np.all(np.diff(knots) >= 0):
-            raise ValueError("knots must be non-decreasing")
-
-        # Derived only here, after the shape and ordering checks: the tolerance
-        # reads the endpoints, so it needs a vector that has them.
-        tol = _knot_tolerance(knots)
-        num_basis = _get_Bspline_num_basis_1D_impl(knots, degree, periodic, tol)
-        if num_basis < (degree + 1):
-            raise ValueError("Not enough knots for the specified degree")
-
-    def _snap_knots(self) -> None:
-        """Collapse each group of knots meant to be one knot onto a single stored value.
-
-        The grouping is delegated to :func:`_get_unique_knots_and_multiplicity_impl`
-        and the vector rebuilt from the classes it reports, so the space and its own
-        accessor cannot disagree about which knots are the same knot -- two
-        implementations of one idea is how they came to disagree before.
-
-        The representative is the class's *first* knot, chosen and not averaged, so
-        snapping returns values the caller supplied and is idempotent. Averaging is
-        a fresh rounding: over ``degree + 1`` identical copies at large magnitude
-        ``np.mean`` is not even the identity, so it moved the reported domain.
-
-        It replaces :attr:`_knots` with the collapsed vector, of the same length,
-        dtype and ordering. Called once from ``__init__``, before the array is
-        frozen read-only.
+        Returns:
+            BsplineSpace1D: The wrapper.
         """
-        unique, mult = _get_unique_knots_and_multiplicity_impl(
-            self._knots, self._degree, self._tol, False
+        space = cls.__new__(cls)
+        space._set_handle(handle)
+        return space
+
+    @classmethod
+    def _from_state(
+        cls,
+        knots: npt.NDArray[np.float32 | np.float64],
+        degree: int,
+        periodic: bool,
+        tol: float,
+    ) -> BsplineSpace1D:
+        """Rebuild a space from its stored knots, degree, periodicity and tolerance.
+
+        The knots are taken as stored (no snapping) with the tolerance the space was
+        built with, so the rebuilt space equals the original.
+
+        Args:
+            knots (npt.NDArray[np.float32 | np.float64]): The stored knot vector.
+            degree (int): The degree.
+            periodic (bool): The periodicity.
+            tol (float): The stored tolerance.
+
+        Returns:
+            BsplineSpace1D: The space.
+        """
+        arr = _as_knot_array(knots)
+        h_cls = _cpp.BsplineSpace1DF32 if arr.dtype.type is np.float32 else _cpp.BsplineSpace1DF64
+        return cls._from_handle(h_cls.from_state(arr, degree, bool(periodic), float(tol)))
+
+    def __reduce__(self) -> tuple[Any, tuple[Any, ...]]:
+        """Pickle (and copy) through :meth:`_from_state`.
+
+        Returns:
+            tuple[Any, tuple[Any, ...]]: The rebuilding callable and its arguments.
+        """
+        return (type(self)._from_state, (self._knots, self._degree, self._periodic, self._tol))
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Load a pickle of the previous release, which stored the attributes.
+
+        Args:
+            state (dict[str, Any]): The pickled attributes (``_knots``, ``_degree``,
+                ``_periodic``, ``_tol``).
+        """
+        rebuilt = type(self)._from_state(
+            np.asarray(state["_knots"]), state["_degree"], state["_periodic"], state["_tol"]
         )
-        self._knots = np.repeat(unique, mult)
+        self._set_handle(rebuilt._h)
+
+    def __copy__(self) -> BsplineSpace1D:
+        """Copy, sharing the immutable compiled value.
+
+        Returns:
+            BsplineSpace1D: A new wrapper of the same value.
+        """
+        return type(self)._from_handle(self._h)
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> BsplineSpace1D:
+        """Deep-copy, sharing the immutable compiled value (nothing in it can change).
+
+        Args:
+            memo (dict[int, Any]): The deep-copy memo.
+
+        Returns:
+            BsplineSpace1D: A new wrapper of the same value.
+        """
+        return _copy.copy(self)
 
     @property
     def degree(self) -> int:
@@ -323,7 +358,7 @@ class BsplineSpace1D:
         """
         return self._knots.dtype
 
-    @functools.cached_property
+    @property
     def num_basis(self) -> int:
         """Get the number of basis functions.
 
@@ -333,7 +368,7 @@ class BsplineSpace1D:
         Returns:
             int: Number of basis functions.
         """
-        return _get_Bspline_num_basis_1D_impl(self._knots, self._degree, self._periodic, self._tol)
+        return self._num_basis
 
     def get_unique_knots_and_multiplicity(
         self,
@@ -350,12 +385,16 @@ class BsplineSpace1D:
             (unique_knots, multiplicities) where unique_knots contains the distinct knot values
             and multiplicities contains the corresponding multiplicity counts.
         """
-        knots_repr = (self._knots.tobytes(), self._knots.dtype.str, int(self._knots.size))
-        degree = int(self._degree)
-        tol = float(self._tol)
-        return _cached_unique_knots_and_multiplicity(knots_repr, degree, tol, in_domain)
+        key = "unique_in_domain" if in_domain else "unique"
+        result: tuple[npt.NDArray[np.float32 | np.float64], npt.NDArray[np.int_]] | None = (
+            self._cache.get(key)
+        )
+        if result is None:
+            result = self._h.unique_knots_and_multiplicity(bool(in_domain))
+            self._cache[key] = result
+        return result
 
-    @functools.cached_property
+    @property
     def num_intervals(self) -> int:
         """Get the number of intervals in the domain.
 
@@ -367,33 +406,7 @@ class BsplineSpace1D:
             >>> space.num_intervals
             2
         """
-        unique_knots, _ = self.get_unique_knots_and_multiplicity(in_domain=True)
-        return len(unique_knots) - 1
-
-    @functools.cached_property
-    def _first_basis_per_interval_cached(self) -> npt.NDArray[np.int64]:
-        """Compute and freeze the first supported basis index of each interval.
-
-        Cached because the knot vector is immutable, and frozen because the cached
-        array is handed out directly.
-
-        The index is exact integer arithmetic, no basis evaluation: the functions
-        non-zero on the span starting at knot index ``k`` are ``k - degree`` through
-        ``k``, so the first one is ``k - degree``, where ``k`` is the *last* position
-        at which that unique knot occurs. Selecting the unique knots whose last
-        position lies in ``[degree, num_basis)`` picks out exactly the knots that
-        start an in-domain interval, which makes the first interval no different from
-        the rest and needs no special case for a non-clamped knot vector.
-
-        Returns:
-            npt.NDArray[np.int64]: Read-only array of shape ``(num_intervals,)``.
-        """
-        _, multiplicities = self.get_unique_knots_and_multiplicity(in_domain=False)
-        last_position = np.cumsum(np.asarray(multiplicities, dtype=np.int64)) - 1
-        starts_an_interval = (last_position >= self._degree) & (last_position < self.num_basis)
-        first_basis = (last_position[starts_an_interval] - self._degree).astype(np.int64)
-        first_basis.flags.writeable = False
-        return first_basis
+        return self._num_intervals
 
     def first_basis_per_interval(self) -> npt.NDArray[np.int64]:
         """Get the index of the first B-spline function supported on each interval.
@@ -418,23 +431,14 @@ class BsplineSpace1D:
             >>> space.first_basis_per_interval().tolist()
             [0, 1, 3]
         """
-        if self._periodic:
-            raise ValueError(
-                "first_basis_per_interval: periodic B-spline spaces are not supported."
-            )
-        return self._first_basis_per_interval_cached
+        result: npt.NDArray[np.int64] | None = self._cache.get("first_basis")
+        if result is None:
+            # Raises for a periodic space, with the message the suite matches.
+            result = self._h.first_basis_per_interval()
+            self._cache["first_basis"] = result
+        return result
 
-    def _get_domain_indices(self) -> tuple[int, int]:
-        """Get the domain boundary indices of the knot vector.
-
-        I.e., the indices of the knot vector that define the domain.
-
-        Returns:
-            tuple[int, int]: Tuple of (start_index, end_index) defining the domain.
-        """
-        return (self._degree, self._knots.size - self._degree - 1)
-
-    @functools.cached_property
+    @property
     def domain(self) -> tuple[np.float32 | np.float64, np.float32 | np.float64]:
         """Get the knot vector domain.
 
@@ -448,59 +452,13 @@ class BsplineSpace1D:
             >>> float(start), float(end)
             (0.0, 2.0)
         """
-        i0, i1 = self._get_domain_indices()
-        return (self._knots[i0], self._knots[i1])
-
-    @functools.cached_property
-    def _left_end_open(self) -> bool:
-        """Whether the left end is open (cached; knots are immutable).
-
-        Returns:
-            bool: True if the first ``degree + 1`` knots are equal; always
-            False for periodic splines regardless of knot values.
-        """
-        if self.periodic:
-            return False
-
-        # Check if the first degree+1 knots are equal
-        # (we know that they are non-decreasing).  The comparison is absolute, as
-        # ``_snap_knots`` already notes: ``np.isclose`` keeps its default
-        # ``rtol=1e-5``, which would read a gap of up to ``1e-5 * |knots[degree]|``
-        # as clamped (half the domain, on a knot vector based at 1e6).
-        return bool(abs(float(self._knots[0]) - float(self._knots[self._degree])) <= self._tol)
-
-    @functools.cached_property
-    def _right_end_open(self) -> bool:
-        """Whether the right end is open (cached; knots are immutable).
-
-        Returns:
-            bool: True if the last ``degree + 1`` knots are equal; always
-            False for periodic splines regardless of knot values.
-        """
-        if self.periodic:
-            return False
-
-        # Check if the last degree+1 knots are equal
-        # (we know that they are non-decreasing).  Absolute comparison, as in
-        # :attr:`_left_end_open`.
-        return bool(
-            abs(float(self._knots[-self._degree - 1]) - float(self._knots[-1])) <= self._tol
+        result: tuple[np.float32 | np.float64, np.float32 | np.float64] | None = self._cache.get(
+            "domain"
         )
-
-    @functools.cached_property
-    def _bezier_like_knots(self) -> bool:
-        """Whether the knots are a Bézier-like configuration (cached; knots are immutable).
-
-        Returns:
-            bool: True iff the spline is non-periodic, open on both ends, and
-            ``num_basis == degree + 1`` (i.e., exactly one non-zero span).
-        """
-        return (
-            (not self._periodic)
-            and self._left_end_open
-            and self._right_end_open
-            and self.num_basis == (self._degree + 1)
-        )
+        if result is None:
+            result = (self._knots[self._degree], self._knots[self._knots.size - self._degree - 1])
+            self._cache["domain"] = result
+        return result
 
     def has_left_end_open(self) -> bool:
         """Check if the left end of the B-spline is open.
@@ -510,7 +468,7 @@ class BsplineSpace1D:
         Returns:
             bool: True if the left end is open, False otherwise.
         """
-        return self._left_end_open
+        return bool(self._h.left_open)
 
     def has_right_end_open(self) -> bool:
         """Check if the right end of the B-spline is open.
@@ -520,7 +478,7 @@ class BsplineSpace1D:
         Returns:
             bool: True if the right end is open, False otherwise.
         """
-        return self._right_end_open
+        return bool(self._h.right_open)
 
     def has_open_knots(self) -> bool:
         """Check if the B-spline has open ends.
@@ -528,7 +486,7 @@ class BsplineSpace1D:
         Returns:
             bool: True if both ends are open, False otherwise.
         """
-        return self._left_end_open and self._right_end_open
+        return bool(self._h.left_open and self._h.right_open)
 
     def has_Bezier_like_knots(self) -> bool:
         """Check if the knot vector represents a Bézier-like configuration.
@@ -543,7 +501,7 @@ class BsplineSpace1D:
             >>> bspline.has_Bezier_like_knots()
             True
         """
-        return self._bezier_like_knots
+        return bool(self._h.bezier_like)
 
     def get_cardinal_intervals(
         self, out: npt.NDArray[np.bool_] | None = None
@@ -620,9 +578,31 @@ class BsplineSpace1D:
             The recurrence whose knot footprint sets this window is Algorithm A2.2
             of :cite:p:`piegl1997nurbs`.
         """
-        return _get_Bspline_cardinal_intervals_1D_impl(
-            self._knots, self._degree, self._tol, out=out
-        )
+        shape = (self._num_intervals,)
+        if out is None:
+            out = np.empty(shape, dtype=np.bool_)
+        else:
+            _validate_out_array(out, shape, np.bool_)
+        # The C++ call writes C-contiguous memory; a strided ``out`` gets a temporary.
+        target = out if out.flags.c_contiguous else np.empty(shape, dtype=np.bool_)
+        self._h.cardinal_intervals(target)
+        if target is not out:
+            out[...] = target
+        return out
+
+    def _check_in_domain(self, pts: Any) -> None:  # noqa: ANN401
+        """Refuse points outside the domain, the domain spelled as the previous release did.
+
+        Args:
+            pts (Any): Normalized, C-contiguous ``float32`` or ``float64`` points.
+
+        Raises:
+            ValueError: If a point (NaN included) is outside the domain up to the tolerance.
+        """
+        if not self._h.all_in_domain(pts):
+            raise ValueError(
+                f"One or more values in pts are outside the knot vector domain {self.domain}"
+            )
 
     def tabulate_basis(
         self,
@@ -689,9 +669,33 @@ class BsplineSpace1D:
             Basis values are computed with the stable Cox-de Boor recurrence
             :cite:p:`deboor2001splines`.
         """
-        return _tabulate_Bspline_basis_1D_impl(
-            self, pts, out_basis=out_basis, out_first_basis=out_first_basis, validate=validate
+        input_shape = np.shape(pts)
+        # The binding is overloaded on the dtype; ``p`` is either, so it is passed untyped.
+        p: Any = np.ascontiguousarray(_normalize_points_1D(pts))
+        if validate:
+            self._check_in_domain(p)
+        num_pts = p.shape[0]
+        order = self._degree + 1
+        if out_basis is None and out_first_basis is None:
+            # Allocated here rather than by the binding: an uninitialized NumPy array is the
+            # cheaper hand-off for the one-point calls whose cost is all overhead.
+            values = np.empty((num_pts, order), dtype=p.dtype)
+            first = np.empty(num_pts, dtype=np.int_)
+            self._h.tabulate_basis(p, values, first, False)
+            return (
+                values.reshape(_compute_final_output_shape_1D(input_shape, order)),
+                first.reshape(input_shape),
+            )
+        out_basis = _prepared_out(
+            out_basis, _compute_final_output_shape_1D(input_shape, order), p.dtype
         )
+        out_first_basis = _prepared_out(out_first_basis, input_shape, np.int_)
+        with (
+            _kernel_buffer(out_basis, (num_pts, order)) as values,
+            _kernel_buffer(out_first_basis, (num_pts,)) as first,
+        ):
+            self._h.tabulate_basis(p, values, first, False)
+        return out_basis, out_first_basis
 
     def tabulate_basis_derivatives(
         self,
@@ -751,14 +755,34 @@ class BsplineSpace1D:
             >>> np.allclose(d[0, 1, :], [-1.0, 0.0, 1.0])
             True
         """
-        return _tabulate_Bspline_basis_deriv_1D_impl(
-            self,
-            pts,
-            n_deriv,
-            out_deriv=out_deriv,
-            out_first_basis=out_first_basis,
-            validate=validate,
+        if n_deriv < 0:
+            # Refused by the C++ call, before the points are read or any output is sized.
+            self._h.tabulate_basis_derivatives(_EMPTY_PTS, n_deriv, None, None, bool(validate))
+        input_shape = np.shape(pts)
+        p: Any = np.ascontiguousarray(_normalize_points_1D(pts))
+        if validate:
+            self._check_in_domain(p)
+        num_pts = p.shape[0]
+        order = self._degree + 1
+        kernel_shape = (num_pts, n_deriv + 1, order)
+        if out_deriv is None and out_first_basis is None:
+            values = np.empty(kernel_shape, dtype=p.dtype)
+            first = np.empty(num_pts, dtype=np.int_)
+            self._h.tabulate_basis_derivatives(p, n_deriv, values, first, False)
+            return (
+                values.reshape(_compute_final_output_shape_1D_deriv(input_shape, n_deriv, order)),
+                first.reshape(input_shape),
+            )
+        out_deriv = _prepared_out(
+            out_deriv, _compute_final_output_shape_1D_deriv(input_shape, n_deriv, order), p.dtype
         )
+        out_first_basis = _prepared_out(out_first_basis, input_shape, np.int_)
+        with (
+            _kernel_buffer(out_deriv, kernel_shape) as values,
+            _kernel_buffer(out_first_basis, (num_pts,)) as first,
+        ):
+            self._h.tabulate_basis_derivatives(p, n_deriv, values, first, False)
+        return out_deriv, out_first_basis
 
     def tabulate_Bezier_extraction_operators(
         self, out: npt.NDArray[np.float32 | np.float64] | None = None
@@ -941,27 +965,7 @@ class BsplineSpace1D:
         Raises:
             ValueError: If the space is periodic, or the interval range is invalid.
         """
-        if self._periodic:
-            raise ValueError("restrict: periodic B-spline spaces are not supported.")
-        n_int = self.num_intervals
-        lo, hi = int(interval_lo), int(interval_hi)
-        if not 0 <= lo < hi <= n_int:
-            raise ValueError(
-                f"restrict: require 0 <= interval_lo < interval_hi <= {n_int}; got [{lo}, {hi})."
-            )
-        unique_knots, _ = self.get_unique_knots_and_multiplicity(in_domain=True)
-        mids = np.array(
-            [
-                0.5 * (unique_knots[lo] + unique_knots[lo + 1]),
-                0.5 * (unique_knots[hi - 1] + unique_knots[hi]),
-            ],
-            dtype=self._knots.dtype,
-        )
-        _, first_basis = self.tabulate_basis(mids)
-        j_lo = int(first_basis[0])
-        j_hi = int(first_basis[1]) + self._degree
-        windowed_knots = self._knots[j_lo : j_hi + self._degree + 2]
-        windowed = BsplineSpace1D(windowed_knots, self._degree, periodic=False, snap_knots=False)
-        local_to_global_dof = np.arange(j_lo, j_hi + 1, dtype=np.int64)
+        handle, local_to_global_dof = self._h.restrict(int(interval_lo), int(interval_hi))
         local_to_global_dof.flags.writeable = False
+        windowed = BsplineSpace1D._from_handle(handle)
         return windowed, local_to_global_dof

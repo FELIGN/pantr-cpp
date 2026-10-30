@@ -12,8 +12,7 @@ The following operations are parallelized over **evaluation points**:
 
 | Operation | Kernel | Parallelism dimension |
 |---|---|---|
-| B-spline basis evaluation (Cox--de Boor) | `_compute_basis_nurbs_book_impl` | points |
-| B-spline basis derivatives (DerBasisFuncs) | `_compute_basis_deriv_nurbs_book_impl` | points |
+| B-spline basis evaluation and derivatives (`BsplineSpace1D`, `BsplineSpace`) | C++ (`include/pantr/bspline/`), on pantr's own thread pool | points |
 | B-spline evaluation (basis + combine) | `_evaluate_Bspline_basis_combine_1D` | points |
 | B-spline derivative evaluation | `_evaluate_Bspline_basis_combine_*_deriv_1D` | points |
 | Bernstein, cardinal B-spline, Legendre and Lagrange basis evaluation (1D and tensor product) | C++ (`include/pantr/basis/`), on pantr's own thread pool | points |

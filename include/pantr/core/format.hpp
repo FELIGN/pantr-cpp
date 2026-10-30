@@ -102,6 +102,35 @@ namespace pantr {
   return out;
 }
 
+/// Spell a double as Python's `format(x, '.<precision>g')` or `format(x, '.<precision>f')` does.
+///
+/// `std::to_chars` in `general` or `fixed` form with a precision follows C's `%g` and `%f`, which
+/// Python's `g` and `f` presentation types also follow (exponent threshold, trailing zeros removed
+/// by `g`, a signed at-least-two-digit exponent), and is locale-independent. Special values are
+/// spelled as Python spells them: `inf`, `-inf`, and `nan` whatever the sign bit.
+///
+/// Args:
+///     x (double): The value.
+///     precision (int): Significant digits (`g`) or digits after the point (`f`), `>= 0`.
+///     fixed (bool): `true` for the `f` presentation type, `false` for `g`.
+///
+/// Returns:
+///     std::string: The spelling, e.g. `1.23e-05` for `(1.2345e-5, 3, false)`, `8` for
+///     `(7.5, 0, true)`.
+[[nodiscard]] inline std::string py_format(double x, int precision, bool fixed) {
+  if (std::isnan(x)) {
+    return "nan";
+  }
+  if (std::isinf(x)) {
+    return x > 0 ? "inf" : "-inf";
+  }
+  // A fixed spelling of the largest double has 309 digits before the point.
+  char buf[400];
+  const auto fmt = fixed ? std::chars_format::fixed : std::chars_format::general;
+  const auto res = std::to_chars(buf, buf + sizeof(buf), x, fmt, precision);
+  return {buf, static_cast<std::size_t>(res.ptr - buf)};
+}
+
 /// Spell an array shape as Python spells the tuple `ndarray.shape`.
 ///
 /// Args:

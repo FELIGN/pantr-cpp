@@ -248,3 +248,36 @@ def projected_relative_deviation(
     | None,
     quad_weights: Annotated[NDArray[numpy.float64], dict(order="C", device="cpu", writable=False)],
 ) -> float: ...
+@overload
+def knot_scale(
+    knots: Annotated[NDArray[numpy.float64], dict(shape=(None,), device="cpu", writable=False)],
+) -> float: ...
+@overload
+def knot_scale(
+    knots: Annotated[NDArray[numpy.float32], dict(shape=(None,), device="cpu", writable=False)],
+) -> float:
+    """max(span, |knots[0]|, |knots[-1]|) of a non-empty knot vector."""
+
+@overload
+def knot_tolerance(
+    knots: Annotated[NDArray[numpy.float64], dict(shape=(None,), device="cpu", writable=False)],
+) -> float: ...
+@overload
+def knot_tolerance(
+    knots: Annotated[NDArray[numpy.float32], dict(shape=(None,), device="cpu", writable=False)],
+) -> float:
+    """The absolute parametric tolerance of a non-empty knot vector."""
+
+@overload
+def check_snapping_kept_an_interval(
+    raw: Annotated[NDArray[numpy.float64], dict(shape=(None,), device="cpu", writable=False)],
+    snapped: Annotated[NDArray[numpy.float64], dict(shape=(None,), device="cpu", writable=False)],
+    tol: float,
+) -> None: ...
+@overload
+def check_snapping_kept_an_interval(
+    raw: Annotated[NDArray[numpy.float32], dict(shape=(None,), device="cpu", writable=False)],
+    snapped: Annotated[NDArray[numpy.float32], dict(shape=(None,), device="cpu", writable=False)],
+    tol: float,
+) -> None:
+    """Refuse a knot vector that snapping collapsed onto one point."""

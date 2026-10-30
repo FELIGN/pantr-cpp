@@ -44,7 +44,7 @@ and the largest quantity any of them handles is the control-point scale. The ste
 are *not* convex combinations -- the ``1 / alpha`` in the recurrence can amplify --
 so this is an operation count and not a proved bound; the eight epsilons per step are
 the same doubling of the strict tier that
-:data:`~pantr.bspline._bspline_knots._KNOT_MERGE_SAFETY` applies, covering an FMA
+``pantr::bspline::knot_merge_safety`` applies, covering an FMA
 contraction and a differing summation order on top of the count.
 
 **Measured**, over 105 cases (degrees 1 to 7, ranks 1 to 3, geometry scales ``1e-6``
@@ -65,7 +65,7 @@ def _control_point_scale(ctrl: npt.NDArray[np.float32 | np.float64]) -> float:
 
     ``max(bounding-box diagonal, largest ||P_i||)`` over the rows of ``ctrl``, the same
     pairing of extent and coordinate magnitude that
-    :func:`~pantr.bspline._bspline_knots._knot_scale` makes in parametric space and that
+    ``pantr::bspline::knot_scale`` makes in parametric space and that
     :func:`~pantr.bspline._bspline_locate._geometric_scale` makes for the physical half
     of its own scale. The extent alone is not enough: a small part sitting at ``x = 1e6``
     has control points whose differences carry an absolute error of ``eps * 1e6`` however

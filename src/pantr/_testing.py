@@ -20,6 +20,9 @@ module.
 - The root provider's raw state (``root_provider_state``, ``set_root_provider_state``), so a test
   can return it to "resolve on first use".
 - :func:`bernstein_interpolate`: values on the modified-Chebyshev grid to Bernstein coefficients.
+- The B-spline knot vector's scale and absolute tolerance (``knot_scale``, ``knot_tolerance``)
+  and the snapping diagnosis (``check_snapping_kept_an_interval``), which a space applies at
+  construction and no public function exposes on their own.
 """
 
 from __future__ import annotations
@@ -99,6 +102,9 @@ ROOTS_CLIP_MAX_DEPTH: Final[int] = _t.ROOTS_CLIP_MAX_DEPTH
 interpolating_reduction_operator = ext._kernels.interpolating_reduction_operator
 l2_reduction_operator = _t.l2_reduction_operator
 elevation_matrix = _t.elevation_matrix
+knot_scale = _t.knot_scale
+knot_tolerance = _t.knot_tolerance
+check_snapping_kept_an_interval = _t.check_snapping_kept_an_interval
 reduction_cache_size = _t.reduction_cache_size
 reduction_cache_clear = _t.reduction_cache_clear
 projected_quadrature_size = _t.projected_quadrature_size
@@ -208,6 +214,7 @@ __all__ = [
     "bernstein_row_unmirrored_f32",
     "change_basis_cache_clear",
     "change_basis_cache_size",
+    "check_snapping_kept_an_interval",
     "clip_hull_to_zero",
     "clip_roots_core",
     "count_sign_changes",
@@ -222,6 +229,8 @@ __all__ = [
     "have_opposite_signs",
     "have_same_sign",
     "interpolating_reduction_operator",
+    "knot_scale",
+    "knot_tolerance",
     "l2_reduction_operator",
     "newton_polish_scalar",
     "projected_quadrature_size",

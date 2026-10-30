@@ -4,6 +4,7 @@ from pantr._pantr import _kernels as _kernels
 from pantr._pantr import _testing as _testing
 from pantr._pantr import basis as basis
 from pantr._pantr import bezier as bezier
+from pantr._pantr import bspline as bspline
 from pantr._pantr import change_basis as change_basis
 from pantr._pantr import geometry as geometry
 from pantr._pantr import quad as quad

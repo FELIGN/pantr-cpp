@@ -14,8 +14,6 @@ from pantr.bspline import BsplineSpace1D
 from pantr.bspline._bspline_basis_core import (
     _compute_basis_deriv_nurbs_book_impl,
     _compute_basis_nurbs_book_impl,
-    _tabulate_Bspline_basis_Bernstein_like_deriv_1D,
-    _tabulate_Bspline_basis_deriv_1D_impl,
 )
 
 # ---------------------------------------------------------------------------
@@ -150,57 +148,56 @@ class TestComputeBasisDerivNurbsBook:
 
 
 # ---------------------------------------------------------------------------
-# Layer 2 function: _tabulate_Bspline_basis_deriv_1D_impl
+# Argument handling of BsplineSpace1D.tabulate_basis_derivatives
 # ---------------------------------------------------------------------------
 
 
 class TestTabulateBsplineBasisDeriv1D:
-    """Tests for the Layer 2 wrapper _tabulate_Bspline_basis_deriv_1D_impl."""
+    """Tests for the shapes and ``out`` handling of ``tabulate_basis_derivatives``."""
 
     def test_output_shape_1d_input(self, quadratic_two_span: BsplineSpace1D) -> None:
         """Shape is (n_pts, n_deriv+1, degree+1) for 1D input."""
         pts = np.array([0.1, 0.5, 0.9])
-        out, first = _tabulate_Bspline_basis_deriv_1D_impl(quadratic_two_span, pts, n_deriv=2)
+        out, first = quadratic_two_span.tabulate_basis_derivatives(pts, n_deriv=2)
         assert out.shape == (3, 3, 3)
         assert first.shape == (3,)
 
     def test_output_shape_scalar_input(self, quadratic_two_span: BsplineSpace1D) -> None:
         """Shape is (n_deriv+1, degree+1) for scalar input."""
-        out, first = _tabulate_Bspline_basis_deriv_1D_impl(quadratic_two_span, 0.5, n_deriv=1)
+        out, first = quadratic_two_span.tabulate_basis_derivatives(0.5, n_deriv=1)
         assert out.shape == (2, 3)
         assert first.shape == ()
 
     def test_output_shape_2d_input(self, quadratic_two_span: BsplineSpace1D) -> None:
         """Shape is (m, n, n_deriv+1, degree+1) for 2D input."""
         pts = np.array([[0.1, 0.5], [0.6, 0.9]])
-        out, first = _tabulate_Bspline_basis_deriv_1D_impl(quadratic_two_span, pts, n_deriv=1)
+        out, first = quadratic_two_span.tabulate_basis_derivatives(pts, n_deriv=1)
         assert out.shape == (2, 2, 2, 3)
         assert first.shape == (2, 2)
 
     def test_invalid_n_deriv(self, quadratic_two_span: BsplineSpace1D) -> None:
         """Negative n_deriv raises ValueError."""
         with pytest.raises(ValueError, match="n_deriv"):
-            _tabulate_Bspline_basis_deriv_1D_impl(quadratic_two_span, [0.5], n_deriv=-1)
+            quadratic_two_span.tabulate_basis_derivatives([0.5], n_deriv=-1)
 
     def test_points_outside_domain(self, quadratic_two_span: BsplineSpace1D) -> None:
         """Points outside the domain raise ValueError."""
         with pytest.raises(ValueError, match="outside"):
-            _tabulate_Bspline_basis_deriv_1D_impl(quadratic_two_span, [1.5], n_deriv=1)
+            quadratic_two_span.tabulate_basis_derivatives([1.5], n_deriv=1)
 
     def test_out_deriv_wrong_shape(self, quadratic_two_span: BsplineSpace1D) -> None:
         """Providing out_deriv with wrong shape raises ValueError."""
         out_bad = np.empty((3, 2, 3), dtype=np.float64)  # wrong n_deriv+1 axis
         with pytest.raises(ValueError, match="shape"):
-            _tabulate_Bspline_basis_deriv_1D_impl(
-                quadratic_two_span, [0.1, 0.5, 0.9], n_deriv=2, out_deriv=out_bad
+            quadratic_two_span.tabulate_basis_derivatives(
+                [0.1, 0.5, 0.9], n_deriv=2, out_deriv=out_bad
             )
 
     def test_out_deriv_wrong_dtype(self, quadratic_two_span: BsplineSpace1D) -> None:
         """Providing out_deriv with wrong dtype raises ValueError."""
         out_bad = np.empty((3, 3, 3), dtype=np.float32)
         with pytest.raises(ValueError, match="dtype"):
-            _tabulate_Bspline_basis_deriv_1D_impl(
-                quadratic_two_span,
+            quadratic_two_span.tabulate_basis_derivatives(
                 np.array([0.1, 0.5, 0.9], dtype=np.float64),
                 n_deriv=2,
                 out_deriv=out_bad,
@@ -211,16 +208,16 @@ class TestTabulateBsplineBasisDeriv1D:
         out_bad = np.empty((3, 3, 3), dtype=np.float64)
         out_bad.flags.writeable = False
         with pytest.raises(ValueError, match="writeable"):
-            _tabulate_Bspline_basis_deriv_1D_impl(
-                quadratic_two_span, [0.1, 0.5, 0.9], n_deriv=2, out_deriv=out_bad
+            quadratic_two_span.tabulate_basis_derivatives(
+                [0.1, 0.5, 0.9], n_deriv=2, out_deriv=out_bad
             )
 
     def test_out_deriv_reuses_array(self, quadratic_two_span: BsplineSpace1D) -> None:
         """When out_deriv is provided, the returned array is the same object."""
         pts = np.array([0.1, 0.5, 0.9])
         out_pre = np.empty((3, 3, 3), dtype=np.float64)
-        out_ret, _ = _tabulate_Bspline_basis_deriv_1D_impl(
-            quadratic_two_span, pts, n_deriv=2, out_deriv=out_pre
+        out_ret, _ = quadratic_two_span.tabulate_basis_derivatives(
+            pts, n_deriv=2, out_deriv=out_pre
         )
         assert out_ret is out_pre
 
@@ -228,8 +225,8 @@ class TestTabulateBsplineBasisDeriv1D:
         """Providing out_first_basis with wrong shape raises ValueError."""
         out_bad = np.empty(5, dtype=np.int_)
         with pytest.raises(ValueError, match="shape"):
-            _tabulate_Bspline_basis_deriv_1D_impl(
-                quadratic_two_span, [0.1, 0.5, 0.9], n_deriv=1, out_first_basis=out_bad
+            quadratic_two_span.tabulate_basis_derivatives(
+                [0.1, 0.5, 0.9], n_deriv=1, out_first_basis=out_bad
             )
 
 
@@ -381,7 +378,6 @@ class TestMathematicalPropertiesDeriv:
 
 # ---------------------------------------------------------------------------
 # Bézier fast path: the C++ Bernstein derivative tabulation
-# and _tabulate_Bspline_basis_Bernstein_like_deriv_1D
 # ---------------------------------------------------------------------------
 
 
@@ -537,14 +533,24 @@ class TestBezierFastPath:
         _, first = spline.tabulate_basis_derivatives(pts, n_deriv=1)
         np.testing.assert_array_equal(first, 0)
 
-    def test_bezier_like_deriv_helper_raises_for_non_bezier(self) -> None:
-        """_tabulate_Bspline_basis_Bernstein_like_deriv_1D raises for non-Bézier splines."""
+    def test_non_bezier_like_deriv_does_not_take_the_bernstein_path(self) -> None:
+        """Non-Bézier-like knots are not tabulated as one Bernstein polynomial.
+
+        The private helper that raised ``Bézier-like`` for such knots is gone; what it
+        protected is that the Bernstein-only path (first basis index 0 everywhere, one
+        global polynomial) is never applied to a multi-span space. Observable through the
+        public method as the per-span first-basis indices and the span-local derivatives.
+        """
         spline = BsplineSpace1D([0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0], 2)
+        assert not spline.has_Bezier_like_knots()
         pts = np.array([0.25, 0.75])
-        out_deriv = np.empty((2, 2, 3), dtype=np.float64)
-        out_first = np.empty(2, dtype=np.int_)
-        with pytest.raises(ValueError, match="Bézier-like"):
-            _tabulate_Bspline_basis_Bernstein_like_deriv_1D(spline, pts, 1, out_deriv, out_first)
+        d, first = spline.tabulate_basis_derivatives(pts, n_deriv=1)
+        np.testing.assert_array_equal(first, [0, 1])
+        # Independent oracle: central differences of the (separately tabulated) basis.
+        h = 1e-6
+        b_fwd, _ = spline.tabulate_basis(pts + h)
+        b_bwd, _ = spline.tabulate_basis(pts - h)
+        np.testing.assert_allclose(d[:, 1, :], (b_fwd - b_bwd) / (2 * h), atol=1e-8)
 
     def test_bezier_0th_matches_tabulate_basis(self) -> None:
         """With n_deriv=0, fast path matches tabulate_basis output."""

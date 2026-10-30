@@ -13,7 +13,7 @@ Restriction introduces **no tolerance of its own**, and that is the policy rathe
 than an omission. Every comparison it makes is between two parametric coordinates
 of one knot vector -- a requested bound against a domain endpoint, against an
 existing knot, against the refined vector -- so every one of them is the question
-:func:`~pantr.bspline._bspline_knots._knot_tolerance` already answers: *are these
+``pantr::bspline::knot_tolerance`` already answers: *are these
 two values the same knot?* The single ``tol`` threaded through this module is
 :attr:`~pantr.bspline.BsplineSpace1D.tolerance`, the absolute parametric length
 ``8 * eps * max(span, |knots[0]|, |knots[-1]|)`` that the space derived once at
@@ -25,7 +25,7 @@ because each is what makes one number enough:
 
 **The scale does not move between the stages.** ``tol`` is derived from the input
 knot vector, then applied to the *refined* one after boundary insertion. Knot
-insertion never changes the first or last knot, so ``_knot_scale`` is identical for
+insertion never changes the first or last knot, so ``knot_scale`` is identical for
 both and the tolerance means the same thing on either side. The one stage that does
 change the endpoints is the periodic-to-open conversion, which trims the ghost knots
 and leaves the vector spanning ``[a, b] = [knots[p], knots[-p - 1]]``. That can only
@@ -33,7 +33,7 @@ and leaves the vector spanning ``[a, b] = [knots[p], knots[-p - 1]]``. That can 
 asserting: ``[a, b]`` is contained in ``[knots[0], knots[-1]]``, so ``b - a`` is at
 most the original span; and the largest absolute value on a real interval is attained
 at an endpoint, so ``|a|`` and ``|b|`` are both at most
-``max(|knots[0]|, |knots[-1]|)``. Each of the three terms of ``_knot_scale`` therefore
+``max(|knots[0]|, |knots[-1]|)``. Each of the three terms of ``knot_scale`` therefore
 only decreases. The inherited tolerance is then conservative rather than tight, which
 is the safe direction for a merge test.
 
@@ -55,7 +55,7 @@ and a cut widened by ``tol`` cannot reach the next one. The one configuration wh
 that is not enough is a bound falling between two distinct knots less than
 ``2 * tol`` apart, which requires a mesh already at the format's resolution floor
 for its magnitude -- the regime
-:func:`~pantr.bspline._bspline_knots._check_snapping_kept_an_interval` reports on.
+``pantr::bspline::check_snapping_kept_an_interval`` reports on.
 """
 
 from __future__ import annotations
