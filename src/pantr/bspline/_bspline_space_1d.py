@@ -839,9 +839,9 @@ class BsplineSpace1D:
             ValueError: If ``n_deriv < 0``, if ``validate`` is True and any evaluation
                 point is outside the domain, or ``out_deriv`` / ``out_first_basis``
                 has incorrect shape or dtype.
-            ZeroDivisionError: If ``n_deriv >= 1`` and the recurrence divides by zero, which
-                a basis function of empty support produces (a knot repeated more than
-                ``degree + 1`` times within a point's support).
+            ZeroDivisionError: If ``n_deriv >= 1`` and the recurrence divides by zero: a
+                first knot repeated more than ``degree + 1`` times leaves an empty clamped span,
+                and a point within the tolerance band left of the domain lands on it.
 
         Example:
             >>> import numpy as np

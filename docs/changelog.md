@@ -358,10 +358,18 @@
   are unchanged except as listed below. The knot vectors, knot classes, tolerances, interval
   counts, first-basis indices, cardinal-interval flags, windowed spaces (`restrict`) and Greville
   abscissae are the previous release's to the bit. Basis values and derivatives can move in the
-  last bits, since the C++ build fuses a multiply and an add where the previous one rounded twice:
-  within a few units in the last place of the type the recurrence runs in, which is the points'
-  type for the values and the knots' type for the derivatives (a `float32` space's derivatives at
-  `float64` points are computed in `float32`, as before).
+  last bits. On a space with more than one interval the cause is the C++ build fusing a multiply
+  and an add on the AVX2 and AVX-512 builds (the generic build reproduces the previous values); a
+  Bézier-like space's values come from pantr's Bernstein recurrence (as `tabulate_bernstein_1d`'s
+  do, above), which moves their last bits on every build (its derivatives move only on the AVX
+  builds). Observed over sweeps of degrees up to
+  16 on an AVX-512 machine: values within about `degree` units in the last place of the type they
+  are computed in; derivatives of order up to 2 within about twice `degree` units in the last
+  place of the largest entry of their row, growing at higher orders (to about 8 `degree` for a
+  knotted space and 27 `degree` for a Bézier-like one at degree 16, where both releases are far
+  from the exact values already). The values are computed in the points' type; the derivatives in
+  the knots' type for a knotted space (a `float32` space's derivatives at `float64` points are
+  computed in `float32`, as before) and in the points' type for a Bézier-like one.
 - **The basis tabulations of `BsplineSpace1D` and `BsplineSpace` run on pantr's thread pool and
   release the GIL** for a large batch; results do not depend on the thread count, and
   `pantr.set_num_threads` sets their parallelism. The serial kernel the previous release used for
@@ -371,35 +379,56 @@
   the previous release still loads. `copy.copy` and `copy.deepcopy` of a `BsplineSpace1D` share
   its immutable C++ value; a subclass instance keeps its class and its own attributes through
   copy and pickle, as before.
-- **A masked knot array** gives a `BsplineSpace1D` whose `knots` is a plain read-only array of the
-  data (it used to be a masked array; the mask was never applied).
+- **A space is immutable** (its C++ value is): `knots` and the arrays of
+  `get_unique_knots_and_multiplicity` and `first_basis_per_interval` are read-only views that do not
+  own their data, and their `writeable` flag can no longer be set back to `True` (the previous
+  release's arrays could be made writeable and written); arrays of a deep copy or an unpickled
+  space are read-only views as well (they were writeable copies, except `knots` unpickled from
+  protocol 5). `num_basis` and `num_intervals`
+  are read-only properties (assigning to them used to overwrite a cached value).
+- **A masked knot array is accepted** by `BsplineSpace1D`: its data is used, the mask is ignored,
+  and `knots` is a plain read-only array. The previous release refused it with Numba's
+  `NumbaTypeError` ("Unsupported array type: numpy.ma.MaskedArray"), or, when every element was
+  masked, with "knots must be non-decreasing" after a `UserWarning`.
 - **`degree=True` or `False` is the integer it is** (`1` or `0`) in `BsplineSpace1D`; the previous
-  release failed in Numba's typing (`TypingError`) on most knot vectors.
-- **A `float32` point array on a `float64` Bézier-like space** (`BsplineSpace1D.tabulate_basis`,
-  `tabulate_basis_derivatives`, and `BsplineSpace.tabulate_basis` with such a direction), and
-  points of a dtype other than the space's in a one-direction `BsplineSpace.tabulate_basis`, are
-  accepted and tabulated in the points' dtype (respectively the space's): the previous release
-  refused them with "Output array has dtype ...". A list of points (or any array-like) is accepted
+  release failed in Numba's typing (`TypingError`) on every knot vector that reached its kernels.
+- **A `float32` point array on a `float64` Bézier-like space** is accepted by
+  `BsplineSpace1D.tabulate_basis` (tabulated in `float32`, the points' dtype) and by
+  `BsplineSpace.tabulate_basis` with such a direction (in the space's dtype at scattered points,
+  the lattice's on a lattice), and points of a dtype other than the space's by a one-direction
+  `BsplineSpace.tabulate_basis` (in the space's dtype): the previous release refused them with
+  "Output array has dtype ..." (`tabulate_basis_derivatives` accepted them, and still does). A list of points (or any array-like) is accepted
   by `BsplineSpace.tabulate_basis`, which raised `AttributeError`.
 - **`tabulate_basis_derivatives` raises `ZeroDivisionError` at every batch size** when the
-  derivative recurrence divides by zero, which a basis function of empty support produces (a
-  knot repeated more than `degree + 1` times within a point's support, at order `n_deriv >= 1`).
-  The previous release raised it below 4096 points and returned without an error for a larger
-  batch.
-- **No `RuntimeWarning` from `create_uniform_open_knots` or `create_uniform_periodic_knots`** at an
-  infinite domain end; the knot vectors are the same.
-- **Inputs outside the annotated types** in `BsplineSpace1D` and the knot factories raise another
-  exception or message than before, since the compiled binding converts a degree, a count or a
-  continuity to an integer before any check runs: a `float` degree in `BsplineSpace1D` is a
-  `TypeError` from the binding (it was Numba's `TypingError`), and a `float` count, degree or
-  continuity in a factory is a `TypeError` with the binding's message instead of NumPy's.
+  derivative recurrence divides by zero, at order `n_deriv >= 1`: a first knot repeated more than
+  `degree + 1` times leaves an empty clamped span, and a point within the tolerance band left of
+  the domain lands on it. The previous release raised it below 4096 points and returned without an
+  error for a larger batch.
+- **No `RuntimeWarning` from `create_uniform_open_knots`, `create_uniform_periodic_knots` or
+  `BsplineSpace1D`** at an infinite domain end or a span that overflows the dtype; the knot vectors
+  and tolerances are the same.
+- **Inputs outside the annotated types, and integers past 64 bits**, in `BsplineSpace1D`,
+  `BsplineSpace` and the knot factories raise another exception or message than before, since the
+  compiled binding converts a degree, a count, a continuity, an `n_deriv` or a `restrict` bound to
+  a 64-bit integer before any check runs: a `float` degree in `BsplineSpace1D` is a `TypeError`
+  from the binding (it was Numba's `TypingError`); a `float`, a NumPy `bool_` or a one-element array
+  as a count, degree or continuity in a factory is a `TypeError` with the binding's message (NumPy's
+  message, or accepted, before); a Python integer outside the 64-bit range there, as a degree or
+  `n_deriv`, or as a `restrict` bound is a `TypeError` (it was the `ValueError` of the range
+  check, or for a positive one in a factory NumPy's `IndexError` or `OverflowError`); a knot count past a quarter of the 64-bit range is a `ValueError` ("knot vector too
+  large") and an allocation that fails is a `MemoryError` from C++ (`std::bad_alloc`), where NumPy
+  raised `IndexError`, `MemoryError` or its own allocation error. Tabulating on an empty
+  `BsplineSpace([])` raises `AttributeError` (it was an `IndexError`).
 - The private module `pantr.bspline._bspline_basis_multidim`, and the helpers
   `_bspline_basis_core._tabulate_Bspline_basis_1D_impl`, `_tabulate_Bspline_basis_deriv_1D_impl`,
-  the Bernstein-like and serial kernels and `_PARALLEL_MIN_NUM_PTS`,
+  `_find_spans_and_first_basis`, the Bernstein-like and serial kernels and `_PARALLEL_MIN_NUM_PTS`,
   `_bspline_knots._knot_scale`, `_knot_tolerance`, `_KNOT_MERGE_SAFETY`,
   `_check_snapping_kept_an_interval`, `_check_space_has_an_interval`, `_validate_knot_input`,
-  `_get_last_knot_smaller_equal_impl` and `_bspline_space_1d._cached_unique_knots_and_multiplicity`
-  are gone with the Numba kernels and NumPy code they held, whose work is now done in C++.
+  `_get_last_knot_smaller_equal_impl`, `_bspline_space_1d._cached_unique_knots_and_multiplicity`,
+  and the private methods and cached attributes of `BsplineSpace1D` (`_snap_knots`,
+  `_validate_input`, `_get_domain_indices`, `_left_end_open`, `_right_end_open`,
+  `_bezier_like_knots`, `_first_basis_per_interval_cached`) are gone with the Numba kernels and
+  NumPy code they held, whose work is now done in C++.
 
 ### Fixed
 - **`find_roots` no longer loses roots that Bezier clipping found.** Clipping collected its
