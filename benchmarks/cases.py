@@ -643,6 +643,133 @@ def _s4_space_cases() -> list[Case]:
     return cases
 
 
+def _s4_bspline_cases() -> list[Case]:  # noqa: PLR0915
+    """The B-spline cases of the S4 stage (C4.2): the `Bspline` value and its operations.
+
+    Operation sizes count intervals (or inserted/removed knots) rather than points: ``medium`` is
+    1e3 and ``large`` 1e5. Two operations take smaller ``large`` sizes because main's cost grows
+    faster than linearly: knot removal 1e4 (each removal is a sweep), and the conversion to periodic
+    form 1e3 (a dense QR factorization of the Oslo matrix).
+    """
+    from pantr.bspline import (  # noqa: PLC0415
+        Bspline,
+        BsplineSpace,
+        BsplineSpace1D,
+        create_uniform_open_knots,
+        create_uniform_periodic_knots,
+    )
+    from pantr.quad import PointsLattice  # noqa: PLC0415
+
+    cases: list[Case] = []
+    degree = 3
+    rank = 3
+    op_sizes = {"tiny": 1, "medium": 1_000, "large": 100_000}
+    nd_points = {"tiny": 1, "medium": 1_000, "large": 100_000}
+
+    def curve(num_intervals: int) -> Bspline:
+        knots = create_uniform_open_knots(num_intervals, degree)
+        space = BsplineSpace([BsplineSpace1D(knots, degree)])
+        cp = np.random.default_rng(1234).random((num_intervals + degree, rank))
+        return Bspline(space, cp)
+
+    def add(name: str, size: str, what: str, setup: Callable[[], Callable[[], Any]]) -> None:
+        cases.append(Case(f"S4.{name}.{size}", "S4", size, what, setup))
+
+    for size, n in op_sizes.items():
+
+        def setup_construct(n: int = n) -> Callable[[], Any]:
+            space = curve(n).space
+            cp = np.random.default_rng(1234).random((n + degree, rank))
+            return lambda: Bspline(space, cp)
+
+        add("bspline_construct", size, f"Bspline(open space, {n} intervals)", setup_construct)
+
+    ten = curve(10)
+    for size, n in SIZES.items():
+
+        def setup_eval_1d(n: int = n) -> Callable[[], Any]:
+            x = _points(n)
+            return lambda: ten.evaluate(x)
+
+        add("bspline_evaluate_1d", size, f"Bspline.evaluate({n} points), 1D", setup_eval_1d)
+
+    space_1d = ten.space.spaces[0]
+    for dim in (2, 3):
+        nd_space = BsplineSpace([space_1d] * dim)
+        nd = Bspline(nd_space, np.random.default_rng(1234).random((*nd_space.num_basis, 1)))
+        for size, n in nd_points.items():
+
+            def setup_eval_nd(n: int = n, dim: int = dim, nd: Bspline = nd) -> Callable[[], Any]:
+                pts = np.random.default_rng(1234).random((n, dim))
+                return lambda: nd.evaluate(pts)
+
+            add(f"bspline_evaluate_{dim}d", size, f"evaluate({n} x {dim} points)", setup_eval_nd)
+
+    surface_space = BsplineSpace([space_1d] * 2)
+    surface = Bspline(
+        surface_space, np.random.default_rng(1234).random((*surface_space.num_basis, 1))
+    )
+    for size, side in ND_SIDE.items():
+
+        def setup_lattice(side: int = side) -> Callable[[], Any]:
+            lattice = PointsLattice([_points(side), _points(side)])
+            return lambda: surface.evaluate(lattice)
+
+        add("bspline_evaluate_2d_lattice", size, f"evaluate({side}x{side} lattice)", setup_lattice)
+
+    for size, n in nd_points.items():
+
+        def setup_derivs(n: int = n) -> Callable[[], Any]:
+            pts = np.random.default_rng(1234).random((n, 2))
+            return lambda: surface.evaluate_derivatives(pts, [1, 1])
+
+        add("bspline_evaluate_derivatives_2d", size, f"d2/dudv at {n} points", setup_derivs)
+
+    for size, n in op_sizes.items():
+
+        def setup_insert(n: int = n) -> Callable[[], Any]:
+            knots = (np.arange(n) + 0.5) / n
+            return lambda: ten.insert_knots(knots)
+
+        add("bspline_insert_knots", size, f"insert {n} knots, 10-interval cubic", setup_insert)
+
+        def setup_remove(n: int = min(n, 10_000)) -> Callable[[], Any]:
+            knots = (np.arange(n) + 0.5) / n
+            refined = curve(1).insert_knots(knots)
+            return lambda: refined.remove_knots(knots)
+
+        add("bspline_remove_knots", size, f"remove {min(n, 10_000)} knots, cubic", setup_remove)
+
+        def setup_elevate(n: int = n) -> Callable[[], Any]:
+            c = curve(n)
+            return lambda: c.elevate_degree(1)
+
+        add("bspline_elevate_degree", size, f"elevate a {n}-interval cubic by 1", setup_elevate)
+
+        def setup_to_beziers(n: int = n) -> Callable[[], Any]:
+            c = curve(n)
+            # `to_beziers` caches its result on the instance, so time it on a fresh value.
+            return lambda: Bspline(c.space, c.control_points).to_beziers()
+
+        add("bspline_to_beziers", size, f"to_beziers of a {n}-interval cubic", setup_to_beziers)
+
+        def setup_to_periodic(n: int = n) -> Callable[[], Any]:
+            m = min(max(n, degree + 1), 1_000)
+            knots = create_uniform_periodic_knots(m, degree)
+            space = BsplineSpace([BsplineSpace1D(knots, degree, periodic=True)])
+            periodic = Bspline(space, np.random.default_rng(1234).random((m, rank)))
+            open_curve = periodic.to_open_bspline()
+            return lambda: open_curve.to_periodic()
+
+        add(
+            "bspline_to_periodic",
+            size,
+            f"to_periodic, open cubic of {min(max(n, degree + 1), 1_000)} intervals",
+            setup_to_periodic,
+        )
+    return cases
+
+
 def all_cases() -> list[Case]:
     """Return every case this tree can run.
 
@@ -655,5 +782,6 @@ def all_cases() -> list[Case]:
         + _s2_bezier_cases()
         + _s2_approx_roots_cases()
         + _s4_space_cases()
+        + _s4_bspline_cases()
         + _r6_cases()
     )
