@@ -17,8 +17,10 @@
 
 #include <cstddef>
 #include <limits>
+#include <new>
 #include <span>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 namespace nb = nanobind;
@@ -81,10 +83,8 @@ void def_bspline(nb::module_& m, const char* name) {
     cls.def(
         "evaluate_lattice",
         [](const B& b, const Lattice& lattice, Out2D<T>& out) {
-          const ReleaseIfParallel gil(
-              lattice.num_points(),
-              bspline::detail::tabulation_ops(b) +
-                  bspline::detail::contraction_ops(bspline::detail::make_layout(b)));
+          const ReleaseIfParallel gil(lattice.num_points(),
+                                      bspline::detail::value_ops_per_point(b));
           bspline::evaluate<T, L>(b, lattice, out_view(out));
         },
         nb::arg("lattice"), nb::arg("out").noconvert(),
@@ -98,8 +98,7 @@ void def_bspline(nb::module_& m, const char* name) {
           bool complete = false;
           {
             const ReleaseIfParallel gil(lattice.num_points(),
-                                        bspline::detail::derivative_ops_per_point(b, o) +
-                                            bspline::detail::tabulation_ops(b));
+                                        bspline::detail::derivative_ops_per_point(b, o));
             complete = bspline::evaluate_derivatives<T, L>(b, lattice, o, out_view(out));
           }
           if (!complete) {
@@ -146,9 +145,7 @@ void def_bspline(nb::module_& m, const char* name) {
       .def(
           "evaluate",
           [](const B& b, const Points<T>& pts, Out2D<T>& out) {
-            const ReleaseIfParallel gil(pts.shape(0), bspline::detail::tabulation_ops(b) +
-                                                          bspline::detail::contraction_ops(
-                                                              bspline::detail::make_layout(b)));
+            const ReleaseIfParallel gil(pts.shape(0), bspline::detail::value_ops_per_point(b));
             bspline::evaluate<T, T>(b, points_view(pts), out_view(out));
           },
           nb::arg("pts"), nb::arg("out").noconvert(),
@@ -162,8 +159,7 @@ void def_bspline(nb::module_& m, const char* name) {
             bool complete = false;
             {
               const ReleaseIfParallel gil(pts.shape(0),
-                                          bspline::detail::derivative_ops_per_point(b, o) +
-                                              bspline::detail::tabulation_ops(b));
+                                          bspline::detail::derivative_ops_per_point(b, o));
               complete = bspline::evaluate_derivatives<T, T>(b, points_view(pts), o, out_view(out));
             }
             if (!complete) {

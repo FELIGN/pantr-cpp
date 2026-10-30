@@ -1,14 +1,27 @@
 /// @file evaluate.hpp
 /// @brief Evaluation of a `Bspline` and of its partial derivatives at points or on a lattice.
 ///
-/// Every point is evaluated alone: the non-zero 1D basis values (or derivative rows) of each
-/// direction, tabulated by `BsplineSpace1D` once per distinct coordinate, are multiplied into the
-/// tensor-product weights of the point's `prod(degree + 1)` local functions, in `P` and left to
-/// right over the directions, and stored in `T`; the control points of those functions (read modulo
-/// `num_basis` in a periodic direction) are then summed in `T`, in ascending C order of the local
-/// multi-index. A rational B-spline is evaluated on its homogeneous control points and divided by
-/// the interpolated weight. Points are the unit of parallelism, and each writes its own output
-/// row, so no result depends on the number of threads.
+/// Three schemes, by the shape of the request. All evaluate a rational B-spline on its homogeneous
+/// control points and divide by the interpolated weight, read the control points of a periodic
+/// direction modulo `num_basis`, and give every output value to exactly one parallel item that
+/// computes it alone, from fixed chunks of the problem, so no result depends on the number of
+/// threads.
+///
+///  - Scattered points of two or more directions: the non-zero 1D basis values (or derivative
+///    rows) of each direction, tabulated by `BsplineSpace1D` once per distinct coordinate, are
+///    multiplied into the tensor-product weights of the point's `prod(degree + 1)` local
+///    functions, in `P` and left to right over the directions, and stored in `T`; the control
+///    points of those functions are summed in `T`, in ascending C order of the local multi-index.
+///  - A lattice of two or more directions (values and, for a non-rational B-spline, derivatives):
+///    sum factorisation. The control-point array is contracted with one direction's rows at a
+///    time, `out[.., j, ..] = sum_a B_d[j, a] cur[.., first_d[j] + a, ..]` with the terms added in
+///    ascending `a` in `T`, the directions in the order (first to last, or last to first) that
+///    does the fewer multiply-adds. An output value is therefore a sum of nested sums of
+///    products, not the flat sum of the scattered scheme: the two agree to a rounding bound.
+///  - One direction (points or a lattice): each point's basis values are formed in a scratch row
+///    (Cox-de Boor) and contracted at once, with no table of the points' basis values; a
+///    Bezier-like space keeps the tabulated scheme, as `BsplineSpace1D` evaluates it by the
+///    Bernstein recurrence there. Derivatives take the tabulated scheme.
 #pragma once
 
 #include "pantr/basis/detail/tabulate_1d.hpp"
@@ -26,6 +39,8 @@
 #include "pantr/quad/points_lattice.hpp"
 
 #include <algorithm>
+#include <atomic>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -43,11 +58,12 @@ namespace detail {
 /// Attributes:
 ///     lattice (bool): Whether the points are the tensor product of `dirs`.
 ///     count (std::size_t): The number of points.
-///     store (std::vector<std::vector<P>>): The columns of an arbitrary point set, copied out of
-///     the
-///         row-major array (empty for a lattice).
+///     store (std::vector<std::vector<P>>): The columns of an arbitrary point set of two or more
+///         columns, copied out of the row-major array (empty for a lattice and for one column,
+///         which is contiguous already).
 ///     dirs (std::vector<std::span<const P>>): One coordinate array per direction: `count` values
-///         viewing `store`, or the lattice's own coordinates.
+///         viewing `store` or the single column, or the lattice's own coordinates. A view into
+///         the caller's array lives as long as that array does.
 template <StorageFloat P>
 struct PointSet {
   bool lattice = false;
@@ -56,11 +72,15 @@ struct PointSet {
   std::vector<std::span<const P>> dirs;
 };
 
-/// Gather the columns of a `(n, dim)` point array.
+/// Gather the columns of a `(n, dim)` point array (a single column is viewed, not copied).
 template <StorageFloat P>
 [[nodiscard]] PointSet<P> make_point_set(mdview<const P, 2> pts) {
   PointSet<P> e;
   e.count = pts.extent(0);
+  if (pts.extent(1) == 1) {
+    e.dirs.emplace_back(pts.data_handle(), e.count);
+    return e;
+  }
   e.store.resize(pts.extent(1));
   for (std::size_t d = 0; d < pts.extent(1); ++d) {
     e.store[d].resize(e.count);
@@ -297,6 +317,32 @@ inline void check_lattice_dim(std::size_t dim, std::size_t lattice_dim) {
   }
 }
 
+/// Operations to test one coordinate against a domain: two bounds, each a comparison and, inside
+/// the tolerance band, a subtraction and a comparison. An admitted estimate, used only to size the
+/// chunks of the check.
+inline constexpr double domain_check_ops = 8.0;
+
+/// Refuse coordinates outside a direction's domain (a NaN included), testing them over the pool.
+///
+/// The test is a conjunction over the coordinates, so which chunk finds a violation cannot change
+/// the outcome; the error itself is raised by the serial check of the space.
+///
+/// Raises:
+///     value_error: A coordinate is outside the domain of `s`.
+template <StorageFloat T, StorageFloat P>
+void check_domain(const BsplineSpace1D<T>& s, std::span<const P> pts) {
+  std::atomic<bool> inside{true};
+  parallel::parallel_for(pts.size(), parallel::WorkEstimate{domain_check_ops},
+                         [&](std::size_t begin, std::size_t end) {
+                           if (!s.template all_in_domain<P>(pts.subspan(begin, end - begin))) {
+                             inside.store(false, std::memory_order_relaxed);
+                           }
+                         });
+  if (!inside.load(std::memory_order_relaxed)) {
+    s.template check_in_domain<P>(pts);
+  }
+}
+
 /// Tabulate each direction's basis (`orders` empty) or its derivative rows `0..orders[d]`, after
 /// checking its coordinates against the domain.
 ///
@@ -313,7 +359,7 @@ template <StorageFloat T, StorageFloat P>
   bool complete = true;
   for (std::size_t d = 0; d < space.dim(); ++d) {
     const BsplineSpace1D<T>& s = space.spaces()[d];
-    s.template check_in_domain<P>(ps.dirs[d]);
+    check_domain<T, P>(s, ps.dirs[d]);
     const auto order = static_cast<std::size_t>(s.degree()) + 1;
     if (orders.empty()) {
       auto [values, first] = s.template tabulate_basis<P>(ps.dirs[d], false);
@@ -350,15 +396,17 @@ void prepare_point(const Layout& L, const std::vector<DirTable<P>>& tables, cons
   tensor_row<P, T>(s.rows, L.order, s.product.data(), s.weights.data());
 }
 
-/// Operations per point of the contraction: the tensor weights (one product per local function and
-/// direction) and a multiply-add per local function and coordinate.
+/// Operations per point of the scattered contraction: the tensor weights (at most one product per
+/// local function and direction, the first direction forming none) and a multiply-add, two
+/// operations, per local function and coordinate. An admitted estimate that counts the products
+/// of every direction.
 [[nodiscard]] inline double contraction_ops(const Layout& L) {
   return static_cast<double>(L.nloc) *
          (static_cast<double>(L.dim) + 2.0 * static_cast<double>(L.cp_size));
 }
 
-/// Operations per point of the 1D tabulations of every direction (a lattice shares them across
-/// points, so this overestimates it).
+/// Operations per point of the 1D value tabulations of every direction, as the tabulation kernels
+/// size their own loops (a lattice shares them across its points, so this overestimates it).
 template <StorageFloat T>
 [[nodiscard]] double tabulation_ops(const Bspline<T>& b) {
   double ops = 0.0;
@@ -368,10 +416,281 @@ template <StorageFloat T>
   return ops;
 }
 
+/// Operations per point of a whole value evaluation: the tabulations and the contraction (a lattice
+/// shares the tabulations across its points, and sum factorisation does less than this, so it
+/// overestimates both). A binding sizes its release of the interpreter lock with it.
+template <StorageFloat T>
+[[nodiscard]] double value_ops_per_point(const Bspline<T>& b) {
+  return tabulation_ops(b) + contraction_ops(make_layout(b));
+}
+
+/// Rows of one direction for a mode product (see `contract_lattice`).
+///
+/// Attributes:
+///     values (const P*): Row 0 of the direction's table; row `j` starts `stride` values on.
+///     stride (std::size_t): Values between consecutive rows.
+///     first (const std::int64_t*): First supported function of each row.
+///     order (std::size_t): `degree + 1`, the terms of a row.
+///     nb (std::size_t): Basis functions of the direction, the extent contracted.
+///     periodic (bool): Whether indices wrap modulo `nb`.
+template <StorageFloat P>
+struct StageRows {
+  const P* values;
+  std::size_t stride;
+  const std::int64_t* first;
+  std::size_t order;
+  std::size_t nb;
+  bool periodic;
+};
+
+/// The index `i` of a direction, wrapped modulo `n` when it is periodic.
+[[nodiscard]] inline std::size_t wrapped(std::size_t i, std::size_t n, bool periodic) noexcept {
+  return periodic && i >= n ? i % n : i;
+}
+
+/// `out[i] = sum_a coeff[a] src[wrapped(first + a) * inner + i]` for `i < len`, the terms added in
+/// ascending `a` in `T`, the coefficients rounded to `T` first.
+///
+/// A `noexcept` function of its own so that GCC vectorises the loops over `i`: written inside a
+/// body that may throw (a `parallel_for` chunk), GCC 14 with `-ffp-contract=on` treats the
+/// contracted `fma` as a statement that can throw and leaves the loop scalar.
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed).
+template <StorageFloat T, StorageFloat P>
+void combine_terms(T* out, const T* src, const P* coeff, std::size_t order, std::size_t first,
+                   std::size_t n, bool periodic, std::size_t inner, std::size_t len) noexcept {
+  {
+    const T c0 = static_cast<T>(coeff[0]);
+    const T* s0 = src + wrapped(first, n, periodic) * inner;
+    for (std::size_t i = 0; i < len; ++i) {
+      out[i] = c0 * s0[i];
+    }
+  }
+  for (std::size_t a = 1; a < order; ++a) {
+    const T ca = static_cast<T>(coeff[a]);
+    const T* sa = src + wrapped(first + a, n, periodic) * inner;
+    for (std::size_t i = 0; i < len; ++i) {
+      out[i] = out[i] + ca * sa[i];
+    }
+  }
+}
+
+/// One mode product of `contract_lattice`: `out(o, j, :) = sum_a B(j, a) src(o, first_j + a, :)`
+/// for `o < outer`, `j < m`, over rows of `inner` contiguous values.
+///
+/// A row is cut into tiles of at most `chunk_ops / (2 order)` values, so that a row too long for
+/// one chunk is shared out and a short one is not split; the tile is a function of the extents
+/// only. Each tile is one parallel item that writes its own values, each the sum over `a` in
+/// ascending order, whichever thread runs it.
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed).
+template <StorageFloat T, StorageFloat P>
+void lattice_stage(const T* src, const StageRows<P>& dir, std::size_t outer, std::size_t m,
+                   std::size_t inner, T* out) {
+  const std::size_t order = dir.order;
+  const auto tile_cap =
+      static_cast<std::size_t>(std::ceil(parallel::chunk_ops / (2.0 * static_cast<double>(order))));
+  const std::size_t tile = (std::min)(inner, tile_cap);
+  const std::size_t tiles = (inner - 1) / tile + 1;
+  // One tile costs a multiply-add per term and value.
+  const double ops = 2.0 * static_cast<double>(order) * static_cast<double>(tile);
+  parallel::parallel_for(
+      outer * m * tiles, parallel::WorkEstimate{ops}, [&](std::size_t begin, std::size_t end) {
+        std::size_t t = begin % tiles;
+        std::size_t row = begin / tiles;
+        std::size_t o = row / m;
+        std::size_t j = row - o * m;
+        for (std::size_t item = begin; item < end; ++item) {
+          const std::size_t offset = t * tile;
+          combine_terms<T, P>(out + row * inner + offset, src + o * dir.nb * inner + offset,
+                              dir.values + j * dir.stride, order,
+                              static_cast<std::size_t>(dir.first[j]), dir.nb, dir.periodic, inner,
+                              (std::min)(tile, inner - offset));
+          if (++t == tiles) {
+            t = 0;
+            ++row;
+            if (++j == m) {
+              j = 0;
+              ++o;
+            }
+          }
+        }
+      });
+}
+
+/// Contract the control points with one row table per direction on a lattice (sum
+/// factorisation): the value, or the derivative of order `k[d]` per direction, at every point of
+/// the tensor product of the coordinates.
+///
+/// One mode product per direction (`lattice_stage`), in the order of directions that does the
+/// fewer multiply-adds: first to last, where stage `d` turns `(m_0..m_{d-1}, n_d..n_{dim-1}, cp)`
+/// into `(m_0..m_d, n_{d+1}.., cp)`, or last to first, where it turns `(n_0..n_d, m_{d+1}.., cp)`
+/// into `(n_0..n_{d-1}, m_d.., cp)` (`n` the basis functions, `m` the points of a direction). Last
+/// to first is taken when the counts are equal: its last stage, the largest, then has the longest
+/// contiguous rows. The two orders add the same products in another order, so they differ only by
+/// rounding; the choice depends on the extents alone, never on the thread count.
+///
+/// Args:
+///     L (const Layout&): The addressing.
+///     cp (const T*): Control points, row-major over `(nb_0, ..., nb_{dim-1}, cp_size)`.
+///     tables (const std::vector<DirTable<P>>&): One table per direction.
+///     k (std::span<const std::size_t>): The row of each direction's table to use.
+///     counts (std::span<const std::size_t>): Points per direction (each at least 1).
+///     dst (T*): Output `(counts[0], ..., counts[dim-1], cp_size)`.
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed).
+template <StorageFloat T, StorageFloat P>
+void contract_lattice(const Layout& L, const T* cp, const std::vector<DirTable<P>>& tables,
+                      std::span<const std::size_t> k, std::span<const std::size_t> counts, T* dst) {
+  const std::size_t dim = L.dim;
+  std::vector<StageRows<P>> dirs;
+  dirs.reserve(dim);
+  for (std::size_t d = 0; d < dim; ++d) {
+    dirs.push_back({tables[d].values.data() + k[d] * L.order[d], tables[d].rows * L.order[d],
+                    tables[d].first.data(), L.order[d], L.nb[d], L.periodic[d] != 0});
+  }
+  // Values written by the stage of direction d, in either order: the directions already
+  // contracted carry their point counts, the others their numbers of functions.
+  const auto written = [&](std::size_t d, bool forward) {
+    std::size_t v = L.cp_size;
+    for (std::size_t e = 0; e < dim; ++e) {
+      const bool done = forward ? e <= d : e >= d;
+      v *= done ? counts[e] : L.nb[e];
+    }
+    return v;
+  };
+  double cost_forward = 0.0;
+  double cost_backward = 0.0;
+  for (std::size_t d = 0; d < dim; ++d) {
+    const double terms = static_cast<double>(L.order[d]);
+    cost_forward += terms * static_cast<double>(written(d, true));
+    cost_backward += terms * static_cast<double>(written(d, false));
+  }
+  const bool forward = cost_forward < cost_backward;
+  std::size_t scratch = 0;
+  for (std::size_t s = 0; s + 1 < dim; ++s) {
+    scratch = (std::max)(scratch, written(forward ? s : dim - 1 - s, forward));
+  }
+  // Intermediates alternate between two buffers; with two directions only one is needed.
+  NdArray<T> buf0({scratch}, for_overwrite);
+  NdArray<T> buf1({dim > 2 ? scratch : 0}, for_overwrite);
+  const T* src = cp;
+  for (std::size_t s = 0; s < dim; ++s) {
+    const std::size_t d = forward ? s : dim - 1 - s;
+    std::size_t outer = 1;
+    std::size_t inner = L.cp_size;
+    for (std::size_t e = 0; e < d; ++e) {
+      outer *= forward ? counts[e] : L.nb[e];
+    }
+    for (std::size_t e = d + 1; e < dim; ++e) {
+      inner *= forward ? L.nb[e] : counts[e];
+    }
+    T* out = s + 1 == dim ? dst : (s % 2 == 0 ? buf0.data() : buf1.data());
+    lattice_stage<T, P>(src, dirs[d], outer, counts[d], inner, out);
+    src = out;
+  }
+}
+
+/// Divide the first `rank` coordinates of each of the rows `[begin, end)` of `cp_size` values by
+/// the weight at `rank`, which stays.
+///
+/// A `noexcept` function of its own, for the reason of `combine_terms`.
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed).
+template <StorageFloat T>
+void project_rows(T* data, std::size_t begin, std::size_t end, std::size_t cp_size,
+                  std::size_t rank) noexcept {
+  for (std::size_t r = begin; r < end; ++r) {
+    project_in_place<T>(data + r * cp_size, rank);
+  }
+}
+
+/// Project `count` rows of homogeneous values over the pool (a division per coordinate).
+template <StorageFloat T>
+void project_all(T* data, std::size_t count, std::size_t cp_size, std::size_t rank) {
+  parallel::parallel_for(count, parallel::WorkEstimate{(std::max)(static_cast<double>(rank), 1.0)},
+                         [&](std::size_t begin, std::size_t end) {
+                           project_rows<T>(data, begin, end, cp_size, rank);
+                         });
+}
+
+/// Scratch of the 1D chunk loop: one point's basis values and the recurrence's knot differences.
+template <StorageFloat T, StorageFloat P>
+struct Row1DScratch {
+  std::vector<P> basis;
+  std::vector<T> left;
+  std::vector<T> right;
+  std::vector<T> weights;
+  std::vector<std::size_t> offs;
+  explicit Row1DScratch(std::size_t order)
+      : basis(order), left(order), right(order), weights(order), offs(order) {}
+};
+
+/// Evaluate the points `[begin, end)` of a 1D B-spline: each point's basis row is formed in the
+/// scratch (Cox-de Boor, as `BsplineSpace1D::tabulate_basis` forms it) and contracted at once.
+///
+/// A `noexcept` function of its own, so the loop over the points is not a body that may throw.
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed), the domain included.
+template <StorageFloat T, StorageFloat P>
+void evaluate_chunk_1d(const Layout& L, std::span<const T> knots, int degree, const T* cp,
+                       bool rational, std::size_t rank, std::span<const P> pts, std::size_t begin,
+                       std::size_t end, T* out, Row1DScratch<T, P>& sc) noexcept {
+  const std::size_t order = L.order[0];
+  for (std::size_t i = begin; i < end; ++i) {
+    const SpanAndFirst sf = span_and_first<T, P>(knots, degree, pts[i]);
+    basis_funcs_point<T, P>(knots.data(), degree, sf.knot_id, pts[i], sc.basis.data(),
+                            sc.left.data(), sc.right.data());
+    for (std::size_t a = 0; a < order; ++a) {
+      sc.weights[a] = static_cast<T>(sc.basis[a]);
+    }
+    local_offsets(L, &sf.first, sc.offs.data());
+    T* row = out + i * L.cp_size;
+    contract_local<T>(cp, sc.offs.data(), sc.weights.data(), order, L.cp_size, row);
+    if (rational) {
+      project_in_place<T>(row, rank);
+    }
+  }
+}
+
+/// Evaluate a 1D B-spline (not Bezier-like) at `pts` into `out` (`pts.size() x cp_size`), the
+/// weight column kept.
+///
+/// Raises:
+///     value_error: A point (NaN included) is outside the domain; `out` is then unwritten.
+template <StorageFloat T, StorageFloat P>
+void evaluate_1d(const Bspline<T>& b, const Layout& L, std::span<const P> pts, T* out) {
+  const BsplineSpace1D<T>& s = b.rep()->space.spaces()[0];
+  check_domain<T, P>(s, pts);
+  const int degree = s.degree();
+  // The recurrence, then a multiply-add (two operations) per term and coordinate, and the
+  // division of a rational B-spline.
+  const double ops = basis_ops_per_point(degree) +
+                     2.0 * static_cast<double>(L.order[0]) * static_cast<double>(L.cp_size) +
+                     static_cast<double>(b.rank());
+  const T* cp = b.rep()->data.get();
+  const bool rational = b.rational();
+  const std::size_t rank = b.rank();
+  parallel::parallel_for(
+      pts.size(), parallel::WorkEstimate{ops}, [&](std::size_t begin, std::size_t end) {
+        Row1DScratch<T, P> sc(L.order[0]);
+        evaluate_chunk_1d<T, P>(L, s.knots(), degree, cp, rational, rank, pts, begin, end, out, sc);
+      });
+}
+
 /// Evaluate at every point of `ps` into `out` (`count x cp_size`), the weight column kept.
 template <StorageFloat T, StorageFloat P>
 void evaluate_into(const Bspline<T>& b, const PointSet<P>& ps, T* out) {
   const Layout L = make_layout(b);
+  if (L.dim == 1 && !b.rep()->space.spaces()[0].has_bezier_like_knots()) {
+    evaluate_1d<T, P>(b, L, ps.dirs[0], out);
+    return;
+  }
   std::vector<DirTable<P>> tables;
   tables.reserve(L.dim);
   static_cast<void>(tabulate_directions<T, P>(b.rep()->space, ps, {}, tables));
@@ -380,8 +699,15 @@ void evaluate_into(const Bspline<T>& b, const PointSet<P>& ps, T* out) {
   const T* cp = b.rep()->data.get();
   const bool rational = b.rational();
   const std::size_t rank = b.rank();
-  const double ops = tabulation_ops(b) + contraction_ops(L);
-  parallel::parallel_for(ps.count, parallel::WorkEstimate{ops}, sizeof(T) * L.cp_size,
+  if (ps.lattice && L.dim > 1) {
+    contract_lattice<T, P>(L, cp, tables, k, counts, out);
+    if (rational) {
+      project_all<T>(out, ps.count, L.cp_size, rank);
+    }
+    return;
+  }
+  // The tables are formed above, by kernels that size their own loops: this loop contracts.
+  parallel::parallel_for(ps.count, parallel::WorkEstimate{contraction_ops(L)},
                          [&](std::size_t begin, std::size_t end) {
                            PointScratch<T, P> s(L);
                            PointCursor cur(ps.lattice, counts, L.dim, begin);
@@ -540,27 +866,37 @@ inline void check_orders(std::size_t dim, std::span<const int> orders) {
   }
 }
 
-/// Operations per point of a derivative evaluation, from the work it does: each direction's
-/// derivative tabulation, the contraction for every multi-index of the box (rational) or for the
-/// one requested (not), and the quotient rule's terms (rational). Tolerant of orders of the wrong
+/// Operations per point of the contraction of a derivative evaluation, once the rows are
+/// tabulated: for the one multi-index requested (not rational), or for every multi-index of the box
+/// and the quotient rule's terms (rational: at most `nbox^2 / 2` pairs, each a multiply-add per
+/// coordinate, counted as `nbox^2` operations per coordinate). Tolerant of orders of the wrong
 /// number or sign, which it reads as zero: a binding sizes its work before the call validates.
 template <StorageFloat T>
-[[nodiscard]] double derivative_ops_per_point(const Bspline<T>& b, std::span<const int> orders) {
+[[nodiscard]] double derivative_contraction_ops(const Bspline<T>& b, std::span<const int> orders) {
   const Layout L = make_layout(b);
+  if (!b.rational()) {
+    return contraction_ops(L);
+  }
   double nbox = 1.0;
+  for (std::size_t d = 0; d < L.dim; ++d) {
+    nbox *= static_cast<double>(d < orders.size() ? (std::max)(orders[d], 0) : 0) + 1.0;
+  }
+  return nbox * contraction_ops(L) + nbox * nbox * static_cast<double>(b.rank());
+}
+
+/// Operations per point of a whole derivative evaluation, from the work it does: each direction's
+/// derivative-row tabulation and `derivative_contraction_ops` (a lattice shares the tabulations
+/// across its points, so this overestimates it). Tolerant of orders of the wrong number or sign,
+/// which it reads as zero.
+template <StorageFloat T>
+[[nodiscard]] double derivative_ops_per_point(const Bspline<T>& b, std::span<const int> orders) {
   double ops = 0.0;
   std::size_t d = 0;
   for (const auto& s : b.rep()->space.spaces()) {
-    const int k = d < orders.size() ? (std::max)(orders[d], 0) : 0;
-    ops += derivs_ops_per_point(s.degree(), k);
-    nbox *= static_cast<double>(k) + 1.0;
+    ops += derivs_ops_per_point(s.degree(), d < orders.size() ? (std::max)(orders[d], 0) : 0);
     ++d;
   }
-  if (!b.rational()) {
-    return ops + contraction_ops(L);
-  }
-  // Terms of the quotient rule: at most nbox^2 / 2 pairs, each a multiply-add per coordinate.
-  return ops + nbox * contraction_ops(L) + nbox * nbox * static_cast<double>(b.rank());
+  return ops + derivative_contraction_ops(b, orders);
 }
 
 /// Evaluate a derivative at every point of `ps` into `out` (`count x rank`).
@@ -579,54 +915,56 @@ template <StorageFloat T, StorageFloat P>
   const std::vector<std::size_t> counts = counts_of(ps);
   const T* cp = b.rep()->data.get();
   const std::size_t rank = b.rank();
-  const double ops = derivative_ops_per_point(b, orders) + tabulation_ops(b);
+  // The tables are formed above, by kernels that size their own loops: the loops below contract.
+  const parallel::WorkEstimate work{derivative_contraction_ops(b, orders)};
   if (!b.rational()) {
     std::vector<std::size_t> k(L.dim);
     for (std::size_t d = 0; d < L.dim; ++d) {
       k[d] = static_cast<std::size_t>(orders[d]);
     }
-    parallel::parallel_for(ps.count, parallel::WorkEstimate{ops}, sizeof(T) * rank,
-                           [&](std::size_t begin, std::size_t end) {
-                             PointScratch<T, P> s(L);
-                             PointCursor cur(ps.lattice, counts, L.dim, begin);
-                             for (std::size_t p = begin; p < end; ++p) {
-                               prepare_point<T, P>(L, tables, cur, k, s);
-                               local_offsets(L, s.first.data(), s.offs.data());
-                               contract_local<T>(cp, s.offs.data(), s.weights.data(), L.nloc,
-                                                 L.cp_size, out + p * rank);
-                               cur.advance();
-                             }
-                           });
+    if (ps.lattice && L.dim > 1) {
+      contract_lattice<T, P>(L, cp, tables, k, counts, out);
+      return true;
+    }
+    parallel::parallel_for(ps.count, work, [&](std::size_t begin, std::size_t end) {
+      PointScratch<T, P> s(L);
+      PointCursor cur(ps.lattice, counts, L.dim, begin);
+      for (std::size_t p = begin; p < end; ++p) {
+        prepare_point<T, P>(L, tables, cur, k, s);
+        local_offsets(L, s.first.data(), s.offs.data());
+        contract_local<T>(cp, s.offs.data(), s.weights.data(), L.nloc, L.cp_size, out + p * rank);
+        cur.advance();
+      }
+    });
     return true;
   }
   const QuotientPlan<T> plan = make_quotient_plan<T>(orders);
   const std::size_t nbox = plan.nbox;
-  parallel::parallel_for(ps.count, parallel::WorkEstimate{ops}, sizeof(T) * rank,
-                         [&](std::size_t begin, std::size_t end) {
-                           PointScratch<T, P> s(L);
-                           std::vector<T> H(nbox * L.cp_size);
-                           std::vector<T> R(nbox * rank);
-                           std::vector<T> v(rank);
-                           std::vector<std::size_t> k(L.dim);
-                           PointCursor cur(ps.lattice, counts, L.dim, begin);
-                           for (std::size_t p = begin; p < end; ++p) {
-                             for (std::size_t m = 0; m < nbox; ++m) {
-                               for (std::size_t d = 0; d < L.dim; ++d) {
-                                 k[d] = plan.multi[m * L.dim + d];
-                               }
-                               prepare_point<T, P>(L, tables, cur, k, s);
-                               if (m == 0) {
-                                 local_offsets(L, s.first.data(), s.offs.data());
-                               }
-                               contract_local<T>(cp, s.offs.data(), s.weights.data(), L.nloc,
-                                                 L.cp_size, H.data() + m * L.cp_size);
-                             }
-                             quotient_rule<T>(plan, H.data(), L.cp_size, rank, R.data(), v.data());
-                             const T* target = R.data() + (nbox - 1) * rank;
-                             std::copy(target, target + rank, out + p * rank);
-                             cur.advance();
-                           }
-                         });
+  parallel::parallel_for(ps.count, work, [&](std::size_t begin, std::size_t end) {
+    PointScratch<T, P> s(L);
+    std::vector<T> H(nbox * L.cp_size);
+    std::vector<T> R(nbox * rank);
+    std::vector<T> v(rank);
+    std::vector<std::size_t> k(L.dim);
+    PointCursor cur(ps.lattice, counts, L.dim, begin);
+    for (std::size_t p = begin; p < end; ++p) {
+      for (std::size_t m = 0; m < nbox; ++m) {
+        for (std::size_t d = 0; d < L.dim; ++d) {
+          k[d] = plan.multi[m * L.dim + d];
+        }
+        prepare_point<T, P>(L, tables, cur, k, s);
+        if (m == 0) {
+          local_offsets(L, s.first.data(), s.offs.data());
+        }
+        contract_local<T>(cp, s.offs.data(), s.weights.data(), L.nloc, L.cp_size,
+                          H.data() + m * L.cp_size);
+      }
+      quotient_rule<T>(plan, H.data(), L.cp_size, rank, R.data(), v.data());
+      const T* target = R.data() + (nbox - 1) * rank;
+      std::copy(target, target + rank, out + p * rank);
+      cur.advance();
+    }
+  });
   return true;
 }
 
@@ -674,6 +1012,12 @@ struct [[nodiscard]] DerivativeValues {
 /// For a rational B-spline the first `rank()` columns of `out` are divided by the weight column,
 /// which is left in place (so `out` has `cp_size()` columns either way).
 ///
+/// Special values: a rational B-spline's division by the interpolated weight is not guarded. A zero
+/// weight gives `+-Inf` or NaN, and a NaN weight or control point gives NaN, in the affected values
+/// only; none is reported by an error or a warning. A non-rational B-spline divides by nothing. A
+/// NaN control point reaches every value whose `degree + 1` supporting functions per direction
+/// include it, a zero basis value there included (`0 * NaN` is NaN).
+///
 /// Args:
 ///     b (const Bspline<T>&): The B-spline.
 ///     pts (mdview<const P, 2>): Points, extents `(n, dim)`; any float type, the arithmetic of a
@@ -691,6 +1035,12 @@ void evaluate(const Bspline<T>& b, mdview<const P, 2> pts, mdview<T, 2> out) {
 }
 
 /// Evaluate a B-spline at arbitrary parametric points.
+///
+/// Special values: a rational B-spline's division by the interpolated weight is not guarded. A zero
+/// weight gives `+-Inf` or NaN, and a NaN weight or control point gives NaN, in the affected values
+/// only; none is reported by an error or a warning. A non-rational B-spline divides by nothing. A
+/// NaN control point reaches every value whose `degree + 1` supporting functions per direction
+/// include it, a zero basis value there included (`0 * NaN` is NaN).
 ///
 /// Args:
 ///     b (const Bspline<T>&): The B-spline.
@@ -715,6 +1065,12 @@ template <StorageFloat T, StorageFloat P>
 
 /// Evaluate a B-spline on a tensor-product lattice into `out`.
 ///
+/// Special values: a rational B-spline's division by the interpolated weight is not guarded. A zero
+/// weight gives `+-Inf` or NaN, and a NaN weight or control point gives NaN, in the affected values
+/// only; none is reported by an error or a warning. A non-rational B-spline divides by nothing. A
+/// NaN control point reaches every value whose `degree + 1` supporting functions per direction
+/// include it, a zero basis value there included (`0 * NaN` is NaN).
+///
 /// Args:
 ///     b (const Bspline<T>&): The B-spline.
 ///     lattice (const quad::PointsLattice<P>&): The lattice, of dimension `dim()`.
@@ -732,6 +1088,12 @@ void evaluate(const Bspline<T>& b, const quad::PointsLattice<P>& lattice, mdview
 }
 
 /// Evaluate a B-spline on a tensor-product lattice.
+///
+/// Special values: a rational B-spline's division by the interpolated weight is not guarded. A zero
+/// weight gives `+-Inf` or NaN, and a NaN weight or control point gives NaN, in the affected values
+/// only; none is reported by an error or a warning. A non-rational B-spline divides by nothing. A
+/// NaN control point reaches every value whose `degree + 1` supporting functions per direction
+/// include it, a zero basis value there included (`0 * NaN` is NaN).
 ///
 /// Args:
 ///     b (const Bspline<T>&): The B-spline.
@@ -763,6 +1125,12 @@ template <StorageFloat T, StorageFloat P>
 /// For a rational B-spline the homogeneous derivatives of every multi-index up to `orders` are
 /// formed and the generalised quotient rule (Piegl and Tiller A4.2 in several variables) gives the
 /// derivative of the projected map; the weight column does not appear in `out`.
+///
+/// Special values: the quotient rule divides by the interpolated weight, unguarded. A zero weight
+/// gives `+-Inf` or NaN, and a NaN weight or control point gives NaN, in the affected values only;
+/// none is reported by an error or a warning (the one reported failure is the basis recurrence's
+/// zero divisor, below). A non-rational B-spline divides by nothing. A NaN control point reaches
+/// every value whose `degree + 1` supporting functions per direction include it, as for values.
 ///
 /// The binomial coefficients of the quotient rule come from `binomial_double`: each factor is
 /// correctly rounded, and the product of the factors is exact while it stays below 2^53, which
@@ -797,6 +1165,12 @@ template <StorageFloat T, StorageFloat P>
 
 /// Evaluate a partial derivative of a B-spline at arbitrary parametric points.
 ///
+/// Special values: the quotient rule divides by the interpolated weight, unguarded. A zero weight
+/// gives `+-Inf` or NaN, and a NaN weight or control point gives NaN, in the affected values only;
+/// none is reported by an error or a warning (the one reported failure is the basis recurrence's
+/// zero divisor, below). A non-rational B-spline divides by nothing. A NaN control point reaches
+/// every value whose `degree + 1` supporting functions per direction include it, as for values.
+///
 /// Args:
 ///     b (const Bspline<T>&): The B-spline.
 ///     pts (mdview<const P, 2>): Points, extents `(n, dim)`.
@@ -820,6 +1194,12 @@ template <StorageFloat T, StorageFloat P>
 }
 
 /// Evaluate a partial derivative of a B-spline on a tensor-product lattice into `out`.
+///
+/// Special values: the quotient rule divides by the interpolated weight, unguarded. A zero weight
+/// gives `+-Inf` or NaN, and a NaN weight or control point gives NaN, in the affected values only;
+/// none is reported by an error or a warning (the one reported failure is the basis recurrence's
+/// zero divisor, below). A non-rational B-spline divides by nothing. A NaN control point reaches
+/// every value whose `degree + 1` supporting functions per direction include it, as for values.
 ///
 /// Args:
 ///     b (const Bspline<T>&): The B-spline.
@@ -846,6 +1226,12 @@ template <StorageFloat T, StorageFloat P>
 }
 
 /// Evaluate a partial derivative of a B-spline on a tensor-product lattice.
+///
+/// Special values: the quotient rule divides by the interpolated weight, unguarded. A zero weight
+/// gives `+-Inf` or NaN, and a NaN weight or control point gives NaN, in the affected values only;
+/// none is reported by an error or a warning (the one reported failure is the basis recurrence's
+/// zero divisor, below). A non-rational B-spline divides by nothing. A NaN control point reaches
+/// every value whose `degree + 1` supporting functions per direction include it, as for values.
 ///
 /// Args:
 ///     b (const Bspline<T>&): The B-spline.

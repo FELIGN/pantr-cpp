@@ -157,7 +157,7 @@ def _output(
     Raises:
         ValueError: If ``out`` has the wrong shape or dtype, or is not writeable.
     """
-    rows = math.prod(shape) // cols if cols else 0
+    rows = math.prod(shape) // cols
     if out is None:
         arr = np.empty(shape, dtype=dtype)
         return arr, arr.reshape(rows, cols), None
@@ -166,6 +166,27 @@ def _output(
         return out, out.reshape(rows, cols), None
     tmp = np.empty(shape, dtype=dtype)
     return out, tmp.reshape(rows, cols), tmp
+
+
+def _check_orders(dim: int, orders: Sequence[int]) -> None:
+    """Check the number and sign of the derivative orders (the compiled call checks them too).
+
+    The wrapper checks them first so that wrong orders are reported before a wrong point
+    argument, as the previous release did; the compiled evaluation cannot, since it is reached
+    only after the points are normalised.
+
+    Args:
+        dim (int): The parametric dimension of the B-spline.
+        orders (Sequence[int]): The derivative orders, already integers.
+
+    Raises:
+        ValueError: If ``len(orders) != dim`` or an order is negative (the length first).
+    """
+    if len(orders) != dim:
+        raise ValueError(f"len(orders) must equal spline.dim ({dim}), got {len(orders)}")
+    for d, order in enumerate(orders):
+        if order < 0:
+            raise ValueError(f"orders[{d}] must be >= 0, got {order}")
 
 
 def _evaluate_Bspline(
@@ -224,14 +245,16 @@ def _evaluate_Bspline_deriv(
         B-spline is divided out); ``out`` when given.
 
     Raises:
-        ValueError: On a bad point, lattice, order or ``out``, or a point outside the domain.
+        ValueError: On a bad order (the orders are checked before the points), point, lattice or
+            ``out``, or a point outside the domain.
         TypeError: If an order is not an integer.
         ZeroDivisionError: If the basis derivative recurrence divides by zero, which a knot
             repeated more than ``degree + 1`` times within a point's support produces.
     """
+    orders_list = [operator.index(o) for o in orders]
+    _check_orders(spline.dim, orders_list)
     arg, base, lattice = _points_and_base(spline, pts)
     rank = spline.rank
-    orders_list = [operator.index(o) for o in orders]
     shape = (*base, rank) if rank > 1 else base
     arr, buf, pending = _output(out, shape, spline._dtype, rank)
     if lattice:

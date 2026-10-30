@@ -34,10 +34,10 @@ class Bezier:
 
     The value is immutable: the control points are copied in at construction
     and read-only, and the operations that take ``in_place=True`` replace the
-    compiled value this object holds rather than writing into it. (The one
-    exception, until :class:`~pantr.bspline.Bspline` is ported: a Bézier made
-    by a ``copy=False`` conversion from a B-spline shares the B-spline's array,
-    so an in-place change of the B-spline shows through it.)
+    compiled value this object holds rather than writing into it. A Bézier made
+    by a ``copy=False`` conversion from a B-spline shares the B-spline's
+    control-point array, which is as immutable: an in-place operation on the
+    B-spline replaces its compiled value and leaves that array as it was.
 
     Attributes:
         _h (Any): The compiled value (``BezierF64`` or ``BezierF32``).
@@ -129,10 +129,11 @@ class Bezier:
     def _borrow(cls, control_points: npt.ArrayLike, is_rational: bool) -> Bezier:
         """Build a Bézier over an array without copying it (a ``copy=False`` conversion).
 
-        Interim, while :class:`~pantr.bspline.Bspline` is still a Python object over a NumPy
-        array: a ``copy=False`` conversion from it shares that array, as the previous release
-        did, so a later in-place change of the B-spline shows in the Bézier. An array that needs
-        a conversion (dtype, layout) is converted first, which shares nothing.
+        A ``copy=False`` conversion from a :class:`~pantr.bspline.Bspline` shares its
+        control-point array, a read-only view of an immutable value: an in-place operation on the
+        B-spline replaces its compiled value and never writes into that array, so the Bézier
+        does not change. An array that needs a conversion (dtype, layout) is converted first,
+        which shares nothing.
 
         Args:
             control_points (npt.ArrayLike): The control points.
@@ -1228,9 +1229,10 @@ class Bezier:
 
         Args:
             copy (bool): If ``True`` (default), the control points are
-                deep-copied into the new B-spline. If ``False``, the
-                B-spline holds this Bézier's read-only control point view
-                (shared memory, so the B-spline cannot be changed in place).
+                deep-copied before they reach the B-spline. If ``False``, this
+                Bézier's read-only control point view is passed on. Either way
+                the B-spline constructor copies them into its own immutable
+                buffer, so the result shares no memory with this Bézier.
 
         Returns:
             ~pantr.bspline.Bspline: Equivalent B-spline representation.

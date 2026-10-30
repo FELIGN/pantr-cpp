@@ -1,6 +1,8 @@
 """Regression tests for the Cox-de Boor denominator guard (issue #257).
 
-The ``BasisFuncs``/``DerBasisFuncs`` kernels in ``_bspline_basis_core.py`` used to
+The ``BasisFuncs``/``DerBasisFuncs`` kernels of the previous release (``_bspline_basis_core.py``,
+since replaced by ``basis_funcs_point`` and ``basis_derivs_point`` in
+``include/pantr/bspline/detail/basis_kernels.hpp``) used to
 guard the Cox-de Boor recurrence denominator with ``denom < tol`` (an absolute
 per-dtype tolerance): scale-dependent, since a genuinely nonzero knot span on a tiny
 domain can be smaller than ``tol`` and get zeroed, breaking the partition of unity.
@@ -20,7 +22,7 @@ the denominator is the sum of the two non-negative terms the recurrence then
 multiplies the quotient by, so those two weights form a convex combination and a
 tiny denominator cancels against an equally tiny numerator. Verified directly with
 ``snap_knots=False`` and interior knots 0 to 64 ulp apart; see the note on
-``_basis_funcs_point``. (This paragraph used to justify the guard by claiming that
+``basis_funcs_point``. (This paragraph used to justify the guard by claiming that
 snapping stores equal knots bitwise identical. It does, but the guard never rested
 on it.)
 

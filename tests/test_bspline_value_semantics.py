@@ -620,6 +620,24 @@ def test_orders_of_the_wrong_number_or_sign_are_refused(orders: list[int], patte
         _curve().evaluate_derivatives(np.array([0.25]), orders)
 
 
+def test_orders_are_checked_before_the_points() -> None:
+    """Wrong orders are reported when the points are also wrong (here a dtype mismatch)."""
+    wrong = np.array([0.5], dtype=np.float32)
+    b = _curve()
+    with pytest.raises(ValueError, match=r"orders\[0\] must be >= 0, got -1"):
+        b.evaluate_derivatives(wrong, [-1])
+    with pytest.raises(ValueError, match=r"len\(orders\) must equal spline.dim \(1\), got 2"):
+        b.evaluate_derivatives(wrong, [1, 0])
+    with pytest.raises(TypeError):
+        b.evaluate_derivatives(wrong, cast(Any, [1.0]))
+    wrong_2d = np.array([[0.5, 0.5]], dtype=np.float32)
+    with pytest.raises(ValueError, match=r"orders\[1\] must be >= 0, got -2"):
+        _surface().evaluate_derivatives(wrong_2d, [0, -2])
+    # Right orders, wrong points: it is the points that are reported.
+    with pytest.raises(ValueError, match="dtype"):
+        b.evaluate_derivatives(wrong, [1])
+
+
 def test_an_order_beyond_int_is_refused_and_one_above_the_degree_is_zero() -> None:
     """A huge order is a ``ValueError`` (the Numba kernel ran out of memory); above degree: 0."""
     b = _curve()

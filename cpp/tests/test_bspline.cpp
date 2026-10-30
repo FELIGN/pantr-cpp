@@ -86,6 +86,16 @@ const Dir kNonOpen = {{-1, -0.5, 0, 0.5, 1, 1.5, 2, 2.5}, 2};
 // Domain [0, 2] with an interior knot of multiplicity two: C^0 there.
 const Dir kQuadC0 = {{0, 0, 0, 1, 1, 2, 2, 2}, 2};
 
+/// `n` equal intervals on [0, 1] (`n` a power of two: dyadic knots), open ends.
+Dir open_dir(std::size_t n, int degree) {
+  std::vector<double> knots(static_cast<std::size_t>(degree) + 1, 0.0);
+  for (std::size_t i = 1; i < n; ++i) {
+    knots.push_back(static_cast<double>(i) / static_cast<double>(n));
+  }
+  knots.resize(knots.size() + static_cast<std::size_t>(degree) + 1, 1.0);
+  return {knots, degree};
+}
+
 /// Four intervals of length 1/4 on [0, 1], periodic.
 Dir periodic_dir(int continuity) {
   return {bs::uniform_periodic_knots<double>(4, 2, continuity, 0.0, 1.0), 2, true};
@@ -494,6 +504,144 @@ std::vector<std::vector<double>> axes_of(const bs::Bspline<T>& b) {
   return axes;
 }
 
+/// The number of roundings on the longest path from a term to a value, over the evaluations of
+/// `b` that sum its `nloc = prod(degree + 1)` products in different orders.
+///
+/// The scattered scheme forms a weight by `dim - 1` products, stores it in `T` and adds `nloc - 1`
+/// terms: `nloc + dim - 1` roundings. The sum-factorised scheme, per direction, stores a
+/// coefficient, multiplies and adds `degree_d` terms: `sum_d (degree_d + 2)`, at most `nloc + dim`
+/// since every degree here is at least one (the sum of the orders is at most their product). The
+/// bound `nloc + dim` covers both.
+template <class T>
+double rounding_depth(const bs::Bspline<T>& b) {
+  double nloc = 1.0;
+  for (const std::size_t p : b.degrees()) {
+    nloc *= static_cast<double>(p) + 1.0;
+  }
+  return nloc + static_cast<double>(b.dim());
+}
+
+/// The bound on the difference of two evaluations of `b` at the points `pts` (`n` rows of `dim`)
+/// that sum the same products in different orders, per value (`n x rank`).
+///
+/// The basis values are non-negative, so `S_i = sum_j |w_j| |c_ij|`, the sum of the magnitudes of
+/// the terms of coordinate `i`, is the value of the B-spline with the control points `|c|`. With
+/// `m = rounding_depth(b)` the number of roundings on the longest path, each evaluation is within
+/// `m u S_i` of the exact sum to first order, `u = eps / 2` the unit roundoff (the
+/// recursive-summation bound, Higham, Accuracy and Stability of Numerical Algorithms, 2nd ed.,
+/// eq. (4.4), applied term by term), so two of them differ by at most `m eps S_i`. A rational value
+/// divides a homogeneous coordinate by the weight `H_w`: its error is at most `(dH_i + |R_i| dH_w)
+/// / H_w + u |R_i|` with `|R_i| <= S_i / H_w` and `S_w = H_w` (positive weights), that is `(2 m +
+/// 1) u S_i / H_w` for each evaluation, and the difference of two is at most `(2 m + 1) eps S_i /
+/// H_w`. The basis rows are the same table entries in both, so they add no difference.
+template <class T, class P>
+std::vector<double> reorder_bound(const bs::Bspline<T>& b, const std::vector<P>& pts,
+                                  std::size_t n) {
+  std::vector<T> mags(b.control_points().begin(), b.control_points().end());
+  for (T& v : mags) {
+    v = std::fabs(v);
+  }
+  const bs::Bspline<T> babs(b.space(), sp(mags), b.rational());
+  NdArray<T> full({n, b.cp_size()}, pantr::for_overwrite);
+  bs::evaluate<T, P>(babs, mdview<const P, 2>(pts.data(), n, b.dim()), full.template view<2>());
+  const double depth = rounding_depth(b);
+  const double factor = b.rational() ? 2.0 * depth + 1.0 : depth;
+  const double eps = (std::max)(eps_of<T>(), eps_of<P>());
+  std::vector<double> bound(n * b.rank());
+  for (std::size_t i = 0; i < n; ++i) {
+    for (std::size_t c = 0; c < b.rank(); ++c) {
+      bound[i * b.rank() + c] =
+          factor * eps * static_cast<double>(full.data()[i * b.cp_size() + c]);
+    }
+  }
+  return bound;
+}
+
+/// The number of values of `a` and `b` that differ by more than the bound.
+template <class T>
+std::size_t exceeding(const NdArray<T>& a, const NdArray<T>& b, const std::vector<double>& bound) {
+  REQUIRE(a.size() == b.size());
+  REQUIRE(a.size() == bound.size());
+  std::size_t count = 0;
+  for (std::size_t i = 0; i < a.size(); ++i) {
+    const double diff =
+        std::fabs(static_cast<double>(a.data()[i]) - static_cast<double>(b.data()[i]));
+    count += diff <= bound[i] ? 0U : 1U;
+  }
+  return count;
+}
+
+/// The bound, per coordinate, on the difference of two evaluations of a derivative of the
+/// non-rational `b` that sum the same products in different orders, at points whose coordinates in
+/// direction `d` are `columns[d]`.
+///
+/// The weight of a local function is a product of one derivative-row entry per direction, so the
+/// sum of the magnitudes of the terms is at most `cmax prod_d A_d` with `A_d` the largest, over the
+/// coordinates, of the sum of the magnitudes of a row of the table (the entries are signed, so
+/// this is not a value of the spline). Two evaluations then differ by at most `m eps cmax prod_d
+/// A_d`, by the argument of `reorder_bound`; both read the same table, so its rounding is common.
+template <class T, class P>
+std::vector<double> derivative_bound(const bs::Bspline<T>& b,
+                                     const std::vector<std::vector<P>>& columns,
+                                     const std::vector<int>& orders) {
+  const auto space = b.space();
+  double prod = 1.0;
+  for (std::size_t d = 0; d < b.dim(); ++d) {
+    const auto r =
+        space.spaces()[d].template tabulate_basis_derivatives<P>(sp(columns[d]), orders[d]);
+    REQUIRE(r.complete);
+    const std::size_t ord = static_cast<std::size_t>(space.spaces()[d].degree()) + 1;
+    const std::size_t rows = static_cast<std::size_t>(orders[d]) + 1;
+    double largest = 0.0;
+    for (std::size_t i = 0; i < columns[d].size(); ++i) {
+      double l1 = 0.0;
+      for (std::size_t a = 0; a < ord; ++a) {
+        l1 += std::fabs(static_cast<double>(r.values.data()[(i * rows + rows - 1) * ord + a]));
+      }
+      largest = (std::max)(largest, l1);
+    }
+    prod *= largest;
+  }
+  const double eps = (std::max)(eps_of<T>(), eps_of<P>());
+  std::vector<double> bound = column_max(b);
+  for (double& v : bound) {
+    v *= rounding_depth(b) * eps * prod;
+  }
+  return bound;
+}
+
+/// A lattice's coordinates: `counts[d]` (at least 2) equally spaced values over the domain of
+/// direction `d`.
+template <class T, class P>
+std::vector<std::vector<P>> uniform_axes(const bs::Bspline<T>& b,
+                                         const std::vector<std::size_t>& counts) {
+  std::vector<std::vector<P>> axes;
+  const auto space = b.space();
+  for (std::size_t d = 0; d < counts.size(); ++d) {
+    const auto& s = space.spaces()[d];
+    const std::size_t m = counts[d];
+    const auto [lo, hi] = s.domain();
+    std::vector<P> a(m);
+    for (std::size_t i = 0; i < m; ++i) {
+      const double t = static_cast<double>(i) / static_cast<double>(m - 1);
+      a[i] = static_cast<P>(static_cast<double>(lo) +
+                            t * (static_cast<double>(hi) - static_cast<double>(lo)));
+    }
+    axes.push_back(std::move(a));
+  }
+  return axes;
+}
+
+/// The points of the tensor product of `axes`, C order, as rows of a `(n, dim)` array.
+template <class P>
+std::vector<P> product_rows(const std::vector<std::vector<P>>& axes) {
+  std::vector<std::vector<double>> wide;
+  for (const auto& a : axes) {
+    wide.emplace_back(a.begin(), a.end());
+  }
+  return product_points<P>(wide);
+}
+
 }  // namespace
 
 // ---- construction and accessors ---------------------------------------------------------------
@@ -523,12 +671,30 @@ TEST_CASE("bspline: the copying constructor reads the count and refuses what Pyt
                   pantr::value_error);
 }
 
-TEST_CASE("bspline: the shared-buffer and adopting constructors check the rank only") {
+TEST_CASE("bspline: the shared-buffer constructor checks the count first, then the rank") {
   const auto space = make_space<float>({kHat});  // 3 basis functions
   std::shared_ptr<const float[]> data(new float[3]{1.0F, 2.0F, 3.0F});
-  CHECK_THROWS_WITH_AS(static_cast<void>(bs::Bspline<float>(space, data, 1, true)),
+  CHECK_THROWS_WITH_AS(static_cast<void>(bs::Bspline<float>(space, data, 3, 1, true)),
                        "The B-spline must have at least rank one. Got rank 0", pantr::value_error);
-  const bs::Bspline<float> b(space, data, 1, false);
+  // The count must be the number of basis functions times the coordinates per control point.
+  CHECK_THROWS_WITH_AS(
+      static_cast<void>(bs::Bspline<float>(space, data, 3, 2, false)),
+      "The buffer holds 3 control-point values, but the space has 3 basis functions of 2 "
+      "coordinates each.",
+      pantr::value_error);
+  CHECK_THROWS_AS(static_cast<void>(bs::Bspline<float>(space, data, 4, 1, false)),
+                  pantr::value_error);
+  // A product past the largest size matches no count, and is refused rather than wrapped.
+  CHECK_THROWS_AS(static_cast<void>(bs::Bspline<float>(
+                      space, data, 3, (std::numeric_limits<std::size_t>::max)() / 2, false)),
+                  pantr::value_error);
+  // A wrong count is reported before a rank below one.
+  CHECK_THROWS_WITH_AS(
+      static_cast<void>(bs::Bspline<float>(space, data, 4, 1, true)),
+      "The buffer holds 4 control-point values, but the space has 3 basis functions of 1 "
+      "coordinates each.",
+      pantr::value_error);
+  const bs::Bspline<float> b(space, data, 3, 1, false);
   CHECK(b.control_points().data() == data.get());  // no copy
   CHECK(b.size() == 3);
 
@@ -732,12 +898,16 @@ TEST_CASE("bspline: the out overload keeps the weight, the returning overload dr
   const NdArray<double> ngrid = bs::evaluate<double, double>(nr, lat);
   REQUIRE(ngrid.rank() == 3);
   CHECK(ngrid.shape()[2] == 2);
-  // A point of the lattice is the point evaluation of the same coordinates (C order).
+  // A point of the lattice is the point evaluation of the same coordinates (C order). The lattice
+  // contracts one direction at a time and the points sum the tensor products, so the two agree
+  // to the bound of two summation orders (`reorder_bound`), not bit for bit.
   const std::vector<double> one = {0.4, 0.7};
   const NdArray<double> pt =
       bs::evaluate<double, double>(b, mdview<const double, 2>(one.data(), 1, 2));
-  CHECK(grid.data()[(1 * 2 + 1) * 2 + 0] == pt.data()[0]);
-  CHECK(grid.data()[(1 * 2 + 1) * 2 + 1] == pt.data()[1]);
+  const std::vector<double> bound = reorder_bound<double, double>(b, one, 1);
+  for (std::size_t c = 0; c < 2; ++c) {
+    CHECK(std::fabs(grid.data()[(1 * 2 + 1) * 2 + c] - pt.data()[c]) <= bound[c]);
+  }
 }
 
 TEST_CASE("bspline: evaluation refuses a wrong column count, out extents and outside points") {
@@ -813,6 +983,231 @@ TEST_CASE("bspline: a zero divisor in the basis recurrence is a status, not a pl
   CHECK(v.complete);
 }
 
+// ---- the lattice by sum factorisation ---------------------------------------------------------
+
+namespace {
+
+/// Evaluate `b` (values, then derivatives for a non-rational one) on the lattice of `counts`
+/// equally spaced coordinates per direction through the lattice and the points overloads, and count
+/// the values that differ by more than the bound of two summation orders.
+template <class T, class P>
+std::size_t lattice_vs_points(const bs::Bspline<T>& b, const std::vector<std::size_t>& counts,
+                              const std::vector<std::vector<int>>& orders_list) {
+  const auto axes = uniform_axes<T, P>(b, counts);
+  const std::vector<P> pts = product_rows<P>(axes);
+  const std::size_t n = pts.size() / b.dim();
+  const pantr::quad::PointsLattice<P> lat(axes);
+  const mdview<const P, 2> view(pts.data(), n, b.dim());
+  std::size_t bad = exceeding(bs::evaluate<T, P>(b, view), bs::evaluate<T, P>(b, lat),
+                              reorder_bound<T, P>(b, pts, n));
+  if (b.rational()) {
+    return bad;
+  }
+  for (const std::vector<int>& orders : orders_list) {
+    const auto via_points = bs::evaluate_derivatives<T, P>(b, view, orders);
+    const auto via_lattice = bs::evaluate_derivatives<T, P>(b, lat, orders);
+    REQUIRE(via_points.complete);
+    REQUIRE(via_lattice.complete);
+    const std::vector<double> per_column = derivative_bound<T, P>(b, axes, orders);
+    std::vector<double> bound(n * b.rank());
+    for (std::size_t i = 0; i < bound.size(); ++i) {
+      bound[i] = per_column[i % b.rank()];
+    }
+    bad += exceeding(via_points.values, via_lattice.values, bound);
+  }
+  return bad;
+}
+
+}  // namespace
+
+TEST_CASE_TEMPLATE("bspline: a lattice of many chunks and tiles agrees with the points", Pair, DD,
+                   FF) {
+  // The contraction cuts a row of `inner` contiguous values into tiles of `chunk_ops / (2 order)`
+  // (2731 at degree 2) and a stage into chunks of tiles; the order of the directions is the one
+  // that does fewer multiply-adds. Three lattices, each with a stage whose rows span two tiles or
+  // more: 40^3 (rows of 2 values, 64000 rows in many chunks), counts (100, 32, 32) with four
+  // coordinates (the last-to-first order: its last stage has rows of 4096 values) and counts (2,
+  // 40, 40) over directions of 34 functions (the first-to-last order: its first stage has rows of
+  // 4624 values).
+  using T = typename Pair::Knot;
+  using P = typename Pair::Point;
+  const std::vector<std::vector<int>> orders = {{1, 0, 1}, {0, 2, 1}, {1, 1, 1}};
+  const std::vector<Dir> quads = {kQuad, periodic_dir(1), kNonOpen};
+  for (const bool rational : {false, true}) {
+    const auto b = make_bspline<T>(quads, rational ? 3 : 2, rational, 41);
+    CHECK(lattice_vs_points<T, P>(b, {40, 40, 40}, orders) == 0);
+  }
+  const auto last_to_first = make_bspline<T>({kQuad, kQuad, kQuad}, 4, false, 43);
+  CHECK(lattice_vs_points<T, P>(last_to_first, {100, 32, 32}, orders) == 0);
+  const auto wide =
+      make_bspline<T>({open_dir(32, 2), open_dir(32, 2), open_dir(32, 2)}, 4, false, 47);
+  CHECK(lattice_vs_points<T, P>(wide, {2, 40, 40}, orders) == 0);
+}
+
+TEST_CASE_TEMPLATE("bspline: a one-direction lattice and its points agree", Pair, DD, FF) {
+  // Both are the same fused loop over the same coordinates, so the bound (`reorder_bound`) is far
+  // more than they differ by; it is the bound a result is held to.
+  using T = typename Pair::Knot;
+  using P = typename Pair::Point;
+  for (const Dir& dir : {kQuad, kCubic, periodic_dir(1)}) {
+    for (const bool rational : {false, true}) {
+      const auto b = make_bspline<T>({dir}, rational ? 3 : 2, rational, 45);
+      const auto axes = uniform_axes<T, P>(b, {1000});
+      const NdArray<T> via_points =
+          bs::evaluate<T, P>(b, mdview<const P, 2>(axes[0].data(), axes[0].size(), 1));
+      const NdArray<T> via_lattice = bs::evaluate<T, P>(b, pantr::quad::PointsLattice<P>(axes));
+      CHECK(exceeding(via_points, via_lattice, reorder_bound<T, P>(b, axes[0], axes[0].size())) ==
+            0);
+    }
+  }
+}
+
+TEST_CASE_TEMPLATE(
+    "bspline: the mixed partial of a separable rational surface is the product of its curves'",
+    Pair, DD, FF) {
+  // R(u, v) = r1(u) r2(v) for the rational curves r1 = (sum N_i w1_i a_i) / (sum N_i w1_i) and r2
+  // alike: the surface with homogeneous control points (w1_i a_i w2_j b_j, w1_i w2_j) sums to
+  // (sum N_i w1_i a_i) (sum M_j w2_j b_j) over (sum N_i w1_i) (sum M_j w2_j). Its mixed partial is
+  // therefore r1'(u) r2'(v), which the one-direction evaluations give with no cross term of the
+  // multi-index quotient rule. The values a, b are multiples of 1/16 and the weights 1/2, 1, 3/2,
+  // 2, so every control point is exact in float. The bound is the sum of the three first-order
+  // bounds of `exact_derivative` (the surface's, and each curve's weighted by the other factor)
+  // and the rounding of the product.
+  using T = typename Pair::Knot;
+  using P = typename Pair::Point;
+  struct Factor {
+    std::vector<double> a;
+    std::vector<double> w;
+  };
+  const auto factor = [](std::size_t count, unsigned seed) {
+    const std::vector<double> v = control_values(count, seed);
+    Factor f;
+    for (const double x : v) {
+      const int k = static_cast<int>(std::lround(x * 64.0));
+      f.a.push_back(static_cast<double>(k / 4) / 16.0);
+      f.w.push_back(0.5 * static_cast<double>(1 + (k + 64) % 4));
+    }
+    return f;
+  };
+  const std::vector<Dir> dirs = {kQuad, kNonOpen};
+  const std::size_t n1 = total_basis({kQuad});
+  const std::size_t n2 = total_basis({kNonOpen});
+  const Factor f1 = factor(n1, 51);
+  const Factor f2 = factor(n2, 52);
+  const auto curve = [](const Dir& dir, const Factor& f) {
+    std::vector<T> cp;
+    for (std::size_t i = 0; i < f.a.size(); ++i) {
+      cp.push_back(static_cast<T>(f.w[i] * f.a[i]));
+      cp.push_back(static_cast<T>(f.w[i]));
+    }
+    return bs::Bspline<T>(make_space<T>({dir}), sp(cp), true);
+  };
+  const bs::Bspline<T> c1 = curve(kQuad, f1);
+  const bs::Bspline<T> c2 = curve(kNonOpen, f2);
+  std::vector<T> cps;
+  for (std::size_t i = 0; i < n1; ++i) {
+    for (std::size_t j = 0; j < n2; ++j) {
+      cps.push_back(static_cast<T>((f1.w[i] * f1.a[i]) * (f2.w[j] * f2.a[j])));
+      cps.push_back(static_cast<T>(f1.w[i] * f2.w[j]));
+    }
+  }
+  const bs::Bspline<T> surface(make_space<T>(dirs), sp(cps), true);
+
+  const auto axes = axes_of(surface);
+  std::vector<std::vector<double>> d1(2);  // value, bound per coordinate of axis 0
+  std::vector<std::vector<double>> d2(2);
+  const double eps = (std::max)(eps_of<T>(), eps_of<P>());
+  const auto curve_derivatives = [&](const bs::Bspline<T>& c, const std::vector<double>& axis,
+                                     std::vector<double>& value, std::vector<double>& bound) {
+    std::vector<P> x;
+    for (const double v : axis) {
+      x.push_back(static_cast<P>(v));
+    }
+    const auto r = bs::evaluate_derivatives<T, P>(c, mdview<const P, 2>(x.data(), x.size(), 1),
+                                                  std::vector<int>{1});
+    REQUIRE(r.complete);
+    for (std::size_t i = 0; i < x.size(); ++i) {
+      value.push_back(static_cast<double>(r.values.data()[i]));
+      bound.push_back(exact_derivative(c, {static_cast<double>(x[i])}, {1}, eps).bound[0]);
+    }
+  };
+  curve_derivatives(c1, axes[0], d1[0], d1[1]);
+  curve_derivatives(c2, axes[1], d2[0], d2[1]);
+
+  std::vector<std::vector<P>> lattice_axes;
+  for (const auto& a : axes) {
+    lattice_axes.emplace_back(a.begin(), a.end());
+  }
+  const std::vector<P> pts = product_rows<P>(lattice_axes);
+  const std::size_t n = pts.size() / 2;
+  const std::vector<int> orders = {1, 1};
+  const auto via_points =
+      bs::evaluate_derivatives<T, P>(surface, mdview<const P, 2>(pts.data(), n, 2), orders);
+  const auto via_lattice =
+      bs::evaluate_derivatives<T, P>(surface, pantr::quad::PointsLattice<P>(lattice_axes), orders);
+  REQUIRE(via_points.complete);
+  REQUIRE(via_lattice.complete);
+  std::size_t bad = 0;
+  for (std::size_t i = 0; i < axes[0].size(); ++i) {
+    for (std::size_t j = 0; j < axes[1].size(); ++j) {
+      const std::size_t q = i * axes[1].size() + j;
+      const double want = d1[0][i] * d2[0][j];
+      const double surface_bound =
+          exact_derivative(surface,
+                           {static_cast<double>(pts[q * 2]), static_cast<double>(pts[q * 2 + 1])},
+                           orders, eps)
+              .bound[0];
+      const double tol = surface_bound + std::fabs(d2[0][j]) * d1[1][i] +
+                         std::fabs(d1[0][i]) * d2[1][j] + d1[1][i] * d2[1][j] +
+                         2.0 * eps * std::fabs(want);
+      bad += std::fabs(static_cast<double>(via_points.values.data()[q]) - want) <= tol ? 0U : 1U;
+      bad += std::fabs(static_cast<double>(via_lattice.values.data()[q]) - want) <= tol ? 0U : 1U;
+    }
+  }
+  CHECK(bad == 0);
+}
+
+TEST_CASE("bspline: a refused point leaves the output untouched, in one direction and in two") {
+  // The domain is checked before the first write, over the pool for a large input.
+  const std::vector<std::size_t> sizes = {7, 100000};
+  const double sentinel = 7.25;
+  for (const std::size_t n : sizes) {
+    const auto b = make_bspline<double>({kCubic}, 3, false);  // domain [0, 4]
+    std::vector<double> pts(n);
+    for (std::size_t i = 0; i < n; ++i) {
+      pts[i] = 4.0 * static_cast<double>(i) / static_cast<double>(n - 1);
+    }
+    pts[n - 1] = 4.5;
+    NdArray<double> out({n, 3}, pantr::for_overwrite);
+    std::fill(out.data(), out.data() + out.size(), sentinel);
+    CHECK_THROWS_WITH_AS(
+        (bs::evaluate<double, double>(b, mdview<const double, 2>(pts.data(), n, 1), out.view<2>())),
+        "One or more values in pts are outside the knot vector domain (0.0, 4.0)",
+        pantr::value_error);
+    CHECK(
+        std::all_of(out.data(), out.data() + out.size(), [&](double v) { return v == sentinel; }));
+    // A 1D lattice is the same loop; the derivative path checks too.
+    const pantr::quad::PointsLattice<double> lat({pts});
+    CHECK_THROWS_AS((bs::evaluate<double, double>(b, lat, out.view<2>())), pantr::value_error);
+    CHECK(
+        std::all_of(out.data(), out.data() + out.size(), [&](double v) { return v == sentinel; }));
+    CHECK_THROWS_AS(
+        (static_cast<void>(bs::evaluate_derivatives<double, double>(
+            b, mdview<const double, 2>(pts.data(), n, 1), std::vector<int>{1}, out.view<2>()))),
+        pantr::value_error);
+    CHECK(
+        std::all_of(out.data(), out.data() + out.size(), [&](double v) { return v == sentinel; }));
+  }
+  // Two directions: the tabulation checks each direction's coordinates before the contraction.
+  const auto b2 = make_bspline<double>({kQuad, kHat}, 2, false);
+  const pantr::quad::PointsLattice<double> bad_lat({{0.1, 0.5}, {0.2, 1.5}});
+  NdArray<double> out2({4, 2}, pantr::for_overwrite);
+  std::fill(out2.data(), out2.data() + out2.size(), sentinel);
+  CHECK_THROWS_AS((bs::evaluate<double, double>(b2, bad_lat, out2.view<2>())), pantr::value_error);
+  CHECK(
+      std::all_of(out2.data(), out2.data() + out2.size(), [&](double v) { return v == sentinel; }));
+}
+
 // ---- threads ----------------------------------------------------------------------------------
 
 namespace {
@@ -836,10 +1231,7 @@ Big make_big() {
 }
 
 NdArray<double> evaluate_big(const Big& big) {
-  NdArray<double> out({big.n, 3}, pantr::for_overwrite);
-  bs::evaluate<double, double>(big.b, mdview<const double, 2>(big.pts.data(), big.n, 2),
-                               out.view<2>());
-  return out;
+  return bs::evaluate<double, double>(big.b, mdview<const double, 2>(big.pts.data(), big.n, 2));
 }
 
 NdArray<double> differentiate_big(const Big& big) {
@@ -853,31 +1245,84 @@ NdArray<double> differentiate_big(const Big& big) {
   return out;
 }
 
+/// Run `f` with one thread and with every thread, and give both results.
+template <class F>
+auto on_one_and_all_threads(F&& f) {
+  const std::size_t saved = pantr::parallel::get_num_threads();
+  pantr::parallel::set_num_threads(1);
+  auto one = f();
+  pantr::parallel::set_num_threads(static_cast<std::int64_t>(pantr::parallel::max_threads()));
+  auto all = f();
+  pantr::parallel::set_num_threads(static_cast<std::int64_t>(saved));
+  return std::make_pair(std::move(one), std::move(all));
+}
+
 }  // namespace
 
 TEST_CASE("bspline: a result does not depend on the number of threads") {
-  // Bound: zero. Each point is computed from its own basis rows and control points by the same
-  // instructions on whichever thread claims its chunk, the chunks are a function of the problem
-  // alone, and no loop reduces across chunks; the two runs differ in nothing but who runs them.
+  // Bound. A value is computed from its own table rows and control points by the same instructions
+  // on whichever thread claims the chunk that holds it: the chunks are a function of the problem
+  // alone, each value is written by one parallel item, and no loop reduces across items. The
+  // difference between one thread and all is zero by construction. The test asserts what a result
+  // is held to in any case, the derived bound of two summation orders of the same products
+  // (`reorder_bound`, `derivative_bound`): it fails for a dependence on the thread count that
+  // matters and not for a last bit a toolchain may move. The one exception is the derivative of a
+  // rational B-spline, whose quotient rule has no closed bound here: its path is the scattered
+  // one, point by point with no sum across points, and the test asserts the identical operations
+  // it shows, equality.
   const Big big = make_big();
-  const std::size_t saved = pantr::parallel::get_num_threads();
-  pantr::parallel::set_num_threads(1);
-  const NdArray<double> v1 = evaluate_big(big);
-  const NdArray<double> d1 = differentiate_big(big);
-  pantr::parallel::set_num_threads(static_cast<std::int64_t>(pantr::parallel::max_threads()));
-  const NdArray<double> vk = evaluate_big(big);
-  const NdArray<double> dk = differentiate_big(big);
-  pantr::parallel::set_num_threads(static_cast<std::int64_t>(saved));
-  REQUIRE(v1.size() == vk.size());
+  const auto [v1, vk] = on_one_and_all_threads([&] { return evaluate_big(big); });
+  CHECK(exceeding(v1, vk, reorder_bound<double, double>(big.b, big.pts, big.n)) == 0);
+  // Not a B-spline of the same value: the same space with polynomial control points.
+  const auto poly = make_bspline<double>({kQuad, periodic_dir(1)}, 2, false, 33);
+  const Big pbig{poly, big.pts, big.n};
+  const auto [p1, pk] = on_one_and_all_threads([&] { return differentiate_big(pbig); });
+  const std::vector<std::vector<double>> columns = {[&] {
+                                                      std::vector<double> c(big.n);
+                                                      for (std::size_t i = 0; i < big.n; ++i) {
+                                                        c[i] = big.pts[i * 2];
+                                                      }
+                                                      return c;
+                                                    }(),
+                                                    [&] {
+                                                      std::vector<double> c(big.n);
+                                                      for (std::size_t i = 0; i < big.n; ++i) {
+                                                        c[i] = big.pts[i * 2 + 1];
+                                                      }
+                                                      return c;
+                                                    }()};
+  const std::vector<double> per_column = derivative_bound<double, double>(poly, columns, {1, 1});
+  std::vector<double> bound(p1.size());
+  for (std::size_t i = 0; i < bound.size(); ++i) {
+    bound[i] = per_column[i % poly.rank()];
+  }
+  CHECK(exceeding(p1, pk, bound) == 0);
+  const auto [d1, dk] = on_one_and_all_threads([&] { return differentiate_big(big); });
   REQUIRE(d1.size() == dk.size());
   std::size_t differing = 0;
-  for (std::size_t i = 0; i < v1.size(); ++i) {
-    differing += v1.data()[i] == vk.data()[i] ? 0U : 1U;
-  }
   for (std::size_t i = 0; i < d1.size(); ++i) {
     differing += d1.data()[i] == dk.data()[i] ? 0U : 1U;
   }
   CHECK(differing == 0);
+
+  // The sum-factorised lattice: tiles are cut by the extents alone.
+  const auto vol = make_bspline<double>({kQuad, periodic_dir(1), kNonOpen}, 3, true, 35);
+  const auto axes = uniform_axes<double, double>(vol, {40, 40, 40});
+  const pantr::quad::PointsLattice<double> lat(axes);
+  const std::vector<double> grid = product_rows<double>(axes);
+  const auto [l1, lk] =
+      on_one_and_all_threads([&] { return bs::evaluate<double, double>(vol, lat); });
+  CHECK(exceeding(l1, lk, reorder_bound<double, double>(vol, grid, grid.size() / 3)) == 0);
+  const auto pvol = make_bspline<double>({kQuad, periodic_dir(1), kNonOpen}, 2, false, 37);
+  const auto [ld1, ldk] = on_one_and_all_threads([&] {
+    return bs::evaluate_derivatives<double, double>(pvol, lat, std::vector<int>{1, 0, 2}).values;
+  });
+  const std::vector<double> lcol = derivative_bound<double, double>(pvol, axes, {1, 0, 2});
+  std::vector<double> lbound(ld1.size());
+  for (std::size_t i = 0; i < lbound.size(); ++i) {
+    lbound[i] = lcol[i % pvol.rank()];
+  }
+  CHECK(exceeding(ld1, ldk, lbound) == 0);
 }
 
 TEST_CASE("bspline: concurrent evaluations of one value from several threads agree") {

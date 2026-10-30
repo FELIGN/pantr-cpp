@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <limits>
 #include <memory>
 #include <span>
 #include <string>
@@ -23,8 +24,8 @@ namespace detail {
 /// The shared representation of a `Bspline`: its space and its control points.
 ///
 /// Attributes:
-///     space (BsplineSpace<T>): The tensor-product space (held by value; it shares its own
-///         representation).
+///     space (BsplineSpace<T>): The tensor-product space (held by value: a vector of handles,
+///         each sharing its direction's representation).
 ///     data (std::shared_ptr<const T[]>): The control points, row-major over `shape`. Possibly
 ///         shared with another immutable value.
 ///     shape (std::vector<std::size_t>): `(num_basis[0], ..., num_basis[dim - 1], cp_size)`.
@@ -83,16 +84,18 @@ class Bspline {
   ///
   /// Args:
   ///     space (BsplineSpace<T>): The space.
-  ///     data (std::shared_ptr<const T[]>): `num_total_basis * cp_size` values, row-major; the
-  ///         count cannot be checked here.
+  ///     data (std::shared_ptr<const T[]>): `num_total_basis * cp_size` values, row-major. A
+  ///         pointer cannot say how many it points to, so `count` does.
+  ///     count (std::size_t): The number of values `data` holds.
   ///     cp_size (std::size_t): The coordinates per control point, the weight included.
   ///     rational (bool): Whether the last coordinate is a homogeneous weight.
   ///
   /// Raises:
-  ///     value_error: The rank is below one.
-  Bspline(BsplineSpace<T> space, std::shared_ptr<const T[]> data, std::size_t cp_size,
-          bool rational)
-      : rep_(make_rep(std::move(space), std::move(data), cp_size, rational)) {}
+  ///     value_error: `count` is not `num_total_basis * cp_size` (checked first); the rank is
+  ///         below one.
+  Bspline(BsplineSpace<T> space, std::shared_ptr<const T[]> data, std::size_t count,
+          std::size_t cp_size, bool rational)
+      : rep_(make_rep(std::move(space), std::move(data), count, cp_size, rational)) {}
 
   /// Build a B-spline that adopts an array's buffer (no copy). Only the array's number of values
   /// is read, as if it were flat.
@@ -130,7 +133,7 @@ class Bspline {
     return count / total;
   }
 
-  /// Get the space (a cheap copy: it shares its representation).
+  /// Get the space (a copy of its handles: each direction shares its representation).
   ///
   /// Returns:
   ///     BsplineSpace<T>: The space.
@@ -235,8 +238,9 @@ class Bspline {
 
   static std::shared_ptr<const Rep> make_rep(BsplineSpace<T> space, NdArray<T>&& a, bool rational) {
     const std::size_t cp = cp_size_for(space, a.size());
-    return make_rep(std::move(space), std::shared_ptr<const T[]>(std::move(a).into_buffer()), cp,
-                    rational);
+    const std::size_t count = a.size();
+    return make_rep(std::move(space), std::shared_ptr<const T[]>(std::move(a).into_buffer()), count,
+                    cp, rational);
   }
 
   static std::shared_ptr<const Rep> make_rep(BsplineSpace<T> space, std::span<const T> src,
@@ -244,11 +248,21 @@ class Bspline {
     const std::size_t cp = cp_size_for(space, src.size());
     std::shared_ptr<T[]> buf(new T[src.size()]);
     std::copy(src.begin(), src.end(), buf.get());
-    return make_rep(std::move(space), std::shared_ptr<const T[]>(std::move(buf)), cp, rational);
+    return make_rep(std::move(space), std::shared_ptr<const T[]>(std::move(buf)), src.size(), cp,
+                    rational);
   }
 
   static std::shared_ptr<const Rep> make_rep(BsplineSpace<T> space, std::shared_ptr<const T[]> data,
-                                             std::size_t cp_size, bool rational) {
+                                             std::size_t count, std::size_t cp_size,
+                                             bool rational) {
+    const std::size_t total = num_total_basis_of(space);
+    // `total * cp_size` is formed only when it fits: a product past size_t matches no count.
+    const bool fits = cp_size == 0 || total <= (std::numeric_limits<std::size_t>::max)() / cp_size;
+    if (!fits || total * cp_size != count) {
+      throw value_error("The buffer holds " + std::to_string(count) +
+                        " control-point values, but the space has " + std::to_string(total) +
+                        " basis functions of " + std::to_string(cp_size) + " coordinates each.");
+    }
     const long long rank = static_cast<long long>(cp_size) - (rational ? 1 : 0);
     if (rank <= 0) {
       throw value_error("The B-spline must have at least rank one. Got rank " +

@@ -166,7 +166,7 @@ class Bspline:
         if "_control_points" in state:
             cp = state.pop("_control_points")
             space = state.pop("_space")
-            Bspline.__init__(self, space, cp, bool(state.pop("_is_rational", False)))
+            Bspline.__init__(self, space, cp, bool(state.pop("_is_rational")))
             state.pop("_beziers_cache", None)
             state.pop("_locate_cache", None)
         self.__dict__.update(state)
@@ -349,6 +349,14 @@ class Bspline:
             ValueError: If the points have an unusable shape, if their dtype does
                 not match the B-spline dtype, or if `out` has incorrect shape or
                 dtype.
+
+        Note:
+            Special values are not guarded. A rational B-spline divides by the
+            interpolated weight: a zero weight gives ``inf`` or ``nan`` and a ``nan``
+            weight gives ``nan``, in the affected values only, with no error or
+            warning. A ``nan`` control point reaches every value whose supporting
+            functions include it, a zero basis value there included. A ``nan`` point
+            is outside the domain and raises.
         """
         return _evaluate_Bspline(self, pts, out)
 
@@ -395,7 +403,21 @@ class Bspline:
         Raises:
             ValueError: If ``len(orders) != self.dim``, if any order is
                 negative, if the points dtype does not match the B-spline dtype,
-                or if ``out`` has incorrect shape or dtype.
+                or if ``out`` has incorrect shape or dtype. The orders are checked
+                before the points.
+            TypeError: If an order is not an integer (anything without
+                ``__index__``).
+            ZeroDivisionError: If the basis derivative recurrence divides by zero,
+                which a knot repeated more than ``degree + 1`` times within a
+                point's support produces; ``out`` is then unwritten.
+
+        Note:
+            Special values are not guarded. The quotient rule of a rational B-spline
+            divides by the interpolated weight: a zero weight gives ``inf`` or
+            ``nan`` and a ``nan`` weight gives ``nan``, in the affected values only,
+            with no error or warning. A ``nan`` control point reaches every value
+            whose supporting functions include it. A ``nan`` point is outside the
+            domain and raises.
 
         Example:
             >>> import numpy as np
@@ -1574,8 +1596,10 @@ def create_from_bezier(bezier: Bezier, *, copy: bool = True) -> Bspline:
     Args:
         bezier (~pantr.bezier.Bezier): The source Bézier.
         copy (bool): If ``True`` (default), the control points are
-            deep-copied into the new B-spline.  If ``False``, the
-            B-spline shares the same underlying control point array.
+            deep-copied before they reach the B-spline.  If ``False``, they
+            are passed on as they are.  Either way the B-spline constructor
+            copies them into its own immutable buffer, so the result shares
+            no memory with the Bézier.
 
     Returns:
         Bspline: Equivalent B-spline with Bézier-like knots.
