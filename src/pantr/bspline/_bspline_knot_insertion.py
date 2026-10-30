@@ -1,205 +1,65 @@
-"""Layer 2 implementation for B-spline knot insertion and periodic conversion.
+"""Interim access to the compiled one-direction refinement kernels (DR-2).
 
-This module provides input validation, multi-dimensional looping, and subdivision
-logic that wrap the Layer 3 Oslo-algorithm kernels.  It also implements the
-open-to-periodic conversion via an exact change-of-basis (Oslo + wrapping matrix).
+Knot insertion, conversion to open and periodic form, restriction, splitting and subdivision live
+in the compiled library (``pantr::bspline``, ``include/pantr/bspline/knot_insertion.hpp``,
+``periodic.hpp``, ``restrict.hpp``); the ``Bspline`` methods call them through the compiled value.
+This module keeps the three one-direction entry points that Python callers not yet ported
+(degree elevation and reduction, the derivative, the products and the THB spaces) still reach,
+with the argument conventions of the Numba kernels and Layer 2 helpers they replaced: arrays of
+the knot dtype, any strides, new arrays returned. It shrinks as those callers are ported and is
+deleted with the last one.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
 
-from .._array_utils import _flatten_along_axis, _unflatten_along_axis
-from ..tolerance import get_conservative
-from ._bspline_knot_insertion_core import _compute_oslo_matrix_1d_core, _insert_knots_1d_core
-from ._bspline_knots import (
-    _get_Bspline_num_basis_1D_impl,
-    _get_unique_knots_and_multiplicity_impl,
-    _is_in_domain_impl,
-)
+from .._ext import ext
 
-if TYPE_CHECKING:
-    from . import Bspline, BsplineSpace1D
+_kernels: Any = ext._kernels
+"""The compiled kernels (interim surface, untyped: each has a ``_f32`` twin)."""
 
 
-def _compute_inserted_knot_vector_1d(
-    knots: npt.NDArray[np.float32 | np.float64],
+def _suffix(dtype: np.dtype[Any]) -> str:
+    """Get the suffix of a kernel's name for a dtype.
+
+    Args:
+        dtype (np.dtype): The dtype of the knots.
+
+    Returns:
+        str: ``"_f32"`` for ``float32``, ``""`` otherwise.
+    """
+    return "_f32" if dtype == np.float32 else ""
+
+
+def _compute_oslo_matrix_1d_core(
     degree: int,
-    new_knots_to_insert: npt.NDArray[np.float32 | np.float64],
-    tol: float,
+    old_knots: npt.NDArray[np.float32 | np.float64],
+    new_knots: npt.NDArray[np.float32 | np.float64],
 ) -> npt.NDArray[np.float32 | np.float64]:
-    """Validate new knots and compute the merged (refined) knot vector.
+    """Get the dense Oslo refinement matrix of a knot vector and a refinement of it.
 
     Args:
-        knots (npt.NDArray[np.float32 | np.float64]): Original B-spline knot vector.
-        degree (int): Polynomial degree.
-        new_knots_to_insert (npt.NDArray[np.float32 | np.float64]): 1D array of knot
-            values to insert.  Must already be cast to the same dtype as ``knots``.
-        tol (float): Tolerance for domain and multiplicity checks.
+        degree (int): Degree of the B-spline.
+        old_knots (npt.NDArray[np.float32 | np.float64]): Original knot vector.
+        new_knots (npt.NDArray[np.float32 | np.float64]): Refined knot vector, of the same dtype.
 
     Returns:
-        npt.NDArray[np.float32 | np.float64]: Merged, sorted knot vector.
+        npt.NDArray[np.float32 | np.float64]: The matrix ``alpha`` of shape ``(m + 1, n + 1)``
+        such that ``alpha @ P`` are the control points over the refined knots.
 
     Raises:
-        ValueError: If ``new_knots_to_insert`` is not 1D.
-        ValueError: If ``new_knots_to_insert`` is empty.
-        ValueError: If any value lies outside the B-spline domain.
-        ValueError: If any knot's resulting multiplicity would exceed ``degree + 1``.
+        ValueError: If a knot vector has fewer than ``degree + 2`` knots.
     """
-    if new_knots_to_insert.ndim != 1:
-        raise ValueError(
-            f"new_knots must be a 1D array-like, got shape {new_knots_to_insert.shape}"
-        )
-
-    if new_knots_to_insert.size == 0:
-        raise ValueError("new_knots_to_insert must not be empty.")
-
-    # Domain check.
-    in_domain = _is_in_domain_impl(knots, degree, new_knots_to_insert, tol)
-    if not np.all(in_domain):
-        bad = new_knots_to_insert[~in_domain]
-        domain_lo = float(knots[degree])
-        domain_hi = float(knots[-degree - 1])
-        raise ValueError(
-            f"new_knots contains values outside the domain [{domain_lo}, {domain_hi}]: {bad}"
-        )
-
-    # Merge and sort.
-    merged = np.sort(np.concatenate([knots, new_knots_to_insert]).astype(knots.dtype, copy=False))
-
-    # Multiplicity check: no value may appear more than degree+1 times.
-    max_allowed = degree + 1
-    _, mults = _get_unique_knots_and_multiplicity_impl(merged, degree, tol, False)
-    if np.any(mults > max_allowed):
-        raise ValueError(
-            f"Inserting these knots would exceed the maximum multiplicity of {max_allowed}. "
-            f"Maximum multiplicity found: {int(np.max(mults))}."
-        )
-
-    return merged
-
-
-def _insert_knots_bspline_1d_impl(
-    knots: npt.NDArray[np.float32 | np.float64],
-    degree: int,
-    ctrl: npt.NDArray[np.float32 | np.float64],
-    new_knots_to_insert: npt.NDArray[np.float32 | np.float64],
-    tol: float,
-) -> tuple[npt.NDArray[np.float32 | np.float64], npt.NDArray[np.float32 | np.float64]]:
-    """Insert knots into a 1D B-spline and compute new control points.
-
-    Args:
-        knots (npt.NDArray[np.float32 | np.float64]): Original knot vector of shape
-            ``(n + degree + 2,)``.
-        degree (int): Polynomial degree.
-        ctrl (npt.NDArray[np.float32 | np.float64]): Control point matrix of shape
-            ``(n+1, rank)``.
-        new_knots_to_insert (npt.NDArray[np.float32 | np.float64]): 1D array of knot
-            values to insert.
-        tol (float): Tolerance for validation.
-
-    Returns:
-        tuple[npt.NDArray, npt.NDArray]: ``(refined_knots, new_ctrl)`` where
-        ``refined_knots`` is the merged knot vector and ``new_ctrl`` has shape
-        ``(m+1, rank)``.
-
-    Raises:
-        ValueError: If ``new_knots_to_insert`` is invalid (see
-            :func:`_compute_inserted_knot_vector_1d`).
-    """
-    refined_knots = _compute_inserted_knot_vector_1d(knots, degree, new_knots_to_insert, tol)
-
-    if refined_knots.shape[0] == knots.shape[0]:
-        # No knots were added (empty insertion).
-        return refined_knots, ctrl.copy()
-
-    ctrl_c = np.ascontiguousarray(ctrl)
-
-    new_ctrl = _insert_knots_1d_core(degree, knots, ctrl_c, refined_knots)
-    return refined_knots, new_ctrl
-
-
-def _insert_knots_bspline(
-    bspline: Bspline,
-    new_knots_per_dim: list[npt.NDArray[np.float32 | np.float64] | None],
-) -> Bspline:
-    """Apply knot insertion per parametric direction and return a new B-spline.
-
-    The control points are updated so that the new B-spline represents the same
-    geometry as the original one.
-
-    Args:
-        bspline (Bspline): Original B-spline.
-        new_knots_per_dim (list[npt.NDArray | None]): Per-direction arrays of knot
-            values to insert.  ``None`` or an empty array skips that direction.
-
-    Returns:
-        Bspline: New B-spline with the same geometry and refined knot vectors.
-    """
-    dim = bspline.dim
-    ctrl = bspline.control_points
-
-    from ._bspline_space_1d import BsplineSpace1D  # noqa: PLC0415
-
-    new_spaces_1d: list[BsplineSpace1D] = []
-
-    for i in range(dim):
-        space_1d = bspline.space.spaces[i]
-        nk = new_knots_per_dim[i]
-
-        if nk is None or nk.size == 0:
-            new_spaces_1d.append(space_1d)
-            continue
-
-        is_periodic = space_1d.periodic
-
-        pts_2d, trailing_shape = _flatten_along_axis(ctrl, i)
-
-        if is_periodic:
-            # Round-trip through open form to preserve periodicity.
-            tol = float(space_1d.tolerance)
-            _, mults = _get_unique_knots_and_multiplicity_impl(
-                space_1d.knots, space_1d.degree, tol, in_domain=True
-            )
-            m_bdy = int(mults[0])
-
-            # Convert to open form.
-            open_knots, open_pts_2d = _to_open_bspline_1d_impl(
-                space_1d.knots, space_1d.degree, pts_2d, True, tol
-            )
-
-            # Insert knots into the open representation.
-            refined_knots, new_pts_2d = _insert_knots_bspline_1d_impl(
-                open_knots, space_1d.degree, open_pts_2d, nk, tol
-            )
-
-            # Convert back to periodic.
-            per_knots, new_pts_2d = _to_periodic_bspline_1d_impl(
-                refined_knots, space_1d.degree, new_pts_2d, m_bdy, tol
-            )
-
-            new_space_1d = BsplineSpace1D(per_knots, space_1d.degree, periodic=True)
-        else:
-            refined_knots, new_pts_2d = _insert_knots_bspline_1d_impl(
-                space_1d.knots, space_1d.degree, pts_2d, nk, space_1d.tolerance
-            )
-            new_space_1d = BsplineSpace1D(refined_knots, space_1d.degree)
-
-        ctrl = _unflatten_along_axis(new_pts_2d, trailing_shape, i)
-
-        new_spaces_1d.append(new_space_1d)
-
-    # Assemble the new B-spline.
-    from . import (  # noqa: PLC0415
-        Bspline,
-        BsplineSpace,
+    old = np.ascontiguousarray(old_knots)
+    fn = getattr(_kernels, "oslo_matrix" + _suffix(old.dtype))
+    result: npt.NDArray[np.float32 | np.float64] = fn(
+        int(degree), old, np.ascontiguousarray(new_knots)
     )
-
-    new_space = BsplineSpace(new_spaces_1d)
-    return Bspline(new_space, ctrl, is_rational=bspline.is_rational)
+    return result
 
 
 def _to_open_bspline_1d_impl(
@@ -211,385 +71,27 @@ def _to_open_bspline_1d_impl(
 ) -> tuple[npt.NDArray[np.float32 | np.float64], npt.NDArray[np.float32 | np.float64]]:
     """Convert a single parametric direction to an open (clamped) knot vector.
 
-    Inserts ``degree + 1 - m_left`` copies of the left boundary knot and
-    ``degree + 1 - m_right`` copies of the right boundary knot so that both
-    endpoints have multiplicity ``degree + 1``.  For periodic splines the
-    ``n_full = len(knots) - degree - 1`` control points are reconstructed by
-    modulo-wrapping the ``n_periodic`` stored rows of ``ctrl_2d``
-    (``ctrl_full[i] = ctrl_2d[i % n_periodic]``), and ghost knots are trimmed
-    after insertion.
-
     Args:
-        knots (npt.NDArray[np.float32 | np.float64]): Knot vector of shape
-            ``(len(knots),)``. May include ghost knots if ``periodic=True``.
+        knots (npt.NDArray[np.float32 | np.float64]): Knot vector, ghost knots included if
+            ``periodic``.
         degree (int): Polynomial degree.
-        ctrl_2d (npt.NDArray[np.float32 | np.float64]): Control point matrix of
-            shape ``(n_stored, rank)`` where ``n_stored = num_total_basis``.
-        periodic (bool): Whether the spline is periodic (has ghost knots).
-        tol (float): Knot comparison tolerance.
+        ctrl_2d (npt.NDArray[np.float32 | np.float64]): Control points of shape
+            ``(n_stored, cols)``.
+        periodic (bool): Whether the direction is periodic.
+        tol (float): Absolute parametric tolerance.
 
     Returns:
-        tuple[npt.NDArray, npt.NDArray]: ``(open_knots, open_ctrl)`` — the
-        clamped knot vector and the corresponding control points.
+        tuple[npt.NDArray, npt.NDArray]: ``(open_knots, open_ctrl)``.
 
     Raises:
-        ValueError: If the knot vector already has full multiplicity at both
-            boundaries (i.e. the spline is already open and non-periodic).
+        ValueError: If the direction is already open and not periodic.
     """
-    p = degree
-    a = float(knots[p])
-    b = float(knots[-p - 1])
-
-    m_left = int(np.sum(np.abs(knots[: p + 1] - a) <= tol))
-    m_right = int(np.sum(np.abs(knots[-p - 1 :] - b) <= tol))
-
-    if m_left == p + 1 and m_right == p + 1 and not periodic:
-        raise ValueError(
-            "B-spline is already open (both boundary knots have multiplicity degree + 1)."
-        )
-
-    # For periodic splines, build the full non-periodic ctrl by modulo-wrapping.
-    ctrl_full: npt.NDArray[np.float32 | np.float64]
-    if periodic:
-        n_stored = ctrl_2d.shape[0]
-        n_full = len(knots) - p - 1
-        indices = np.arange(n_full) % n_stored
-        ctrl_full = ctrl_2d[indices]
-    else:
-        ctrl_full = ctrl_2d
-
-    # Insert boundary knots to reach multiplicity degree + 1.
-    knots_to_insert = np.array([a] * (p + 1 - m_left) + [b] * (p + 1 - m_right), dtype=knots.dtype)
-
-    new_knots: npt.NDArray[np.float32 | np.float64]
-    new_ctrl: npt.NDArray[np.float32 | np.float64]
-    if knots_to_insert.size > 0:
-        new_knots, new_ctrl = _insert_knots_bspline_1d_impl(
-            knots, p, ctrl_full, knots_to_insert, tol
-        )
-    else:
-        new_knots, new_ctrl = knots, ctrl_full
-
-    # Trim external / ghost knots.  For both periodic (ghost knots) and
-    # non-periodic unclamped (external support knots), there are
-    # ``p + 1 - m_bdy`` entries outside the domain on each side -- counted with
-    # each side's own boundary multiplicity, which may differ.
-    n_trim_left = p + 1 - m_left
-    n_trim_right = p + 1 - m_right
-    end = len(new_knots) - n_trim_right
-    open_knots = new_knots[n_trim_left:end]
-    n_open = len(open_knots) - p - 1
-    open_ctrl = new_ctrl[n_trim_left : n_trim_left + n_open]
-
-    return open_knots, open_ctrl
-
-
-def _to_open_bspline_impl(bspline: Bspline) -> Bspline:
-    """Convert all parametric directions of a B-spline to open (clamped) form.
-
-    For each direction that is periodic or has unclamped boundary knots, inserts
-    knots at the domain boundaries until multiplicity ``degree + 1`` is achieved
-    and strips any ghost knots.  Directions that are already open are left
-    unchanged.
-
-    Raises a ``ValueError`` if every direction is already open (i.e. the spline
-    is already fully open and non-periodic).
-
-    Args:
-        bspline (Bspline): Input B-spline. May be periodic, unclamped, or
-            multi-dimensional.
-
-    Returns:
-        Bspline: New B-spline with open knot vectors in all directions and
-        ``periodic=False``.
-
-    Raises:
-        ValueError: If the B-spline is already open in every direction.
-    """
-    from . import (  # noqa: PLC0415
-        Bspline,
-        BsplineSpace,
-        BsplineSpace1D,
+    k = np.ascontiguousarray(knots)
+    fn = getattr(_kernels, "to_open_1d" + _suffix(k.dtype))
+    result: tuple[npt.NDArray[np.float32 | np.float64], npt.NDArray[np.float32 | np.float64]] = fn(
+        k, int(degree), np.ascontiguousarray(ctrl_2d), bool(periodic), float(tol)
     )
-
-    dim = bspline.dim
-    ctrl = bspline.control_points  # shape (*num_basis, rank)
-
-    # Check if every direction is already open.
-    if all(s.has_open_knots() and not s.periodic for s in bspline.space.spaces):
-        raise ValueError("B-spline is already open in every direction.")
-
-    new_spaces_1d: list[BsplineSpace1D] = []
-
-    for i in range(dim):
-        space_1d = bspline.space.spaces[i]
-
-        # Skip already-open directions.
-        if space_1d.has_open_knots() and not space_1d.periodic:
-            new_spaces_1d.append(space_1d)
-            continue
-
-        pts_2d, trailing_shape = _flatten_along_axis(ctrl, i)
-
-        open_knots, open_pts_2d = _to_open_bspline_1d_impl(
-            space_1d.knots,
-            space_1d.degree,
-            pts_2d,
-            space_1d.periodic,
-            float(space_1d.tolerance),
-        )
-
-        ctrl = _unflatten_along_axis(open_pts_2d, trailing_shape, i)
-
-        new_spaces_1d.append(BsplineSpace1D(open_knots, space_1d.degree, periodic=False))
-
-    new_space = BsplineSpace(new_spaces_1d)
-    return Bspline(new_space, ctrl, is_rational=bspline.is_rational)
-
-
-def _check_boundary_multiplicity(m_bdy: int, degree: int) -> None:
-    """Raise if a target boundary multiplicity is outside ``[1, degree]``.
-
-    The precondition of :func:`_to_periodic_bspline_1d_impl`, enforced rather than
-    assumed because :func:`_build_periodic_knot_vector` cannot survive its violation:
-    with ``m_bdy = 0`` the per-period tile it replicates has total multiplicity 0 at the
-    seam, so its right-hand loop appends nothing and increments its shift forever.
-
-    Every caller but one derives ``m_bdy`` from a range that already satisfies this:
-    ``to_periodic`` computes ``degree - continuity`` with a validated continuity, and
-    knot insertion and degree elevation carry a multiplicity forward from an existing
-    periodic space. Degree reduction computes ``m_bdy - decrement``, which reaches 0.
-
-    Args:
-        m_bdy (int): Target boundary multiplicity of the periodic knot vector.
-        degree (int): Polynomial degree of the periodic space.
-
-    Raises:
-        ValueError: If ``m_bdy`` is outside ``[1, degree]``.
-    """
-    if not 1 <= m_bdy <= degree:
-        raise ValueError(
-            f"A periodic knot vector needs a boundary multiplicity in [1, degree] = "
-            f"[1, {degree}], got {m_bdy}. At degree 0 that range is empty: with no ghost "
-            f"knots there is nothing to wrap, and the periodic form of a piecewise "
-            f"constant is its open form. Work in the open representation instead."
-        )
-
-
-def _build_periodic_knot_vector(
-    open_knots: npt.NDArray[np.float32 | np.float64],
-    degree: int,
-    interior_bp: npt.NDArray[np.float32 | np.float64],
-    interior_mults: npt.NDArray[np.int_],
-    m_bdy: int,
-) -> npt.NDArray[np.float32 | np.float64]:
-    """Build a periodic knot vector from an open knot vector's breakpoints.
-
-    Constructs the in-domain part ``[a^{m_bdy}, interior, b^{m_bdy}]`` and
-    extends it periodically with ghost knots on each side.  Ghost knots are
-    computed by applying integer shifts to individual breakpoint values
-    (``bp + k * period``) rather than shifting entire arrays, to minimize
-    floating-point drift.
-
-    Args:
-        open_knots (npt.NDArray[np.float32 | np.float64]): Open knot vector.
-        degree (int): Polynomial degree.
-        interior_bp (npt.NDArray[np.float32 | np.float64]): Unique interior
-            breakpoints (between ``a`` and ``b``, exclusive).
-        interior_mults (npt.NDArray[np.int_]): Multiplicity of each interior
-            breakpoint.
-        m_bdy (int): Target boundary multiplicity.
-
-    Returns:
-        npt.NDArray[np.float32 | np.float64]: Periodic knot vector with ghost
-        knots.
-    """
-    dtype = open_knots.dtype
-    p = degree
-    a = dtype.type(open_knots[p])
-    b = dtype.type(open_knots[-p - 1])
-    period = dtype.type(b - a)
-
-    n_ghost = p + 1 - m_bdy  # ghost knot entries needed on each side
-
-    # Build the unique breakpoints (with multiplicity) for one period.
-    # "tile" = [a, xi_1, ..., xi_{N-1}], each repeated by its multiplicity.
-    bp_vals = np.concatenate([[a], interior_bp])
-    bp_mults = np.concatenate([[m_bdy], interior_mults]).astype(int)
-
-    # In-domain part: tile + b^{m_bdy}.
-    in_domain_parts: list[npt.NDArray[np.float32 | np.float64]] = []
-    for val, m in zip(bp_vals, bp_mults, strict=True):
-        in_domain_parts.append(np.full(m, dtype.type(val), dtype=dtype))
-    in_domain_parts.append(np.full(m_bdy, b, dtype=dtype))
-    in_domain = np.concatenate(in_domain_parts)
-
-    if n_ghost <= 0:
-        return in_domain
-
-    # Build ghost knots by generating shifted copies of the tile breakpoints.
-    # We create a long enough sequence and slice to n_ghost entries.
-    # Right ghosts: interior breakpoints + period, then a + 2*period, etc.
-    #
-    # Both loops below terminate for the same reason, and only for that reason:
-    # `bp_mults` sums to at least `m_bdy`, which `_check_boundary_multiplicity` has
-    # already put at 1 or more. Each pass then appends at least one entry -- the right
-    # loop from `shift = 2` on, since its `shift == 1` pass skips the seam entry, and
-    # the left loop from its first -- so `n_ghost` is reached in at most `n_ghost + 1`
-    # passes. At `m_bdy = 0` with no interior breakpoint the tile is empty, neither
-    # loop can append anything, and both spin forever. That is why the caller checks
-    # rather than assumes, and why weakening that one check reintroduces a hang here.
-    right_entries: list[np.floating[Any]] = []
-    shift = 1
-    while len(right_entries) < n_ghost:
-        for val, m in zip(bp_vals, bp_mults, strict=True):
-            if shift == 1 and val == a:
-                continue  # skip the leading a at shift=1 (it equals b)
-            for _ in range(m):
-                right_entries.append(dtype.type(val + shift * period))
-                if len(right_entries) == n_ghost:
-                    break
-            if len(right_entries) == n_ghost:
-                break
-        shift += 1
-
-    # Left ghosts: full tile shifted by -1, -2, etc.
-    left_entries: list[np.floating[Any]] = []
-    shift = -1
-    while len(left_entries) < n_ghost:
-        for val, m in zip(bp_vals, bp_mults, strict=True):
-            for _ in range(m):
-                left_entries.append(dtype.type(val + shift * period))
-        shift -= 1
-    left_entries = left_entries[-n_ghost:]
-
-    left_arr = np.array(left_entries, dtype=dtype)
-    right_arr = np.array(right_entries, dtype=dtype)
-
-    return np.concatenate([left_arr, in_domain, right_arr])
-
-
-def _control_point_magnitude(ctrl_2d: npt.NDArray[np.float32 | np.float64]) -> float:
-    """Get the magnitude the periodic admissibility tests are relative to.
-
-    ``max |c|`` over every entry, and an inf-norm on purpose: both quantities graded
-    below are inf-norms, so the scale has to be one too.
-
-    This is deliberately *not*
-    :func:`~pantr.bspline._bspline_knot_removal._control_point_scale`, which builds
-    2-norms over the rows. That is right where it is used, because the kernel it serves
-    aggregates a Euclidean distance over the stacked directions -- which is also why it
-    is paired there with an explicit ``sqrt(num_stacked)``. Here the array has already
-    been flattened to ``(n, rank * n_other)``, so a row 2-norm would sum over every
-    other parametric direction and inflate the budget by ``sqrt(rank * n_other)``, which
-    grows with the size of the net while the graded quantity does not.
-
-    What it is relative to is the **whole net**, not the neighbourhood of the seam. A
-    small feature sitting beside a large one is therefore graded against the large one,
-    which is loose for the small feature; the tighter statement would use the ``2(p+1)``
-    control points in the boundary supports. That is a real limitation and it is stated
-    rather than fixed here, because narrowing it changes which splines convert.
-
-    Computed on the array as given, so for a rational spline it is the scale of the
-    *homogeneous* control points -- the space these tests measure in, matching the
-    convention :func:`~pantr.bspline._bspline_knot_removal._roundoff_deviation_floor`
-    states for the same reason.
-
-    Args:
-        ctrl_2d (npt.NDArray[np.float32 | np.float64]): Control points, shape
-            ``(n, rank)``.
-
-    Returns:
-        float: The magnitude, zero only for an identically-zero net.
-    """
-    return float(np.max(np.abs(ctrl_2d))) if ctrl_2d.size else 0.0
-
-
-def _seam_deviation_budget(ctrl_2d: npt.NDArray[np.float32 | np.float64]) -> float:
-    """Get how far the two end control points may sit apart and still close the seam.
-
-    ``get_conservative(dtype) * _control_point_magnitude(ctrl_2d)``.
-
-    The magnitude is a control-point one because the quantity graded is a distance
-    between two control points. It is emphatically *not* the parametric ``tol`` this
-    function's caller also takes: :attr:`~pantr.bspline.BsplineSpace1D.tolerance` says in
-    as many words that an absolute parametric length "is *not* the factor to scale a
-    physical coordinate or a spline coefficient by". Grading a value-space deviation
-    against it makes the verdict track the knot vector's magnitude rather than the
-    function's: the same endpoint mismatch, refused at unit knot scale, is *accepted*
-    once the knot vector is scaled up far enough, and the accepted spline then differs
-    from the input by a large fraction of the input's whole range.
-
-    ``get_conservative``, the same tier as :func:`_closure_deviation_budget`, and the
-    argument is consistency rather than a count of operations. The two grade the *same*
-    defect -- a least-squares closure splits a seam mismatch across the two boundary
-    rows -- so the seam deviation is of the same order as the residual that follows it.
-    A budget that is *tighter* than the one grading the same quantity downstream can
-    only produce refusals the downstream test would not have made, such as refusing
-    ``derivative()`` of a genuinely periodic NURBS of high degree over many elements as
-    "not periodic".
-
-    The control points reach this test through a short chain on the plain conversion,
-    but not on the rational derivative's path: the quotient rule runs at degree ``2p``
-    through :meth:`~pantr.bspline.Bspline.multiply` and a refinement to a common space
-    first. A budget for this site has to cover its longest caller.
-
-    Args:
-        ctrl_2d (npt.NDArray[np.float32 | np.float64]): Control points, shape
-            ``(n, rank)``.
-
-    Returns:
-        float: The budget, in the units of a control-point distance.
-    """
-    return get_conservative(ctrl_2d.dtype) * _control_point_magnitude(ctrl_2d)
-
-
-def _closure_deviation_budget(
-    ctrl_2d: npt.NDArray[np.float32 | np.float64],
-    ctrl_per: npt.NDArray[np.float64],
-    tol_deviation: float | None,
-) -> float:
-    """Get how far the open form may sit from the periodic subspace and still convert.
-
-    ``get_conservative(dtype) * max(magnitude(ctrl_2d), magnitude(ctrl_per))``, raised to
-    ``tol_deviation`` when the caller supplies one.
-
-    **Why both vectors.** The graded quantity is the residual of a least-squares solve,
-    ``max|M x - b|``, and Householder QR is backward stable with a constant polynomial in
-    the shape and free of ``cond(M)``: the bound is ``c(m, n) * eps * ||M|| * ||x||``.
-    Here ``M = oslo @ W`` is entrywise non-negative with unit row sums, so ``||M||_inf``
-    is exactly 1 and drops out -- but the bound is against ``x``, the periodic control
-    points, not against ``b``. Normalising by ``b`` alone would re-import the
-    conditioning through ``||x|| / ||b||``. Taking the larger of the two removes
-    conditioning from the argument instead of budgeting for it.
-
-    ``get_conservative``'s 4096 epsilons then cover the shape constant and the Oslo
-    chain's own accumulation, the rational derivative's chain included.
-
-    Both budgets read ``eps`` from the control points' own dtype. The expression they
-    replace read it from ``float64`` unconditionally, which for a float32 spline demanded
-    of the data a precision it does not carry.
-
-    A caller whose input is only approximately periodic *by design* passes its own
-    budget, in the same control-point units, which is why the ``max`` here is legitimate
-    where the one it replaces was not: both operands are control-point distances rather
-    than one of each kind. For a rational spline those units are **homogeneous**, as the
-    floor is; a caller holding a projected distance has to convert, exactly as
-    :func:`~pantr.bspline._bspline_knot_removal._homogeneous_deviation_tolerance` does.
-
-    Args:
-        ctrl_2d (npt.NDArray[np.float32 | np.float64]): Open-form control points, the
-            right-hand side of the solve.
-        ctrl_per (npt.NDArray[np.float64]): Periodic control points, its solution.
-        tol_deviation (float | None): Caller's budget in control-point units, or ``None``
-            for the round-off floor alone.
-
-    Returns:
-        float: The budget, in the units of a control-point distance.
-    """
-    scale = max(_control_point_magnitude(ctrl_2d), _control_point_magnitude(ctrl_per))
-    floor = get_conservative(ctrl_2d.dtype) * scale
-    return floor if tol_deviation is None else max(tol_deviation, floor)
+    return result
 
 
 def _to_periodic_bspline_1d_impl(  # noqa: PLR0913
@@ -602,272 +104,31 @@ def _to_periodic_bspline_1d_impl(  # noqa: PLR0913
 ) -> tuple[npt.NDArray[np.float32 | np.float64], npt.NDArray[np.float32 | np.float64]]:
     """Convert an open (clamped) 1D B-spline to periodic form.
 
-    Performs an exact change of basis from the open representation to a periodic
-    one with the specified boundary multiplicity ``m_bdy``.  The Oslo matrix
-    defines the linear map from the periodic (ghost-extended, wrapped) basis to
-    the open basis; inverting this map via QR factorization recovers the periodic
-    control points.
-
     Args:
-        open_knots (npt.NDArray[np.float32 | np.float64]): Open (clamped) knot
-            vector with multiplicity ``degree + 1`` at both boundaries.
+        open_knots (npt.NDArray[np.float32 | np.float64]): Open knot vector.
         degree (int): Polynomial degree.
         ctrl_2d (npt.NDArray[np.float32 | np.float64]): Control points of shape
-            ``(n_open, rank)``.
-        m_bdy (int): Target boundary multiplicity for the periodic knot vector.
-            Must satisfy ``1 <= m_bdy <= degree``.
-        tol (float): Knot comparison tolerance. Parametric, and used only for knot
-            comparisons; the two admissibility tests below measure control-point
-            distances and take ``tol_deviation`` instead.
-        tol_deviation (float | None): How far the open form may sit from the periodic
-            subspace, in control-point units (homogeneous ones for a rational spline),
-            or ``None`` for the round-off floor alone. Pass ``np.inf`` from a caller
-            whose input is only approximately periodic by design. It raises the
-            **closure** budget only: the C0 seam test keeps its derived floor, because
-            an approximate caller does not thereby move the two end control points --
-            the reduction operator's first and last rows are exact unit vectors, so the
-            boundary points arrive
-            bit for bit unchanged. Defaults to ``None``.
+            ``(n_open, cols)``.
+        m_bdy (int): Target boundary multiplicity, in ``[1, degree]``.
+        tol (float): Absolute parametric tolerance.
+        tol_deviation (float | None): How far the open form may sit from the periodic subspace,
+            in control-point units, or ``None`` for the round-off floor alone (``np.inf`` removes
+            the closure test; the seam test keeps its floor). Defaults to ``None``.
 
     Returns:
-        tuple[npt.NDArray, npt.NDArray]: ``(periodic_knots, periodic_ctrl)`` where
-        ``periodic_knots`` includes ghost knots and ``periodic_ctrl`` has shape
-        ``(n_periodic, rank)``.
+        tuple[npt.NDArray, npt.NDArray]: ``(periodic_knots, periodic_ctrl)``.
 
     Raises:
-        ValueError: If ``m_bdy`` is outside ``[1, degree]``, or if the function is
-            not periodic (C^0 check at seam or residual exceeds tolerance).
-
-    Note:
-        Layer 2, so it does validate, and the boilerplate that used to stand here
-        claiming otherwise was never true of it: the C^0 seam test below predates
-        this docstring and :func:`_check_boundary_multiplicity` joins it. What is
-        *not* checked is shapes and dtypes, which the caller owns.
-        For general use, call :meth:`~pantr.bspline.Bspline.to_periodic` instead.
+        ValueError: If ``m_bdy`` is outside ``[1, degree]``, or the function is not periodic.
     """
-    p = degree
-    dtype = open_knots.dtype
-
-    _check_boundary_multiplicity(m_bdy, p)
-
-    a = float(open_knots[p])
-    b = float(open_knots[-p - 1])
-
-    # --- Quick C^0 check when knots are clamped (P_0 = f(a), P_{n-1} = f(b)) ---
-    m_left = int(np.sum(np.abs(open_knots[: p + 1] - a) <= tol))
-    m_right = int(np.sum(np.abs(open_knots[-p - 1 :] - b) <= tol))
-    is_clamped = m_left == p + 1 and m_right == p + 1
-    if is_clamped:
-        c0_tol = _seam_deviation_budget(ctrl_2d)
-        c0_dev = float(np.max(np.abs(ctrl_2d[0] - ctrl_2d[-1])))
-        if c0_dev > c0_tol:
-            raise ValueError(
-                "Function values do not match at the domain endpoints "
-                f"(max deviation {c0_dev:.2e}, tolerance {c0_tol:.2e}). "
-                "The B-spline is not periodic."
-            )
-
-    _, mults_all = _get_unique_knots_and_multiplicity_impl(open_knots, p, tol, in_domain=True)
-    # Extract exact breakpoint values directly from open_knots to avoid
-    # floating-point drift from the averaging in unique-knot computation.
-    # The in-domain knots of open_knots are at indices [p, ..., len-p-1].
-    in_domain_flat = open_knots[p : len(open_knots) - p]
-    # Deduplicate preserving exact values: take the first occurrence of each group.
-    bp_exact: list[np.float32 | np.float64] = [in_domain_flat[0]]
-    for v in in_domain_flat[1:]:
-        if abs(float(v) - float(bp_exact[-1])) > tol:
-            bp_exact.append(v)
-    interior_bp = np.array(bp_exact[1:-1], dtype=dtype)
-    interior_mults = mults_all[1:-1]
-
-    T_per = _build_periodic_knot_vector(open_knots, p, interior_bp, interior_mults, m_bdy)
-
-    # --- Build the Oslo chain: T_per → open_knots ---
-    n_ghost = p + 1 - m_bdy
-    n_open = ctrl_2d.shape[0]
-
-    # Step 1: Insert clamping knots into T_per → T_inter.
-    knots_ins = np.array([a] * n_ghost + [b] * n_ghost, dtype=dtype)
-    T_inter = np.sort(np.concatenate([T_per, knots_ins]))
-    oslo1 = _compute_oslo_matrix_1d_core(p, T_per, T_inter)
-
-    # Step 2: Trim ghost region from T_inter to isolate the open part.
-    n_inter_open = len(T_inter) - 2 * n_ghost - p - 1
-    oslo1_trimmed = oslo1[n_ghost : n_ghost + n_inter_open, :]
-
-    # Step 3: If the trimmed intermediate has more CPs than the open form
-    # (because open_knots has fewer knots), map through a second Oslo step.
-    # Use open_knots directly (not T_inter trimmed) to avoid float artefacts.
-    if n_inter_open == n_open:
-        oslo = oslo1_trimmed
-    else:
-        T_inter_open = T_inter[n_ghost : len(T_inter) - n_ghost]
-        oslo2 = _compute_oslo_matrix_1d_core(p, T_inter_open, open_knots)
-        oslo = oslo2 @ oslo1_trimmed  # shape (n_open, n_full)
-
-    # --- Build the modulo-wrapping matrix W ---
-    n_full = len(T_per) - p - 1
-    n_per = int(_get_Bspline_num_basis_1D_impl(T_per, p, True, tol))
-    W = np.zeros((n_full, n_per), dtype=np.float64)
-    for i in range(n_full):
-        W[i, i % n_per] = 1.0
-
-    # --- Exact solve via QR: M @ C_per = C_open ---
-    M = oslo @ W  # shape (n_open, n_per)
-    Q, R = np.linalg.qr(M)
-    ctrl_per = np.linalg.solve(R, Q.T @ ctrl_2d.astype(np.float64))
-
-    # --- Residual check ---
-    residual_tol = _closure_deviation_budget(ctrl_2d, ctrl_per, tol_deviation)
-    residual = float(np.max(np.abs(M @ ctrl_per - ctrl_2d.astype(np.float64))))
-    if residual > residual_tol:
-        raise ValueError(
-            f"Residual {residual:.2e} exceeds tolerance {residual_tol:.2e}. "
-            "The B-spline does not have sufficient smoothness at the seam "
-            "for the requested periodic regularity."
-        )
-
-    return T_per, ctrl_per.astype(dtype)
-
-
-def _to_periodic_bspline_impl(
-    bspline: Bspline,
-    continuity: int | tuple[int | None, ...] | None,
-) -> Bspline:
-    """Convert selected parametric directions of a B-spline to periodic form.
-
-    For each direction that is not already periodic and not explicitly skipped,
-    computes an exact change of basis from the open/non-open representation to
-    a periodic one with the requested continuity at the seam.
-
-    Args:
-        bspline (Bspline): Input B-spline.
-        continuity (int | tuple[int | None, ...] | None): Target continuity at
-            the seam per direction.  ``None`` means maximum regularity
-            (``degree - 1``) in every non-periodic direction.  An integer
-            applies to all non-periodic directions.  A tuple specifies
-            per-direction values; ``None`` entries skip that direction.
-
-    Returns:
-        Bspline: New B-spline with the requested directions made periodic.
-
-    Raises:
-        ValueError: If no direction would be converted.
-        ValueError: If the function is not periodic in some direction.
-    """
-    from . import Bspline as BsplineCls  # noqa: PLC0415
-    from . import BsplineSpace, BsplineSpace1D  # noqa: PLC0415
-
-    dim = bspline.dim
-    ctrl = bspline.control_points
-
-    # Normalize continuity to a per-direction tuple.
-    # A scalar applies to all non-periodic directions.
-    # A global None means "max regularity in all non-periodic directions."
-    # Per-direction None means "skip this direction (leave unchanged)."
-    # The sentinel _CONVERT_DEFAULT = -1 means "use max regularity."
-    _CONVERT_DEFAULT = -1
-    cont_per_dir: tuple[int | None, ...]
-    if continuity is None:
-        # Default: max regularity for every non-periodic direction.
-        cont_per_dir = tuple(_CONVERT_DEFAULT for _ in range(dim))
-    elif isinstance(continuity, int):
-        cont_per_dir = tuple(continuity for _ in range(dim))
-    else:
-        if len(continuity) != dim:
-            raise ValueError(f"continuity tuple length {len(continuity)} != dimension {dim}.")
-        cont_per_dir = tuple(continuity)
-
-    # Determine which directions will be converted: non-periodic and not skipped.
-    will_convert = [
-        not bspline.space.spaces[i].periodic and cont_per_dir[i] is not None for i in range(dim)
-    ]
-    if not any(will_convert):
-        raise ValueError(
-            "No direction to convert: all directions are either already periodic "
-            "or explicitly skipped."
-        )
-
-    new_spaces_1d: list[BsplineSpace1D] = []
-
-    for i in range(dim):
-        space_1d = bspline.space.spaces[i]
-
-        if not will_convert[i]:
-            new_spaces_1d.append(space_1d)
-            continue
-
-        p = space_1d.degree
-
-        # Resolve continuity for this direction.
-        c = cont_per_dir[i]
-        if c is None or c == _CONVERT_DEFAULT:
-            c = p - 1
-        if not (0 <= c <= p - 1):
-            raise ValueError(
-                f"continuity must be in [0, degree-1]=[0, {p - 1}] for direction {i}, got {c}."
-            )
-        m_bdy = p - c
-
-        knots_1d = space_1d.knots
-        tol_1d = float(space_1d.tolerance)
-        pts_2d, trailing_shape = _flatten_along_axis(ctrl, i)
-
-        per_knots, per_pts_2d = _to_periodic_bspline_1d_impl(knots_1d, p, pts_2d, m_bdy, tol_1d)
-
-        ctrl = _unflatten_along_axis(per_pts_2d, trailing_shape, i)
-
-        new_spaces_1d.append(BsplineSpace1D(per_knots, p, periodic=True))
-
-    new_space = BsplineSpace(new_spaces_1d)
-    return BsplineCls(new_space, ctrl, is_rational=bspline.is_rational)
-
-
-def _compute_uniform_subdivision_knots(
-    knots: npt.NDArray[np.float32 | np.float64],
-    degree: int,
-    tol: float,
-    n_subdivisions: int,
-    regularity: int | None = None,
-) -> npt.NDArray[np.float32 | np.float64]:
-    """Compute the new knots required to subdivide every knot span uniformly.
-
-    For each non-zero span ``[u_i, u_{i+1})`` of the knot vector, generates
-    ``n_subdivisions - 1`` uniformly-spaced interior knot values, each repeated
-    ``degree - regularity`` times to achieve the requested continuity.
-
-    Args:
-        knots (npt.NDArray[np.float32 | np.float64]): B-spline knot vector.
-        degree (int): Polynomial degree.
-        tol (float): Tolerance for uniqueness detection.
-        n_subdivisions (int): Number of equal sub-spans per existing interval.
-            Must be >= 2 (callers have already validated this).
-        regularity (int | None): Desired continuity order at inserted knots.
-            Must be in ``[-1, degree - 1]``.  ``None`` defaults to
-            ``degree - 1`` (minimum multiplicity = 1, maximum continuity).
-
-    Returns:
-        npt.NDArray[np.float32 | np.float64]: 1D array of new knot values to insert.
-            May be empty if the knot vector has only one unique span.
-    """
-    eff_regularity = degree - 1 if regularity is None else regularity
-    repeat = degree - eff_regularity  # multiplicity of each inserted knot
-
-    unique_knots, _ = _get_unique_knots_and_multiplicity_impl(knots, degree, tol, in_domain=True)
-
-    dtype = knots.dtype
-    parts: list[npt.NDArray[np.float32 | np.float64]] = []
-
-    for k in range(len(unique_knots) - 1):
-        lo = float(unique_knots[k])
-        hi = float(unique_knots[k + 1])
-        # Generate n_subdivisions-1 equally-spaced interior points.
-        interior = np.linspace(lo, hi, n_subdivisions + 1, dtype=np.float64)[1:-1]
-        # Repeat each value `repeat` times to achieve the requested regularity.
-        repeated = np.repeat(interior, repeat)
-        parts.append(repeated.astype(dtype, copy=False))
-
-    if not parts:
-        return np.empty(0, dtype=dtype)
-
-    return np.concatenate(parts)
+    k = np.ascontiguousarray(open_knots)
+    fn = getattr(_kernels, "to_periodic_1d" + _suffix(k.dtype))
+    result: tuple[npt.NDArray[np.float32 | np.float64], npt.NDArray[np.float32 | np.float64]] = fn(
+        k,
+        int(degree),
+        np.ascontiguousarray(ctrl_2d),
+        int(m_bdy),
+        float(tol),
+        None if tol_deviation is None else float(tol_deviation),
+    )
+    return result

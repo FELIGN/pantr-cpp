@@ -138,6 +138,9 @@ void def_bspline(nb::module_& m, const char* name) {
       .def_prop_ro(
           "space", [](const B& b) { return b.space(); }, "The space.")
       .def_prop_ro(
+          "directions", [](const B& b) { return b.space().spaces(); },
+          "The 1D space of each direction (each sharing its representation).")
+      .def_prop_ro(
           "control_points",
           [](const B& b) { return view_of<T>(b.rep()->data.get(), b.shape(), b.rep()); },
           nb::rv_policy::automatic, "Read-only view of the control points.")

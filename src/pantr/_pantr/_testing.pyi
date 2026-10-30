@@ -281,3 +281,95 @@ def check_snapping_kept_an_interval(
     tol: float,
 ) -> None:
     """Refuse a knot vector that snapping collapsed onto one point."""
+
+def oslo_rows(
+    degree: int,
+    old_knots: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    new_knots: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+) -> tuple[NDArray[numpy.float64], NDArray[numpy.int64]]:
+    """The banded rows of the Oslo matrix: (alphas (m + 1, degree + 1), first_col (m + 1,))."""
+
+def oslo_matrix(
+    degree: int,
+    old_knots: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    new_knots: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+) -> NDArray[numpy.float64]:
+    """The dense Oslo refinement matrix (m + 1, n + 1)."""
+
+def evaluate_blossom_1d(
+    knots: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    degree: int,
+    control_points: Annotated[
+        NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu", writable=False)
+    ],
+    u_values: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    tol: float,
+) -> NDArray[numpy.float64]:
+    """The blossom of a 1D B-spline at `degree` values: (rank,)."""
+
+def blossom_span(
+    knots: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    u_last: float,
+    n: int,
+) -> int:
+    """The span the blossom's recurrence starts from, in [0, n]."""
+
+def oslo_rows_f32(
+    degree: int,
+    old_knots: Annotated[
+        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    new_knots: Annotated[
+        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+) -> tuple[NDArray[numpy.float32], NDArray[numpy.int64]]:
+    """The banded rows of the Oslo matrix: (alphas (m + 1, degree + 1), first_col (m + 1,))."""
+
+def oslo_matrix_f32(
+    degree: int,
+    old_knots: Annotated[
+        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    new_knots: Annotated[
+        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+) -> NDArray[numpy.float32]:
+    """The dense Oslo refinement matrix (m + 1, n + 1)."""
+
+def evaluate_blossom_1d_f32(
+    knots: Annotated[
+        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    degree: int,
+    control_points: Annotated[
+        NDArray[numpy.float32], dict(shape=(None, None), order="C", device="cpu", writable=False)
+    ],
+    u_values: Annotated[
+        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    tol: float,
+) -> NDArray[numpy.float32]:
+    """The blossom of a 1D B-spline at `degree` values: (rank,)."""
+
+def blossom_span_f32(
+    knots: Annotated[
+        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    u_last: float,
+    n: int,
+) -> int:
+    """The span the blossom's recurrence starts from, in [0, n]."""

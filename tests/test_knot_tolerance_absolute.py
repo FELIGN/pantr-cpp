@@ -52,10 +52,6 @@ from pantr.bspline._bspline_knots import (
     _is_in_domain_impl,
 )
 from pantr.bspline._bspline_product import _get_boundary_mults
-from pantr.bspline._bspline_restrict import (
-    _compute_boundary_knots_to_insert,
-    _validate_restrict_bounds,
-)
 from pantr.grid import hierarchical_grid, uniform_grid
 
 # Coordinate scales exercised throughout. 1.0 is the regime where the leak is
@@ -372,18 +368,24 @@ class TestSplitMultiplicity:
 class TestRestrictBounds:
     """Restriction bounds must be snapped and validated absolutely.
 
-    These exercise the Layer-2 helpers rather than ``Bspline.restrict`` itself: the
-    public method is independently broken for any bound above roughly 8 in
-    magnitude by an unrelated defect at ``_bspline_restrict.py:183-184``, where an
-    absolute ``+/- tol`` nudge fed to ``np.searchsorted`` underflows below one ulp
-    and the wrong end of a repeated-knot block is selected. That defect predates
-    this fix and is untouched by it.
+    These exercise ``Bspline.restrict`` itself (they exercised the Layer-2 helpers
+    ``_validate_restrict_bounds`` and ``_compute_boundary_knots_to_insert`` before those moved
+    into the compiled library): the snapping shows in the domain of the restricted B-spline, and
+    the knots that needed inserting show in its knot vector. The tolerance is the space's own,
+    ``8 eps max(span, |knots[0]|, |knots[-1]|)``.
     """
 
     @staticmethod
     def _knots(base: float) -> npt.NDArray[np.float64]:
         """Clamped degree-2 knot vector on ``[base, 3 * base]``."""
         return np.array([1.0, 1.0, 1.0, 2.0, 3.0, 3.0, 3.0]) * base
+
+    @staticmethod
+    def _curve(base: float) -> Bspline:
+        """A degree-2 curve on the knots of :meth:`_knots`."""
+        knots = TestRestrictBounds._knots(base)
+        space = BsplineSpace([BsplineSpace1D(knots, 2)])
+        return Bspline(space, np.arange(4.0).reshape(4, 1))
 
     @pytest.mark.parametrize("base", SCALES)
     def test_a_bound_inside_the_domain_is_not_snapped_to_the_end(self, base: float) -> None:
@@ -399,20 +401,27 @@ class TestRestrictBounds:
         a_new = a + INSIDE_LEAK * base
         b_new = b - INSIDE_LEAK * base
 
-        snapped_a, snapped_b = _validate_restrict_bounds(knots, 2, 1e-15, a_new, b_new)
+        domain = self._curve(base).restrict((a_new, b_new)).space.spaces[0].domain
 
-        assert snapped_a == a_new
-        assert snapped_b == b_new
+        assert (float(domain[0]), float(domain[1])) == (a_new, b_new)
 
     @pytest.mark.parametrize("base", SCALES)
     def test_a_bound_at_the_domain_end_is_still_snapped(self, base: float) -> None:
-        """The tightened snap must still fire on an exact endpoint."""
+        """A bound within the tolerance of an end is that end, exactly.
+
+        The tightened snap must still fire: a bound half a tolerance off each end (inside it,
+        and far inside the leaked window) lands on the stored end value.
+        """
         knots = self._knots(base)
         a, b = float(knots[2]), float(knots[-3])
+        tol = knot_tolerance(knots)
+        mid = 2.0 * base
 
-        snapped_a, snapped_b = _validate_restrict_bounds(knots, 2, 1e-15, a, b)
+        lower = self._curve(base).restrict((a + 0.5 * tol, mid)).space.spaces[0].domain
+        upper = self._curve(base).restrict((mid, b - 0.5 * tol)).space.spaces[0].domain
 
-        assert (snapped_a, snapped_b) == (a, b)
+        assert float(lower[0]) == a
+        assert float(upper[1]) == b
 
     @pytest.mark.parametrize("base", SCALES)
     def test_interior_bounds_still_require_boundary_knots(self, base: float) -> None:
@@ -426,12 +435,13 @@ class TestRestrictBounds:
         a_new = a + INSIDE_LEAK * base
         b_new = b - INSIDE_LEAK * base
 
-        to_insert = _compute_boundary_knots_to_insert(knots, 2, 1e-15, a_new, b_new)
+        restricted = self._curve(base).restrict((a_new, b_new))
 
-        # Neither bound coincides with an existing knot, so each needs degree + 1.
-        assert to_insert.size == 6
-        np.testing.assert_array_equal(to_insert[:3], [a_new] * 3)
-        np.testing.assert_array_equal(to_insert[3:], [b_new] * 3)
+        # Neither bound coincides with an existing knot, so each gets degree + 1 copies; the
+        # interior knot stays.
+        np.testing.assert_array_equal(
+            restricted.space.spaces[0].knots, [a_new] * 3 + [2.0 * base] + [b_new] * 3
+        )
 
 
 class TestTHBRootBounds:

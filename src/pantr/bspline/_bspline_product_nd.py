@@ -104,7 +104,7 @@ def _project_to_optimal_nd(
     Note:
         Inputs are assumed to be correct (no validation performed).
     """
-    from ._bspline_knot_insertion_core import _compute_oslo_matrix_1d_core  # noqa: PLC0415
+    from ._bspline_knot_insertion import _compute_oslo_matrix_1d_core  # noqa: PLC0415
 
     ndim = len(degrees_sum)
     ctrl = ctrl_full
@@ -321,7 +321,7 @@ def _convert_boundary_direction(  # noqa: PLR0913
     Note:
         Inputs are assumed to be correct (no validation performed).
     """
-    from ._bspline_knot_insertion_core import _compute_oslo_matrix_1d_core  # noqa: PLC0415
+    from ._bspline_knot_insertion import _compute_oslo_matrix_1d_core  # noqa: PLC0415
     from ._bspline_product import (  # noqa: PLC0415
         _build_periodic_product_knot_vector,
     )

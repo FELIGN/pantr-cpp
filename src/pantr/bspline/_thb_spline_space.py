@@ -26,7 +26,7 @@ from scipy import sparse
 
 from ..grid import HierarchicalGrid, hierarchical_grid, tensor_product_grid
 from ..tolerance import get_conservative, get_strict
-from ._bspline_knot_insertion_core import _compute_oslo_matrix_1d_core
+from ._bspline_knot_insertion import _compute_oslo_matrix_1d_core
 from ._bspline_space_nd import BsplineSpace
 from ._thb_eval_core import _combine_tp_values
 

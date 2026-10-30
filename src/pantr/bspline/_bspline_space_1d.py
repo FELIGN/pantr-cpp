@@ -37,10 +37,6 @@ from ._bspline_extraction import (
     _tabulate_Bspline_cardinal_1D_extraction_impl,
     _tabulate_Bspline_Lagrange_1D_extraction_impl,
 )
-from ._bspline_knot_insertion import (
-    _compute_inserted_knot_vector_1d,
-    _compute_uniform_subdivision_knots,
-)
 
 _cpp: Any = ext.bspline
 """The compiled B-spline spaces (private; untyped: one class per dtype)."""
@@ -1005,7 +1001,12 @@ class BsplineSpace1D:
         arr = np.asarray(new_knots, dtype=self.dtype)
         if arr.size == 0:
             raise ValueError("new_knots must not be empty.")
-        merged = _compute_inserted_knot_vector_1d(self._knots, self._degree, arr, self._tol)
+        if arr.ndim != 1:
+            raise ValueError(f"new_knots must be a 1D array-like, got shape {arr.shape}")
+        f32 = self._knots.dtype == np.float32
+        merged = (
+            _cpp.compute_inserted_knot_vector_f32 if f32 else _cpp.compute_inserted_knot_vector
+        )(self._knots, self._degree, np.ascontiguousarray(arr), self._tol)
         return BsplineSpace1D(merged, self._degree)
 
     def subdivide(self, n_subdivisions: int, regularity: int | None = None) -> BsplineSpace1D:
@@ -1030,17 +1031,12 @@ class BsplineSpace1D:
             ValueError: If ``n_subdivisions < 2``.
             ValueError: If ``regularity`` is outside ``[-1, degree - 1]``.
         """
-        if n_subdivisions < 2:  # noqa: PLR2004
-            raise ValueError(f"n_subdivisions must be >= 2, got {n_subdivisions}")
-        eff_regularity = self._degree - 1 if regularity is None else regularity
-        if eff_regularity < -1 or eff_regularity > self._degree - 1:
-            raise ValueError(
-                f"regularity must be in [-1, degree - 1] = [-1, {self._degree - 1}], "
-                f"got {eff_regularity}"
-            )
-        new_knots = _compute_uniform_subdivision_knots(
-            self._knots, self._degree, self._tol, n_subdivisions, eff_regularity
-        )
+        f32 = self._knots.dtype == np.float32
+        new_knots = (
+            _cpp.compute_uniform_subdivision_knots_f32
+            if f32
+            else _cpp.compute_uniform_subdivision_knots
+        )(self._knots, self._degree, self._tol, n_subdivisions, regularity)
         return self.insert_knots(new_knots)
 
     def restrict(

@@ -33,6 +33,9 @@ class BsplineSpace1DF64:
     ) -> BsplineSpace1DF64:
         """Rebuild a space from its stored knots and tolerance (no snapping)."""
 
+    def same_rep(self, other: BsplineSpace1DF64) -> bool:
+        """Whether both share one representation."""
+
     @property
     def degree(self) -> int:
         """The degree."""
@@ -183,6 +186,9 @@ class BsplineSpace1DF32:
         tol: float,
     ) -> BsplineSpace1DF32:
         """Rebuild a space from its stored knots and tolerance (no snapping)."""
+
+    def same_rep(self, other: BsplineSpace1DF32) -> bool:
+        """Whether both share one representation."""
 
     @property
     def degree(self) -> int:
@@ -526,6 +532,10 @@ class BsplineF64:
         """The space."""
 
     @property
+    def directions(self) -> list[BsplineSpace1DF64]:
+        """The 1D space of each direction (each sharing its representation)."""
+
+    @property
     def control_points(self) -> Annotated[NDArray[numpy.float64], dict(writable=False)]:
         """Read-only view of the control points."""
 
@@ -583,6 +593,32 @@ class BsplineF64:
     ) -> None:
         """Write a mixed partial derivative on a lattice into `out` (num_points, rank)."""
 
+    def insert_knots(
+        self,
+        new_knots: Sequence[
+            Annotated[
+                NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+            ]
+            | None
+        ],
+    ) -> BsplineF64:
+        """Insert knots per direction (none or empty skips a direction); a periodic direction is refined through its open form."""
+
+    def to_open(self) -> BsplineF64:
+        """Convert every direction to open (clamped) non-periodic form."""
+
+    def to_periodic(self, continuity: Sequence[int | None]) -> BsplineF64:
+        """Convert the directions with a continuity (-1 for the maximum; none skips) to periodic form."""
+
+    def subdivide(self, counts: Sequence[int], regularity: int | None) -> BsplineF64:
+        """Subdivide each direction whose count is at least 2 uniformly."""
+
+    def restrict(self, bounds: Sequence[tuple[float, float] | None]) -> BsplineF64:
+        """Restrict each direction with bounds to that interval."""
+
+    def split(self, direction: int, value: float) -> tuple[BsplineF64, BsplineF64]:
+        """Split at a parameter value in one direction."""
+
 class BsplineF32:
     """An immutable B-spline map (a space and control points in a shared, read-only buffer)."""
 
@@ -619,6 +655,10 @@ class BsplineF32:
     @property
     def space(self) -> BsplineSpaceF32:
         """The space."""
+
+    @property
+    def directions(self) -> list[BsplineSpace1DF32]:
+        """The 1D space of each direction (each sharing its representation)."""
 
     @property
     def control_points(self) -> Annotated[NDArray[numpy.float32], dict(writable=False)]:
@@ -677,3 +717,75 @@ class BsplineF32:
         out: Annotated[NDArray[numpy.float32], dict(shape=(None, None), order="C", device="cpu")],
     ) -> None:
         """Write a mixed partial derivative on a lattice into `out` (num_points, rank)."""
+
+    def insert_knots(
+        self,
+        new_knots: Sequence[
+            Annotated[
+                NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
+            ]
+            | None
+        ],
+    ) -> BsplineF32:
+        """Insert knots per direction (none or empty skips a direction); a periodic direction is refined through its open form."""
+
+    def to_open(self) -> BsplineF32:
+        """Convert every direction to open (clamped) non-periodic form."""
+
+    def to_periodic(self, continuity: Sequence[int | None]) -> BsplineF32:
+        """Convert the directions with a continuity (-1 for the maximum; none skips) to periodic form."""
+
+    def subdivide(self, counts: Sequence[int], regularity: int | None) -> BsplineF32:
+        """Subdivide each direction whose count is at least 2 uniformly."""
+
+    def restrict(self, bounds: Sequence[tuple[float, float] | None]) -> BsplineF32:
+        """Restrict each direction with bounds to that interval."""
+
+    def split(self, direction: int, value: float) -> tuple[BsplineF32, BsplineF32]:
+        """Split at a parameter value in one direction."""
+
+def compute_inserted_knot_vector(
+    knots: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    degree: int,
+    new_knots: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    tol: float,
+) -> NDArray[numpy.float64]:
+    """Validate new knots and merge them into a knot vector."""
+
+def compute_uniform_subdivision_knots(
+    knots: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    degree: int,
+    tol: float,
+    n_subdivisions: int,
+    regularity: int | None,
+) -> NDArray[numpy.float64]:
+    """The knots that subdivide every span uniformly."""
+
+def compute_inserted_knot_vector_f32(
+    knots: Annotated[
+        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    degree: int,
+    new_knots: Annotated[
+        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    tol: float,
+) -> NDArray[numpy.float32]:
+    """Validate new knots and merge them into a knot vector."""
+
+def compute_uniform_subdivision_knots_f32(
+    knots: Annotated[
+        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    degree: int,
+    tol: float,
+    n_subdivisions: int,
+    regularity: int | None,
+) -> NDArray[numpy.float32]:
+    """The knots that subdivide every span uniformly."""

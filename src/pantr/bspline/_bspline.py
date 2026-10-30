@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy as _copy
 import functools
+import operator
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Literal, overload
 
@@ -21,17 +22,9 @@ from .._transform_control_points import _apply_affine_to_control_points
 from ._bspline_degree import _degree_elevate_bspline, _degree_reduce_bspline
 from ._bspline_derivative import _derivative_bspline
 from ._bspline_eval import _evaluate_Bspline, _evaluate_Bspline_deriv
-from ._bspline_knot_insertion import (
-    _compute_uniform_subdivision_knots,
-    _insert_knots_bspline,
-    _to_open_bspline_impl,
-    _to_periodic_bspline_impl,
-)
 from ._bspline_knot_removal import _remove_knots_bspline
 from ._bspline_locate import _locate_impl
-from ._bspline_restrict import _restrict_bspline_impl
 from ._bspline_slice import _slice_bspline
-from ._bspline_split import _split_bspline_impl
 from ._bspline_to_beziers import _to_beziers_impl
 
 _cpp: Any = ext.bspline
@@ -322,6 +315,30 @@ class Bspline:
             other (Bspline): The B-spline whose value is taken.
         """
         self._set_handle(other._h, other._space)
+
+    def _from_result(self, h: Any) -> Bspline:  # noqa: ANN401
+        """Wrap a compiled value an operation returned as a new B-spline.
+
+        The directions the operation left alone keep their Python space objects.
+
+        Args:
+            h (Any): The compiled B-spline (of this B-spline's dtype).
+
+        Returns:
+            Bspline: A plain ``Bspline`` over the value, whose space is built from the
+            returned directions.
+        """
+        from ._bspline_space_1d import BsplineSpace1D  # noqa: PLC0415
+        from ._bspline_space_nd import BsplineSpace  # noqa: PLC0415
+
+        old = self._space.spaces
+        spaces = [
+            o if n.same_rep(o._h) else BsplineSpace1D._from_handle(n)
+            for n, o in zip(h.directions, old, strict=True)
+        ]
+        result = object.__new__(Bspline)
+        result._set_handle(h, BsplineSpace(spaces))
+        return result
 
     def evaluate(
         self,
@@ -790,7 +807,32 @@ class Bspline:
                 "At least one direction must have a non-empty array of knots to insert."
             )
 
-        return _insert_knots_bspline(self, new_knots_per_dim)
+        return self._insert_knots_per_direction(new_knots_per_dim)
+
+    def _insert_knots_per_direction(
+        self, new_knots_per_dim: list[npt.NDArray[np.float32 | np.float64] | None]
+    ) -> Bspline:
+        """Insert knots given per direction (``None`` or an empty array skips a direction).
+
+        Args:
+            new_knots_per_dim (list[npt.NDArray | None]): One array of the B-spline's dtype, or
+                ``None``, per direction.
+
+        Returns:
+            Bspline: The refined B-spline.
+
+        Raises:
+            ValueError: If an array to insert is not 1D.
+        """
+        per_dim: list[npt.NDArray[np.float32 | np.float64] | None] = []
+        for nk in new_knots_per_dim:
+            if nk is None or nk.size == 0:
+                per_dim.append(None)
+                continue
+            if nk.ndim != 1:
+                raise ValueError(f"new_knots must be a 1D array-like, got shape {nk.shape}")
+            per_dim.append(np.ascontiguousarray(nk))
+        return self._from_result(self._h.insert_knots(per_dim))
 
     def remove_knots(
         self,
@@ -894,7 +936,7 @@ class Bspline:
         Raises:
             ValueError: If the B-spline is already open in every direction.
         """
-        return _to_open_bspline_impl(self)
+        return self._from_result(self._h.to_open())
 
     def restrict(
         self,
@@ -939,7 +981,11 @@ class Bspline:
                 )
             bounds_per_dim = seq  # type: ignore[assignment]
 
-        return _restrict_bspline_impl(self, bounds_per_dim)
+        return self._from_result(
+            self._h.restrict(
+                [None if b is None else (_real(b[0]), _real(b[1])) for b in bounds_per_dim]
+            )
+        )
 
     def split(self, direction: int, value: float) -> tuple[Bspline, Bspline]:
         """Split the B-spline into two at a parameter value in one direction.
@@ -975,18 +1021,8 @@ class Bspline:
             >>> np.allclose(right.space.spaces[0].domain, [0.5, 1.0])
             True
         """
-        if direction < 0 or direction >= self.dim:
-            raise ValueError(f"direction must be in [0, {self.dim}), got {direction}.")
-
-        space_1d = self.space.spaces[direction]
-        domain = space_1d.domain
-        a, b = float(domain[0]), float(domain[1])
-        tol = float(space_1d.tolerance)
-
-        if value <= a + tol or value >= b - tol:
-            raise ValueError(f"value must be strictly inside the domain ({a}, {b}), got {value}.")
-
-        return _split_bspline_impl(self, direction, value)
+        left, right = self._h.split(_index(direction), _real(value))
+        return self._from_result(left), self._from_result(right)
 
     def to_periodic(self, continuity: int | tuple[int | None, ...] | None = None) -> Bspline:
         """Return a periodic B-spline equivalent to this one.
@@ -1030,7 +1066,14 @@ class Bspline:
                 or residual exceeds tolerance).
             ValueError: If ``continuity`` is out of range.
         """
-        return _to_periodic_bspline_impl(self, continuity)
+        cont: list[int | None]
+        if continuity is None:
+            cont = [_CONVERT_DEFAULT] * self.dim
+        elif isinstance(continuity, int):
+            cont = [_index(continuity)] * self.dim
+        else:
+            cont = [None if c is None else _index(c) for c in continuity]
+        return self._from_result(self._h.to_periodic(cont))
 
     def to_bezier(self, *, copy: bool = True) -> Bezier:
         """Convert to an equivalent Bézier.
@@ -1407,45 +1450,18 @@ class Bspline:
             ValueError: If ``regularity`` is outside the valid range for any
                 active direction.
         """
+        counts: list[int | None]
         if isinstance(n_subdivisions, int):
-            counts: list[int | None] = [n_subdivisions] * self.dim
+            counts = [n_subdivisions] * self.dim
         else:
             counts = list(n_subdivisions)
-            if len(counts) != self.dim:
-                raise ValueError(
-                    f"n_subdivisions sequence length ({len(counts)}) must match dim ({self.dim})."
-                )
-
-        # Validate counts.
-        for c in counts:
-            if c is not None and c < 1:
-                raise ValueError(f"n_subdivisions must be >= 1, got {c}")
-
-        # Require at least one active direction with count >= 2.
-        if all(c is None or c == 1 for c in counts):
-            raise ValueError("At least one direction must have n_subdivisions >= 2.")
-
-        # Validate regularity per active direction and compute per-direction new knots.
-        dtype = self.dtype
-        new_knots_per_dim: list[npt.NDArray[np.float32 | np.float64] | None] = []
-        for i, c in enumerate(counts):
-            if c is None or c == 1:
-                new_knots_per_dim.append(None)
-            else:
-                space_1d = self.space.spaces[i]
-                deg = space_1d.degree
-                eff_regularity = deg - 1 if regularity is None else regularity
-                if eff_regularity < -1 or eff_regularity > deg - 1:
-                    raise ValueError(
-                        f"regularity must be in [-1, degree - 1] = [-1, {deg - 1}] "
-                        f"for direction {i}, got {eff_regularity}"
-                    )
-                nk = _compute_uniform_subdivision_knots(
-                    space_1d.knots, space_1d.degree, space_1d.tolerance, c, eff_regularity
-                ).astype(dtype, copy=False)
-                new_knots_per_dim.append(nk)
-
-        return _insert_knots_bspline(self, new_knots_per_dim)
+        # None skips a direction, as a count of 1 does.
+        return self._from_result(
+            self._h.subdivide(
+                [1 if c is None else _index(c) for c in counts],
+                None if regularity is None else _index(regularity),
+            )
+        )
 
     def slice(self, axis: int, value: float) -> Bspline | npt.NDArray[np.float32 | np.float64]:
         """Slice the B-spline by fixing one parametric direction at a given value.
@@ -1606,6 +1622,48 @@ def create_from_bezier(bezier: Bezier, *, copy: bool = True) -> Bspline:
     """
     return bezier.to_bspline(copy=copy)
 
+
+_I64_MAX = 2**63 - 1
+"""The largest integer the compiled library takes as an index or a count."""
+
+
+def _index(x: Any) -> int:  # noqa: ANN401
+    """Get an integer argument as the compiled library takes it.
+
+    A Python integer beyond 64 bits is saturated: it is out of every range the library checks, so
+    it is refused there, and only the number in the message is the saturated one.
+
+    Args:
+        x (Any): An ``int``, ``bool`` or NumPy integer (anything with ``__index__``).
+
+    Returns:
+        int: ``x``, limited to the 64-bit range.
+
+    Raises:
+        TypeError: If ``x`` has no ``__index__`` (a float, for instance).
+    """
+    return max(-_I64_MAX - 1, min(operator.index(x), _I64_MAX))
+
+
+def _real(x: Any) -> float:  # noqa: ANN401
+    """Get a real-number argument as a Python float.
+
+    Args:
+        x (Any): A Python or NumPy real number (a 0-d array too).
+
+    Returns:
+        float: ``x`` as a float.
+
+    Raises:
+        TypeError: If ``x`` is a string or bytes (``float()`` would parse it).
+    """
+    if isinstance(x, str | bytes):
+        raise TypeError(f"expected a real number, got {type(x).__name__}")
+    return float(x)
+
+
+_CONVERT_DEFAULT = -1
+"""The continuity that ``to_periodic`` reads as "the maximum regularity, ``degree - 1``"."""
 
 _VALUE_ATTRS = frozenset({"_h", "_shape", "_is_rational", "_dtype", "control_points"})
 """The attributes that hold the immutable value and what is cached from it (shared by copies)."""

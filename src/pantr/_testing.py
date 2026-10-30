@@ -23,6 +23,9 @@ module.
 - The B-spline knot vector's scale and absolute tolerance (``knot_scale``, ``knot_tolerance``)
   and the snapping diagnosis (``check_snapping_kept_an_interval``), which a space applies at
   construction and no public function exposes on their own.
+- The blossom (``evaluate_blossom_1d``, ``blossom_span``) of a 1D B-spline, which has no public
+  API, and the Oslo refinement matrix in its banded (``oslo_rows``) and dense (``oslo_matrix``)
+  forms, whose bands no public function returns.
 """
 
 from __future__ import annotations
@@ -102,6 +105,14 @@ ROOTS_CLIP_MAX_DEPTH: Final[int] = _t.ROOTS_CLIP_MAX_DEPTH
 interpolating_reduction_operator = ext._kernels.interpolating_reduction_operator
 l2_reduction_operator = _t.l2_reduction_operator
 elevation_matrix = _t.elevation_matrix
+evaluate_blossom_1d = _t.evaluate_blossom_1d
+evaluate_blossom_1d_f32 = _t.evaluate_blossom_1d_f32
+blossom_span = _t.blossom_span
+blossom_span_f32 = _t.blossom_span_f32
+oslo_rows = _t.oslo_rows
+oslo_rows_f32 = _t.oslo_rows_f32
+oslo_matrix = _t.oslo_matrix
+oslo_matrix_f32 = _t.oslo_matrix_f32
 knot_scale = _t.knot_scale
 knot_tolerance = _t.knot_tolerance
 check_snapping_kept_an_interval = _t.check_snapping_kept_an_interval
@@ -212,6 +223,8 @@ __all__ = [
     "bernstein_row_mirrored_f32",
     "bernstein_row_unmirrored",
     "bernstein_row_unmirrored_f32",
+    "blossom_span",
+    "blossom_span_f32",
     "change_basis_cache_clear",
     "change_basis_cache_size",
     "check_snapping_kept_an_interval",
@@ -222,6 +235,8 @@ __all__ = [
     "de_casteljau_eval_scalar",
     "dedup_roots",
     "elevation_matrix",
+    "evaluate_blossom_1d",
+    "evaluate_blossom_1d_f32",
     "find_roots_detailed",
     "find_roots_detailed_f32",
     "gram_projection",
@@ -233,6 +248,10 @@ __all__ = [
     "knot_tolerance",
     "l2_reduction_operator",
     "newton_polish_scalar",
+    "oslo_matrix",
+    "oslo_matrix_f32",
+    "oslo_rows",
+    "oslo_rows_f32",
     "projected_quadrature_size",
     "projected_relative_deviation",
     "reduction_cache_clear",

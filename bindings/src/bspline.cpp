@@ -136,6 +136,9 @@ void def_space_1d(nb::module_& m, const char* name) {
           },
           nb::arg("knots"), nb::arg("degree"), nb::arg("periodic"), nb::arg("tol"),
           "Rebuild a space from its stored knots and tolerance (no snapping).")
+      .def(
+          "same_rep", [](const S& a, const S& b) { return a.rep() == b.rep(); }, nb::arg("other"),
+          "Whether both share one representation.")
       .def_prop_ro("degree", &S::degree, "The degree.")
       .def_prop_ro("periodic", &S::periodic, "Whether the space is periodic.")
       .def_prop_ro("tolerance", &S::tolerance, "The absolute parametric tolerance.")

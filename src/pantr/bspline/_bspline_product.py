@@ -459,7 +459,7 @@ def _ghost_open_oslo(
         with ghost extension and ``oslo_chain`` maps ghost-representation CPs to open CPs,
         shape ``(n_open, n_ghost_full)``.
     """
-    from ._bspline_knot_insertion_core import _compute_oslo_matrix_1d_core  # noqa: PLC0415
+    from ._bspline_knot_insertion import _compute_oslo_matrix_1d_core  # noqa: PLC0415
 
     h_space = h_open.space.spaces[0]
     r = h_space.degree
@@ -678,7 +678,7 @@ def _multiply_nonrational_1d(f: Bspline, g: Bspline) -> Bspline:
     # Re-express the Bézier control points on the minimal knot vector.  T_opt is a
     # subsequence of T_full, so the Oslo matrix has full column rank and the
     # least-squares solve is an exact change of representation, not a fit.
-    from ._bspline_knot_insertion_core import _compute_oslo_matrix_1d_core  # noqa: PLC0415
+    from ._bspline_knot_insertion import _compute_oslo_matrix_1d_core  # noqa: PLC0415
 
     # oslo[i,j]: coefficient of old CP j in new CP i (old=minimal, new=Bézier)
     oslo = _compute_oslo_matrix_1d_core(r, T_opt, T_full)
