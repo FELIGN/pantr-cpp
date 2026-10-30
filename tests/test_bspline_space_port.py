@@ -21,6 +21,7 @@ suite noticing:
 from __future__ import annotations
 
 import copy
+import functools
 import pickle
 import sys
 from collections.abc import Callable
@@ -645,3 +646,94 @@ def test_a_tensor_product_space_pickled_by_the_previous_release_loads(protocol: 
     want_values, want_first = built.tabulate_basis(pts)
     np.testing.assert_array_equal(got_values, want_values)
     np.testing.assert_array_equal(got_first, want_first)
+
+
+class _NamedND(BsplineSpace):
+    """A tensor-product subclass whose constructor takes another argument, as a user's might."""
+
+    name: str
+
+    def __init__(self, spaces: list[BsplineSpace1D], name: str) -> None:
+        """Build the space and keep its name.
+
+        Args:
+            spaces (list[BsplineSpace1D]): The directions.
+            name (str): A label.
+        """
+        super().__init__(spaces)
+        self.name = name
+
+
+def test_a_subclass_with_its_own_constructor_signature_round_trips_through_pickle() -> None:
+    """Unpickling does not call the subclass's constructor (it may need other arguments)."""
+    line = BsplineSpace1D([0, 0, 0, 0.5, 1, 1, 1], 2)
+    space = _NamedND([line, line], "kept")
+
+    got = pickle.loads(pickle.dumps(space))
+
+    assert type(got) is _NamedND
+    assert got.name == "kept"
+    assert got.num_basis == space.num_basis
+
+
+def test_every_cached_property_is_part_of_the_value_not_extra_state() -> None:
+    """After every cached property is computed, a plain space pickles no extra attribute.
+
+    A cached property missing from the value attributes would be pickled as subclass state and
+    restored over the rebuilt value, possibly stale.
+    """
+    line = BsplineSpace1D([0, 0, 0, 0.5, 1, 1, 1], 2)
+    _ = line.domain, line.get_unique_knots_and_multiplicity(), line.first_basis_per_interval()
+    _ = line.get_unique_knots_and_multiplicity(in_domain=True)
+    space = BsplineSpace([line, line])
+    _ = (space.degrees, space.tolerance, space.num_basis, space.num_total_basis)
+    _ = (space.num_intervals, space.num_total_intervals, space.domain)
+    cached_1d = {k for k, v in vars(type(line)).items() if isinstance(v, functools.cached_property)}
+    cached_nd = {
+        k for k, v in vars(type(space)).items() if isinstance(v, functools.cached_property)
+    }
+
+    assert cached_1d <= set(vars(line))
+    assert cached_nd <= set(vars(space))
+    assert line.__reduce__()[2] == {}
+    assert space.__reduce__()[2] == {}
+
+
+@pytest.mark.parametrize("dtype", _DTYPES, ids=_DTYPE_IDS)
+@pytest.mark.parametrize(
+    "knots",
+    [
+        [0, 0, 0, 0.5, 0.5 + 1e-17, 1, 1, 1],
+        [-0.0, 0.0, 0, 0.25, 1, 1, 1],
+        [1e3, 1e3, 1e3, 1e3 + 0.5, 1e3 + 1, 1e3 + 1, 1e3 + 1],
+        [0, 1, 2, 3, 4, 5, 6, 7, 10],
+    ],
+)
+def test_a_space_rebuilt_from_its_stored_state_equals_it(dtype: type, knots: list[float]) -> None:
+    """The stored knots and tolerance rebuild the same classes, intervals and first indices.
+
+    This is the property the single classification of a snapped vector rests on: re-classifying
+    the snapped knots at the tolerance the space was built with gives the space's own classes.
+    """
+    space = BsplineSpace1D(np.array(knots, dtype), 2)
+
+    rebuilt = pickle.loads(pickle.dumps(space))
+
+    np.testing.assert_array_equal(rebuilt.knots, space.knots)
+    assert rebuilt.tolerance == space.tolerance
+    for in_domain in (False, True):
+        got = rebuilt.get_unique_knots_and_multiplicity(in_domain=in_domain)
+        want = space.get_unique_knots_and_multiplicity(in_domain=in_domain)
+        np.testing.assert_array_equal(got[0], want[0])
+        np.testing.assert_array_equal(got[1], want[1])
+    assert rebuilt.num_intervals == space.num_intervals
+    np.testing.assert_array_equal(
+        rebuilt.first_basis_per_interval(), space.first_basis_per_interval()
+    )
+
+
+@pytest.mark.parametrize("tol", [-1.0, float("nan")])
+def test_a_stored_state_with_an_impossible_tolerance_is_refused(tol: float) -> None:
+    """A corrupt pickle's negative or NaN tolerance is refused rather than splitting every knot."""
+    with pytest.raises(ValueError, match="stored tolerance must be non-negative"):
+        BsplineSpace1D._from_state(np.array([0.0, 0.0, 1.0, 1.0]), 1, False, tol)

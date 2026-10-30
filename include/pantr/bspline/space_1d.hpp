@@ -147,9 +147,13 @@ class BsplineSpace1D {
   ///     BsplineSpace1D: The space.
   ///
   /// Raises:
-  ///     value_error: As the constructor, but for the snapping check.
+  ///     value_error: `tol` is negative or NaN (no space has such a tolerance: a corrupt state),
+  ///         or as the constructor, but for the snapping check.
   [[nodiscard]] static BsplineSpace1D from_state(std::span<const T> knots, int degree,
                                                  bool periodic, double tol) {
+    if (!(tol >= 0.0)) {
+      throw value_error("a stored tolerance must be non-negative, got " + py_repr(tol));
+    }
     return BsplineSpace1D(build(knots, degree, periodic, false, &tol));
   }
 

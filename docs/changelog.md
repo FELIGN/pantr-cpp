@@ -384,7 +384,7 @@
 - **`tabulate_basis_derivatives` raises `ZeroDivisionError` at every batch size** when the
   derivative recurrence divides by zero, which a basis function of empty support produces (a
   knot repeated more than `degree + 1` times within a point's support, at order `n_deriv >= 1`).
-  The previous release raised it below 4096 points and returned non-finite values for a larger
+  The previous release raised it below 4096 points and returned without an error for a larger
   batch.
 - **No `RuntimeWarning` from `create_uniform_open_knots` or `create_uniform_periodic_knots`** at an
   infinite domain end; the knot vectors are the same.

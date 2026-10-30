@@ -80,7 +80,7 @@ void validate_knot_input(long long num_intervals, long long degree, long long co
 
 /// The largest knot count a factory forms: a quarter of `long long`, far past memory, so that
 /// the sums and products leading to a count cannot overflow.
-inline constexpr long long max_knot_count = std::numeric_limits<long long>::max() / 4;
+inline constexpr long long max_knot_count = (std::numeric_limits<long long>::max)() / 4;
 
 /// Count the knots `2 * per_end + repeated * mult` of a factory's vector, refusing a count past
 /// `max_knot_count` before it is formed.
@@ -101,7 +101,7 @@ inline std::size_t knot_count(long long num_intervals, long long degree, long lo
                               long long repeated, long long mult) {
   // num_intervals and degree within the limit bound per_end, repeated and mult by it too, so the
   // quotient below is formed from values that cannot overflow.
-  if (num_intervals > max_knot_count || degree > max_knot_count ||
+  if (num_intervals > max_knot_count || degree > max_knot_count || 2 * per_end > max_knot_count ||
       repeated > (max_knot_count - 2 * per_end) / mult) {
     throw capacity_error("knot vector too large: the number of knots exceeds the supported size");
   }

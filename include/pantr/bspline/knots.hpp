@@ -1,5 +1,5 @@
 /// @file knots.hpp
-/// @brief Knot vectors: the parametric tolerance, knot classes, domain tests and the factories.
+/// @brief Knot vectors: the parametric tolerance, knot classes, domain tests and the checks.
 ///
 /// Every `tol` here is an **absolute** parametric length, in the units of the knot vector.
 /// `knot_tolerance` turns the dimensionless strict preset of `pantr/tolerance.hpp` into one by
@@ -100,27 +100,6 @@ struct KnotClasses {
   std::vector<std::int64_t> multiplicities;
 };
 
-/// Group a knot vector into classes of knots that are the same knot.
-///
-/// A class ends where the step to the next knot exceeds `tol`, so one pass over the
-/// non-decreasing vector suffices; each class is represented by its **first** knot, chosen rather
-/// than averaged, so the representatives are knots the vector contains and the grouping is
-/// idempotent. Grouping by gap rather than by a rounding grid makes the answer independent of an
-/// origin; its cost is chaining (knots each within `tol` of the next collapse into one class),
-/// accepted because a class-width cap would break idempotence.
-///
-/// Args:
-///     knots (std::span<const T>): Non-decreasing knot vector, non-empty.
-///     degree (int): Degree, which fixes the domain `[knots[degree], knots[size - degree - 1]]`.
-///     tol (double): Absolute parametric tolerance.
-///     in_domain (bool): Report only the classes from the one holding the first domain knot to the
-///         one holding the last (whole classes, clamped copies outside the domain included).
-///
-/// Returns:
-///     KnotClasses<T>: With `in_domain == false` the multiplicities sum to `knots.size()`.
-///
-/// Note:
-///     Inputs are assumed to be correct (no validation performed).
 /// Every knot class of a knot vector, with the classes holding the first and the last domain knot.
 ///
 /// Attributes:
@@ -169,6 +148,27 @@ template <StorageFloat T>
   return out;
 }
 
+/// Group a knot vector into classes of knots that are the same knot.
+///
+/// A class ends where the step to the next knot exceeds `tol`, so one pass over the
+/// non-decreasing vector suffices; each class is represented by its **first** knot, chosen rather
+/// than averaged, so the representatives are knots the vector contains and the grouping is
+/// idempotent. Grouping by gap rather than by a rounding grid makes the answer independent of an
+/// origin; its cost is chaining (knots each within `tol` of the next collapse into one class),
+/// accepted because a class-width cap would break idempotence.
+///
+/// Args:
+///     knots (std::span<const T>): Non-decreasing knot vector, non-empty.
+///     degree (int): Degree, which fixes the domain `[knots[degree], knots[size - degree - 1]]`.
+///     tol (double): Absolute parametric tolerance.
+///     in_domain (bool): Report only the classes from the one holding the first domain knot to the
+///         one holding the last (whole classes, clamped copies outside the domain included).
+///
+/// Returns:
+///     KnotClasses<T>: With `in_domain == false` the multiplicities sum to `knots.size()`.
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed).
 template <StorageFloat T>
 [[nodiscard]] KnotClasses<T> unique_knots_and_multiplicity(std::span<const T> knots, int degree,
                                                            double tol, bool in_domain) {

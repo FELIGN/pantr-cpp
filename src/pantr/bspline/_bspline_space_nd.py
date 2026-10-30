@@ -91,9 +91,10 @@ class BsplineSpace:
         """Pickle (and copy) through the constructor, with a subclass's own attributes as state.
 
         Returns:
-            tuple[Any, ...]: The class, its constructor argument and the other attributes.
+            tuple[Any, ...]: The rebuilding function, the class and directions, and the other
+            attributes.
         """
-        return (type(self), (self._spaces,), _extra_state(self, _VALUE_ATTRS_ND))
+        return (_rebuild_space, (type(self), self._spaces), _extra_state(self, _VALUE_ATTRS_ND))
 
     def __setstate__(self, state: dict[str, Any]) -> None:
         """Restore a subclass's attributes, or rebuild from a previous release's pickle.
@@ -526,6 +527,24 @@ class BsplineSpace:
         ).astype(np.int64)
         local_to_global_dof.flags.writeable = False
         return BsplineSpaceRestriction(BsplineSpace(windowed_1d), local_to_global_dof)
+
+
+def _rebuild_space(cls: type[BsplineSpace], spaces: tuple[BsplineSpace1D, ...]) -> BsplineSpace:
+    """Rebuild a pickled space of class ``cls`` from its directions, bypassing ``cls.__init__``.
+
+    A subclass's constructor may take other arguments; the previous release's pickles did not
+    call it either.
+
+    Args:
+        cls (type[BsplineSpace]): The class of the pickled space.
+        spaces (tuple[BsplineSpace1D, ...]): Its directions.
+
+    Returns:
+        BsplineSpace: The space (its extra attributes are restored by ``__setstate__``).
+    """
+    space = cls.__new__(cls)
+    BsplineSpace.__init__(space, spaces)
+    return space
 
 
 class BsplineSpaceRestriction(NamedTuple):

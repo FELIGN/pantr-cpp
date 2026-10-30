@@ -4,8 +4,8 @@ The knot classes, domain test, basis count and knot search here are the Numba
 kernels the unported modules (evaluation, knot insertion and removal, extraction,
 products, derivatives, degree change, slicing) still call; the spaces, the knot
 tolerance, the snapping and interval checks, the cardinal intervals and the knot
-factories are C++ (``include/pantr/bspline/knots.hpp``). Each kernel is deleted with
-its last caller (the coexistence rule of the C++ port).
+factories are C++ (``include/pantr/bspline/knots.hpp`` and ``knot_factories.hpp``).
+Each kernel is deleted with its last caller (the coexistence rule of the C++ port).
 
 Every ``tol`` argument in this module is an **absolute** parametric length, in the
 units of the knot vector itself: the tolerance ``pantr::bspline::knot_tolerance``

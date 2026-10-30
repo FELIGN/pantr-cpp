@@ -210,9 +210,9 @@ template <StorageFloat K, StorageFloat P>
     }
   }
   // Row k times degree! / (degree - k)!, a 64-bit integer product applied in double; zero from
-  // k = degree + 1 on. The product wraps as the Numba kernel's did once it exceeds 2^63, which
-  // degree! / (degree - k)! can from degree 21 on (21! > 2^63): rows of order 21 and above are then
-  // wrong, as they were before.
+  // k = degree + 1 on. The product wraps as the Numba kernel's did once degree! / (degree - k)!
+  // exceeds 2^63 - 1, which first happens at degree 21 (from order 19 on, 21! / 2! > 2^63): those
+  // rows are then wrong, as they were before.
   std::uint64_t fac = static_cast<std::uint64_t>(static_cast<std::int64_t>(degree));
   for (int k = 1; k <= n_deriv; ++k) {
     const auto f = static_cast<double>(static_cast<std::int64_t>(fac));
