@@ -467,7 +467,7 @@ class BsplineSpace1D {
       }
       return;
     }
-    detail::tabulate_basis_kernel<T, P>(knots(), p, periodic(), num_basis(), pts, out, first);
+    detail::tabulate_basis_kernel<T, P>(knots(), p, pts, out, first);
   }
 
   template <StorageFloat P>
@@ -501,8 +501,7 @@ class BsplineSpace1D {
       }
       return true;
     }
-    return detail::tabulate_derivs_kernel<T, P>(knots(), p, periodic(), num_basis(), n_deriv, pts,
-                                                out, first);
+    return detail::tabulate_derivs_kernel<T, P>(knots(), p, n_deriv, pts, out, first);
   }
 
   static std::shared_ptr<const Rep> build(std::span<const T> raw, int degree, bool periodic,

@@ -8,6 +8,7 @@ by combining the 1D components, in the C++ library (``pantr::bspline::BsplineSpa
 
 from __future__ import annotations
 
+import copy as _copy
 import functools
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, NamedTuple
@@ -19,13 +20,28 @@ from .._ext import ext
 from ..basis._basis_utils import _allocate_or_validate_out
 from ..quad import PointsLattice
 from ._bspline_cell_supports import _cell_supports_impl
-from ._bspline_space_1d import _FIRST_DTYPE, _first_out, _kernel_buffer
+from ._bspline_space_1d import _FIRST_DTYPE, _extra_state, _first_out, _kernel_buffer
 
 if TYPE_CHECKING:
     from ._bspline_space_1d import BsplineSpace1D
 
 _cpp: Any = ext.bspline
 """The compiled B-spline spaces (private; untyped: one class per dtype)."""
+
+_VALUE_ATTRS_ND: frozenset[str] = frozenset(
+    {
+        "_spaces",
+        "_h",
+        "degrees",
+        "tolerance",
+        "num_basis",
+        "num_total_basis",
+        "num_intervals",
+        "num_total_intervals",
+        "domain",
+    }
+)
+"""The attributes of a ``BsplineSpace`` that hold its value or are cached from it."""
 
 
 class BsplineSpace:
@@ -71,22 +87,57 @@ class BsplineSpace:
             cls = _cpp.BsplineSpaceF32 if self.dtype == np.float32 else _cpp.BsplineSpaceF64
             self._h = cls([space._h for space in self._spaces])
 
-    def __reduce__(self) -> tuple[type[BsplineSpace], tuple[tuple[BsplineSpace1D, ...]]]:
-        """Pickle (and copy) through the constructor, from the 1D spaces.
+    def __reduce__(self) -> tuple[Any, ...]:
+        """Pickle (and copy) through the constructor, with a subclass's own attributes as state.
 
         Returns:
-            tuple[type[BsplineSpace], tuple[tuple[BsplineSpace1D, ...]]]: The class and its
-            constructor argument.
+            tuple[Any, ...]: The class, its constructor argument and the other attributes.
         """
-        return (type(self), (self._spaces,))
+        return (type(self), (self._spaces,), _extra_state(self, _VALUE_ATTRS_ND))
 
     def __setstate__(self, state: dict[str, Any]) -> None:
-        """Load a pickle of the previous release, which stored the attributes.
+        """Restore a subclass's attributes, or rebuild from a previous release's pickle.
+
+        A previous release pickled the attribute ``_spaces`` (with whatever cached properties it
+        held); such a state rebuilds the compiled value from it and drops the cached entries.
 
         Args:
-            state (dict[str, Any]): The pickled attributes (``_spaces``).
+            state (dict[str, Any]): The pickled state.
         """
-        type(self).__init__(self, state["_spaces"])
+        state = dict(state)
+        if "_spaces" in state and "_h" not in self.__dict__:
+            BsplineSpace.__init__(self, state["_spaces"])
+            for key in _VALUE_ATTRS_ND:
+                state.pop(key, None)
+        self.__dict__.update(state)
+
+    def __copy__(self) -> BsplineSpace:
+        """Copy: the new object shares the 1D spaces and the compiled value.
+
+        Returns:
+            BsplineSpace: The copy, of the same class, with the same attributes.
+        """
+        new = object.__new__(type(self))
+        new.__dict__.update(self.__dict__)
+        return new
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> BsplineSpace:
+        """Deep copy: deep-copies the 1D spaces (which share their values) and other attributes.
+
+        Args:
+            memo (dict[int, Any]): The deep-copy memo.
+
+        Returns:
+            BsplineSpace: The copy.
+        """
+        new = object.__new__(type(self))
+        memo[id(self)] = new
+        spaces = _copy.deepcopy(self._spaces, memo)
+        BsplineSpace.__init__(new, spaces)
+        for key, value in self.__dict__.items():
+            if key not in _VALUE_ATTRS_ND:
+                new.__dict__[key] = _copy.deepcopy(value, memo)
+        return new
 
     @property
     def dim(self) -> int:

@@ -86,6 +86,54 @@ _FIRST_DTYPE: np.dtype[np.int64] = np.dtype(np.int64)
 """The dtype the C++ library writes first-basis indices in (``np.int_`` is that on NumPy 2)."""
 
 
+_VALUE_ATTRS_1D: frozenset[str] = frozenset(
+    {
+        "_h",
+        "_knots",
+        "_degree",
+        "_periodic",
+        "_tol",
+        "_num_basis",
+        "_num_intervals",
+        "_unique_all",
+        "_unique_in_domain",
+        "_first_basis",
+        "domain",
+    }
+)
+"""The attributes of a ``BsplineSpace1D`` that hold its immutable value or are cached from it."""
+
+_PREVIOUS_RELEASE_ATTRS_1D: frozenset[str] = frozenset(
+    {
+        "_knots",
+        "_degree",
+        "_periodic",
+        "_tol",
+        "num_basis",
+        "num_intervals",
+        "domain",
+        "_first_basis_per_interval_cached",
+        "_left_end_open",
+        "_right_end_open",
+        "_bezier_like_knots",
+    }
+)
+"""The value and cached attributes a previous release's ``BsplineSpace1D`` pickled."""
+
+
+def _extra_state(obj: object, value_attrs: frozenset[str]) -> dict[str, Any]:
+    """Get an object's attributes other than its value, for pickling a subclass.
+
+    Args:
+        obj (object): The space.
+        value_attrs (frozenset[str]): The attributes that hold the value or are cached from it.
+
+    Returns:
+        dict[str, Any]: The other attributes (empty for an instance of the class itself).
+    """
+    return {k: v for k, v in obj.__dict__.items() if k not in value_attrs}
+
+
 def _first_out(out: npt.NDArray[np.int_] | None, shape: tuple[int, ...]) -> npt.NDArray[np.int_]:
     """Allocate a first-basis index array, or validate the caller's as the previous release did.
 
@@ -267,44 +315,62 @@ class BsplineSpace1D:
         h_cls = _cpp.BsplineSpace1DF32 if arr.dtype.type is np.float32 else _cpp.BsplineSpace1DF64
         return cls._from_handle(h_cls.from_state(arr, degree, bool(periodic), float(tol)))
 
-    def __reduce__(self) -> tuple[Any, tuple[Any, ...]]:
-        """Pickle (and copy) through :meth:`_from_state`.
+    def __reduce__(self) -> tuple[Any, ...]:
+        """Pickle (and copy) through :meth:`_from_state`, with a subclass's own attributes as state.
 
         Returns:
-            tuple[Any, tuple[Any, ...]]: The rebuilding callable and its arguments.
+            tuple[Any, ...]: The rebuilding callable, its arguments and the other attributes.
         """
-        return (type(self)._from_state, (self._knots, self._degree, self._periodic, self._tol))
+        return (
+            type(self)._from_state,
+            (self._knots, self._degree, self._periodic, self._tol),
+            _extra_state(self, _VALUE_ATTRS_1D),
+        )
 
     def __setstate__(self, state: dict[str, Any]) -> None:
-        """Load a pickle of the previous release, which stored the attributes.
+        """Restore a subclass's attributes, or rebuild from a previous release's pickle.
+
+        A previous release pickled the attributes ``_knots``, ``_degree``, ``_periodic`` and
+        ``_tol`` (with whatever cached properties it held); such a state rebuilds the compiled
+        value from them and drops the cached entries.
 
         Args:
-            state (dict[str, Any]): The pickled attributes (``_knots``, ``_degree``,
-                ``_periodic``, ``_tol``).
+            state (dict[str, Any]): The pickled state.
         """
-        rebuilt = type(self)._from_state(
-            np.asarray(state["_knots"]), state["_degree"], state["_periodic"], state["_tol"]
-        )
-        self._set_handle(rebuilt._h)
+        state = dict(state)
+        if "_knots" in state and "_h" not in self.__dict__:
+            rebuilt = type(self)._from_state(
+                np.asarray(state["_knots"]), state["_degree"], state["_periodic"], state["_tol"]
+            )
+            self._set_handle(rebuilt._h)
+            for key in _PREVIOUS_RELEASE_ATTRS_1D:
+                state.pop(key, None)
+        self.__dict__.update(state)
 
     def __copy__(self) -> BsplineSpace1D:
-        """Copy, sharing the immutable compiled value.
+        """Copy: the new object shares the immutable compiled value.
 
         Returns:
-            BsplineSpace1D: A new wrapper of the same value.
+            BsplineSpace1D: The copy, of the same class, with the same attributes.
         """
-        return type(self)._from_handle(self._h)
+        new = object.__new__(type(self))
+        new.__dict__.update(self.__dict__)
+        return new
 
     def __deepcopy__(self, memo: dict[int, Any]) -> BsplineSpace1D:
-        """Deep-copy, sharing the immutable compiled value (nothing in it can change).
+        """Deep copy: shares the immutable compiled value and deep-copies any other attribute.
 
         Args:
             memo (dict[int, Any]): The deep-copy memo.
 
         Returns:
-            BsplineSpace1D: A new wrapper of the same value.
+            BsplineSpace1D: The copy.
         """
-        return _copy.copy(self)
+        new = object.__new__(type(self))
+        memo[id(self)] = new
+        for key, value in self.__dict__.items():
+            new.__dict__[key] = value if key in _VALUE_ATTRS_1D else _copy.deepcopy(value, memo)
+        return new
 
     @property
     def degree(self) -> int:

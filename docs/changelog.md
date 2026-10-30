@@ -369,7 +369,8 @@
 - **`BsplineSpace1D` and `BsplineSpace` pickle and copy explicitly** (`__reduce__`): a space
   rebuilds from its stored knots and tolerance, so the copy equals the original, and a pickle of
   the previous release still loads. `copy.copy` and `copy.deepcopy` of a `BsplineSpace1D` share
-  its immutable C++ value.
+  its immutable C++ value; a subclass instance keeps its class and its own attributes through
+  copy and pickle, as before.
 - **A masked knot array** gives a `BsplineSpace1D` whose `knots` is a plain read-only array of the
   data (it used to be a masked array; the mask was never applied).
 - **`degree=True` or `False` is the integer it is** (`1` or `0`) in `BsplineSpace1D`; the previous

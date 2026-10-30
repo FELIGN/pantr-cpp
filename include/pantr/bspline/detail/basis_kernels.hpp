@@ -27,8 +27,11 @@ namespace pantr::bspline::detail {
 /// Attributes:
 ///     knot_id (std::size_t): Span index `k` with `knots[k] <= pt < knots[k + 1]`, clamped to the
 ///         in-domain spans `[degree, size - degree - 2]`.
-///     first (std::int64_t): First supported basis function; for a non-periodic space clamped to
-///         `num_basis - degree - 1` so the last point addresses the last `degree + 1` functions.
+///     first (std::int64_t): First supported basis function, `knot_id - degree`. For a
+///         non-periodic space it is at most `num_basis - degree - 1` (`num_basis` is
+///         `size - degree - 1` and `knot_id <= size - degree - 2`), so the last point addresses the
+///         last `degree + 1` functions without a clamp of its own (the previous implementation's
+///         clamp could not fire); a periodic space's evaluation wraps it.
 struct SpanAndFirst {
   std::size_t knot_id;
   std::int64_t first;
@@ -40,8 +43,7 @@ struct SpanAndFirst {
 /// Note:
 ///     Inputs are assumed to be correct (no validation performed).
 template <StorageFloat K, StorageFloat P>
-[[nodiscard]] SpanAndFirst span_and_first(std::span<const K> knots, int degree, bool periodic,
-                                          long long num_basis, P pt) {
+[[nodiscard]] SpanAndFirst span_and_first(std::span<const K> knots, int degree, P pt) {
   using W = std::common_type_t<K, P>;
   const auto p = static_cast<W>(pt);
   const auto it = std::upper_bound(knots.begin(), knots.end(), p,
@@ -50,11 +52,7 @@ template <StorageFloat K, StorageFloat P>
   const auto max_id = static_cast<std::ptrdiff_t>(knots.size()) - degree - 2;
   std::ptrdiff_t id = (std::min)(raw, max_id);
   id = (std::max)(id, static_cast<std::ptrdiff_t>(degree));
-  std::int64_t first = id - degree;
-  if (!periodic) {
-    first = (std::min<std::int64_t>)(first, num_basis - degree - 1);
-  }
-  return {static_cast<std::size_t>(id), first};
+  return {static_cast<std::size_t>(id), static_cast<std::int64_t>(id - degree)};
 }
 
 /// The `degree + 1` non-zero basis values at `pt` in span `knot_id` (A2.2).
@@ -247,8 +245,8 @@ inline double derivs_ops_per_point(int degree, int n_deriv) {
 /// Note:
 ///     Inputs are assumed to be correct (no validation performed).
 template <StorageFloat K, StorageFloat P>
-void tabulate_basis_kernel(std::span<const K> knots, int degree, bool periodic, long long num_basis,
-                           std::span<const P> pts, P* out, std::int64_t* first) {
+void tabulate_basis_kernel(std::span<const K> knots, int degree, std::span<const P> pts, P* out,
+                           std::int64_t* first) {
   const std::size_t ord = static_cast<std::size_t>(degree) + 1;
   pantr::basis::detail::for_each_chunk(
       pts.size(), basis_ops_per_point(degree), sizeof(P) * ord + sizeof(std::int64_t),
@@ -256,7 +254,7 @@ void tabulate_basis_kernel(std::span<const K> knots, int degree, bool periodic, 
         std::vector<K> left(ord);
         std::vector<K> right(ord);
         for (std::size_t i = begin; i < end; ++i) {
-          const SpanAndFirst sf = span_and_first<K, P>(knots, degree, periodic, num_basis, pts[i]);
+          const SpanAndFirst sf = span_and_first<K, P>(knots, degree, pts[i]);
           first[i] = sf.first;
           basis_funcs_point<K, P>(knots.data(), degree, sf.knot_id, pts[i], out + i * ord,
                                   left.data(), right.data());
@@ -273,9 +271,8 @@ void tabulate_basis_kernel(std::span<const K> knots, int degree, bool periodic, 
 /// Note:
 ///     Inputs are assumed to be correct (no validation performed).
 template <StorageFloat K, StorageFloat P>
-[[nodiscard]] bool tabulate_derivs_kernel(std::span<const K> knots, int degree, bool periodic,
-                                          long long num_basis, int n_deriv, std::span<const P> pts,
-                                          P* out, std::int64_t* first) {
+[[nodiscard]] bool tabulate_derivs_kernel(std::span<const K> knots, int degree, int n_deriv,
+                                          std::span<const P> pts, P* out, std::int64_t* first) {
   const std::size_t block =
       (static_cast<std::size_t>(degree) + 1) * (static_cast<std::size_t>(n_deriv) + 1);
   std::atomic<bool> complete{true};
@@ -284,7 +281,7 @@ template <StorageFloat K, StorageFloat P>
       [&](std::size_t begin, std::size_t end) {
         DerivScratch<K> scratch(degree, n_deriv);
         for (std::size_t i = begin; i < end; ++i) {
-          const SpanAndFirst sf = span_and_first<K, P>(knots, degree, periodic, num_basis, pts[i]);
+          const SpanAndFirst sf = span_and_first<K, P>(knots, degree, pts[i]);
           first[i] = sf.first;
           if (!basis_derivs_point<K, P>(knots.data(), degree, n_deriv, sf.knot_id, pts[i],
                                         out + i * block, scratch)) {
