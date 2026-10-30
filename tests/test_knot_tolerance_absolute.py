@@ -38,6 +38,7 @@ import numpy as np
 import pytest
 from numpy import typing as npt
 
+from pantr._testing import find_knot_index_and_multiplicity as _find_knot_index_and_multiplicity
 from pantr._testing import knot_tolerance
 from pantr.bspline import (
     Bspline,
@@ -47,7 +48,6 @@ from pantr.bspline import (
     create_uniform_space,
 )
 from pantr.bspline._bspline_knots import (
-    _find_knot_index_and_multiplicity,
     _get_unique_knots_and_multiplicity_impl,
     _is_in_domain_impl,
 )

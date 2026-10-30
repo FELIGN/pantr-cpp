@@ -1034,6 +1034,23 @@ class TestEdgeCases:
         with pytest.raises(ValueError, match="direction"):
             f.derivative(direction=-1)
 
+    @pytest.mark.parametrize("degree", [1, 2, 3])
+    def test_a_c_minus_1_knot_cannot_be_reelevated(self, degree: int) -> None:
+        """``keep_degree=True`` on a discontinuous spline is refused, naming the knot.
+
+        A knot of multiplicity ``degree + 1`` makes the hodograph repeat it more than the
+        hodograph's own degree allows, so the degree elevation (A5.9) cannot walk it; the
+        previous kernel wrote outside its arrays there, and crashed the process at degree 1.
+        The plain derivative of the same spline is fine (the masked control point is zero).
+        """
+        knots = [0.0] * (degree + 1) + [0.5] * (degree + 1) + [1.0] * (degree + 1)
+        n_basis = len(knots) - degree - 1
+        f = make_bspline_1d(knots, degree, [float(i + 1) for i in range(n_basis)])
+
+        assert f.derivative().degree == (degree - 1,)
+        with pytest.raises(ValueError, match="cannot walk a knot vector that repeats the knot 0.5"):
+            f.derivative(keep_degree=True)
+
     def test_float32_dtype(self) -> None:
         """Float32 B-spline produces float32 derivative."""
         knots = [0.0, 0.0, 0.0, 1.0, 1.0, 1.0]

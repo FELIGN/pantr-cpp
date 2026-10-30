@@ -26,6 +26,11 @@ module.
 - The blossom (``evaluate_blossom_1d``, ``blossom_span``) of a 1D B-spline, which has no public
   API, and the Oslo refinement matrix in its banded (``oslo_rows``) and dense (``oslo_matrix``)
   forms, whose bands no public function returns.
+- The exact-integer binomial kernel (``bincoeff``, ``check_bincoeff_envelope``,
+  ``BINCOEFF_MAX_N``) and the 1D degree kernels (``degree_elevate_1d``, ``degree_reduce_1d``)
+  behind ``Bspline.elevate_degree`` and ``reduce_degree``.
+- The knot-removal helpers behind ``Bspline.remove_knots``: the control-point scale, the round-off
+  floor, the stacked-point count, the homogeneous tolerance and the knot-class lookup.
 """
 
 from __future__ import annotations
@@ -189,6 +194,145 @@ def bernstein_interpolate(
     return np.asarray(cp[..., 0], dtype=arr.dtype)
 
 
+BINCOEFF_MAX_N: Final[int] = _t.bincoeff_max_n
+"""Largest upper index for which :data:`bincoeff` honours its contract."""
+
+bincoeff = _t.bincoeff
+check_bincoeff_envelope = _t.check_bincoeff_envelope
+num_stacked_control_points = _t.num_stacked_control_points
+
+
+def _by_dtype(name: str, dtype: npt.DTypeLike) -> Any:  # noqa: ANN401
+    """Get a compiled helper of the dtype's instantiation.
+
+    Args:
+        name (str): The helper's name without the dtype suffix.
+        dtype (npt.DTypeLike): ``float32`` or ``float64``.
+
+    Returns:
+        Any: ``<name>_f32`` for ``float32``, else ``<name>``.
+    """
+    return getattr(_t, name + ("_f32" if np.dtype(dtype) == np.float32 else ""))
+
+
+def control_point_scale(ctrl: npt.NDArray[np.floating[Any]]) -> float:
+    """Get the magnitude a knot-removal distance is relative to.
+
+    Args:
+        ctrl (npt.NDArray[np.floating[Any]]): Control points of any shape, the last axis the
+            coordinates.
+
+    Returns:
+        float: ``max(bounding-box diagonal, largest ||P_i||)``, in float64.
+    """
+    flat = np.ascontiguousarray(ctrl).reshape(-1, ctrl.shape[-1])
+    return float(_by_dtype("control_point_scale", flat.dtype)(flat))
+
+
+def roundoff_deviation_floor(
+    ctrl: npt.NDArray[np.floating[Any]], degree: int, num_stacked: int
+) -> float:
+    """Get the deviation budget that admits exactly the removals round-off allows.
+
+    Args:
+        ctrl (npt.NDArray[np.floating[Any]]): Control points as the removal sees them, the last
+            axis the coordinates.
+        degree (int): The degree of the direction being reduced.
+        num_stacked (int): The control points the removal's one distance spans.
+
+    Returns:
+        float: ``8 (degree + 1) eps sqrt(num_stacked)`` times :func:`control_point_scale`.
+    """
+    flat = np.ascontiguousarray(ctrl).reshape(-1, ctrl.shape[-1])
+    return float(_by_dtype("roundoff_deviation_floor", flat.dtype)(flat, degree, num_stacked))
+
+
+def homogeneous_deviation_tolerance(
+    ctrl: npt.NDArray[np.floating[Any]], tol_euclidean: float
+) -> float:
+    """Pull a projected-space deviation budget back to homogeneous control points.
+
+    Args:
+        ctrl (npt.NDArray[np.floating[Any]]): Homogeneous control points, the last column the
+            weights.
+        tol_euclidean (float): The budget in projected space.
+
+    Returns:
+        float: ``d w_min / (1 + |P|_max)``.
+    """
+    flat = np.ascontiguousarray(ctrl).reshape(-1, ctrl.shape[-1])
+    return float(_by_dtype("homogeneous_deviation_tolerance", flat.dtype)(flat, tol_euclidean))
+
+
+def find_knot_index_and_multiplicity(
+    knots: npt.NDArray[np.floating[Any]], degree: int, knot_value: float, tol: float
+) -> tuple[int, int]:
+    """Find the last index and the multiplicity of the knot class a value falls in.
+
+    Args:
+        knots (npt.NDArray[np.floating[Any]]): The knot vector.
+        degree (int): The degree.
+        knot_value (float): The value to locate.
+        tol (float): The absolute parametric tolerance.
+
+    Returns:
+        tuple[int, int]: ``(r, s)``.
+    """
+    k = np.ascontiguousarray(knots)
+    r, s = _by_dtype("find_knot_index_and_multiplicity", k.dtype)(k, degree, knot_value, tol)
+    return int(r), int(s)
+
+
+def degree_elevate_1d(
+    degree: int,
+    ctrl: npt.NDArray[np.floating[Any]],
+    knots: npt.NDArray[np.floating[Any]],
+    increment: int,
+) -> tuple[npt.NDArray[np.floating[Any]], npt.NDArray[np.floating[Any]]]:
+    """Degree elevate a 1D B-spline given by its arrays (the knot vector must be clamped).
+
+    Args:
+        degree (int): The degree.
+        ctrl (npt.NDArray[np.floating[Any]]): Control points ``(n, rank)``.
+        knots (npt.NDArray[np.floating[Any]]): The clamped knot vector.
+        increment (int): The degrees to add.
+
+    Returns:
+        tuple[npt.NDArray[np.floating[Any]], npt.NDArray[np.floating[Any]]]: The elevated control
+        points and the elevated knot vector.
+    """
+    c = np.ascontiguousarray(ctrl)
+    out: tuple[npt.NDArray[np.floating[Any]], npt.NDArray[np.floating[Any]]] = _by_dtype(
+        "degree_elevate_1d", c.dtype
+    )(degree, c, np.ascontiguousarray(knots), increment)
+    return (out[1], out[0])
+
+
+def degree_reduce_1d(
+    degree: int,
+    ctrl: npt.NDArray[np.floating[Any]],
+    knots: npt.NDArray[np.floating[Any]],
+    decrement: int,
+) -> tuple[npt.NDArray[np.floating[Any]], npt.NDArray[np.floating[Any]]]:
+    """Degree reduce a 1D B-spline given by its arrays to Bezier form (clamped knot vector).
+
+    Args:
+        degree (int): The degree.
+        ctrl (npt.NDArray[np.floating[Any]]): Control points ``(n, rank)``.
+        knots (npt.NDArray[np.floating[Any]]): The clamped knot vector.
+        decrement (int): The degrees to remove.
+
+    Returns:
+        tuple[npt.NDArray[np.floating[Any]], npt.NDArray[np.floating[Any]]]: The reduced control
+        points and the knot vector, in Bezier form.
+    """
+    c = np.ascontiguousarray(ctrl)
+    out: tuple[npt.NDArray[np.floating[Any]], npt.NDArray[np.floating[Any]]] = _by_dtype(
+        "degree_reduce_1d", c.dtype
+    )(degree, c, np.ascontiguousarray(knots), decrement)
+    return (out[1], out[0])
+
+
 BERNSTEIN: Final = _Family.BERNSTEIN
 """The Bernstein family, for :data:`gram_projection`."""
 CARDINAL_BSPLINE: Final = _Family.CARDINAL_BSPLINE
@@ -200,6 +344,7 @@ __all__ = [
     "BERNSTEIN",
     "BERNSTEIN_MAX_UNMIRRORED_DEGREE_FLOAT32",
     "BERNSTEIN_MAX_UNMIRRORED_DEGREE_FLOAT64",
+    "BINCOEFF_MAX_N",
     "CARDINAL_BSPLINE",
     "CHANGE_BASIS_CACHE_MAX_DEGREE",
     "LEGENDRE",
@@ -223,31 +368,39 @@ __all__ = [
     "bernstein_row_mirrored_f32",
     "bernstein_row_unmirrored",
     "bernstein_row_unmirrored_f32",
+    "bincoeff",
     "blossom_span",
     "blossom_span_f32",
     "change_basis_cache_clear",
     "change_basis_cache_size",
+    "check_bincoeff_envelope",
     "check_snapping_kept_an_interval",
     "clip_hull_to_zero",
     "clip_roots_core",
+    "control_point_scale",
     "count_sign_changes",
     "de_casteljau_eval_and_deriv_scalar",
     "de_casteljau_eval_scalar",
     "dedup_roots",
+    "degree_elevate_1d",
+    "degree_reduce_1d",
     "elevation_matrix",
     "evaluate_blossom_1d",
     "evaluate_blossom_1d_f32",
+    "find_knot_index_and_multiplicity",
     "find_roots_detailed",
     "find_roots_detailed_f32",
     "gram_projection",
     "gram_projection_f32",
     "have_opposite_signs",
     "have_same_sign",
+    "homogeneous_deviation_tolerance",
     "interpolating_reduction_operator",
     "knot_scale",
     "knot_tolerance",
     "l2_reduction_operator",
     "newton_polish_scalar",
+    "num_stacked_control_points",
     "oslo_matrix",
     "oslo_matrix_f32",
     "oslo_rows",
@@ -258,6 +411,7 @@ __all__ = [
     "reduction_cache_size",
     "root_provider_capabilities",
     "root_provider_state",
+    "roundoff_deviation_floor",
     "sample_projected",
     "set_root_provider_state",
     "solve_monotone_root_kernel",

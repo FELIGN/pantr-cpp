@@ -9,7 +9,7 @@ namespace pantr::bindings {
 /// Version of the module's interface. pantr/_ext.py refuses a module whose version differs from
 /// its EXPECTED_INTERFACE, so a stale build fails at import instead of as a phantom regression.
 /// Bump both together with any change to what the module exposes.
-inline constexpr int kInterfaceVersion = 8;
+inline constexpr int kInterfaceVersion = 9;
 
 /// Register the translation of pantr's C++ exceptions to Python exceptions.
 void register_errors(nanobind::module_& m);
@@ -69,9 +69,18 @@ void register_bspline_ops(nanobind::module_& m);
 /// `bspline` submodule. After `register_bspline_ops`.
 void register_bspline_refine(nanobind::module_& m);
 
+/// Register degree elevation and reduction, knot removal and the derivative of the Bspline
+/// classes, and the common refinement of two B-splines, in the `bspline` submodule. After
+/// `register_bspline_ops`.
+void register_bspline_modify(nanobind::module_& m);
+
 /// Register the 1D refinement kernels in the `_kernels` submodule (for Python callers not yet
 /// ported).
 void register_bspline_kernels(nanobind::module_& m);
+
+/// Register the knot-removal tolerances, the binomial kernel and the 1D degree kernels in the
+/// `_testing` submodule.
+void register_bspline_modify_testing(nanobind::module_& m);
 
 /// Register the blossom in the `_testing` submodule.
 void register_bspline_blossom_testing(nanobind::module_& m);

@@ -498,12 +498,20 @@ template <StorageFloat T>
 /// the denominator can then vanish on the domain, so the net is not a NURBS. The reduction
 /// operator is not a convex combination (at degree 3 it has an entry of -0.25) and acts on the
 /// weight column too.
+///
+/// Args:
+///     data (std::span<const T>): The control points, flat; the weight is the last of every `cp`
+///         values.
+///     cp (std::size_t): The coordinates per control point, the weight included.
+///     remedy (std::string_view): A sentence naming what this caller's type can do instead.
+///
+/// Raises:
+///     value_error: The smallest weight is not strictly positive (NaN included).
 template <StorageFloat T>
-void refuse_inverted_weight(const NdArray<T>& ctrl, std::string_view remedy) {
-  const std::size_t cp = ctrl.shape().back();
+void refuse_inverted_weight(std::span<const T> data, std::size_t cp, std::string_view remedy) {
   double smallest = std::numeric_limits<double>::infinity();
-  for (std::size_t i = cp - 1; i < ctrl.size(); i += cp) {
-    const auto w = static_cast<double>(ctrl.data()[i]);
+  for (std::size_t i = cp - 1; i < data.size(); i += cp) {
+    const auto w = static_cast<double>(data[i]);
     if (std::isnan(w)) {
       smallest = w;
       break;
@@ -518,6 +526,13 @@ void refuse_inverted_weight(const NdArray<T>& ctrl, std::string_view remedy) {
                     "valid NURBS: its denominator can vanish on the domain. The reduction "
                     "operator is not a convex combination and acts on the weight column too. " +
                     std::string(remedy));
+}
+
+/// Refuse a rational control net whose smallest control weight is not strictly positive; see the
+/// overload over flat values.
+template <StorageFloat T>
+void refuse_inverted_weight(const NdArray<T>& ctrl, std::string_view remedy) {
+  refuse_inverted_weight<T>(ctrl.flat(), ctrl.shape().back(), remedy);
 }
 
 }  // namespace detail

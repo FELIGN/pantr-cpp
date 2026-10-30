@@ -351,3 +351,130 @@ def blossom_span_f32(
     n: int,
 ) -> int:
     """The span the blossom's recurrence starts from, in [0, n]."""
+
+bincoeff_max_n: int = ...
+
+def bincoeff(n: int, k: int) -> float:
+    """The exact-integer binomial coefficient C(n, k) as a double (n <= 61)."""
+
+def check_bincoeff_envelope(n: int, what: str) -> None:
+    """Refuse an upper index beyond the exactness envelope of the binomial kernel."""
+
+def num_stacked_control_points(shape: Sequence[int], axis: int) -> int:
+    """The control points the removal kernel's one distance spans: the product of the extents other than `axis` (the last extent, the coordinates, excluded)."""
+
+def control_point_scale(
+    ctrl: Annotated[
+        NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu", writable=False)
+    ],
+) -> float:
+    """max(bounding-box diagonal, largest norm) of the rows of (points, coordinates)."""
+
+def roundoff_deviation_floor(
+    ctrl: Annotated[
+        NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu", writable=False)
+    ],
+    degree: int,
+    num_stacked: int,
+) -> float:
+    """The deviation budget that admits exactly the removals round-off allows."""
+
+def homogeneous_deviation_tolerance(
+    ctrl: Annotated[
+        NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu", writable=False)
+    ],
+    tol_euclidean: float,
+) -> float:
+    """A projected-space deviation budget pulled back to homogeneous control points."""
+
+def find_knot_index_and_multiplicity(
+    knots: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    degree: int,
+    knot_value: float,
+    tol: float,
+) -> tuple[int, int]:
+    """The last index and the multiplicity of the knot class a value falls in."""
+
+def degree_elevate_1d(
+    degree: int,
+    ctrl: Annotated[
+        NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu", writable=False)
+    ],
+    knots: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    increment: int,
+) -> tuple[NDArray[numpy.float64], NDArray[numpy.float64]]:
+    """Degree elevate a 1D B-spline: (control points (n, rank), knots) -> (points, knots)."""
+
+def degree_reduce_1d(
+    degree: int,
+    ctrl: Annotated[
+        NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu", writable=False)
+    ],
+    knots: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    decrement: int,
+) -> tuple[NDArray[numpy.float64], NDArray[numpy.float64]]:
+    """Degree reduce a 1D B-spline to Bezier form: (points (n, rank), knots) -> (points, knots)."""
+
+def control_point_scale_f32(
+    ctrl: Annotated[
+        NDArray[numpy.float32], dict(shape=(None, None), order="C", device="cpu", writable=False)
+    ],
+) -> float:
+    """max(bounding-box diagonal, largest norm) of the rows of (points, coordinates)."""
+
+def roundoff_deviation_floor_f32(
+    ctrl: Annotated[
+        NDArray[numpy.float32], dict(shape=(None, None), order="C", device="cpu", writable=False)
+    ],
+    degree: int,
+    num_stacked: int,
+) -> float:
+    """The deviation budget that admits exactly the removals round-off allows."""
+
+def homogeneous_deviation_tolerance_f32(
+    ctrl: Annotated[
+        NDArray[numpy.float32], dict(shape=(None, None), order="C", device="cpu", writable=False)
+    ],
+    tol_euclidean: float,
+) -> float:
+    """A projected-space deviation budget pulled back to homogeneous control points."""
+
+def find_knot_index_and_multiplicity_f32(
+    knots: Annotated[
+        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    degree: int,
+    knot_value: float,
+    tol: float,
+) -> tuple[int, int]:
+    """The last index and the multiplicity of the knot class a value falls in."""
+
+def degree_elevate_1d_f32(
+    degree: int,
+    ctrl: Annotated[
+        NDArray[numpy.float32], dict(shape=(None, None), order="C", device="cpu", writable=False)
+    ],
+    knots: Annotated[
+        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    increment: int,
+) -> tuple[NDArray[numpy.float32], NDArray[numpy.float32]]:
+    """Degree elevate a 1D B-spline: (control points (n, rank), knots) -> (points, knots)."""
+
+def degree_reduce_1d_f32(
+    degree: int,
+    ctrl: Annotated[
+        NDArray[numpy.float32], dict(shape=(None, None), order="C", device="cpu", writable=False)
+    ],
+    knots: Annotated[
+        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    decrement: int,
+) -> tuple[NDArray[numpy.float32], NDArray[numpy.float32]]:
+    """Degree reduce a 1D B-spline to Bezier form: (points (n, rank), knots) -> (points, knots)."""

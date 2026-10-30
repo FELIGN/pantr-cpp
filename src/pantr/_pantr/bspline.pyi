@@ -619,6 +619,31 @@ class BsplineF64:
     def split(self, direction: int, value: float) -> tuple[BsplineF64, BsplineF64]:
         """Split at a parameter value in one direction."""
 
+    def elevate_degree(self, increments: Sequence[int]) -> BsplineF64:
+        """Elevate the degree in each direction by its increment (a periodic direction is elevated through its open form)."""
+
+    def reduce_degree(self, decrements: Sequence[int]) -> BsplineF64:
+        """Reduce the degree in each direction by its decrement (an approximation)."""
+
+    def remove_knots(
+        self,
+        knot_values: Sequence[
+            Annotated[
+                NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+            ]
+            | None
+        ],
+        num: int | None,
+        tol: float | None,
+    ) -> BsplineF64:
+        """Remove the knots per direction (none or empty skips a direction), up to `num` times each, while the deviation stays within `tol` (the round-off floor when none)."""
+
+    def derivative(self, direction: int) -> BsplineF64:
+        """The partial derivative of a non-rational B-spline."""
+
+    def derivative_keep_degree(self, direction: int) -> BsplineF64:
+        """The partial derivative of a non-rational B-spline, elevated back to its degree."""
+
 class BsplineF32:
     """An immutable B-spline map (a space and control points in a shared, read-only buffer)."""
 
@@ -744,6 +769,31 @@ class BsplineF32:
     def split(self, direction: int, value: float) -> tuple[BsplineF32, BsplineF32]:
         """Split at a parameter value in one direction."""
 
+    def elevate_degree(self, increments: Sequence[int]) -> BsplineF32:
+        """Elevate the degree in each direction by its increment (a periodic direction is elevated through its open form)."""
+
+    def reduce_degree(self, decrements: Sequence[int]) -> BsplineF32:
+        """Reduce the degree in each direction by its decrement (an approximation)."""
+
+    def remove_knots(
+        self,
+        knot_values: Sequence[
+            Annotated[
+                NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
+            ]
+            | None
+        ],
+        num: int | None,
+        tol: float | None,
+    ) -> BsplineF32:
+        """Remove the knots per direction (none or empty skips a direction), up to `num` times each, while the deviation stays within `tol` (the round-off floor when none)."""
+
+    def derivative(self, direction: int) -> BsplineF32:
+        """The partial derivative of a non-rational B-spline."""
+
+    def derivative_keep_degree(self, direction: int) -> BsplineF32:
+        """The partial derivative of a non-rational B-spline, elevated back to its degree."""
+
 def compute_inserted_knot_vector(
     knots: Annotated[
         NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
@@ -789,3 +839,13 @@ def compute_uniform_subdivision_knots_f32(
     regularity: int | None,
 ) -> NDArray[numpy.float32]:
     """The knots that subdivide every span uniformly."""
+
+def refine_to_common_space_1d(
+    a: BsplineF64, b: BsplineF64, direction: int
+) -> tuple[BsplineF64, BsplineF64]:
+    """Insert into each of two B-splines the knots the other has in one direction and it lacks."""
+
+def refine_to_common_space_1d_f32(
+    a: BsplineF32, b: BsplineF32, direction: int
+) -> tuple[BsplineF32, BsplineF32]:
+    """Insert into each of two B-splines the knots the other has in one direction and it lacks."""

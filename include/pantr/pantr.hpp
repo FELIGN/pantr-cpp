@@ -36,9 +36,12 @@
 
 #include "pantr/bspline/blossom.hpp"
 #include "pantr/bspline/bspline.hpp"
+#include "pantr/bspline/degree.hpp"
+#include "pantr/bspline/derivative.hpp"
 #include "pantr/bspline/evaluate.hpp"
 #include "pantr/bspline/knot_factories.hpp"
 #include "pantr/bspline/knot_insertion.hpp"
+#include "pantr/bspline/knot_removal.hpp"
 #include "pantr/bspline/knots.hpp"
 #include "pantr/bspline/periodic.hpp"
 #include "pantr/bspline/restrict.hpp"

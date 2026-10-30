@@ -19,10 +19,8 @@ from numpy import typing as npt
 
 from .._ext import ext
 from .._transform_control_points import _apply_affine_to_control_points
-from ._bspline_degree import _degree_elevate_bspline, _degree_reduce_bspline
 from ._bspline_derivative import _derivative_bspline
 from ._bspline_eval import _evaluate_Bspline, _evaluate_Bspline_deriv
-from ._bspline_knot_removal import _remove_knots_bspline
 from ._bspline_locate import _locate_impl
 from ._bspline_slice import _slice_bspline
 from ._bspline_to_beziers import _to_beziers_impl
@@ -595,7 +593,7 @@ class Bspline:
             ValueError: If the degree in the given direction is 0.
             ValueError: If the degree the result has to be built at exceeds the
                 exactness envelope of the binomial-coefficient kernel
-                (``_BINCOEFF_MAX_N``). Reachable with ``keep_degree=True``, and
+                (``bincoeff_max_n``, 61). Reachable with ``keep_degree=True``, and
                 for a rational B-spline with either setting, since that path
                 always re-elevates.
             ValueError: If the call re-elevates and the differentiated direction's
@@ -607,6 +605,10 @@ class Bspline:
                 ``keep_degree=False``, which asks nothing of the ends, and a
                 direction of degree 1, whose hodograph is degree 0 and so has no
                 end runs to lack.
+            ValueError: If the call re-elevates and the differentiated direction has
+                an interior knot of multiplicity ``degree + 1`` (a ``C^-1`` knot): the
+                hodograph then repeats that knot more than its own degree allows, and
+                A5.9 cannot walk it.
             ValueError: If the B-spline is rational and the differentiated direction
                 is periodic with a C^0 seam (seam multiplicity equal to the degree).
                 The derivative is discontinuous at the seam, so it has no periodic
@@ -658,7 +660,7 @@ class Bspline:
             ValueError: If all degree increments are zero.
             ValueError: If the number of increments does not match the dimension.
             ValueError: If an elevated degree would exceed the exactness envelope
-                of the binomial-coefficient kernel (``_BINCOEFF_MAX_N``).
+                of the binomial-coefficient kernel (``bincoeff_max_n``, 61).
             ValueError: If a direction to be elevated is not periodic and its knot
                 vector is not clamped, meaning a run of ``degree + 1`` equal knots
                 at each end. Elevation is Piegl and Tiller A5.9, which assumes those
@@ -666,6 +668,8 @@ class Bspline:
                 control points, and without the opening one it returns a different
                 function. A periodic direction is converted to its open form first
                 and is unaffected.
+            ValueError: If a knot of a direction to be elevated repeats more than
+                ``degree + 1`` times (a space accepts one; A5.9 cannot walk it).
 
         References:
             Degree elevation of spline curves :cite:p:`piegl1997nurbs`.
@@ -687,7 +691,7 @@ class Bspline:
         if all(inc == 0 for inc in increments):
             raise ValueError("At least one degree increment must be positive.")
 
-        return _degree_elevate_bspline(self, increments)
+        return self._from_result(self._h.elevate_degree([_index(inc) for inc in increments]))
 
     def reduce_degree(self, degree_decrements: int | Sequence[int]) -> Bspline:
         r"""Reduce the polynomial degree of the B-spline.
@@ -734,6 +738,9 @@ class Bspline:
                 direction.
             ValueError: If the object is rational and the reduction drives a
                 control weight to zero or below.
+            ValueError: If a direction to be reduced is not periodic and its knot
+                vector is not clamped, or a knot of it repeats more than
+                ``degree + 1`` times.
         """
         if isinstance(degree_decrements, int):
             decrements = (degree_decrements,) * self.dim
@@ -759,7 +766,7 @@ class Bspline:
                     f"current degree ({self.degree[d]})."
                 )
 
-        return _degree_reduce_bspline(self, decrements)
+        return self._from_result(self._h.reduce_degree([_index(dec) for dec in decrements]))
 
     def insert_knots(
         self,
@@ -882,7 +889,10 @@ class Bspline:
             ValueError: If the sequence length does not match ``dim``
                 (multi-dim case).
             ValueError: If all directions have empty or ``None`` knot arrays.
-            ValueError: If any knot value is not found or is a boundary knot.
+            ValueError: If any knot value is not found, is a boundary knot, or is
+                not an interior knot of the domain (a ghost knot of an unclamped
+                knot vector).
+            TypeError: If ``num`` is not an integer.
         """
         # Periodic splines are not supported.
         for i, sp in enumerate(self._space.spaces):
@@ -914,7 +924,16 @@ class Bspline:
                 "At least one direction must have a non-empty array of knot values to remove."
             )
 
-        return _remove_knots_bspline(self, kv_per_dim, num, tol)
+        return self._from_result(
+            self._h.remove_knots(
+                [
+                    None if kv is None or kv.size == 0 else np.ascontiguousarray(kv)
+                    for kv in kv_per_dim
+                ],
+                None if num is None else _index(num),
+                None if tol is None else _real(tol),
+            )
+        )
 
     def to_open_bspline(self) -> Bspline:
         """Return an open (clamped) non-periodic B-spline equivalent to this one.

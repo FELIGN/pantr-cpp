@@ -48,6 +48,7 @@ from types import FrameType
 import numpy as np
 import pytest
 
+from pantr._testing import degree_elevate_1d
 from pantr.basis import LagrangeVariant, tabulate_lagrange_1d
 from pantr.bspline import (
     Bspline,
@@ -58,7 +59,6 @@ from pantr.bspline import (
     create_uniform_periodic_knots,
     find_roots,
 )
-from pantr.bspline._bspline_degree_core import _degree_elevate_1d_core
 from pantr.change_basis import compute_cardinal_to_bernstein_1d
 from pantr.quad import get_tanh_sinh_1d
 from pantr.tolerance import get_machine_epsilon
@@ -111,7 +111,7 @@ def test_degree_elevation_outputs_are_mutually_consistent() -> None:
     # changes, not one: what looked like a single defect with two faces is two defects
     # that happened to share a symptom.
     #
-    # What it was: `_degree_elevate_1d_core` returns (control_points, knots), usable
+    # What it was: the elevation kernel returns (control_points, knots), usable
     # together only when `control_points.shape[0] == knots.size - new_degree - 1`. Those
     # come from counters `cind` and `kind` maintained independently through the
     # Piegl-Tiller A5.9 walk, and they diverged by the number of interior knots at
@@ -137,7 +137,7 @@ def test_degree_elevation_outputs_are_mutually_consistent() -> None:
         )
         n_basis = knots.size - degree - 1
         control = np.arange(2 * n_basis, dtype=np.float64).reshape(n_basis, 2)
-        new_control, new_knots = _degree_elevate_1d_core(degree, control, knots, 1)
+        new_control, new_knots = degree_elevate_1d(degree, control, knots, 1)
         implied = new_knots.size - (degree + 1) - 1
         assert new_control.shape[0] == implied, (
             f"degree {degree}, interior multiplicity {mult}: kernel wrote "
@@ -165,8 +165,8 @@ def test_degree_elevation_outputs_are_mutually_consistent() -> None:
 
 
 def test_degree_elevation_preserves_float32() -> None:
-    # FIXED by allocating the kernel's knot output in the knot vector's own dtype, in both
-    # `_degree_elevate_1d_core` and `_degree_reduce_1d_core`. Kept as a regression guard
+    # FIXED by allocating the kernel's knot output in the knot vector's own dtype, in both the
+    # elevation and the reduction kernel. Kept as a regression guard
     # with its original triggering data, per this repository's convention that the fix PR
     # un-xfails the tests it closes.
     #
@@ -187,7 +187,7 @@ def test_degree_elevation_preserves_float32() -> None:
     # dtype promotion is invisible until something downstream compares dtypes, and it
     # doubles memory and halves throughput without a word.
     #
-    # `_degree_reduce_1d_core` carried the identical hardcoded allocation and raised the
+    # The reduction kernel carried the identical hardcoded allocation and raised the
     # identical error, so the third assertion below covers the round trip.
     knots = np.array([0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0], dtype=np.float32)
     clamped = _scalar_spline(knots, 2, [1.0, 2.0, 3.0, 4.0])
