@@ -57,6 +57,26 @@ template <StorageFloat T>
   return Bspline<T>(w.space(), std::move(out), false);
 }
 
+/// Convert one non-periodic direction of a B-spline to open (clamped) form; itself if already open.
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed): `direction` is in range and
+///     not periodic.
+template <StorageFloat T>
+[[nodiscard]] Bspline<T> open_in_direction(const Bspline<T>& b, std::size_t direction) {
+  if (b.space().spaces()[direction].has_open_knots()) {
+    return b;
+  }
+  return map_directions<T>(
+      b, [direction](std::size_t d) { return d == direction; },
+      [](std::size_t /*d*/, const BsplineSpace1D<T>& space,
+         mdview<const T, 2> flat) -> std::pair<BsplineSpace1D<T>, NdArray<T>> {
+        KnotsAndCtrl<T> o =
+            to_open_1d<T>(space.knots(), space.degree(), flat, false, space.tolerance());
+        return {BsplineSpace1D<T>(std::span<const T>(o.knots), space.degree()), std::move(o.ctrl)};
+      });
+}
+
 /// The quotient rule on a rational B-spline whose `direction` is not periodic.
 ///
 /// Note:
@@ -80,7 +100,12 @@ template <StorageFloat T>
     diff.data()[i] = c1[i] - c2[i];
   }
   const Bspline<T> numerator(num1.space(), std::move(diff), false);
-  const Bspline<T> denominator = multiply<T>(w, w);
+  // `A'` and `w'` are re-elevated hodographs, clamped in `direction` whatever `b`'s ends are (a
+  // degree-1 direction is accepted unclamped), so `multiply` makes both numerator products open
+  // there. `w^2` has to be open there too, or the join below pairs control points over two
+  // different bases.
+  const Bspline<T> w_open = open_in_direction<T>(w, static_cast<std::size_t>(direction));
+  const Bspline<T> denominator = multiply<T>(w_open, w_open);
   auto [n, d] =
       refine_to_common_space_1d<T>(numerator, denominator, static_cast<std::size_t>(direction));
   return join_columns<T>(n, d, true);
@@ -97,13 +122,14 @@ template <StorageFloat T>
 /// Returns:
 ///     Bspline<T>: The rational derivative, of degree `2p` in `direction` (the other degrees
 ///     doubled as well, `multiply` adding the operands' degrees in every direction), periodic in
-///     `direction` exactly when `b` is.
+///     `direction` exactly when `b` is and open there otherwise (a degree-1 direction not clamped
+///     at both ends included).
 ///
 /// Raises:
 ///     value_error: `b` is not rational; the direction is out of range or has degree 0; the
 ///         direction is periodic with a `C^0` seam (seam multiplicity equal to the degree); or as
-///         `derivative_keep_degree_nonrational` (the degree envelope of the binomial kernel, an
-///         unclamped direction, a `C^-1` interior knot).
+///         `derivative_keep_degree_nonrational` (the degree envelope of the binomial kernel, a
+///         direction of degree 2 or more not clamped at both ends, a `C^-1` interior knot).
 template <StorageFloat T>
 [[nodiscard]] Bspline<T> derivative_rational(const Bspline<T>& b, long long direction) {
   if (!b.rational()) {
