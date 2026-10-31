@@ -616,11 +616,12 @@
   `NotImplementedError`), and an object that is not a space, or `orders=1.0`, fails with another
   message. `find_roots` checks `tol` straight after the type of its first argument, so a `tol`
   that is not positive, cannot be compared with `0.0` or cannot be converted to a float (a
-  one-dimensional one-element array on NumPy 2.4, an integer past the range of a float) is reported before a
-  B-spline that is not univariate, not scalar valued, of degree 0 or rational with a
-  non-positive weight (the previous release reported those first). A `Bezier` with the B-spline's
-  number of directions, dtype and rank given as `other` to `multiply` raises `TypeError` from the
-  binding, where it raised `AttributeError` ("... has no attribute 'space'").
+  one-dimensional one-element array on NumPy 2.4, an integer past the range of a float) is
+  reported before a B-spline that is not univariate, not scalar valued, of degree 0 or rational
+  with a non-positive weight (the previous release reported those first). A `Bezier` with the
+  B-spline's number of directions, dtype and rank given as `other` to `multiply` raises
+  `TypeError` from the binding, where it raised `AttributeError` ("... has no attribute
+  'space'").
 - **`SpanwiseElementExtraction` takes any number of directions** (its `apply` family raised
   `NotImplementedError` beyond three) and **any memory layout** for the operand, `out`, `scratch`
   and the cell indices, through a temporary where needed. The previous kernels raised Numba's
@@ -678,7 +679,8 @@
     or more that is not clamped is still refused, as above.
   - **A NaN or infinite control point or weight no longer makes `multiply` or the rational
     `derivative` emit NumPy's `RuntimeWarning`s** ("invalid value encountered in ..."; the
-    sampled ones were in `add`, `at`, `multiply`, `subtract`, `reduce` and `divide`). With one such value placed at random in an operand
+    sampled ones were in `add`, `at`, `multiply`, `subtract`, `reduce` and `divide`). With one
+    such value placed at random in an operand
     (open, one or two directions, `float32` and `float64`), the previous release warned in 89 of
     300 products and 107 of 200 derivatives and the new release in none. The result is non-finite
     in both releases in all 300 products, and at the same control points in all 200 derivatives;
@@ -753,7 +755,8 @@
   `pantr.cad._compat` keeps the two breakpoint helpers it took from `_bspline_product` as its own.
   What tests reach of the root finder and of the knot classes is in `pantr._testing`. The warmup
   thread that `import pantr` starts compiled Numba kernels across the package (by this change only
-  the knot-class and root-finder ones were left); it now compiles nothing and only sets the event that the remaining warmup barriers wait on.
+  the knot-class and root-finder ones were left); it now compiles nothing
+  and only sets the event that the remaining warmup barriers wait on.
 
 ### Fixed
 - **`Bspline.multiply` no longer returns values that depend on memory it never wrote.** The
