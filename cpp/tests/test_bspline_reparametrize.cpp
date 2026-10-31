@@ -295,6 +295,11 @@ TEST_CASE_TEMPLATE("transformed: applies x -> A x + b to the projected geometry"
 }
 
 TEST_CASE("transformed: float32 data off the dyadic grid is rounded in float at every step") {
+  // A precision-policy specification pin (design section 8.3, M4: the formula is the spec): the
+  // expected value is the float operations of the transformation's formula in its own order, the
+  // library's groupings (fused or not) bit for bit, not an independent oracle. What it pins is
+  // that `float` data are accumulated and rounded in `float` at every step, never in `double`.
+  //
   // The dyadic test above cannot tell rounding in `T` at every operation from one rounding of an
   // exact (or double) accumulation: every product and sum there is exact. Here `A` and `b` are
   // not dyadic (rounded to float, each product of a 24-bit entry and a 7-bit control point needs

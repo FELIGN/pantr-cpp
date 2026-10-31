@@ -14,6 +14,7 @@
 /// batch takes `(n_cells, dim)` indices and runs the cells in parallel, each into its own output.
 #pragma once
 
+#include "pantr/basis/detail/tabulate_1d.hpp"
 #include "pantr/basis/lagrange_variant.hpp"
 #include "pantr/bspline/detail/kron_apply.hpp"
 #include "pantr/bspline/extraction.hpp"
@@ -32,7 +33,6 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -157,6 +157,11 @@ template <StorageFloat T>
 /// is written for others). The cell of a one-cell application is the per-direction interval index;
 /// the elements of a batch are the rows of a `(n_cells, d)` array of such indices.
 ///
+/// Special values: the applications check no value. A NaN or an infinity in an operand propagates
+/// as the multiply-adds give it, so it reaches every entry of the result that the stages combine
+/// it with, including those a zero entry of an operator would weigh by 0 (`0 * NaN` is NaN); an
+/// identity direction copies and mixes nothing.
+///
 /// Attributes:
 ///     rep_ (std::shared_ptr<const detail::SpanwiseRep<T>>): The shared representation.
 template <StorageFloat T>
@@ -177,6 +182,11 @@ class SpanwiseElementExtraction {
   ///     not_implemented: A direction is periodic.
   ///     value_error: The degree of a direction is beyond the degrees the target's change-of-basis
   ///         matrix can be built for.
+  ///     capacity_error: The operand or an intermediate result of a two-sided operation
+  ///         (`M^T K M`, `M K M^T`: `prod(degree_k + 1)^2` entries) is more than `std::size_t` can
+  ///         count, which a space of many directions reaches (the space itself accepts
+  ///         `prod(degree_k + 1)` entries). The Python class raises `ValueError`. The message
+  ///         names the number of directions and the quantity, not the extents.
   SpanwiseElementExtraction(const BsplineSpace<T>& space, ExtractionTarget target,
                             basis::LagrangeVariant variant = basis::LagrangeVariant::equispaces)
       : rep_(make_rep(space, target, variant)) {}
@@ -326,8 +336,9 @@ class SpanwiseElementExtraction {
   /// Raises:
   ///     value_error: `cells` has another number of columns or rows than `v`, an operand or `out`
   ///         has another shape, `scratch` has another number of rows or is narrower than needed,
-  ///         `out` overlaps `v` (unless every cell is identity in every direction) or `scratch`
-  ///         overlaps either.
+  ///         `out` overlaps `v` (unless every cell is identity in every direction and `out` is
+  ///         exactly `v`'s range: a shifted overlap is refused, since cells on different threads
+  ///         would read what others write) or `scratch` overlaps either.
   ///     index_error: An entry of `cells` is out of range for its direction.
   void apply_many(mdview<const T, 2> v, mdview<const std::int64_t, 2> cells, mdview<T, 2> out,
                   std::optional<mdview<T, 2>> scratch = std::nullopt) const {
@@ -520,7 +531,9 @@ class SpanwiseElementExtraction {
       ident[k] = dir.mask[cell[k]];
       all_identity = all_identity && ident[k];
     }
-    // The stages read and write overlapping memory unless the cell is a plain copy.
+    // The stages read and write overlapping memory unless the cell is a plain copy. A copy is one
+    // `memmove` on one thread, correct for any overlap (a batch is stricter: its cells run on
+    // several threads).
     if (!all_identity &&
         detail::ranges_overlap<T>(out.data(), out.size(), operand.data(), operand.size())) {
       throw value_error(
@@ -611,7 +624,13 @@ class SpanwiseElementExtraction {
     }
     const std::size_t operand_total = n_cells * plan.operand_size;
     const std::size_t out_total = n_cells * plan.result_size;
-    if (!all_identity && detail::ranges_overlap<T>(out, out_total, operand, operand_total)) {
+    // The cells run on several threads. A batch of copies may overwrite its operand only where
+    // `out` is that very range: then cell `c` reads and writes only its own entries. Any other
+    // overlap (`out` shifted against the operand) makes a chunk write what another one reads, so
+    // the result would depend on the chunking, that is on the thread count.
+    const bool in_place = out == operand && out_total == operand_total;
+    if (detail::ranges_overlap<T>(out, out_total, operand, operand_total) &&
+        !(all_identity && in_place)) {
       throw value_error(
           "out must not alias the operand; the kernel reads and writes overlapping memory");
     }
@@ -665,81 +684,5 @@ class SpanwiseElementExtraction {
 
   std::shared_ptr<const Rep> rep_;
 };
-
-/// Apply a Kronecker product `kron(M_0, ..., M_{d-1})` of arbitrary factors to one operand.
-///
-/// The same computation as the class's, on factors that need not come from a space (any shapes; an
-/// identity-flagged factor must be square). `operand` and `out` are the flat row-major vector or
-/// square matrix the operation reads and writes.
-///
-/// Args:
-///     op (ExtractionOp): The operation.
-///     factors (std::span<const KronFactor<T>>): One per direction, at least one.
-///     operand (std::span<const T>): The vector or matrix the operation reads.
-///     out (std::span<T>): The vector or matrix it writes; overwritten.
-///     scratch (std::span<T>): At least `required_scratch_size` entries.
-///
-/// Raises:
-///     value_error: No factor; an identity-flagged factor that is not square; a factor with the
-///         wrong number of values; an operand, `out` or `scratch` of the wrong size; `out`
-///         overlaps `operand` (unless every factor is identity) or `scratch` overlaps either.
-///     capacity_error: A product of extents overflows `std::size_t`.
-template <StorageFloat T>
-void apply_kron(ExtractionOp op, std::span<const KronFactor<T>> factors, std::span<const T> operand,
-                std::span<T> out, std::span<T> scratch) {
-  if (factors.empty()) {
-    throw value_error("At least one direction is required");
-  }
-  std::vector<std::size_t> rows;
-  std::vector<std::size_t> cols;
-  std::vector<const T*> values;
-  const std::unique_ptr<bool[]> ident(new bool[factors.size()]);
-  bool all_identity = true;
-  for (std::size_t k = 0; k < factors.size(); ++k) {
-    const KronFactor<T>& f = factors[k];
-    if (f.identity && f.rows != f.cols) {
-      const std::size_t shape[2] = {f.rows, f.cols};
-      throw value_error("factors[" + std::to_string(k) + "] is flagged identity but has shape " +
-                        py_repr(std::span<const std::size_t>(shape)) +
-                        "; an identity operator must be square");
-    }
-    // `rows * cols` is formed only when it fits: a product past size_t matches no span.
-    const bool fits = f.rows == 0 || f.cols <= (std::numeric_limits<std::size_t>::max)() / f.rows;
-    if (!f.identity && (!fits || f.values.size() != f.rows * f.cols)) {
-      throw value_error("factors[" + std::to_string(k) + "] holds " +
-                        std::to_string(f.values.size()) + " values, but its shape needs " +
-                        std::to_string(f.rows) + " x " + std::to_string(f.cols));
-    }
-    rows.push_back(f.rows);
-    cols.push_back(f.cols);
-    values.push_back(f.values.data());
-    ident[k] = f.identity;
-    all_identity = all_identity && f.identity;
-  }
-  const detail::KronPlan plan = detail::make_kron_plan(op, rows, cols);
-  if (operand.size() != plan.operand_size) {
-    throw value_error("Operand has " + std::to_string(operand.size()) + " values, but expected " +
-                      std::to_string(plan.operand_size));
-  }
-  if (out.size() != plan.result_size) {
-    throw value_error("Output array has " + std::to_string(out.size()) + " values, but expected " +
-                      std::to_string(plan.result_size));
-  }
-  if (scratch.size() < 2 * plan.half) {
-    throw value_error("Scratch size " + std::to_string(scratch.size()) +
-                      " is smaller than required " + std::to_string(2 * plan.half));
-  }
-  if (!all_identity &&
-      detail::ranges_overlap<T>(out.data(), out.size(), operand.data(), operand.size())) {
-    throw value_error(
-        "out must not alias the operand; the kernel reads and writes overlapping memory");
-  }
-  if (detail::ranges_overlap<T>(scratch.data(), scratch.size(), operand.data(), operand.size()) ||
-      detail::ranges_overlap<T>(scratch.data(), scratch.size(), out.data(), out.size())) {
-    throw value_error("scratch must not overlap the operand or out");
-  }
-  detail::kron_execute<T>(plan, values.data(), ident.get(), operand.data(), out.data(),
-                          scratch.data());
-}
 
 }  // namespace pantr::bspline

@@ -34,10 +34,12 @@ constexpr int max_unmirrored_degree() {
                                  : bernstein_max_unmirrored_degree_float;
 }
 
-/// `x^n` for `n >= 0` by binary powering: about `2 log2(n)` multiplications, each rounded once,
+/// `x^n` for `n >= 0` by binary powering: at most `2 log2(n)` multiplications, each rounded once,
 /// where `std::pow` is a libm call costing several times the rest of a low-degree row. The seed
-/// of the recurrences is in `[0, 1]`, so no intermediate overflows; the result is within
-/// `2 log2(n)` roundings of `x^n`.
+/// of the recurrences is in `[0, 1]`, so no intermediate overflows. The error is not that of
+/// `2 log2(n)` roundings: a relative error `e` in `x^m` is `2 e` in `x^(2m)`, so the result is
+/// `x^n (1 + e)` with `|e| <= (n - 1) u + O(u^2)`, `u` the unit roundoff (expanded, the product is
+/// a tree of `n` factors with `n - 1` roundings, and a power of two attains the bound).
 inline double int_power(double x, int n) {
   double result = 1.0;
   double base = x;

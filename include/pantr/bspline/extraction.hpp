@@ -421,8 +421,10 @@ void bezier_structural_identity_mask(const BsplineSpace1D<T>& space, std::span<b
 ///
 /// A degree-0 space has the 1x1 operator `[[1]]` on every interval. Otherwise the operator is the
 /// Bézier one times the Lagrange-to-Bernstein matrix, so it is the identity exactly where the
-/// Bézier operator is and that matrix is the identity (the Lagrange nodes are the Bernstein
-/// abscissae `i / degree`: degree 1 with equispaced, Gauss-Lobatto or Chebyshev-Lobatto nodes);
+/// Bézier operator is and that matrix is the identity. The matrix is the identity exactly when the
+/// Lagrange basis is the Bernstein basis, `B_i(x_k) = delta_ik` at the nodes `x_k`. That needs each
+/// Bernstein function to reach 1 at a node, which an interior one (`0 < i < degree`) never does,
+/// so it happens for degree 1 only (nodes 0 and 1: equispaced, Gauss-Lobatto or Chebyshev-Lobatto);
 /// for any other matrix no interval is flagged.
 ///
 /// Args:

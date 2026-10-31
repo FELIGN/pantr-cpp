@@ -786,9 +786,9 @@ def _s4_extraction_cases() -> list[Case]:
     A cubic space of ``n`` uniform intervals per direction in three directions: ``tiny`` is 2 per
     direction, ``medium`` 10 (1e3 elements), ``large`` 46 (97 336 elements, the largest a batch of
     the shape below reasonably is). The per-cell ``apply`` is timed as a Python loop over cells:
-    one call on ``tiny``, then 1e3 and, on ``large``, 1e4 calls (main spends tens of microseconds
-    in each, so a full 1e5-cell loop would take seconds per repeat). The batch ``apply_many`` runs
-    every element of the space.
+    one call on ``tiny``, then 1e3 and, on ``large``, 1e4 calls (a loop over every cell of
+    ``large`` would make a repeat too long). The batch ``apply_many`` runs every element of the
+    space.
     """
     from pantr.bspline import (  # noqa: PLC0415
         BsplineSpace,

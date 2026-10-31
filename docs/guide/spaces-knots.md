@@ -158,7 +158,7 @@ n_in  = int(np.prod(ext.input_shape_per_dir))
 n_out = int(np.prod(ext.output_shape_per_dir))
 
 v = np.ones(n_in)
-y = ext.apply(v, cell=5)                 # one element, y.shape == (n_out,)
+y = ext.apply(v, cell_idx=5)             # one element, y.shape == (n_out,)
 
 cells = np.arange(ext.num_total_intervals)
 Y = ext.apply_many(np.ones((cells.size, n_in)), cells)   # all elements at once
@@ -183,19 +183,23 @@ identity-heavy spaces also use a compact storage that saves memory.
 When you do want the dense matrix, {meth}`~pantr.bspline.SpanwiseElementExtraction.operator`
 assembles the ``(n_out, n_in)`` Kronecker product for one element and
 {meth}`~pantr.bspline.SpanwiseElementExtraction.tabulate` returns the full
-``(num_total_intervals, n_out, n_in)`` stack (this is what backs
-{meth}`~pantr.bspline.Bspline.to_beziers`). Prefer the matrix-free applies in hot loops.
+``(num_total_intervals, n_out, n_in)`` stack. Prefer the matrix-free applies in hot loops.
 
 ### Calling kernels from Numba
 
-For code that is itself ``@njit``-compiled, the operator stacks
-({attr}`~pantr.bspline.SpanwiseElementExtraction.ops_1d`,
-{attr}`~pantr.bspline.SpanwiseElementExtraction.is_identity_mask_1d`, the compact arrays
-and index maps) are plain read-only NumPy arrays, and the underlying Kronecker kernels in
-``pantr.bspline._extraction_kernels`` are importable Numba functions. The helper
-{func}`~pantr.bspline.make_struct_view` bundles every array + shape into a single
-{class}`~pantr.bspline.ExtractionStructView` (a ``NamedTuple`` Numba can unbox) so you can
-pass one argument instead of forwarding the pieces. See the
+The applies run in the compiled library, and PaNTr ships no Numba kernels to call from your
+own code. What it hands you for a kernel you write yourself are the operators: the compact
+arrays, index maps and identity masks
+({attr}`~pantr.bspline.SpanwiseElementExtraction.compact_ops_1d`,
+{attr}`~pantr.bspline.SpanwiseElementExtraction.idx_maps_1d`,
+{attr}`~pantr.bspline.SpanwiseElementExtraction.is_identity_mask_1d`) are read-only NumPy
+arrays, and {func}`~pantr.bspline.make_struct_view` bundles them with the shape metadata
+into a single {class}`~pantr.bspline.ExtractionStructView`. That is a ``NamedTuple`` of
+read-only views of the extraction's compact operators, which an ``@njit`` function you write
+accepts as one argument and reads (the arrays and the integer fields). You apply the
+operators yourself: for the element with per-direction indices ``c_k``, direction ``k``
+contributes the identity where ``is_identity_mask_1d[k][c_k]`` is set, and the matrix
+``compact_ops_1d[k][idx_maps_1d[k][c_k]]`` otherwise. See the
 {class}`~pantr.bspline.SpanwiseElementExtraction` and
 {class}`~pantr.bspline.ExtractionStructView` API entries for the full field list.
 

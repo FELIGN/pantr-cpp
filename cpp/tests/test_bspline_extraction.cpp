@@ -309,11 +309,10 @@ namespace {
 /// The bound on the relative error of a stored Bernstein value of degree `p >= 1`, in units of the
 /// unit roundoff `u`: the ratio recurrence takes `p` steps, each rounding the ratio (two
 /// roundings), the product with the constant factor (two) and the stored value (one), `5 p`, the
-/// seed by binary powering (`2 ceil(log2 p)` roundings, `1 - x` and the store, `2`) and the seed
-/// `1 - x` once more, so at most `6 p + 2 ceil(log2 p) + 2`.
-double bernstein_value_roundings(int p) {
-  return 6.0 * p + 2.0 * std::ceil(std::log2(static_cast<double>(p))) + 2.0;
-}
+/// seed by binary powering (`p - 1` roundings to first order, `int_power` in bernstein.hpp: the
+/// error of a squaring doubles with the rest, so it is not `2 ceil(log2 p)`; `1 - x` and the
+/// store, `2`) and the seed `1 - x` once more, `p`, so at most `7 p + 1`.
+double bernstein_value_roundings(int p) { return 7.0 * p + 1.0; }
 
 }  // namespace
 

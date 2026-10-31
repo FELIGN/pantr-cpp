@@ -1,7 +1,6 @@
 /// @file kron_apply.hpp
 /// @brief Applying a Kronecker product `M = kron(M_0, ..., M_{d-1})` to a vector or on both sides
-/// of
-///        a matrix, as one mode product per direction (and per side).
+///        of a matrix, as one mode product per direction (and per side).
 ///
 /// `M v` is `d` mode products on `v` viewed as a tensor with the extents `(n_in_0, ...,
 /// n_in_{d-1})`, and `M^T v` the same with the transposed factors. `M^T K M` and `M K M^T` are `2d`
@@ -20,6 +19,7 @@
 #include "pantr/bspline/detail/mode_product.hpp"
 #include "pantr/config.hpp"
 #include "pantr/core/errors.hpp"
+#include "pantr/core/format.hpp"
 #include "pantr/core/ndarray.hpp"
 #include "pantr/core/scalar.hpp"
 
@@ -27,6 +27,8 @@
 #include <cstddef>
 #include <cstring>
 #include <functional>
+#include <limits>
+#include <memory>
 #include <span>
 #include <string>
 #include <vector>
@@ -106,6 +108,36 @@ struct KronPlan {
   double ops = 1.0;
 };
 
+/// The product of `extents`, for a Kronecker product of `extents.size()` or fewer directions.
+///
+/// As `checked_product`, but the message names the direction count and `what` overflowed instead
+/// of printing every extent: the number of directions is the caller's, and a list of that many
+/// extents is not a message.
+///
+/// Args:
+///     extents (std::span<const std::size_t>): The factors.
+///     d (std::size_t): The number of directions.
+///     what (const char*): What the product counts, for the message ("<what> for d = <d>
+///         directions is too large to count").
+///
+/// Returns:
+///     std::size_t: The product.
+///
+/// Raises:
+///     capacity_error: The product overflows `std::size_t`.
+[[nodiscard]] inline std::size_t checked_count(std::span<const std::size_t> extents, std::size_t d,
+                                               const char* what) {
+  std::size_t n = 1;
+  for (const std::size_t e : extents) {
+    if (e != 0 && n > (std::numeric_limits<std::size_t>::max)() / e) {
+      throw capacity_error(std::string(what) + " for d = " + std::to_string(d) +
+                           " directions is too large to count");
+    }
+    n *= e;
+  }
+  return n;
+}
+
 /// Work out the plan of an operation.
 ///
 /// Args:
@@ -151,8 +183,9 @@ struct KronPlan {
     }
   }
   KronPlan plan;
-  plan.operand_size = checked_product(extents);
-  plan.operand_side = checked_product(std::span<const std::size_t>(extents).first(d));
+  const char* const what = "the size of the operand or of an intermediate result";
+  plan.operand_size = checked_count(extents, d, what);
+  plan.operand_side = checked_count(std::span<const std::size_t>(extents).first(d), d, what);
   double ops = 0.0;
   for (std::size_t k = 0; k < d; ++k) {
     for (std::size_t side = 0; side < sides; ++side) {
@@ -170,15 +203,15 @@ struct KronPlan {
       extents[mode] = to[k];
       ops += 2.0 * static_cast<double>(around.outer) * static_cast<double>(to[k]) *
              static_cast<double>(from[k]) * static_cast<double>(around.inner);
-      const std::size_t after = checked_product(extents);
+      const std::size_t after = checked_count(extents, d, what);
       const bool last = k + 1 == d && side + 1 == sides;
       if (!last) {
         plan.half = (std::max)(plan.half, after);
       }
     }
   }
-  plan.result_size = checked_product(extents);
-  plan.result_side = checked_product(std::span<const std::size_t>(extents).first(d));
+  plan.result_size = checked_count(extents, d, what);
+  plan.result_side = checked_count(std::span<const std::size_t>(extents).first(d), d, what);
   plan.ops = (std::max)(ops, 1.0);
   return plan;
 }
@@ -262,6 +295,84 @@ template <class T>
                                                        std::span<const std::size_t> rows,
                                                        std::span<const std::size_t> cols) {
   return 2 * detail::make_kron_plan(op, rows, cols).half;
+}
+
+/// Apply a Kronecker product `kron(M_0, ..., M_{d-1})` of arbitrary factors to one operand.
+///
+/// The same computation as the class's, on factors that need not come from a space (any shapes; an
+/// identity-flagged factor must be square). `operand` and `out` are the flat row-major vector or
+/// square matrix the operation reads and writes. No value is checked: a NaN or an infinity in the
+/// operand or a factor propagates as the multiply-adds give it (`0 * NaN` is NaN), except along an
+/// identity factor, which is not read.
+///
+/// Args:
+///     op (ExtractionOp): The operation.
+///     factors (std::span<const KronFactor<T>>): One per direction, at least one.
+///     operand (std::span<const T>): The vector or matrix the operation reads.
+///     out (std::span<T>): The vector or matrix it writes; overwritten.
+///     scratch (std::span<T>): At least `required_scratch_size` entries.
+///
+/// Raises:
+///     value_error: No factor; an identity-flagged factor that is not square; a factor with the
+///         wrong number of values; an operand, `out` or `scratch` of the wrong size; `out`
+///         overlaps `operand` (unless every factor is identity) or `scratch` overlaps either.
+///     capacity_error: A product of extents overflows `std::size_t`.
+template <StorageFloat T>
+void apply_kron(ExtractionOp op, std::span<const KronFactor<T>> factors, std::span<const T> operand,
+                std::span<T> out, std::span<T> scratch) {
+  if (factors.empty()) {
+    throw value_error("At least one direction is required");
+  }
+  std::vector<std::size_t> rows;
+  std::vector<std::size_t> cols;
+  std::vector<const T*> values;
+  const std::unique_ptr<bool[]> ident(new bool[factors.size()]);
+  bool all_identity = true;
+  for (std::size_t k = 0; k < factors.size(); ++k) {
+    const KronFactor<T>& f = factors[k];
+    if (f.identity && f.rows != f.cols) {
+      const std::size_t shape[2] = {f.rows, f.cols};
+      throw value_error("factors[" + std::to_string(k) + "] is flagged identity but has shape " +
+                        py_repr(std::span<const std::size_t>(shape)) +
+                        "; an identity operator must be square");
+    }
+    // `rows * cols` is formed only when it fits: a product past size_t matches no span.
+    const bool fits = f.rows == 0 || f.cols <= (std::numeric_limits<std::size_t>::max)() / f.rows;
+    if (!f.identity && (!fits || f.values.size() != f.rows * f.cols)) {
+      throw value_error("factors[" + std::to_string(k) + "] holds " +
+                        std::to_string(f.values.size()) + " values, but its shape needs " +
+                        std::to_string(f.rows) + " x " + std::to_string(f.cols));
+    }
+    rows.push_back(f.rows);
+    cols.push_back(f.cols);
+    values.push_back(f.values.data());
+    ident[k] = f.identity;
+    all_identity = all_identity && f.identity;
+  }
+  const detail::KronPlan plan = detail::make_kron_plan(op, rows, cols);
+  if (operand.size() != plan.operand_size) {
+    throw value_error("Operand has " + std::to_string(operand.size()) + " values, but expected " +
+                      std::to_string(plan.operand_size));
+  }
+  if (out.size() != plan.result_size) {
+    throw value_error("Output array has " + std::to_string(out.size()) + " values, but expected " +
+                      std::to_string(plan.result_size));
+  }
+  if (scratch.size() < 2 * plan.half) {
+    throw value_error("Scratch size " + std::to_string(scratch.size()) +
+                      " is smaller than required " + std::to_string(2 * plan.half));
+  }
+  if (!all_identity &&
+      detail::ranges_overlap<T>(out.data(), out.size(), operand.data(), operand.size())) {
+    throw value_error(
+        "out must not alias the operand; the kernel reads and writes overlapping memory");
+  }
+  if (detail::ranges_overlap<T>(scratch.data(), scratch.size(), operand.data(), operand.size()) ||
+      detail::ranges_overlap<T>(scratch.data(), scratch.size(), out.data(), out.size())) {
+    throw value_error("scratch must not overlap the operand or out");
+  }
+  detail::kron_execute<T>(plan, values.data(), ident.get(), operand.data(), out.data(),
+                          scratch.data());
 }
 
 }  // namespace pantr::bspline

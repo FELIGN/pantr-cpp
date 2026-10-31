@@ -38,6 +38,7 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
+from pantr._numba_compat import nb_jit
 from pantr._testing import bezier_identity_mask, lagrange_identity_mask, required_scratch_size
 from pantr.basis import LagrangeVariant
 from pantr.bspline import (
@@ -83,6 +84,17 @@ def test_unknown_target_rejected() -> None:
     sp = _space_2d()
     with pytest.raises(ValueError, match="Unknown target"):
         SpanwiseElementExtraction(sp, "spline")  # type: ignore[arg-type]
+
+
+def test_too_many_directions_for_the_operand_rejected() -> None:
+    """33 directions of degree 1 make a two-sided operand of 2**66 entries: ``ValueError``.
+
+    The message names the number of directions, not the 66 extents of the product.
+    """
+    sp1 = BsplineSpace1D([0, 0, 1, 1], 1)
+    with pytest.raises(ValueError, match=r"for d = 33 directions is too large to count") as info:
+        SpanwiseElementExtraction(BsplineSpace([sp1] * 33), "bezier")
+    assert len(str(info.value)) < 200
 
 
 def test_periodic_rejected() -> None:
@@ -1012,6 +1024,117 @@ def test_batch_apply_aliasing_raises() -> None:
         ext.apply_transpose_many(W, flat, out=W)
 
 
+def test_apply_refuses_an_out_that_shares_memory_through_a_view() -> None:
+    """A strided ``out`` that overlaps the operand is refused, as it is when contiguous.
+
+    A non-contiguous ``out`` goes through a temporary, which would otherwise hide the overlap
+    from the compiled library: ``vv[::-1]`` reversed the operand under it.
+    """
+    ext = SpanwiseElementExtraction(_space_1d_square(), "bezier")
+    n_in = int(np.prod(ext.input_shape_per_dir))
+    vv = RNG.standard_normal(n_in)
+    before = vv.copy()
+    with pytest.raises(ValueError, match="alias"):
+        ext.apply(vv, 3, out=vv[::-1])
+    with pytest.raises(ValueError, match="alias"):
+        ext.apply_transpose(vv, 3, out=vv[::-1])
+    np.testing.assert_array_equal(vv, before)
+
+    # A strided operand over the same memory as `out` is the same case.
+    buf = RNG.standard_normal(2 * n_in)
+    kept = buf.copy()
+    with pytest.raises(ValueError, match="alias"):
+        ext.apply(buf[::2], 3, out=buf[:n_in])
+    np.testing.assert_array_equal(buf, kept)
+
+    # The matrix operations too.
+    n_out = int(np.prod(ext.output_shape_per_dir))
+    big = RNG.standard_normal((2 * n_out, n_out))
+    with pytest.raises(ValueError, match="alias"):
+        ext.apply_MT_K_M(big[::2], 3, out=big[::2])
+    with pytest.raises(ValueError, match="alias"):
+        ext.apply_M_K_MT(big[::2], 3, out=big[::2][:, ::-1])
+
+
+def test_apply_accepts_interleaved_views_that_share_no_element() -> None:
+    """Two strided views of one buffer that touch no common element do not alias.
+
+    Their address ranges overlap, which is what a bounds test would refuse; only the element
+    test accepts them.
+    """
+    ext = SpanwiseElementExtraction(_space_1d_square(), "bezier")
+    n_in = int(np.prod(ext.input_shape_per_dir))
+    buf = RNG.standard_normal(2 * n_in)
+    v = buf[::2]
+    expected = ext.apply(v.copy(), 3)
+    got = ext.apply(v, 3, out=buf[1::2])
+    np.testing.assert_array_equal(got, expected)
+    np.testing.assert_array_equal(buf[1::2], expected)
+
+
+def _identity_space_1d() -> BsplineSpace:
+    """Degree-1 space whose Bezier elements are all identity (knots of multiplicity 2)."""
+    return BsplineSpace([BsplineSpace1D([0, 0, 1, 1, 2, 2], 1)])
+
+
+def test_identity_batch_may_overwrite_its_operand_only_in_place() -> None:
+    """A batch of copies may write over its operand as the same view, not shifted against it.
+
+    The cells run on several threads: with `out` shifted by a cell (or by one entry) a chunk
+    writes what another one reads, and the result would depend on the thread count.
+    """
+    ext = SpanwiseElementExtraction(_identity_space_1d(), "bezier")
+    assert ext.is_identity
+    n = 4096
+    cells = np.arange(n) % 2
+    buf = RNG.standard_normal(2 * n + 2)
+    before = buf.copy()
+
+    # In place: the same view.
+    operand = buf[: 2 * n].reshape(n, 2)
+    got = ext.apply_many(operand, cells, out=operand)
+    assert got is operand
+    np.testing.assert_array_equal(buf, before)
+
+    # Shifted by one cell, and by one entry: refused, nothing written.
+    for shift in (1, 2):
+        operand = buf[: 2 * n].reshape(n, 2)
+        out = buf[shift : shift + 2 * n].reshape(n, 2)
+        with pytest.raises(ValueError, match="alias"):
+            ext.apply_many(operand, cells, out=out)
+        np.testing.assert_array_equal(buf, before)
+
+    # Another view of the same memory (reversed rows) is not the same view either.
+    operand = buf[: 2 * n].reshape(n, 2)
+    with pytest.raises(ValueError, match="alias"):
+        ext.apply_many(operand, cells, out=operand[::-1])
+    np.testing.assert_array_equal(buf, before)
+
+
+def test_identity_cell_is_a_copy_whatever_the_overlap() -> None:
+    """One cell that is the identity is one copy, correct for any overlap with its operand."""
+    ext = SpanwiseElementExtraction(_identity_space_1d(), "bezier")
+    buf = RNG.standard_normal(3)
+    expected = buf[:2].copy()
+    got = ext.apply(buf[:2], 0, out=buf[1:3])
+    np.testing.assert_array_equal(got, expected)
+    np.testing.assert_array_equal(buf[1:], expected)
+
+
+def test_non_identity_batch_refuses_a_shifted_overlap() -> None:
+    """A batch with a non-identity cell refuses `out` shifted against its operand."""
+    ext = SpanwiseElementExtraction(_space_1d_square(), "bezier")
+    n_in = int(np.prod(ext.input_shape_per_dir))
+    n = 64
+    buf = RNG.standard_normal(n * n_in + n_in)
+    before = buf.copy()
+    operand = buf[: n * n_in].reshape(n, n_in)
+    out = buf[n_in:].reshape(n, n_in)
+    with pytest.raises(ValueError, match="alias"):
+        ext.apply_many(operand, np.arange(n) % ext.num_total_intervals, out=out)
+    np.testing.assert_array_equal(buf, before)
+
+
 def test_apply_with_distinct_out_still_works() -> None:
     """A non-aliasing ``out`` must still be accepted and give the allocating answer.
 
@@ -1406,6 +1529,67 @@ def test_struct_view_float32_reproduces_the_batch_apply() -> None:
     )
 
 
+@nb_jit(nopython=True)
+def _njit_read_view(  # pragma: no cover -- executed through Numba.
+    view: ExtractionStructView,
+) -> tuple[float, int, int, int]:
+    """Read every field of a view: operator sum, index-map sum, identity count, int fields."""
+    ops_total = 0.0
+    idx_total = 0
+    n_identity = 0
+    for k in range(view.dim):
+        ops = view.compact_ops_1d[k]
+        for i in range(ops.shape[0]):
+            for j in range(ops.shape[1]):
+                for m in range(ops.shape[2]):
+                    ops_total += ops[i, j, m]
+        for i in range(view.idx_maps_1d[k].shape[0]):
+            idx_total += view.idx_maps_1d[k][i]
+            if view.is_identity_mask_1d[k][i]:
+                n_identity += 1
+    ints = view.dim
+    for n in view.num_intervals:
+        ints += n
+    for n in view.input_shape_per_dir:
+        ints += n
+    for n in view.output_shape_per_dir:
+        ints += n
+    return ops_total, idx_total, n_identity, ints
+
+
+@pytest.mark.parametrize("dtype", [np.float64, np.float32])
+@pytest.mark.parametrize("target", ["bezier", "cardinal"])
+def test_struct_view_is_accepted_by_njit_code(dtype: Any, target: str) -> None:
+    """A user's ``@njit`` function takes the view as one argument and reads its arrays.
+
+    This is the property the guide promises (pantr ships no Numba kernels to call): the oracle is
+    NumPy reading the same fields. The operator sums differ from NumPy's only by the order of
+    summation: both are bounded by ``(n - 1) u sum|x|`` in the float64 accumulator, so they
+    agree within ``(n - 1) eps_64 sum|x|``.
+    """
+    knots = np.array([0, 0, 0, 1, 2, 3, 4, 5, 6, 6, 6], dtype=dtype)
+    sp1 = BsplineSpace1D(knots, 2)
+    ext = SpanwiseElementExtraction(BsplineSpace([sp1, sp1]), target)  # type: ignore[arg-type]
+    assert ext.dtype == dtype
+    view = make_struct_view(ext)
+
+    ops_total, idx_total, n_identity, ints = _njit_read_view(view)
+
+    # NumPy reads the extraction's own properties, which the view must carry unchanged.
+    flat = np.concatenate([a.astype(np.float64).ravel() for a in ext.compact_ops_1d])
+    bound = (flat.size - 1) * np.finfo(np.float64).eps * float(np.abs(flat).sum())
+    assert abs(ops_total - float(flat.sum())) <= bound
+    assert idx_total == sum(int(m.sum()) for m in ext.idx_maps_1d)
+    assert n_identity == sum(int(m.sum()) for m in ext.is_identity_mask_1d)
+    assert (n_identity > 0) == (target == "cardinal")
+    assert ints == (
+        ext.dim
+        + sum(ext.num_intervals)
+        + sum(ext.input_shape_per_dir)
+        + sum(ext.output_shape_per_dir)
+    )
+
+
 # ---------------------------------------------------------------- factors()
 
 
@@ -1653,12 +1837,21 @@ def test_returned_arrays_are_read_only_views_that_outlive_the_extraction(target:
 
 
 def test_extraction_is_not_changed_by_its_inputs() -> None:
-    """The space is copied into the value: later work on other objects cannot reach it."""
-    ext = SpanwiseElementExtraction(_space_2d(), "cardinal")
+    """The knots are copied into the value: changing the caller's array cannot reach it."""
+    knots = np.array([0, 0, 0, 1, 2, 3, 4, 5, 6, 6, 6], dtype=np.float64)
+    sp1 = BsplineSpace1D(knots, 2)
+    ext = SpanwiseElementExtraction(BsplineSpace([sp1, sp1]), "cardinal")
     before = ext.operator(7).copy()
-    other = SpanwiseElementExtraction(_space_3d(), "bezier")
-    other.apply(np.ones(27), 0)
+    compact_before = [a.copy() for a in ext.compact_ops_1d]
+    # Move the interior knots, so that a value that read the caller's array again would differ.
+    knots[3:8] += 0.3
+    moved = SpanwiseElementExtraction(
+        BsplineSpace([BsplineSpace1D(knots, 2), BsplineSpace1D(knots, 2)]), "cardinal"
+    )
+    assert not np.array_equal(moved.operator(7), before)
     np.testing.assert_array_equal(ext.operator(7), before)
+    for kept, now in zip(compact_before, ext.compact_ops_1d, strict=True):
+        np.testing.assert_array_equal(now, kept)
 
 
 class _Tagged(SpanwiseElementExtraction):
