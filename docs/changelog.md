@@ -66,28 +66,37 @@
   still checks its degrees first, it is checked before the count or degree
   (`compute_bernstein_to_lagrange_1d` already refused it). The same holds for
   `BsplineSpace1D.tabulate_Lagrange_extraction_operators` and for `SpanwiseElementExtraction`
-  with `target="lagrange"`, which treated any other value as the equispaced variant; lower-case
-  string values are still accepted, and the other targets still ignore the variant.
+  with `target="lagrange"`, which treated any other value as the Chebyshev second-kind variant;
+  lower-case string values are still accepted, and the other targets still ignore the variant.
 - **`Bspline.remove_knots` refuses a knot that is not an interior knot of the domain** (a knot
   outside the domain of an unclamped direction): `ValueError` "Cannot remove knot v: it is not
-  an interior knot of the domain [lo, hi]." The previous release read and wrote past its arrays
-  for such a knot and returned a B-spline with other values.
+  an interior knot of the domain [lo, hi]." The previous kernel indexed past its arrays for such
+  a knot; it returned the B-spline unchanged in most cases, and one with other values under a
+  large `tol`.
 - **A knot repeated more than `degree + 1` times is refused** with a `ValueError` naming the
   knot, its multiplicity and the degree: by `Bspline.remove_knots` when it is the knot to
   remove, and by `elevate_degree`, `reduce_degree`, `derivative(keep_degree=True)` and the
-  rational `derivative` for any such knot. For the knot to remove, the previous release
-  returned the B-spline unchanged by default and with `num=1`, and removed up to `degree` copies
-  under a large `tol` (through a wrapped negative index); in the other operations it raised an
-  unrelated "The number of control points must be a multiple of ..." or ended the process. The
+  rational `derivative` for any such knot in a direction they work on. The algorithms index their
+  arrays assuming at most `degree + 1` copies of a knot, and the C++ code refuses rather than
+  read past them. For the knot to remove, the previous release returned the B-spline unchanged by
+  default and with `num=1`, and removed up to `degree` copies under a large `tol` (through a
+  wrapped negative index). In the other operations its result depended on where the excess
+  stood: an excess at the first knot often gave a correct result, and otherwise it raised an
+  unrelated error ("The number of control points must be a multiple of ...", "Inserting these
+  knots would exceed the maximum multiplicity", `ZeroDivisionError`) or ended the process. The
   non-rational `derivative()` with `keep_degree=False` still works on such a B-spline.
 - **`Bspline.reduce_degree` refuses a direction whose knot vector is not clamped** ("needs a
-  clamped knot vector"); the previous release returned a different function or raised "knots
-  must be non-decreasing".
+  clamped knot vector"); the previous release returned a different function or raised another
+  error ("knots must be non-decreasing", "knot vector spans no interval", "A periodic knot vector
+  needs a boundary multiplicity").
 - **A NaN `value` in `Bspline.slice`** raises `ValueError` ("value nan is outside the domain");
   it was an `IndexError` raised after reading past the knots.
 - **A `scratch` array of `SpanwiseElementExtraction`'s `apply` family that overlaps the operand
-  or `out`** raises `ValueError` ("scratch must not overlap the operand or out"); the previous
-  kernels used it as working memory and returned corrupted values.
+  or `out`** raises `ValueError` ("scratch must not overlap the operand or out"). The previous
+  kernels used it as working memory: depending on the overlap, the identity pattern and the
+  number of directions, the result was right or corrupted.
+- **`SpanwiseElementExtraction` of a `BsplineSpace` with no direction** raises `IndexError`; the
+  previous release built one.
 
 ### Changed
 - **pantr needs Python 3.12 or later.** pantr is becoming a C++ library with a compiled
@@ -490,101 +499,130 @@
   given no longer changes the B-spline; `control_points` is a read-only view that cannot be made
   writable; the B-splines returned by `reverse`, `slice`, `boundary` and `permute_directions`
   hold read-only, C-contiguous control points (`reverse()` returned a view of the original
-  through a flip, and the others writable arrays); `reverse`, `permute_directions` and `transform`
-  with `in_place=True` replace the value and the space the object holds, so an array read before
-  the call keeps its values and `control_points` is a new array afterwards.
+  through a flip in most cases, and the others writable arrays); `reverse`, `permute_directions`
+  and `transform` with `in_place=True` replace the value the object holds (and, for the first
+  two, its space), so an array read before the call keeps its values and `control_points` is a
+  new array afterwards. `is_rational` is the `bool` of the argument given (it returned the
+  argument as given). `evaluate_derivatives` returns an array owning its data (it could be a view).
   `Bezier.to_bspline(copy=False)` and `create_from_bezier(copy=False)` copy, so the B-spline no
   longer shares the Bézier's array. `Bspline.to_bezier(copy=False)` and
   `create_from_bspline(..., copy=False)` share the B-spline's own buffer, read-only, so an
-  in-place operation on the B-spline no longer shows in that Bézier; a B-spline that is not open
-  is converted to open form without the copies the previous release made. Constructing a
-  `Bspline` therefore takes time proportional to its control points, where it took a constant
-  time, plus the call that builds the compiled value.
+  in-place operation on the B-spline no longer shows in that Bézier; for a B-spline that is not
+  open, the Bézier retains one copy of the open form's control points where the previous release
+  retained more, although the conversion's peak memory is higher. Constructing a `Bspline`
+  therefore takes time proportional to its control points, where it took a constant time, plus
+  the call that builds the compiled value.
 - **`Bspline` and `SpanwiseElementExtraction` pickle and copy explicitly** (`__reduce__`,
   `__copy__`, `__deepcopy__`, which share the immutable value). Subclasses and their attributes
   survive. A `Bspline` pickled by the previous release still loads; one pickled now does not load
   in the previous release. The cached Bézier decomposition and point-inversion state of a
-  `Bspline` are not pickled, so a B-spline on which `locate` ran now pickles (it raised).
-- **Values move in the last bits**, since the C++ code orders its sums and products differently.
-  Largest difference seen against the previous release over the sampled cases, in units of
-  `eps * max(1, |largest value|)` of the dtype (one to three directions, open, non-open and
-  periodic knots, rational and polynomial, `float32` and `float64`): evaluation 1.6, derivatives
-  6.9, knot insertion, `to_open_bspline`, `to_periodic`, `subdivide`, `restrict` and `split` 3.5,
-  `elevate_degree` 3.9, `reduce_degree` 3.5, `derivative` 4.7, `slice` 1.8, `boundary` 0.8,
-  `to_beziers` 1.1, the Bézier extraction operators 0.5, the Lagrange extraction operators 2.5,
-  the extraction applications 1.6. Knot vectors are unchanged. Knot removal removes the same knots
-  with the same control points on the generic instruction set; `reverse` and `permute_directions`
-  give the same values, and `transform` gives them except for a single-control-point periodic
-  B-spline of degree 0, by one unit in the last place. The cardinal extraction operators inherit
-  the differences of the cardinal-to-Bernstein matrix computed in C++ (above), which grow with the
-  degree (largest seen: 22 at degree 3, 1383 at degree 5).
-- **`Bspline` evaluation and `to_beziers` run on pantr's thread pool**, as do the batch
-  applications of `SpanwiseElementExtraction`, with the GIL released. A lattice of two or more
-  directions is contracted direction by direction, so the value on a lattice equals the value at
-  the same points only to rounding, where it was bitwise equal. A one-direction B-spline with
-  Bézier-like knots is evaluated through the Bernstein basis, as several directions already were.
-  A one-direction `PointsLattice` of the other float dtype is evaluated with the basis in the
-  lattice's dtype (it was the B-spline's).
+  `Bspline` are not pickled, so a B-spline on which `locate` ran now pickles with protocols 0 and
+  1 too (it raised there).
+- **Values move in the last bits**, since the C++ code orders its sums and products differently
+  and the build may contract multiply-adds. In samples of a few hundred random B-splines (one to
+  three directions, degree up to 5, open, non-open and periodic knots, rational and polynomial,
+  `float32` and `float64`, two instruction sets), the largest difference seen against the previous
+  release, in units of `eps * max(1, |largest value|)` of the dtype, was: evaluation 2.5,
+  derivatives 38 (rational `float32` on a lattice; 12 otherwise), knot insertion, `subdivide`,
+  `to_periodic`, `to_open_bspline`, `restrict` and `split` 4.0, `elevate_degree` 5.1,
+  `reduce_degree` 3.5, `derivative` 22, `slice` 2.9, `boundary` 1.4, `to_beziers` 3.1, the Bézier
+  extraction operators 1.0, the Lagrange extraction operators 2.5, the extraction applications
+  4.3. These are maxima of samples, not bounds. Knot vectors are unchanged. Knot removal removes
+  the same knots with the same control points on the generic instruction set; `reverse` and
+  `permute_directions` give the same values, and `transform` gives them up to one unit in the last
+  place on some instruction sets. The cardinal extraction operators inherit the differences of the
+  cardinal-to-Bernstein matrix computed in C++ (above), which grow with the degree and with
+  non-uniform knots (largest seen: 22 at degree 3 and 1 383 at degree 5 for uniform open knots on
+  one instruction set, 3 426 at degree 5 on another, 29 904 at degree 5 on non-uniform knots).
+- **`Bspline` evaluation runs on pantr's thread pool**, as do the batch applications of
+  `SpanwiseElementExtraction` and the decomposition of `to_beziers` (whose Python Bézier objects
+  are then built with the GIL held), with the GIL released. A lattice of two or more directions
+  is contracted direction by direction; the value on such a lattice and at the same points agree
+  to rounding, as before. A one-direction B-spline with Bézier-like knots is evaluated through the
+  Bernstein basis, as several directions already were. A one-direction `PointsLattice` of the
+  other float dtype is evaluated with the basis in the lattice's dtype (it was the B-spline's).
 - **`Bspline.evaluate_derivatives` checks `orders` as integers in every dimension.** With one
   direction, `len(orders) != 1` raises `ValueError` "len(orders) must equal spline.dim (1), got
   n" (the previous release raised `IndexError` for `[]` and ignored the extra entries otherwise),
   and a negative order reads "orders[0] must be >= 0, got -1" (it read "n_deriv must be >= 0,
-  got -1"). Each order goes through `operator.index`: `bool` and objects with `__index__` are
-  accepted, a float order is a `TypeError`, a NumPy scalar passed as the whole of `orders` is a
-  `TypeError` (it was an `IndexError`), an order from `2**31` raises `ValueError` "derivative
-  order N is too large" (it was a `MemoryError`) and one from `2**63` a `TypeError`. The orders
-  are checked before the points.
+  got -1"). `orders` may be any iterable of integers (a set, a generator), each going through
+  `operator.index`: `bool` and objects with `__index__` are accepted, a float order is a
+  `TypeError`, a NumPy scalar passed as the whole of `orders` is a `TypeError` (it was an
+  `IndexError`), an order from `2**31` raises `ValueError` "derivative order N is too large"
+  (the previous release tried to allocate the derivative table and failed with a `MemoryError`,
+  ran out of memory, or from `2**62` raised NumPy's `ValueError` "array is too big") and one from
+  `2**63` a `TypeError`. The orders are checked before the
+  points.
 - **A derivative whose recurrence divides by zero** (a point inside the tolerance band of an
-  empty span) raises `ZeroDivisionError` in every dimension; with one direction the previous
-  release returned NaN or arbitrary values.
+  empty span) raises `ZeroDivisionError` in every dimension and at any number of points. The
+  previous release returned NaN or arbitrary values with one direction, and with two or three
+  raised below 4 096 points and returned NaN above; at such a point an order above the degree
+  returned 0.0 and now raises too.
 - A rational B-spline with a zero or NaN weight evaluates to `inf` or NaN without the NumPy
-  `RuntimeWarning` ("invalid value encountered in divide") the previous release emitted.
-- The out-of-domain message of `Bspline.evaluate` prints the domain with Python floats
-  (`(0.0, 1.0)`, not `(np.float64(0.0), np.float64(1.0))`), and other domain messages print a
-  `float32` value at `float32` precision (`2e-09`, not `1.999999943436137e-09`). With one
-  direction, an invalid `out` is reported before an out-of-domain point, as several directions
-  already did.
+  `RuntimeWarning`s (such as "invalid value encountered in divide") the previous release emitted.
+- The out-of-domain messages of `Bspline.evaluate` and `evaluate_derivatives` print the domain
+  with Python floats (`(0.0, 1.0)`, not `(np.float64(0.0), np.float64(1.0))`; a `float32` domain
+  prints as its `float64` value, `0.10000000149011612`, not `np.float32(0.1)`), and
+  `Bspline.slice`'s domain message prints a `float32` domain at `float32` precision (`2e-09`, not
+  `1.999999943436137e-09`). With one direction, an invalid `out` is reported before an
+  out-of-domain point, as several directions already did.
 - **Arguments of the ported `Bspline` operations are read as the C++ entry points take them:**
   - `restrict` and `split` read bounds and values as Python floats: `np.float16` and
     `np.float32` bounds now work (they raised an unrelated "knots must have at least
-    2*degree+2 elements"), a `Decimal` or any object with `__float__` is accepted, a string is
-    a `TypeError` ("expected a real number, got str"), and `split(0, 10**400)` raises
-    `OverflowError` (it raised `ValueError`). For a `float32` B-spline an `np.float64` bound is
-    compared in `float32`, as a Python float was; the previous release compared it in `float64`.
+    2*degree+2 elements" or returned a B-spline restricted to another domain), a `Decimal` or any
+    object with `__float__` is accepted, a string is a `TypeError` ("expected a real number, got
+    str"), and `split(0, 10**400)` raises `OverflowError` (it raised `ValueError`). For a
+    `float32` B-spline, `restrict` compares an `np.float64` bound in `float32`, as a Python float
+    was (the previous release compared it in `float64`); `split` compares its value in `float64`,
+    as before.
+  - `remove_knots`' `tol` is read as a Python float: `np.float16`, `Decimal`, `Fraction` and
+    objects with `__float__` are accepted, and a list is a `TypeError` (it was accepted).
   - Directions, axes, counts, `regularity`, `num` and permutation entries go through
     `operator.index`: a float is a `TypeError`, where `subdivide(2, regularity=1.0)` (on
     `Bspline` and on `BsplineSpace1D`) and `remove_knots(..., num=1.0)` were accepted,
-    `Bspline.subdivide([1.0])` skipped the direction and `[0.5]` raised `ValueError`; a float,
-    `bool` array or other non-integer axis or direction out of range is a `TypeError` (it was a
-    `ValueError` for some); objects with `__index__` are accepted, as is a list of booleans as a
-    permutation; `remove_knots` accepts a 0-d integer `num` and a `Fraction` `tol` (they raised
+    `Bspline.subdivide([1.0])` skipped the direction and `[0.5]` raised `ValueError`; a float, a
+    `bool` array or another non-integer axis or direction is a `TypeError` (some were a
+    `ValueError`, from the range check that ran first); objects with `__index__` are accepted, as
+    is a list of booleans as a permutation; `remove_knots` accepts a 0-d integer `num` (it raised
     Numba's `TypingError`). `boundary`'s `side` keeps the previous handling.
   - An integer argument past 64 bits is reported saturated at `9223372036854775807` in the
     message, and `subdivide(10**30)` (on `Bspline` and `BsplineSpace1D`) raises `ValueError` "...
     would insert more knots than an array can hold." (NumPy's "Maximum allowed size exceeded"
     before).
   - Messages print values as floats where they echoed an integer argument ("got 1.0.", "value
-    2.0 is outside"), `True` as `1`, and list every out-of-domain knot to insert without NumPy's
-    array padding. `insert_knots` checks that every direction's `new_knots` is one-dimensional
-    before inserting any.
+    2.0 is outside"), `True` as `1`, and list every out-of-domain knot to insert at full
+    precision without NumPy's array formatting. `insert_knots` checks that every direction's
+    `new_knots` is one-dimensional before inserting any.
   - A singular least-squares system in `to_periodic` would raise `ValueError` "Singular matrix"
     (`numpy.linalg.LinAlgError`, a `ValueError` subclass, before); no input reaching it was found.
+- **Inputs outside the annotated types, and calls with two invalid arguments, in `Bspline` and
+  `SpanwiseElementExtraction`** can raise another exception or message than before: a conversion
+  error (of an index, a real value, a Lagrange variant or the orders) is reported before a range
+  or shape error (for example `slice(10, "x")` is now a `TypeError` for the value, where it was a
+  `ValueError` for the axis, and `SpanwiseElementExtraction` of a periodic space with an invalid
+  variant raises `ValueError` for the variant, where it raised `NotImplementedError`), and an
+  object that is not a space, or `orders=1.0`, fails with another message.
 - **`SpanwiseElementExtraction` takes any number of directions** (its `apply` family raised
   `NotImplementedError` beyond three) and **any memory layout** for the operand, `out`, `scratch`
-  and the cell indices (non-contiguous, Fortran-ordered and masked arrays raised Numba's typing
-  errors); such arrays go through a temporary. `compact_ops_1d`, `idx_maps_1d` and
-  `is_identity_mask_1d` are read-only views over the C++ value. A first argument that is not a
-  `BsplineSpace` raises `AttributeError` for `None` and `TypeError` for a `BsplineSpace1D` (both
-  raised `AttributeError` on `.spaces`). When a call has two faults, a read-only or wrongly typed
-  `scratch` is reported before a too-small one or an aliasing `out`. `ExtractionStructView` keeps
-  its fields, now holding those views; the Numba kernels it was meant to feed are gone.
+  and the cell indices, through a temporary where needed. The previous kernels raised Numba's
+  typing errors for masked, strided and some Fortran-ordered arrays, and returned wrong values
+  for a Fortran-ordered matrix in one-cell `apply_MT_K_M` and `apply_M_K_MT` with two or three
+  directions. A masked `out` of `BsplineSpace1D.tabulate_*_extraction_operators` is accepted
+  (it was refused). `compact_ops_1d`, `idx_maps_1d` and `is_identity_mask_1d` are read-only views
+  over the C++ value. A first argument that is not a `BsplineSpace` raises `AttributeError` for
+  `None` and `TypeError` for a `BsplineSpace1D` (both raised `AttributeError` on `.spaces`). When
+  a call has two faults, a read-only or wrongly typed `scratch` is reported before a too-small
+  one. `ExtractionStructView` keeps its fields, now holding those views; the Numba kernels it was
+  meant to feed are gone.
 - The private modules `pantr.bspline._bspline_basis_core`, `_bspline_knot_insertion_core`,
   `_bspline_restrict`, `_bspline_split`, `_bspline_blossom`, `_bspline_blossom_core`,
   `_bspline_degree`, `_bspline_degree_core`, `_bspline_knot_removal`,
   `_bspline_knot_removal_core`, `_bspline_slice`, `_bspline_to_beziers`, `_bspline_extraction`,
   `_extraction_kernels`, `_extraction_helpers` and `pantr._transform_control_points`, the
-  evaluation kernels of `_bspline_eval`, `Bspline._control_points`, `Bezier._borrow`, and the
-  helpers `_bspline_knots._check_spline_info`, `_find_span`, `_count_multiplicity`,
+  evaluation kernels of `_bspline_eval`, every function of `_bspline_knot_insertion` but
+  `_compute_oslo_matrix_1d_core`, the non-rational helpers of `_bspline_derivative`,
+  `Bspline._control_points`, `SpanwiseElementExtraction._ops_for_cell`, and the helpers
+  `_bspline_knots._is_in_domain_impl`, `_check_spline_info`, `_find_span`, `_count_multiplicity`,
   `_find_knot_index_and_multiplicity` and `_get_Bspline_cardinal_intervals_1D_core` and `_impl`,
   `_control_points_utils._reverse_control_points` and `_permute_control_points`, and
   `spanwise_element_extraction._bezier_structural_identity_mask` and
