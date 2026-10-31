@@ -43,7 +43,9 @@
 - **`Bspline.derivative(keep_degree=True)` refuses an unclamped direction**, and so does a
   rational `derivative()` in either setting, since both re-elevate. It used to return a
   function that disagrees with the true derivative. A non-rational `derivative()` with
-  `keep_degree=False`, and a direction of degree 1, are unaffected.
+  `keep_degree=False`, and a non-rational direction of degree 1, are unaffected. A rational
+  direction of degree 1 is differentiated whether or not it is clamped, where the previous release
+  raised `ValueError` (see the rational `derivative` under Changed).
 - **A rational `derivative()` on a periodic direction with a C^0 seam is refused**
   (seam multiplicity equal to the degree). The derivative is discontinuous at the seam and
   has no periodic form; the error says so. Before, the same input raised a misleading
@@ -643,21 +645,31 @@
     sampled and in 960 more that pair each boundary type with each of the three (degrees 0 to 3,
     polynomial and rational, `float32` and `float64`). The control points are not: the C++ code
     orders its sums and products differently, and solves the least-squares projections (onto the
-    minimal product knot vectors, and onto a periodic or unclamped boundary) with Eigen's SVD where
-    the previous release called LAPACK's through NumPy. Over 1 575 of the random products
+    minimal product knot vectors, and onto a periodic or unclamped boundary) by a banded QR where
+    the previous release called LAPACK's SVD-based solver through NumPy. The QR's answer is kept
+    only where it shows the system has full rank well clear of that solver's cutoff, and the
+    SVD (Eigen's) solves the rest; the cost of a projection then grows about with the square of
+    the number of intervals rather than its cube. Over 1 575 of the random products
     (one to three directions, open, unclamped and periodic operands in any pairing, polynomial and
     rational, `float32` and `float64`, domains of length 3e-4 to 3e3), the largest difference seen
     against the previous release, in units of `eps * max(1, |largest control value|)` of the
-    dtype, was 190 for `float64` and 29 for `float32`; it was 62 and 3.1 when all operands were
+    dtype, was 182 for `float64` and 29 for `float32`; it was 69 and 3.1 when all operands were
     open, so the largest differences are those of products with a periodic or unclamped operand.
-    The 960 paired products differed by at most 8.9 (`float64`) and 4.4 (`float32`). These are
-    maxima of samples, not bounds, and on domains of other lengths than those above the largest
-    seen in `float64` was larger (975).
+    The 960 paired products differed by at most 7.6 (`float64`) and 4.4 (`float32`). These are
+    maxima of samples, not bounds. On domains of other lengths the largest seen in `float64` was
+    the same; in `float32`, three two-direction products differed by far more, all of them
+    products in which the previous release read control points it had never written (see the
+    `multiply` entry under Fixed).
   - **The rational `derivative` moves in the last bits as well**, with the same knot vectors,
     degrees and boundary types to the bit (485 sampled derivatives, `keep_degree` either way). Over
     420 of them (one or two directions, open or periodic differentiated direction, `float32` and
-    `float64`, domains of length 3e-4 to 3e3) the largest difference was 10 units, as above, in
+    `float64`, domains of length 3e-4 to 3e3) the largest difference was 7.0 units, as above, in
     `float64` and 23 in `float32`.
+  - **A rational `derivative()` of a direction of degree 1 that is not clamped at both ends**
+    (unclamped, or clamped at one end only) returns the derivative, open in that direction, for
+    either `keep_degree`. The previous release raised `ValueError` ("all the input array
+    dimensions except for the concatenation axis must match exactly ..."). A direction of degree 2
+    or more that is not clamped is still refused, as above.
   - **A NaN or infinite control point or weight no longer makes `multiply` or the rational
     `derivative` emit NumPy's `RuntimeWarning`** ("invalid value encountered in add", "in
     multiply", "in subtract" or "in at"). With one such value placed at random in an operand
@@ -737,6 +749,15 @@
   nothing and only sets the event that the remaining warmup barriers wait on.
 
 ### Fixed
+- **`Bspline.multiply` no longer returns values that depend on memory it never wrote.** The
+  product groups the knots of every direction at the largest tolerance of any direction, so in a
+  direction much shorter than another (in `float32`, one a few `1e-6` long beside one of length
+  1) knots closer than the other direction's tolerance merge into one breakpoint of multiplicity
+  above `degree + 1`, and the product's Bézier form then has control points that no element
+  writes. The previous release read them as `numpy.empty` left them, so the result could change
+  from call to call on the same input, up to `1e37` or NaN. They are now zero and the result is
+  repeatable. It is still not `f g` on such input, as it was not before: the grouping itself is
+  unchanged.
 - **`SpanwiseElementExtraction`'s batch applications no longer race on an overlapping `out`.**
   A batch of cells whose operators are all the identity accepted any `out` overlapping the
   operand, and its cells then read entries other cells had written, so the result depended on the
