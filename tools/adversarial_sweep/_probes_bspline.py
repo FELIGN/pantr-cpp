@@ -832,8 +832,8 @@ def _product_agreement(
 ) -> Predicate:
     """Build a predicate requiring a spline product to equal the pointwise product.
 
-    ``_bspline_product.py``'s module docstring claims the product is *exact* in the
-    product space of degree ``p + q``. The comparison's own error is each factor's
+    The product's documentation (``include/pantr/bspline/product.hpp``) claims it is *exact*
+    in the product space of degree ``p + q``. The comparison's own error is each factor's
     evaluation error times the other factor's magnitude, so the bound is the evaluation
     tolerance scaled by the value magnitude once more.
 

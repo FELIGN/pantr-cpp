@@ -15,11 +15,74 @@ from typing import Any
 import numpy as np
 from numpy import typing as npt
 
+from .._ext import ext
 from ..bspline import Bspline, BsplineSpace, BsplineSpace1D
-from ..bspline._bspline_product import (
-    _get_interior_breakpoints_and_mults,
-    _lookup_mults_in_space,
-)
+
+_kernels: Any = ext._kernels
+"""The compiled one-direction kernels (interim surface, untyped): the knot classes."""
+
+
+def _get_interior_breakpoints_and_mults(
+    space_1d: BsplineSpace1D,
+    tol: float,
+) -> tuple[npt.NDArray[np.float32 | np.float64], npt.NDArray[np.int_]]:
+    """Return interior breakpoints and their multiplicities for a 1D B-spline space.
+
+    The knot classes of the domain at ``tol`` (rounded to the knot dtype), with the two
+    boundary classes stripped, leaving only interior breakpoints.
+
+    Args:
+        space_1d (BsplineSpace1D): The 1D B-spline space to query.
+        tol (float): Absolute tolerance for grouping nearby knots.
+
+    Returns:
+        tuple[npt.NDArray[np.float32 | np.float64], npt.NDArray[np.int_]]: Arrays
+        ``(breakpoints, multiplicities)`` of interior knots only.  Both arrays are
+        empty when the space has a single Bézier element.
+    """
+    knots = np.ascontiguousarray(space_1d.knots)
+    suffix = "_f32" if knots.dtype == np.float32 else ""
+    tol_typed = float(knots.dtype.type(tol))
+    unique, mults = getattr(_kernels, "unique_knots_and_multiplicity_1d" + suffix)(
+        knots, int(space_1d.degree), tol_typed, True
+    )
+    return unique[1:-1], mults[1:-1]
+
+
+def _lookup_mults_in_space(
+    all_bp: npt.NDArray[np.float32 | np.float64],
+    bp_space: npt.NDArray[np.float32 | np.float64],
+    mult_space: npt.NDArray[np.int_],
+    tol: float,
+) -> npt.NDArray[np.int_]:
+    """Look up the multiplicity of each merged breakpoint within a single space.
+
+    For each entry in ``all_bp``, finds the corresponding entry in ``bp_space``
+    (within ``tol``) and returns its multiplicity; returns 0 for breakpoints
+    absent from that space. Both ``all_bp`` and ``bp_space`` must be sorted in
+    ascending order; the entry compared is the one ``np.searchsorted`` finds.
+
+    Args:
+        all_bp (npt.NDArray[np.float32 | np.float64]): Merged (union) interior
+            breakpoints, sorted ascending.
+        bp_space (npt.NDArray[np.float32 | np.float64]): Interior breakpoints of
+            one space, sorted ascending.
+        mult_space (npt.NDArray[np.int_]): Multiplicities for ``bp_space``.
+        tol (float): Tolerance for coincidence tests.
+
+    Returns:
+        npt.NDArray[np.int_]: Array of shape ``(len(all_bp),)`` containing the
+        multiplicity in the given space for each entry of ``all_bp`` (0 if absent).
+    """
+    result = np.zeros(len(all_bp), dtype=np.int_)
+    if bp_space.size == 0 or all_bp.size == 0:
+        return result
+    indices = np.searchsorted(bp_space, all_bp)
+    safe_idx = np.minimum(indices, bp_space.size - 1)
+    in_range = indices < bp_space.size
+    matched = in_range & (np.abs(bp_space[safe_idx] - all_bp) <= tol)
+    result[matched] = mult_space[safe_idx[matched]]
+    return result
 
 
 def _remap_domain_1d(

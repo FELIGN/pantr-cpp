@@ -736,6 +736,17 @@ class BsplineF64:
     def to_beziers(self) -> tuple[list[int], list[pantr._pantr.bezier.BezierF64]]:
         """The Bezier patches of every element, in C order, and the elements per direction."""
 
+    def multiply(self, other: BsplineF64) -> BsplineF64:
+        """The exact pointwise product, on the minimal product knot vectors."""
+
+    def derivative_rational(self, direction: int) -> BsplineF64:
+        """The partial derivative of a rational B-spline (quotient rule)."""
+
+    def find_roots(
+        self, tol: float | None, max_insertions: int | None
+    ) -> tuple[NDArray[numpy.float64], int, int, int, int, int, float]:
+        """The zeros of a scalar univariate B-spline (Morken-Reimers), as `(roots, status, candidates, truncated, abandoned, budget, root_tol)`."""
+
 class BsplineF32:
     """An immutable B-spline map (a space and control points in a shared, read-only buffer)."""
 
@@ -916,6 +927,17 @@ class BsplineF32:
 
     def to_beziers(self) -> tuple[list[int], list[pantr._pantr.bezier.BezierF32]]:
         """The Bezier patches of every element, in C order, and the elements per direction."""
+
+    def multiply(self, other: BsplineF32) -> BsplineF32:
+        """The exact pointwise product, on the minimal product knot vectors."""
+
+    def derivative_rational(self, direction: int) -> BsplineF32:
+        """The partial derivative of a rational B-spline (quotient rule)."""
+
+    def find_roots(
+        self, tol: float | None, max_insertions: int | None
+    ) -> tuple[NDArray[numpy.float64], int, int, int, int, int, float]:
+        """The zeros of a scalar univariate B-spline (Morken-Reimers), as `(roots, status, candidates, truncated, abandoned, budget, root_tol)`."""
 
 def compute_inserted_knot_vector(
     knots: Annotated[
@@ -1306,3 +1328,9 @@ class SpanwiseExtractionF32:
         | None,
     ) -> None:
         """Write M K M^T for the element `cell` into `out`."""
+
+ROOT_STATUS_COMPLETE: int = ...
+
+ROOT_STATUS_BUDGET_EXHAUSTED: int = ...
+
+ROOT_STATUS_STALLED_AT_LAST_ITERATE: int = ...

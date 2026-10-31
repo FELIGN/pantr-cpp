@@ -39,7 +39,7 @@ import pytest
 from numpy import typing as npt
 
 from pantr._testing import find_knot_index_and_multiplicity as _find_knot_index_and_multiplicity
-from pantr._testing import knot_tolerance
+from pantr._testing import knot_tolerance, unique_knots_and_multiplicity
 from pantr.bspline import (
     Bspline,
     BsplineSpace,
@@ -47,8 +47,6 @@ from pantr.bspline import (
     THBSplineSpace,
     create_uniform_space,
 )
-from pantr.bspline._bspline_knots import _get_unique_knots_and_multiplicity_impl
-from pantr.bspline._bspline_product import _get_boundary_mults
 from pantr.grid import hierarchical_grid, uniform_grid
 
 # Coordinate scales exercised throughout. 1.0 is the regime where the leak is
@@ -97,7 +95,7 @@ class TestMultiplicityCounting:
     def test_periodic_num_basis_ignores_near_first_knot(self, base: float) -> None:
         """A periodic space's ``num_basis`` must not depend on a ``1e-6``-relative gap.
 
-        ``_get_multiplicity_of_first_knot_in_domain_impl`` counts how many of
+        The multiplicity of the first knot in the domain counts how many of
         ``knots[:degree+1]`` equal ``knots[degree]``. The leak made two knots a
         relative ``1e-6`` below it count as equal, raising the multiplicity from 1
         to 3, driving the periodic regularity correction from ``degree - 1 == 1``
@@ -139,19 +137,20 @@ class TestMultiplicityCounting:
 
     @pytest.mark.parametrize("base", SCALES)
     def test_boundary_multiplicities_ignore_a_near_boundary_knot(self, base: float) -> None:
-        """``_get_boundary_mults`` must report the true multiplicity at any scale.
+        """The boundary multiplicities must report the true multiplicity at any scale.
 
-        Shared by the product-space knot construction and, through the same
-        pattern, by ``to_open_bspline`` / ``to_periodic``.
+        Read as the first and last in-domain multiplicities of the space, which the product-space
+        knot construction (``include/pantr/bspline/product.hpp``) and, through the same pattern,
+        ``to_open_bspline`` / ``to_periodic`` rely on.
         """
         knots = np.array([1.0, 1.0, 1.0, 1.5, 2.0, 2.0, 2.0]) * base
         knots[0] -= INSIDE_LEAK * base
         knots[-1] += INSIDE_LEAK * base
         space = BsplineSpace1D(knots, 2, snap_knots=False)
 
-        m_left, m_right = _get_boundary_mults(space, space.tolerance)
+        _, mults = space.get_unique_knots_and_multiplicity(in_domain=True)
 
-        assert (m_left, m_right) == (2, 2)
+        assert (int(mults[0]), int(mults[-1])) == (2, 2)
 
 
 class TestDomainGate:
@@ -606,17 +605,15 @@ class TestDerivedKnotTolerance:
     def test_classes_partition_the_knot_vector(dtype: type[np.floating]) -> None:
         """``np.repeat(unique, mults)`` rebuilds the whole vector, as snapping needs.
 
-        The Numba kernel still serving the unported B-spline modules must group exactly as
-        the C++ space snaps (each class onto its first knot), so if the multiplicities
-        stopped summing to ``knots.size`` a vector rebuilt from them would change length.
-        Checked directly on the kernel, with ``in_domain=False``.
+        The grouping must be exactly the one the C++ space snaps with (each class onto its
+        first knot), so if the multiplicities stopped summing to ``knots.size`` a vector
+        rebuilt from them would change length. Checked directly on the knot-class kernel,
+        with ``in_domain=False``.
         """
         raw = np.asarray([0.0, 0.0, 0.0, 0.25, 0.5, 0.5, 0.75, 1.0, 1.0, 1.0], dtype=dtype)
         space = BsplineSpace1D(raw, 2)
         knots = np.asarray(space.knots)
-        unique, mults = _get_unique_knots_and_multiplicity_impl(
-            knots, space.degree, space.tolerance, False
-        )
+        unique, mults = unique_knots_and_multiplicity(knots, space.degree, space.tolerance, False)
         assert int(mults.sum()) == knots.size
         assert np.array_equal(np.repeat(np.asarray(unique), mults), knots)
         assert np.all(np.isin(np.asarray(unique), knots)), "reported knots must be stored knots"
@@ -641,7 +638,7 @@ class TestDerivedKnotTolerance:
         knots = np.zeros(8, dtype=np.float64)
         assert knot_tolerance(knots) == 0.0
 
-        unique, mults = _get_unique_knots_and_multiplicity_impl(knots, 3, 0.0, False)
+        unique, mults = unique_knots_and_multiplicity(knots, 3, 0.0, False)
         assert unique.tolist() == [0.0]
         assert mults.tolist() == [8]
 

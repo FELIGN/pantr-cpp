@@ -11,7 +11,6 @@ from pantr.bezier._bezier_product import (
     _bernstein_product_coefficients_nd,
 )
 from pantr.bspline import Bspline, BsplineSpace, BsplineSpace1D, create_uniform_periodic_knots
-from pantr.bspline._bspline_knots import _get_unique_knots_and_multiplicity_impl
 from pantr.quad import PointsLattice
 
 # ---------------------------------------------------------------------------
@@ -339,9 +338,7 @@ def _get_interior_mults(
     space_1d: BsplineSpace1D,
 ) -> tuple[npt.NDArray[np.float32 | np.float64], npt.NDArray[np.int_]]:
     """Return interior breakpoints and their multiplicities for a 1D space."""
-    unique, mults = _get_unique_knots_and_multiplicity_impl(
-        space_1d.knots, space_1d.degree, float(space_1d.tolerance), in_domain=True
-    )
+    unique, mults = space_1d.get_unique_knots_and_multiplicity(in_domain=True)
     return unique[1:-1], mults[1:-1]
 
 

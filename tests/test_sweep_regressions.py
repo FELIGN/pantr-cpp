@@ -274,8 +274,8 @@ def test_out_of_domain_points_are_rejected_at_large_knot_magnitude() -> None:
     # `_bspline_knots.py` (5), `_bspline_knot_insertion.py` (4),
     # `_bspline_knot_removal.py` (2), `_bspline_product.py` (2),
     # `_bspline_space_1d.py` (2) and the Python splitting module (1) -- not one of them passed
-    # `rtol`. (Restriction and splitting are now C++, `include/pantr/bspline/restrict.hpp`; the
-    # counts are those of the Python modules at the time.) (A 27th call, in
+    # `rtol`. (Restriction, splitting and products are now C++, `include/pantr/bspline/restrict.hpp`
+    # and `product.hpp`; the counts are those of the Python modules at the time.) (A 27th call, in
     # `_bspline_quasi_interpolation.py`, is inside a doctest and so not a library site.)
     # Consequences measured at the time, all at |knot| ~ 1e6:
     # `tabulate_basis` accepted a point 10 units outside a unit-length domain and returned
@@ -753,7 +753,8 @@ def test_find_roots_returns_only_genuine_roots() -> None:
     # 0.0208 on a curve whose values are bounded by 1.
     #
     # The mechanism, traced through a line-for-line pure-Python mirror of
-    # `_bspline_roots_core.py` that reproduced the same wrong roots bit for bit:
+    # the Numba `_bspline_roots_core.py` (now `include/pantr/bspline/roots.hpp`) that
+    # reproduced the same wrong roots bit for bit:
     # `_track_zero` treated a repeated iterate (`x == previous_x`) as a certificate of
     # convergence, per Morken-Reimers Lemma 13/Corollary 14, and `_morken_reimers_roots`
     # then gated acceptance on
@@ -1029,7 +1030,8 @@ def test_unique_knots_are_knots_of_the_space() -> None:
     # answered 2.0e-7, 5.0e-7 and 8.0e-7 -- each moved by 20% of its own value, to a knot
     # the space does not have.
     #
-    # `_get_unique_knots_and_multiplicity_impl` rounded
+    # The Numba `_get_unique_knots_and_multiplicity_impl` (now
+    # `unique_knots_and_multiplicity` in `include/pantr/bspline/knots.hpp`) rounded
     # onto a grid of width `tol` to decide which knots are the same,
     #
     #     scale = dtype.type(1.0 / tol)

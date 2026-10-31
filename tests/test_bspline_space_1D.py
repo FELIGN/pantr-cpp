@@ -20,11 +20,6 @@ from pantr.bspline import (
     create_uniform_open_knots,
     create_uniform_periodic_knots,
 )
-from pantr.bspline._bspline_knots import (
-    _get_Bspline_num_basis_1D_impl,
-    _get_multiplicity_of_first_knot_in_domain_impl,
-    _get_unique_knots_and_multiplicity_impl,
-)
 from pantr.change_basis import compute_lagrange_to_bernstein_1d
 from pantr.tolerance import get_strict
 
@@ -151,7 +146,7 @@ class TestBsplineSpace1DProperties:
         assert not unique.flags.writeable
         assert not mults.flags.writeable
 
-        expected_unique, expected_mults = _get_unique_knots_and_multiplicity_impl(
+        expected_unique, expected_mults = _testing.unique_knots_and_multiplicity(
             np.asarray(spline.knots), spline.degree, spline.tolerance, in_domain
         )
         np.testing.assert_array_equal(unique, expected_unique)
@@ -538,35 +533,33 @@ class TestAssertSplineInfo:
 
 
 class TestGetMultiplicityOfFirstKnotInDomain:
-    """Test the _get_multiplicity_of_first_knot_in_domain_impl function."""
+    """Test the multiplicity of the first knot in the domain, as the space reports it."""
 
     def test_open_knot_vector(self) -> None:
         """Test multiplicity calculation for open knot vector."""
         knots = np.array([0.0, 0.0, 0.0, 1.0, 1.0, 1.0], dtype=np.float64)
         degree = 2
-        tol = 1e-10
-        result = _get_multiplicity_of_first_knot_in_domain_impl(knots, degree, tol)
+        _, mults = BsplineSpace1D(knots, degree).get_unique_knots_and_multiplicity(in_domain=True)
         # First knot in domain (index 2) has multiplicity 3
-        assert result == 3
+        assert mults[0] == 3
 
     def test_periodic_knot_vector(self) -> None:
         """Test multiplicity calculation for periodic knot vector."""
         knots = np.array([-1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0], dtype=np.float64)
         degree = 2
-        tol = 1e-10
-        result = _get_multiplicity_of_first_knot_in_domain_impl(knots, degree, tol)
-        assert result == 1  # First knot in domain (index 2) has multiplicity 1
+        _, mults = _testing.unique_knots_and_multiplicity(knots, degree, 1e-10, True)
+        assert mults[0] == 1  # First knot in domain (index 2) has multiplicity 1
 
 
 class TestGetUniqueKnotsAndMultiplicity:
-    """Test the _get_unique_knots_and_multiplicity_impl function."""
+    """Test the knot classes of a raw knot vector at an explicit tolerance."""
 
     def test_open_knot_vector_full(self) -> None:
         """Test unique knots extraction for full knot vector."""
         knots = np.array([0.0, 0.0, 0.0, 1.0, 1.0, 1.0], dtype=np.float64)
         degree = 2
         tol = 1e-10
-        unique_knots, multiplicities = _get_unique_knots_and_multiplicity_impl(
+        unique_knots, multiplicities = _testing.unique_knots_and_multiplicity(
             knots, degree, tol, in_domain=False
         )
         expected_unique = np.array([0.0, 1.0])
@@ -579,7 +572,7 @@ class TestGetUniqueKnotsAndMultiplicity:
         knots = np.array([0.0, 0.0, 0.0, 1.0, 1.0, 1.0], dtype=np.float64)
         degree = 2
         tol = 1e-10
-        unique_knots, multiplicities = _get_unique_knots_and_multiplicity_impl(
+        unique_knots, multiplicities = _testing.unique_knots_and_multiplicity(
             knots, degree, tol, in_domain=True
         )
         expected_unique = np.array([0.0, 1.0])
@@ -592,7 +585,7 @@ class TestGetUniqueKnotsAndMultiplicity:
         knots = np.array([-1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0], dtype=np.float64)
         degree = 2
         tol = 1e-10
-        unique_knots, multiplicities = _get_unique_knots_and_multiplicity_impl(
+        unique_knots, multiplicities = _testing.unique_knots_and_multiplicity(
             knots, degree, tol, in_domain=True
         )
         expected_unique = np.array([0.0, 0.5, 1.0])
@@ -648,31 +641,29 @@ class TestIsInDomain:
 
 
 class TestComputeNumBasis:
-    """Test the compute_num_basis_impl function."""
+    """Test the basis count of a space."""
 
     def test_non_periodic_open(self) -> None:
         """Test basis count for non-periodic open knot vector."""
         knots = np.array([0.0, 0.0, 0.0, 1.0, 1.0, 1.0], dtype=np.float64)
         degree = 2
         periodic = False
-        tol = 1e-10
-        result = _get_Bspline_num_basis_1D_impl(knots, degree, periodic, tol)
+        result = BsplineSpace1D(knots, degree, periodic=periodic).num_basis
         # knots.size - degree - 1 = 6 - 2 - 1 = 3
         assert result == 3
 
     def test_periodic_knot_vector(self) -> None:
         """Test basis count for periodic knot vector."""
-        knots = np.array([-1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0], dtype=np.float64)
+        knots = np.array([-1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0], dtype=np.float64)
         degree = 2
         periodic = True
-        tol = 1e-10
-        result = _get_Bspline_num_basis_1D_impl(knots, degree, periodic, tol)
+        result = BsplineSpace1D(knots, degree, periodic=periodic).num_basis
         # For periodic: num_basis = knots.size - degree - 1 - regularity - 1
         # regularity = degree - multiplicity_of_first_knot_in_domain
         # multiplicity_of_first_knot_in_domain = 1
         # regularity = 2 - 1 = 1
-        # num_basis = 7 - 2 - 1 - 1 - 1 = 2
-        assert result == 2
+        # num_basis = 9 - 2 - 1 - 1 - 1 = 4
+        assert result == 4
 
 
 class TestLastKnotSmallerEqualSpan:

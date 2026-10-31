@@ -1246,13 +1246,35 @@ class Bspline:
             >>> np.allclose((f * g).evaluate(np.array([[0.5]])), [0.25])  # same via __mul__
             True
         """
+        # The checks whose messages spell a NumPy dtype stay here, in the previous release's
+        # order and words (its one-direction and multi-direction paths worded them differently);
+        # the compiled product repeats the dimension and rank checks and checks the domains.
         if self.dim == 1:
-            from ._bspline_product import _multiply_bspline_1d  # noqa: PLC0415
-
-            return _multiply_bspline_1d(self, other)
-        from ._bspline_product_nd import _multiply_bspline_nd  # noqa: PLC0415
-
-        return _multiply_bspline_nd(self, other)
+            if other.dim != 1:
+                raise ValueError(f"g must be a 1D B-spline, got dim={other.dim}")
+            if np.dtype(self.dtype) != np.dtype(other.dtype):
+                raise ValueError(
+                    f"f and g must have the same dtype, got {self.dtype} and {other.dtype}"
+                )
+            if self.rank != other.rank:
+                raise ValueError(
+                    f"f and g must have the same rank, got {self.rank} and {other.rank}"
+                )
+        else:
+            if other.dim != self.dim:
+                raise ValueError(
+                    "f and g must have the same parametric dimension. "
+                    f"Got f.dim={self.dim} and g.dim={other.dim}."
+                )
+            if self.dtype != other.dtype:
+                raise ValueError(
+                    f"f and g must have the same dtype. Got {self.dtype} and {other.dtype}."
+                )
+            if self.rank != other.rank:
+                raise ValueError(
+                    f"f and g must have the same rank. Got {self.rank} and {other.rank}."
+                )
+        return self._from_result(self._h.multiply(other._h))
 
     __mul__ = multiply
 

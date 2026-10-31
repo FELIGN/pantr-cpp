@@ -627,3 +627,31 @@ def lagrange_identity_mask_f32(
 
 def required_scratch_size(op: int, rows: Sequence[int], cols: Sequence[int]) -> int:
     """The scratch entries an operation on factors of these shapes needs per cell."""
+
+def bspline_max_insertions(degree: int) -> int:
+    """The Morken-Reimers insertion budget per zero at a degree."""
+
+def bspline_morken_reimers_roots(
+    knots: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    degree: int,
+    coeffs: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    tol: float,
+    zero_tol: float,
+    root_tol: float,
+    max_insertions: int,
+) -> tuple[NDArray[numpy.float64], int, int, int]:
+    """The Morken-Reimers kernel on an open knot vector, as `(roots, count, truncated, abandoned)` (no validation)."""
+
+def bspline_merge_roots(
+    roots: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    radii: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+) -> tuple[NDArray[numpy.float64], NDArray[numpy.int64]]:
+    """Merge runs of ascending roots within their radii, as `(merged, labels)` (no validation)."""

@@ -710,9 +710,10 @@ class TestKeepDegreeRational:
         This is the one place where ``keep_degree=False`` does **not** stay available on
         an unclamped direction, and it is worth pinning because the reason is invisible
         at the call site: the quotient rule differentiates the numerator and the weight
-        with :func:`~pantr.bspline._bspline_derivative._derivative_keep_degree_nonrational`
-        whatever ``keep_degree`` says, so a rational field re-elevates through A5.9 either
-        way and inherits its precondition either way.
+        with ``derivative_keep_degree_nonrational``
+        (``include/pantr/bspline/derivative_rational.hpp``) whatever ``keep_degree`` says, so a
+        rational field re-elevates through A5.9 either way and inherits its precondition either
+        way.
 
         Before the precondition landed this call did not return a wrong answer -- it
         raised a parametric-domain mismatch from further downstream, because the elevation
@@ -914,9 +915,10 @@ class TestRationalPeriodic1D:
     def test_open_rational_control_is_unaffected(self) -> None:
         """Control: an open (non-periodic) rational derivative never took the round trip.
 
-        Pins the ``if not space_1d.periodic: return _derivative_rational_open(...)``
-        early exit -- the code path every pre-existing rational test in this file
-        already covers -- stays untouched by the periodic round trip added for the fix.
+        Pins the ``if (!s.periodic())`` early exit of ``derivative_rational``
+        (``include/pantr/bspline/derivative_rational.hpp``) -- the code path every pre-existing
+        rational test in this file already covers -- stays untouched by the periodic round trip
+        added for the fix.
         """
         num_intervals = 6
         degree = 3

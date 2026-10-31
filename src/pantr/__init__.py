@@ -18,7 +18,6 @@ The main modules are:
 - :mod:`pantr.viz`: Optional PyVista/VTK visualization of geometries (``viz`` extra).
 """
 
-import sys
 from typing import Final
 
 # The compiled extension first: a missing, stale or mismatched module fails the import here, with
@@ -63,10 +62,8 @@ __all__ = [
     "transform",
 ]
 
-# Defer numba JIT compilation warmups to a background thread to prevent
-# blocking module import, allowing immediate interaction unless Numba
-# functions are called right away.
-import logging
+# The Numba JIT warmup ran on a background thread so that import did not block; what
+# remains of it is the completion event the barrier waits on.
 import threading
 from typing import TYPE_CHECKING
 
@@ -75,27 +72,9 @@ if not TYPE_CHECKING:
     def _async_warmup() -> None:
         from ._numba_compat import _warmup_complete  # noqa: PLC0415
 
-        try:
-            logger = logging.getLogger(__name__)
-            logger.debug("Starting Numba JIT warmup...")
-            from .bspline import _bspline_knots  # noqa: PLC0415
-
-            _bspline_knots._warmup_numba_functions()
-            from .bspline import _bspline_roots_core  # noqa: PLC0415
-
-            _bspline_roots_core._warmup_numba_functions()
-            logger.debug("Finished Numba JIT warmup.")
-        except Exception as exc:
-            # During process teardown (e.g. short scripts), background Numba caching
-            # fails because module locators become unavailable.  Distinguish teardown
-            # (DEBUG) from real compilation errors (WARNING) so that cache corruption
-            # or wrong type specialisations remain observable without noisy false alarms.
-            if sys.is_finalizing():
-                logger.debug("Numba JIT warmup skipped (process finalizing): %s", exc)
-            else:
-                logger.warning("Numba JIT warmup failed: %s", exc)
-        finally:
-            # Always signal completion so callers are never blocked indefinitely.
-            _warmup_complete.set()
+        # Every kernel this warmed is ported to C++ (the B-spline knot classes and root
+        # finder were the last), so there is nothing to compile; the event is still set
+        # on a thread of its own, as before, until Numba and its barrier are retired.
+        _warmup_complete.set()
 
     threading.Thread(target=_async_warmup, daemon=True).start()

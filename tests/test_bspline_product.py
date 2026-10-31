@@ -7,8 +7,6 @@ import numpy.typing as npt
 import pytest
 
 from pantr.bspline import Bspline, BsplineSpace, BsplineSpace1D, create_uniform_periodic_knots
-from pantr.bspline._bspline_knots import _get_unique_knots_and_multiplicity_impl
-from pantr.bspline._bspline_product import _product_multiplicities
 from tests.oracles import bspline_exact
 
 # ---------------------------------------------------------------------------
@@ -302,9 +300,7 @@ class TestOptimalContinuity:
 
         # Interior multiplicity of 0.5 in the product: max(2+2, 1+2) = 4.
         h_space = h.space.spaces[0]
-        unique, mults = _get_unique_knots_and_multiplicity_impl(
-            h_space.knots, 4, float(h_space.tolerance), in_domain=True
-        )
+        unique, mults = h_space.get_unique_knots_and_multiplicity(in_domain=True)
         # unique[0]=0.0, unique[1]=0.5, unique[2]=1.0
         assert unique.shape[0] == 3
         np.testing.assert_allclose(unique[1], 0.5, atol=1e-12)
@@ -586,9 +582,7 @@ class TestNonOpenProduct:
 def _interior_mult(spline: Bspline, xi: float) -> int:
     """Return the multiplicity of interior breakpoint ``xi`` in a 1D spline."""
     space_1d = spline.space.spaces[0]
-    unique, mults = _get_unique_knots_and_multiplicity_impl(
-        space_1d.knots, space_1d.degree, float(space_1d.tolerance), in_domain=True
-    )
+    unique, mults = space_1d.get_unique_knots_and_multiplicity(in_domain=True)
     matches = np.flatnonzero(np.abs(unique - xi) <= float(space_1d.tolerance))
     assert matches.size == 1, f"breakpoint {xi} not found in {unique}"
     return int(mults[matches[0]])
@@ -780,10 +774,17 @@ class TestProductMultiplicityRule:
 
     def test_product_multiplicities_formula(self) -> None:
         """Unit-test the rule itself, including the absent-operand convention."""
-        # p = 4, q = 1.  Columns: shared C^0, f-only C^3, g-only C^0, both C^-1.
-        mults_f = np.array([4, 1, 0, 5], dtype=np.int_)
-        mults_g = np.array([1, 0, 1, 2], dtype=np.int_)
-        np.testing.assert_array_equal(
-            _product_multiplicities(mults_f, mults_g, 4, 1),
-            np.array([5, 2, 5, 6], dtype=np.int_),
-        )
+        # p = 4, q = 1.  Breakpoints 0.2, 0.4, 0.6, 0.8 are, in turn: shared C^0, f-only C^3,
+        # g-only C^0, both C^-1.  Read through the multiplicities of the product's own space.
+        rng = np.random.default_rng(4)
+        knots_f = _open_knots(4, [(0.2, 4), (0.4, 1), (0.8, 5)])
+        knots_g = _open_knots(1, [(0.2, 1), (0.6, 1), (0.8, 2)])
+        f = make_bspline(knots_f, 4, rng.standard_normal((len(knots_f) - 5, 1)).tolist())
+        g = make_bspline(knots_g, 1, rng.standard_normal((len(knots_g) - 2, 1)).tolist())
+
+        h = f.multiply(g)
+
+        assert h.degree == (5,)
+        unique, mults = h.space.spaces[0].get_unique_knots_and_multiplicity(in_domain=True)
+        np.testing.assert_allclose(unique[1:-1], [0.2, 0.4, 0.6, 0.8], rtol=0.0, atol=1e-15)
+        np.testing.assert_array_equal(mults[1:-1], [5, 2, 5, 6])

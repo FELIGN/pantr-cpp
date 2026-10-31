@@ -52,33 +52,6 @@ def interpolating_reduction_operator(
 ) -> Annotated[NDArray[numpy.float64], dict(writable=False)]:
     """The endpoint-interpolating reduction operator (read-only, from the process table)."""
 
-def to_open_1d(
-    knots: Annotated[
-        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
-    ],
-    degree: int,
-    ctrl: Annotated[
-        NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu", writable=False)
-    ],
-    periodic: bool,
-    tol: float,
-) -> tuple[NDArray[numpy.float64], NDArray[numpy.float64]]:
-    """One direction to open form: (knots, control points (n_stored, cols)) -> (knots, points)."""
-
-def to_periodic_1d(
-    open_knots: Annotated[
-        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
-    ],
-    degree: int,
-    ctrl: Annotated[
-        NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu", writable=False)
-    ],
-    m_bdy: int,
-    tol: float,
-    tol_deviation: float | None = ...,
-) -> tuple[NDArray[numpy.float64], NDArray[numpy.float64]]:
-    """One direction to periodic form: (knots, points) -> (periodic knots, periodic points)."""
-
 def oslo_matrix(
     degree: int,
     old_knots: Annotated[
@@ -90,33 +63,6 @@ def oslo_matrix(
 ) -> NDArray[numpy.float64]:
     """The dense Oslo refinement matrix (m + 1, n + 1)."""
 
-def to_open_1d_f32(
-    knots: Annotated[
-        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
-    ],
-    degree: int,
-    ctrl: Annotated[
-        NDArray[numpy.float32], dict(shape=(None, None), order="C", device="cpu", writable=False)
-    ],
-    periodic: bool,
-    tol: float,
-) -> tuple[NDArray[numpy.float32], NDArray[numpy.float32]]:
-    """One direction to open form: (knots, control points (n_stored, cols)) -> (knots, points)."""
-
-def to_periodic_1d_f32(
-    open_knots: Annotated[
-        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
-    ],
-    degree: int,
-    ctrl: Annotated[
-        NDArray[numpy.float32], dict(shape=(None, None), order="C", device="cpu", writable=False)
-    ],
-    m_bdy: int,
-    tol: float,
-    tol_deviation: float | None = ...,
-) -> tuple[NDArray[numpy.float32], NDArray[numpy.float32]]:
-    """One direction to periodic form: (knots, points) -> (periodic knots, periodic points)."""
-
 def oslo_matrix_f32(
     degree: int,
     old_knots: Annotated[
@@ -127,3 +73,23 @@ def oslo_matrix_f32(
     ],
 ) -> NDArray[numpy.float32]:
     """The dense Oslo refinement matrix (m + 1, n + 1)."""
+
+def unique_knots_and_multiplicity_1d(
+    knots: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    degree: int,
+    tol: float,
+    in_domain: bool,
+) -> tuple[NDArray[numpy.float64], NDArray[numpy.int64]]:
+    """The knot classes of a raw knot vector at an explicit absolute tolerance, as `(knots, multiplicities)`."""
+
+def unique_knots_and_multiplicity_1d_f32(
+    knots: Annotated[
+        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    degree: int,
+    tol: float,
+    in_domain: bool,
+) -> tuple[NDArray[numpy.float32], NDArray[numpy.int64]]:
+    """The knot classes of a raw knot vector at an explicit absolute tolerance, as `(knots, multiplicities)`."""

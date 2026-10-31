@@ -63,13 +63,6 @@ NumpyArray<T> knots_to_numpy(const std::vector<T>& v) {
   return to_numpy(std::move(a));
 }
 
-/// A refined knot vector and its control points as a pair of NumPy arrays.
-template <class T>
-std::pair<NumpyArray<T>, NumpyArray<T>> to_pair(bspline::KnotsAndCtrl<T>&& r) {
-  NumpyArray<T> knots = knots_to_numpy(r.knots);
-  return {std::move(knots), to_numpy(std::move(r.ctrl))};
-}
-
 /// One direction's new knots, or none to skip the direction.
 template <class T>
 using MaybeKnots = std::optional<In1D<T>>;
@@ -150,23 +143,6 @@ void def_functions(nb::module_& m, const std::string& suffix) {
 
 template <class T>
 void def_kernels(nb::module_& m, const std::string& suffix) {
-  m.def(("to_open_1d" + suffix).c_str(),
-        [](const In1D<T>& knots, long long degree, const In2D<T>& ctrl, bool periodic, double tol) {
-          return to_pair(bspline::to_open_1d<T>(as_span(knots), saturate_degree(degree),
-                                                as_view(ctrl), periodic, tol));
-        },
-        nb::arg("knots").noconvert(), nb::arg("degree"), nb::arg("ctrl").noconvert(),
-        nb::arg("periodic"), nb::arg("tol"),
-        "One direction to open form: (knots, control points (n_stored, cols)) -> (knots, points).");
-  m.def(("to_periodic_1d" + suffix).c_str(),
-        [](const In1D<T>& knots, long long degree, const In2D<T>& ctrl, long long m_bdy, double tol,
-           std::optional<double> tol_deviation) {
-          return to_pair(bspline::to_periodic_1d<T>(as_span(knots), saturate_degree(degree),
-                                                    as_view(ctrl), m_bdy, tol, tol_deviation));
-        },
-        nb::arg("open_knots").noconvert(), nb::arg("degree"), nb::arg("ctrl").noconvert(),
-        nb::arg("m_bdy"), nb::arg("tol"), nb::arg("tol_deviation").none() = nb::none(),
-        "One direction to periodic form: (knots, points) -> (periodic knots, periodic points).");
   m.def(("oslo_matrix" + suffix).c_str(),
         [](long long degree, const In1D<T>& old_knots, const In1D<T>& new_knots) {
           return to_numpy(bspline::oslo_matrix<T>(saturate_degree(degree), as_span(old_knots),

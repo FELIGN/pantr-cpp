@@ -89,6 +89,19 @@ void register_bspline_spanwise(nanobind::module_& m);
 /// Lagrange identity mask in the `_testing` submodule.
 void register_bspline_spanwise_testing(nanobind::module_& m);
 
+/// Register the product, the rational derivative and the roots of a B-spline (methods of the
+/// `BsplineF64` / `BsplineF32` classes, which must exist) and the root status codes in the
+/// `bspline` submodule.
+void register_bspline_product(nanobind::module_& m);
+
+/// Register the Morken-Reimers kernel, its merge and its insertion budget in the `_testing`
+/// submodule.
+void register_bspline_product_testing(nanobind::module_& m);
+
+/// Register the knot classes of a raw knot vector at an explicit tolerance in the `_kernels`
+/// submodule (for Python callers not yet ported).
+void register_bspline_product_kernels(nanobind::module_& m);
+
 /// Register the 1D refinement kernels in the `_kernels` submodule (for Python callers not yet
 /// ported).
 void register_bspline_kernels(nanobind::module_& m);

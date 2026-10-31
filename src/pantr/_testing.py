@@ -38,6 +38,12 @@ module.
   operators of ``SpanwiseElementExtraction`` are a special case of, its per-cell scratch size
   (``required_scratch_size``) and the structural identity masks of the Bezier and Lagrange
   extraction operators of a 1D space (``bezier_identity_mask``, ``lagrange_identity_mask``).
+- The Mørken-Reimers root finder of a scalar B-spline: its kernel on an open knot vector
+  (``bspline_morken_reimers_roots``, a root array and the counts), the merge of repeated reports
+  (``bspline_merge_roots``), the insertion budget per zero (``bspline_max_insertions``), and
+  :func:`bspline_find_roots_with_budget`, the public route with a budget small enough to exhaust.
+- The knot classes of a raw knot vector at an explicit tolerance
+  (:func:`unique_knots_and_multiplicity`), which a space only reaches with its own tolerance.
 """
 
 from __future__ import annotations
@@ -138,12 +144,75 @@ oslo_matrix = ext._kernels.oslo_matrix
 oslo_matrix_f32 = ext._kernels.oslo_matrix_f32
 knot_scale = _t.knot_scale
 knot_tolerance = _t.knot_tolerance
+bspline_max_insertions = _t.bspline_max_insertions
+bspline_morken_reimers_roots = _t.bspline_morken_reimers_roots
+bspline_merge_roots = _t.bspline_merge_roots
 check_snapping_kept_an_interval = _t.check_snapping_kept_an_interval
 reduction_cache_size = _t.reduction_cache_size
 reduction_cache_clear = _t.reduction_cache_clear
 projected_quadrature_size = _t.projected_quadrature_size
 tensor_gauss_weights = _t.tensor_gauss_weights
 projected_relative_deviation = _t.projected_relative_deviation
+
+
+def bspline_find_roots_with_budget(
+    bspline: Any,  # noqa: ANN401
+    max_insertions: int,
+    tol: float | None = None,
+) -> npt.NDArray[np.float64]:
+    """Find the roots of a scalar B-spline as :func:`pantr.bspline.find_roots` does, on a budget.
+
+    The insertion budget per zero is otherwise fixed by the degree; a small one is how a test
+    reaches the two exhaustion warnings.
+
+    Args:
+        bspline (Any): A :class:`~pantr.bspline.Bspline`.
+        max_insertions (int): Insertion budget per zero.
+        tol (float | None): Relative parametric tolerance, or ``None`` for the dtype default.
+
+    Returns:
+        npt.NDArray[np.float64]: Sorted, read-only array of roots.
+    """
+    from pantr.bspline._bspline_roots import _find_roots_impl  # noqa: PLC0415
+
+    return _find_roots_impl(bspline, tol=tol, max_insertions=max_insertions)
+
+
+def unique_knots_and_multiplicity(
+    knots: npt.NDArray[np.floating[Any]],
+    degree: int,
+    tol: float,
+    in_domain: bool,
+) -> tuple[npt.NDArray[np.floating[Any]], npt.NDArray[np.int64]]:
+    """Get the knot classes of a raw knot vector at an explicit absolute tolerance.
+
+    Args:
+        knots (npt.NDArray[np.floating[Any]]): Non-decreasing ``float32`` or ``float64`` knots.
+        degree (int): The degree, which fixes the domain.
+        tol (float): Absolute parametric tolerance grouping nearby knots.
+        in_domain (bool): Report only the classes from the first domain knot's to the last's.
+
+    Returns:
+        tuple[npt.NDArray[np.floating[Any]], npt.NDArray[np.int64]]: The class values (of the
+        knots' dtype) and their multiplicities.
+    """
+    k = np.ascontiguousarray(knots)
+    fn: Any = _by_dtype_kernel("unique_knots_and_multiplicity_1d", k.dtype)
+    values, mults = fn(k, int(degree), float(tol), bool(in_domain))
+    return values, mults
+
+
+def _by_dtype_kernel(name: str, dtype: npt.DTypeLike) -> Any:  # noqa: ANN401
+    """Get an interim ``_kernels`` function by dtype (``_f32`` for ``float32``).
+
+    Args:
+        name (str): The ``float64`` function's name.
+        dtype (npt.DTypeLike): ``float32`` or ``float64``.
+
+    Returns:
+        Any: The function.
+    """
+    return getattr(ext._kernels, name + ("_f32" if np.dtype(dtype) == np.float32 else ""))
 
 
 def squared_l2_norm(coeffs: npt.NDArray[np.floating[Any]]) -> float:
@@ -655,6 +724,10 @@ __all__ = [
     "bincoeff",
     "blossom_span",
     "blossom_span_f32",
+    "bspline_find_roots_with_budget",
+    "bspline_max_insertions",
+    "bspline_merge_roots",
+    "bspline_morken_reimers_roots",
     "cardinal_extraction_1d",
     "cardinal_intervals_1d",
     "change_basis_cache_clear",
@@ -711,5 +784,6 @@ __all__ = [
     "tabulate_bernstein_derivatives_1d",
     "tabulate_bernstein_derivatives_1d_f32",
     "tensor_gauss_weights",
+    "unique_knots_and_multiplicity",
     "yuksel_roots",
 ]
