@@ -750,3 +750,36 @@ class TestValidationErrors:
 
         with pytest.raises(ValueError, match="same parametric domain"):
             f * g
+
+
+class TestCrossDirectionTolerance:
+    """Knots grouped at another direction's tolerance (inherited from the previous release)."""
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="The product groups each direction's knots at the largest tolerance of any "
+        "direction, so knots closer than another direction's tolerance merge into one class, "
+        "here of multiplicity above degree + 1, and the product is not f g. The previous "
+        "release does the same.",
+    )
+    def test_short_direction_beside_a_long_one(self) -> None:
+        """A product of ``float32`` operands, one direction 4e-6 long, evaluates to ``f g``.
+
+        Direction 0's three interior knots are 0.4e-6 apart, far above that direction's own
+        tolerance and below direction 1's (about 1e-6 on ``[0, 1]``). Oracle: ``f g`` evaluated
+        pointwise; the error is O(1), against a ``float32`` evaluation error of a few ulps.
+        """
+        dt = np.float32
+        s0 = BsplineSpace1D(np.array([0, 0, 1.5e-6, 1.9e-6, 2.3e-6, 4e-6, 4e-6], dtype=dt), 1)
+        s1 = BsplineSpace1D(np.array([0, 0, 1, 1], dtype=dt), 1)
+        space = BsplineSpace([s0, s1])
+        rng = np.random.default_rng(0)
+        f = Bspline(space, rng.uniform(1.0, 2.0, (*space.num_basis, 1)).astype(dt))
+        g = Bspline(space, rng.uniform(1.0, 2.0, (*space.num_basis, 1)).astype(dt))
+        pts = np.array([[0.5e-6, 0.3], [2.1e-6, 0.7], [3.5e-6, 0.1]], dtype=dt)
+
+        h = f.multiply(g)
+
+        np.testing.assert_allclose(
+            h.evaluate(pts), f.evaluate(pts) * g.evaluate(pts), rtol=1e-5, atol=0.0
+        )

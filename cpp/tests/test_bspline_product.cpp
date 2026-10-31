@@ -965,6 +965,30 @@ TEST_CASE_TEMPLATE("product: knots closer than the tolerance are one breakpoint"
   }
 }
 
+TEST_CASE("product: a breakpoint above degree + 1 leaves no control point unwritten") {
+  // Oracle: determinism. The product groups knots at the largest tolerance of any direction, so
+  // direction 0's three knots 0.4e-6 apart, in float on [0, 4e-6], fall into one class under
+  // direction 1's tolerance (about 1e-6 on [0, 1]): multiplicity 3 for degree 1, and 3 + 1 = 4 in
+  // the degree-2 product, whose Bezier form then has a row no element writes. That the values are
+  // then not f g is inherited from the previous release and not pinned here; what is pinned is
+  // that the result depends on the operands only. The heap is first filled with NaN in the sizes
+  // the product allocates, so a row left as allocated reads NaN.
+  const Dir d0{{0.0, 0.0, 1.5e-6, 1.9e-6, 2.3e-6, 4e-6, 4e-6}, 1};
+  const Dir d1{{0.0, 0.0, 1.0, 1.0}, 1};
+  const bs::Bspline<float> f = make_spline<float>({d0, d1}, 1, false, 3U);
+  const bs::Bspline<float> g = make_spline<float>({d0, d1}, 1, false, 4U);
+  {
+    std::vector<std::vector<float>> junk;
+    for (std::size_t n = 1; n <= 256; ++n) {
+      junk.emplace_back(n, std::numeric_limits<float>::quiet_NaN());
+    }
+  }
+  const bs::Bspline<float> h = bs::multiply<float>(f, g);
+  for (const float v : h.control_points()) {
+    REQUIRE(std::isfinite(v));
+  }
+}
+
 TEST_CASE_TEMPLATE("product: the stereographic circle, closed forms", T, double, float) {
   // Oracle: closed forms. x = (1 - t^2) / (1 + t^2) and y = 2 t / (1 + t^2) have the homogeneous
   // Bernstein control points (1, 1), (1, 1), (0, 2) and (0, 1), (1, 1), (2, 2) on [0, 1], integers
