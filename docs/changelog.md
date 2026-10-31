@@ -495,8 +495,8 @@
   `elevate_degree`, `reduce_degree`, the non-rational `derivative`, `slice`, `boundary`,
   `reverse`, `permute_directions`, `transform`, `to_bezier` and `to_beziers`, together with
   `BsplineSpace1D.insert_knots`, `subdivide` and its three `tabulate_*_extraction_operators`.
-  (`multiply`, `find_roots`, `locate` and the rational `derivative`, which uses `multiply`, keep
-  their previous implementation for now.)
+  (`locate` keeps its previous implementation for now; `multiply`, `find_roots` and the rational
+  `derivative`, which uses `multiply`, run in C++ as well, see below.)
 - **A `Bspline` is immutable**, as a `Bezier` is: the constructor copies the control points
   (into a C-contiguous array whatever the input layout), so a later write to the array it was
   given no longer changes the B-spline; `control_points` is a read-only view that cannot be made
@@ -604,13 +604,20 @@
     `new_knots` is one-dimensional before inserting any.
   - A singular least-squares system in `to_periodic` would raise `ValueError` "Singular matrix"
     (`numpy.linalg.LinAlgError`, a `ValueError` subclass, before); no input reaching it was found.
-- **Inputs outside the annotated types, and calls with two invalid arguments, in `Bspline` and
-  `SpanwiseElementExtraction`** can raise another exception or message than before: a conversion
-  error (of an index, a real value, a Lagrange variant or the orders) is reported before a range
-  or shape error (for example `slice(10, "x")` is now a `TypeError` for the value, where it was a
-  `ValueError` for the axis, and `SpanwiseElementExtraction` of a periodic space with an invalid
-  variant raises `ValueError` for the variant, where it raised `NotImplementedError`), and an
-  object that is not a space, or `orders=1.0`, fails with another message.
+- **Inputs outside the annotated types, and calls with two invalid arguments, in `Bspline`,
+  `SpanwiseElementExtraction` and `find_roots`** can raise another exception or message than
+  before: a conversion error (of an index, a real value, a Lagrange variant or the orders) is
+  reported before a range or shape error (for example `slice(10, "x")` is now a `TypeError` for
+  the value, where it was a `ValueError` for the axis, and `SpanwiseElementExtraction` of a
+  periodic space with an invalid variant raises `ValueError` for the variant, where it raised
+  `NotImplementedError`), and an object that is not a space, or `orders=1.0`, fails with another
+  message. `find_roots` checks `tol` straight after the type of its first argument, so a `tol`
+  that is not positive, cannot be compared with `0.0` or cannot be converted to a float (a
+  one-element array on NumPy 2.4, an integer past the range of a float) is reported before a
+  B-spline that is not univariate, not scalar valued, of degree 0 or rational with a
+  non-positive weight (the previous release reported those first). A `Bezier` given as `other` to
+  the `multiply` of a one-direction B-spline raises `TypeError` from the binding, where it raised
+  `AttributeError` ("... has no attribute 'space'").
 - **`SpanwiseElementExtraction` takes any number of directions** (its `apply` family raised
   `NotImplementedError` beyond three) and **any memory layout** for the operand, `out`, `scratch`
   and the cell indices, through a temporary where needed. The previous kernels raised Numba's
@@ -626,6 +633,80 @@
   a call has two faults, a read-only or wrongly typed `scratch` is reported before a too-small
   one. `ExtractionStructView` keeps its fields, now holding those views; the Numba kernels it was
   meant to feed are gone.
+- **`Bspline.multiply`, the rational `Bspline.derivative` and `pantr.bspline.find_roots` run in
+  pantr's C++ library**; names, signatures, defaults and messages are unchanged except as listed
+  here and in the entries on inputs outside the annotated types above. The rational `derivative`
+  is the quotient rule over `multiply`, so it moves with it.
+  - **Product values move in the last bits; knot vectors do not.** The knot vectors, degrees,
+    boundary types (open, periodic or unclamped, per direction), tolerances, rank, dtype and
+    `is_rational` of a product are the previous release's to the bit in all 1 811 random products
+    sampled and in 960 more that pair each boundary type with each of the three (degrees 0 to 3,
+    polynomial and rational, `float32` and `float64`). The control points are not: the C++ code
+    orders its sums and products differently, and solves the least-squares projections (onto the
+    minimal product knot vectors, and onto a periodic or unclamped boundary) with Eigen's SVD where
+    the previous release called LAPACK's through NumPy. Over 1 575 of the random products
+    (one to three directions, open, unclamped and periodic operands in any pairing, polynomial and
+    rational, `float32` and `float64`, domains of length 3e-4 to 3e3), the largest difference seen
+    against the previous release, in units of `eps * max(1, |largest control value|)` of the
+    dtype, was 190 for `float64` and 29 for `float32`; it was 62 and 3.1 when all operands were
+    open, so the largest differences are those of products with a periodic or unclamped operand.
+    The 960 paired products differed by at most 8.9 (`float64`) and 4.4 (`float32`). These are
+    maxima of samples, not bounds, and on domains of other lengths than those above the largest
+    seen in `float64` was larger (975).
+  - **The rational `derivative` moves in the last bits as well**, with the same knot vectors,
+    degrees and boundary types to the bit (485 sampled derivatives, `keep_degree` either way). Over
+    420 of them (one or two directions, open or periodic differentiated direction, `float32` and
+    `float64`, domains of length 3e-4 to 3e3) the largest difference was 10 units, as above, in
+    `float64` and 23 in `float32`.
+  - **A NaN or infinite control point or weight no longer makes `multiply` or the rational
+    `derivative` emit NumPy's `RuntimeWarning`** ("invalid value encountered in add", "in
+    multiply", "in subtract" or "in at"). With one such value placed at random in an operand
+    (open, one or two directions, `float32` and `float64`), the previous release warned in 89 of
+    300 products and 107 of 200 derivatives and the new release in none. The result is non-finite
+    in both releases in all 300 products, and at the same control points in all 200 derivatives;
+    in 6 of the products the new result has more non-finite control points than the previous one.
+  - **The domain-mismatch message of `multiply` prints the domain ends as Python floats**
+    (`f and g must share the same parametric domain. Got (0.0, 1.0) and (0.0, 2.0).`, or
+    `... domain in direction 1. Got ...` for several directions), where it printed NumPy scalars
+    (`(np.float64(0.0), np.float64(1.0))`); a `float32` domain prints as its `float64` value
+    (`0.10000000149011612`, not `np.float32(0.1)`), as the out-of-domain messages of `evaluate`
+    do. Which domains are refused is unchanged: 108 sampled pairs whose domains differ at one end
+    by 0.25 to 10 times the tolerance of the first operand's space (open, periodic and unclamped
+    operands, `float32` and `float64`) were accepted or refused alike by both releases, as were
+    the other mismatches probed.
+  - **A rational `derivative()` of a direction with an interior knot of multiplicity `degree + 1`
+    or more** (a `C^-1` knot at `degree + 1`, which the space accepts) raises `ValueError` with
+    the degree-preserving derivative's message ("Degree-preserving derivative in direction 0 (its
+    degree-1 hodograph) cannot walk a knot vector that repeats the knot 0.5 3 times at degree 1:
+    a knot may repeat at most degree + 1 = 2 times."), for either `keep_degree`. The previous
+    release raised `ValueError` "The number of control points must be a multiple of the number
+    of basis functions" in 28 of the 30 cases sampled (degrees 1 to 5, multiplicities `degree + 1`
+    to `degree + 3`) and ended the process in the other 2, both with `keep_degree=True`. A
+    multiplicity of `degree` is accepted by both.
+  - **`find_roots` returns the previous release's roots to the bit for an open B-spline**, and
+    raises its exceptions with its messages: 885 sampled successful calls and 95 failing ones
+    (degrees 1 to 8, 1 to 10 intervals, interior knots of multiplicity up to the degree, polynomial
+    and rational, `float32` and `float64`, domains of length 1e-6 to 1e6, `tol` of `None`, `1e-6`,
+    `1e-10` and `1e-14`; 160 of the 980 calls have a polynomial's known roots at degrees 2 to 7 and
+    120 have a NaN or infinite coefficient). The two `RuntimeWarning`s for an exhausted insertion
+    budget keep their text, category and stack level (reached by lowering the budget, at 24
+    combinations of budget, `tol` and dtype). A periodic or unclamped B-spline is converted to open
+    form first, by the C++ conversion of `to_open_bspline` (above), so its roots move in the last
+    bits: 7 of 171 sampled `float64` calls differed, by at most 2.4e-16 times the largest root, and
+    79 of 170 `float32` calls, by at most 4.1e-8 times the largest root; the number of roots was
+    the same in every call.
+  - **`find_roots` reads `tol` as a Python float** for the C++ call. A `Decimal`, a `Fraction`, a
+    NumPy `float16` or `longdouble` scalar and an object that has `__float__` and orders against
+    `0.0` are accepted; the previous release raised `TypeError` for a `Decimal` and for such an
+    object, Numba's `TypingError` for a `Fraction` and a `longdouble`, and `NotImplementedError`
+    ("float16") for a `float16`. A one-element array is a `TypeError` ("only 0-dimensional arrays
+    can be converted to Python scalars") on NumPy 2.4.6, where it was accepted. Another 31 values
+    (a `bool`, an `int`, NumPy `float32`, `float64`, integer and `bool` scalars, a 0-d and a
+    two-element array, `None`, NaN, infinities, zero, negative and subnormal values, a string, a
+    list, a complex number, an object with only `__float__`, an integer too large for a float) give
+    the previous release's roots or exception and message, on `float64` and `float32` B-splines.
+  - **The array `find_roots` returns does not own its data** (`ndarray.resize` raises); the
+    previous release's did own it in 13 of 1 226 sampled successful calls.
 - The private modules `pantr.bspline._bspline_basis_core`, `_bspline_knot_insertion_core`,
   `_bspline_restrict`, `_bspline_split`, `_bspline_blossom`, `_bspline_blossom_core`,
   `_bspline_degree`, `_bspline_degree_core`, `_bspline_knot_removal`,
@@ -640,6 +721,20 @@
   `spanwise_element_extraction._bezier_structural_identity_mask` and
   `_lagrange_structural_identity_mask`, are gone with the Numba kernels and NumPy code they held.
   What tests reach of them is in `pantr._testing`.
+- The private modules `pantr.bspline._bspline_roots_core`, `_bspline_product` and
+  `_bspline_product_nd`, the helpers `_bspline_knots._get_unique_knots_and_multiplicity_impl`,
+  `_get_Bspline_num_basis_1D_impl` and `_get_multiplicity_of_first_knot_in_domain_impl`, the
+  functions `_bspline_roots._check_connected`, `_max_insertions`, `_merge_certified`,
+  `_merge_radii`, `_scalar_numerator`, `_slope_bound` and `_validate_bspline_for_roots` with the
+  constants `_CURVATURE_DEGREE`, `_INSERTIONS_BASE`, `_INSERTIONS_PER_DEGREE`, `_STOP_SLACK` and
+  `_ZERO_TOL_SAFETY`, and `_bspline_derivative._derivative_rational`,
+  `_derivative_rational_open`, `_refine_to_common_space_1d` and `_tile_scalar_bspline`, are gone
+  with the Numba kernels and NumPy code they held, whose work is now done in C++.
+  `pantr.cad._compat` keeps the two breakpoint helpers it took from `_bspline_product` as its own.
+  What tests reach of the root finder and of the knot classes is in `pantr._testing`. The warmup
+  thread that `import pantr` starts compiled the knot-class and root-finder kernels (the
+  `_warmup_numba_functions` of `_bspline_knots` and `_bspline_roots_core`); it now compiles
+  nothing and only sets the event that the remaining warmup barriers wait on.
 
 ### Fixed
 - **`SpanwiseElementExtraction`'s batch applications no longer race on an overlapping `out`.**
