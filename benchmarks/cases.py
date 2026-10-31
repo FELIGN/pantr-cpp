@@ -657,6 +657,7 @@ def _s4_bspline_cases() -> list[Case]:  # noqa: PLR0915
         BsplineSpace1D,
         create_uniform_open_knots,
         create_uniform_periodic_knots,
+        find_roots,
     )
     from pantr.quad import PointsLattice  # noqa: PLC0415
 
@@ -777,6 +778,34 @@ def _s4_bspline_cases() -> list[Case]:  # noqa: PLR0915
             f"to_periodic, open cubic of {min(max(n, degree + 1), 1_000)} intervals",
             setup_to_periodic,
         )
+
+    # Root finding on main grows faster than linearly in the number of intervals (each reported
+    # root shifts the rest of the working window down): `large` is 4e3 intervals.
+    for size, n in {"tiny": 1, "medium": 1_000, "large": 4_000}.items():
+
+        def setup_find_roots(n: int = n) -> Callable[[], Any]:
+            knots = create_uniform_open_knots(n, degree)
+            space = BsplineSpace([BsplineSpace1D(knots, degree)])
+            coeffs = np.random.default_rng(1234).uniform(-1.0, 1.0, (n + degree, 1))
+            scalar = Bspline(space, coeffs)
+            return lambda: find_roots(scalar)
+
+        add(
+            "bspline_find_roots",
+            size,
+            f"find_roots, random cubic of {n} intervals",
+            setup_find_roots,
+        )
+
+    # The product re-expresses its Bezier form on the minimal knot vector by a dense least-squares
+    # solve, whose cost is cubic in the number of intervals: `large` is 100 intervals.
+    for size, n in {"tiny": 1, "medium": 10, "large": 100}.items():
+
+        def setup_multiply(n: int = n) -> Callable[[], Any]:
+            c = curve(n)
+            return lambda: c.multiply(c)
+
+        add("bspline_multiply", size, f"multiply two {n}-interval cubics", setup_multiply)
     return cases
 
 
