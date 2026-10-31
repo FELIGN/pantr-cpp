@@ -381,7 +381,7 @@ jobs:
           - { os: ubuntu-24.04-arm, label: linux-aarch64, archs: aarch64 }
           # On macOS the workflow's gcc-14 is Homebrew's GCC, whose libstdc++ delocate would bundle
           # (and which needs a newer macOS than the wheel targets): build with Apple Clang.
-          - { os: macos-14, label: macos-arm64, archs: arm64, cc: clang, cxx: clang++ }
+          - { os: macos-15, label: macos-arm64, archs: arm64, cc: clang, cxx: clang++ }
           - { os: windows-2022, label: windows-amd64, archs: AMD64 }
     steps:
       - uses: actions/checkout@v7
