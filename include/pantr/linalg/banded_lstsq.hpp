@@ -96,16 +96,17 @@ inline void givens(double a, double b, double& c, double& s) {
 /// correctly; the cost is low only when that run is short.
 ///
 /// The QR path is kept when `A` and `B` are finite, `A` has at least as many rows as columns,
-/// every column reaches a nonzero pivot, and `1 / ||R^-1||_F > sqrt(eps) ||A||_F` for the
-/// computed factor `R`. The left side is at most `s_min(R)` and the right side at least
-/// `sqrt(eps) s_max(A)`, so the test says that `s_min / s_max` of the factored matrix exceeds
-/// `sqrt(eps)`, about `1.5e-8`. `lstsq_min_norm` drops a singular value only at or below
-/// `eps * max(m, n) * s_max`; the QR's backward error and the computed inverse's error move the
-/// ratio by amounts of order `m n eps` and `n sqrt(eps)` relative, so the margin covers both while
-/// `m * n * eps` stays well below `sqrt(eps)` (`m * n` below about `8e6`), which the test also
-/// requires. This is argued here, not proved formally. Under it the SVD would keep every singular
-/// value, and its minimum-norm solution is the unique least-squares solution the QR computes: the
-/// two differ by rounding, not by rank.
+/// every column reaches a nonzero pivot, and `L = 1 / ||R^-1||_F > tau ||A||_F = tau U` for the
+/// computed factor `R`, with `tau = max(sqrt(eps), 4 (m n + max(m, n)) eps)`. The argument, made
+/// here and not proved formally: `L <= s_min(R)` and `U >= s_max(A)`. The computed `R` is the
+/// exact factor of `A + E` with `||E||_F <= gamma U`, `gamma = m n eps` taken generously, so
+/// `s_min(A) >= s_min(R) - gamma U`. Each column of the computed inverse is backward stable, so
+/// `L` is off from `1 / ||R^-1||_F` by a relative `n eps kappa_F(R) < n eps / tau <= 1 / (4 m)`,
+/// at most a half. Then `s_min(A) >= U (tau / 2 - gamma) > rcond U >= rcond s_max(A)` with
+/// `rcond = eps max(m, n)`, the cutoff below which `lstsq_min_norm` drops a singular value: the
+/// SVD would keep all of them, its minimum-norm solution is the unique least-squares solution
+/// the QR computes, and the two differ by rounding, not by rank. The floor `sqrt(eps)` is a
+/// heuristic margin over the constants the generous `gamma` stands for.
 ///
 /// A non-finite `B` takes the SVD path, so that a NaN or an infinity spreads through the solution
 /// as it did there. Everything is computed in `double` and the solution rounded to `T`, as
@@ -132,10 +133,10 @@ template <StorageFloat T>
   const Eigen::Index n = a.cols();
   const Eigen::Index nb = b.cols();
   constexpr double eps = std::numeric_limits<double>::epsilon();
-  const double margin = std::sqrt(eps);
-  // `m * n * eps` within an eighth of the margin: the size bound of the argument above.
-  const bool small_enough = static_cast<double>(m) * static_cast<double>(n) * eps < margin / 8.0;
-  if (n == 0 || m < n || !small_enough || !a.allFinite() || !b.allFinite()) {
+  const auto md = static_cast<double>(m);
+  const auto nd = static_cast<double>(n);
+  const double tau = (std::max)(std::sqrt(eps), 4.0 * (md * nd + (std::max)(md, nd)) * eps);
+  if (n == 0 || m < n || !a.allFinite() || !b.allFinite()) {
     return lstsq_min_norm<T>(a, b);
   }
 
@@ -265,7 +266,7 @@ template <StorageFloat T>
     inv_sq += col.topRows(j + 1).squaredNorm();
   }
   // Written so that a NaN or an overflow to infinity fails the test.
-  if (!(std::sqrt(inv_sq) * margin * std::sqrt(a_norm_sq) < 1.0)) {
+  if (!(std::sqrt(inv_sq) * tau * std::sqrt(a_norm_sq) < 1.0)) {
     return lstsq_min_norm<T>(a, b);
   }
 
