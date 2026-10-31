@@ -645,7 +645,7 @@ def test_cached_wrapper_propagates_the_domain_refusal() -> None:
 def test_extraction_degrees_stay_inside_the_domain() -> None:
     """The Bezier extraction paths are unaffected by the domain (issue #311).
 
-    ``pantr.bspline._bspline_extraction`` and
+    ``pantr/bspline/extraction.hpp`` (through ``BsplineSpace1D``) and
     ``pantr.bspline.spanwise_element_extraction`` reach two of these builders through the
     cached matrices: the Lagrange-to-Bernstein one, which carries no limit, and the
     cardinal-to-Bernstein one, which does. Their highest tested spline degree is 4, so this

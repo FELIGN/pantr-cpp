@@ -41,7 +41,6 @@ import numpy.typing as npt
 from ..basis import LagrangeVariant
 from ..basis._basis_utils import _allocate_or_validate_out
 from ..change_basis import _cached_lagrange_to_bernstein_matrix
-from ._bspline_extraction import _bezier_structural_identity_mask_core
 from ._extraction_helpers import (
     OpKind,
     _operation_shapes,
@@ -1058,10 +1057,8 @@ def _bezier_structural_identity_mask(
     Returns:
         npt.NDArray[np.bool_]: Boolean array of shape ``(n_elements,)``.
     """
-    _, mults = space_1d.get_unique_knots_and_multiplicity(in_domain=True)
-    n_elements = len(mults) - 1
-    out = np.empty(n_elements, dtype=np.bool_)
-    _bezier_structural_identity_mask_core(mults, space_1d.degree, out)
+    out = np.empty(space_1d.num_intervals, dtype=np.bool_)
+    space_1d._h.bezier_identity_mask(out)
     return out
 
 

@@ -29,7 +29,6 @@ import subprocess
 import sys
 import textwrap
 import threading
-import weakref
 from collections.abc import Callable
 from types import ModuleType
 from typing import Any
@@ -830,21 +829,22 @@ def test_copy_false_shares_a_contiguous_array_read_only(
 def test_copy_false_bezier_outlives_the_bspline_and_its_array(
     convert: Callable[[Bspline], Bezier], dtype: type
 ) -> None:
-    """The Bézier keeps the B-spline's array alive; dropping it (the last reference) releases it.
+    """The Bézier keeps the B-spline's control points alive after every other reference is gone.
 
-    The array shared is the B-spline's own read-only copy of the control points (the constructor
-    copies), not the caller's.
+    The points shared are the B-spline's own read-only copy of the control points (the constructor
+    copies), not the caller's. The Bézier holds the B-spline's compiled representation (an
+    aliasing pointer), not a Python array, so what is observed here is that the values survive;
+    that the representation is released with the last Bézier is pinned by the C++ test
+    ``to_bezier shares the buffer with copy off`` (``test_bspline_to_beziers.cpp``).
     """
     cp = _curve(dtype)
     expected = cp.copy()
     bs = _bspline_over(cp)
     shared = bs.control_points
-    array_alive = weakref.ref(shared)
     bez = convert(bs)
     del bs, cp, shared
     gc.collect()
 
-    assert array_alive() is not None  # a Bézier that did not hold it would have let it go
     # Allocate over whatever was freed, so a dangling pointer would read these instead.
     junk: list[npt.NDArray[Any]] = [
         np.full(expected.shape, -777.0, dtype=dtype) for _ in range(256)
@@ -854,7 +854,6 @@ def test_copy_false_bezier_outlives_the_bspline_and_its_array(
 
     del bez, junk
     gc.collect()
-    assert array_alive() is None  # and a Bézier that held it for ever would leak it
 
 
 @pytest.mark.parametrize("convert", _CONVERTERS)
@@ -864,7 +863,6 @@ def test_copy_false_bezier_dropped_on_another_thread(convert: Callable[[Bspline]
         cp = _curve()
         bs = _bspline_over(cp)
         shared = bs.control_points
-        array_alive = weakref.ref(shared)
         holders = [[convert(bs)] for _ in range(4)]
         del cp, bs, shared
         gc.collect()
@@ -875,7 +873,6 @@ def test_copy_false_bezier_dropped_on_another_thread(convert: Callable[[Bspline]
             thread.join(timeout=60)
         assert not any(thread.is_alive() for thread in threads)
         gc.collect()
-        assert array_alive() is None
 
 
 def _reversed_view(a: _Array) -> _Array:

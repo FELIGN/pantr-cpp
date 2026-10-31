@@ -9,7 +9,7 @@ namespace pantr::bindings {
 /// Version of the module's interface. pantr/_ext.py refuses a module whose version differs from
 /// its EXPECTED_INTERFACE, so a stale build fails at import instead of as a phantom regression.
 /// Bump both together with any change to what the module exposes.
-inline constexpr int kInterfaceVersion = 9;
+inline constexpr int kInterfaceVersion = 10;
 
 /// Register the translation of pantr's C++ exceptions to Python exceptions.
 void register_errors(nanobind::module_& m);
@@ -73,6 +73,13 @@ void register_bspline_refine(nanobind::module_& m);
 /// classes, and the common refinement of two B-splines, in the `bspline` submodule. After
 /// `register_bspline_ops`.
 void register_bspline_modify(nanobind::module_& m);
+
+/// Register the extraction operators of the 1D spaces and the conversion of a Bspline to Bezier
+/// form in the `bspline` submodule. After `register_bspline_ops`.
+void register_bspline_extraction(nanobind::module_& m);
+
+/// Register the raw extraction operators and cardinal intervals in the `_testing` submodule.
+void register_bspline_extraction_testing(nanobind::module_& m);
 
 /// Register the 1D refinement kernels in the `_kernels` submodule (for Python callers not yet
 /// ported).

@@ -88,25 +88,6 @@ void def_bezier(nb::module_& m, const char* name) {
             new (self) B(span_of(cp), shape_of(cp), rational);
           },
           nb::arg("control_points"), nb::arg("rational"), "Validate and copy the control points.")
-      .def_static(
-          "borrow",
-          [](const Any<T>& cp, bool rational) {
-            // Interim (until the B-spline is ported): a `copy=False` conversion from a B-spline
-            // shares the B-spline's array, as the previous release did. The buffer aliases that
-            // array and keeps it alive. The deleter runs where the last copy of the value dies:
-            // a Python thread today, since no pool task owns a Bezier; the explicit acquire is
-            // for any other thread (nanobind's own release of the array also takes the thread
-            // state, so it is redundant on a Python thread, and harmless). A pool task that did
-            // own a Bezier while its submitter held the GIL would deadlock here.
-            auto* keep = new Any<T>(cp);
-            std::shared_ptr<const T[]> data(cp.data(), [keep](const T* /*unused*/) {
-              const nb::gil_scoped_acquire gil;
-              delete keep;
-            });
-            return B(std::move(data), shape_of(cp), rational);
-          },
-          nb::arg("control_points").noconvert(), nb::arg("rational"),
-          "A Bezier over the caller's array, without copying it (interim).")
       .def_prop_ro(
           "shape",
           [](const B& b) {

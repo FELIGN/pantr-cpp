@@ -250,8 +250,8 @@ class TestCardinalClassification:
     def test_near_uniform_operators_are_not_replaced_by_the_identity(self, rel: float) -> None:
         """A misclassified interval had its exact operator discarded for ``np.eye``.
 
-        ``_tabulate_Bspline_cardinal_1D_extraction_impl`` computes the exact
-        operator and then overwrites it with the identity on every interval flagged
+        The cardinal extraction operators (``cardinal_extraction_1d``) compute the exact
+        operator and then overwrite it with the identity on every interval flagged
         cardinal, so a misclassification did not merely mislabel: it substituted a
         wrong operator for a correct one that had already been computed two lines
         earlier.

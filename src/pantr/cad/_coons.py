@@ -899,7 +899,7 @@ def _homogeneous_endpoint(curve: Bspline, side: int) -> npt.NDArray[np.float32 |
 
     Viewing the same coefficients as an ordinary curve of one rank higher is what stops
     before the division: the de Boor recurrence underneath is linear and does not consult
-    ``is_rational`` (:func:`~pantr.bspline._bspline_slice._slice_bspline` branches on it
+    ``is_rational`` (:meth:`~pantr.bspline.Bspline.slice` branches on it
     only for the final ``X / w``), so the arithmetic is identical and the result is the
     homogeneous corner the blend needs.
 

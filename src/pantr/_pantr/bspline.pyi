@@ -6,6 +6,7 @@ from typing import Annotated, overload
 import numpy
 from numpy.typing import NDArray
 
+import pantr._pantr.bezier
 import pantr._pantr.quad
 
 class BsplineSpace1DF64:
@@ -162,6 +163,36 @@ class BsplineSpace1DF64:
     ) -> None:
         """Write the basis derivatives of orders 0..n_deriv at `pts` into `out` and `first`."""
 
+    def bezier_extraction(
+        self,
+        out: Annotated[
+            NDArray[numpy.float64], dict(shape=(None, None, None), order="C", device="cpu")
+        ],
+    ) -> None:
+        """Write the Bezier extraction operators (intervals, degree + 1, degree + 1) into `out`."""
+
+    def lagrange_extraction(
+        self,
+        variant: int,
+        out: Annotated[
+            NDArray[numpy.float64], dict(shape=(None, None, None), order="C", device="cpu")
+        ],
+    ) -> None:
+        """Write the Lagrange extraction operators of a node variant into `out`."""
+
+    def cardinal_extraction(
+        self,
+        out: Annotated[
+            NDArray[numpy.float64], dict(shape=(None, None, None), order="C", device="cpu")
+        ],
+    ) -> None:
+        """Write the cardinal B-spline extraction operators into `out`."""
+
+    def bezier_identity_mask(
+        self, out: Annotated[NDArray[numpy.bool_], dict(shape=(None,), order="C", device="cpu")]
+    ) -> None:
+        """Write into `out` which intervals are already Bezier patches (identity operator)."""
+
 class BsplineSpace1DF32:
     """An immutable 1D B-spline space (knots and degree)."""
 
@@ -315,6 +346,36 @@ class BsplineSpace1DF32:
         validate: bool,
     ) -> None:
         """Write the basis derivatives of orders 0..n_deriv at `pts` into `out` and `first`."""
+
+    def bezier_extraction(
+        self,
+        out: Annotated[
+            NDArray[numpy.float32], dict(shape=(None, None, None), order="C", device="cpu")
+        ],
+    ) -> None:
+        """Write the Bezier extraction operators (intervals, degree + 1, degree + 1) into `out`."""
+
+    def lagrange_extraction(
+        self,
+        variant: int,
+        out: Annotated[
+            NDArray[numpy.float32], dict(shape=(None, None, None), order="C", device="cpu")
+        ],
+    ) -> None:
+        """Write the Lagrange extraction operators of a node variant into `out`."""
+
+    def cardinal_extraction(
+        self,
+        out: Annotated[
+            NDArray[numpy.float32], dict(shape=(None, None, None), order="C", device="cpu")
+        ],
+    ) -> None:
+        """Write the cardinal B-spline extraction operators into `out`."""
+
+    def bezier_identity_mask(
+        self, out: Annotated[NDArray[numpy.bool_], dict(shape=(None,), order="C", device="cpu")]
+    ) -> None:
+        """Write into `out` which intervals are already Bezier patches (identity operator)."""
 
 class BsplineSpaceF64:
     """An immutable tensor-product B-spline space."""
@@ -593,6 +654,31 @@ class BsplineF64:
     ) -> None:
         """Write a mixed partial derivative on a lattice into `out` (num_points, rank)."""
 
+    def slice(self, axis: int, value: float) -> BsplineF64:
+        """Fix one direction of a surface or a volume at a parameter value."""
+
+    def slice_point(self, axis: int, value: float) -> NDArray[numpy.float64]:
+        """The point of a curve at a parameter value (projected if rational)."""
+
+    def boundary(self, axis: int, side: int) -> BsplineF64:
+        """The boundary of a surface or a volume at the start (0) or the end (1) of a direction."""
+
+    def boundary_point(self, axis: int, side: int) -> NDArray[numpy.float64]:
+        """The end point of a curve (projected if rational)."""
+
+    def reversed(self, direction: int) -> BsplineF64:
+        """Reverse one direction."""
+
+    def permuted(self, permutation: Sequence[int]) -> BsplineF64:
+        """Reorder the directions."""
+
+    def transformed(
+        self,
+        matrix: Annotated[NDArray[numpy.float64], dict(order="C", device="cpu", writable=False)],
+        offset: Annotated[NDArray[numpy.float64], dict(order="C", device="cpu", writable=False)],
+    ) -> BsplineF64:
+        """Apply x -> A x + b to the geometry."""
+
     def insert_knots(
         self,
         new_knots: Sequence[
@@ -643,6 +729,12 @@ class BsplineF64:
 
     def derivative_keep_degree(self, direction: int) -> BsplineF64:
         """The partial derivative of a non-rational B-spline, elevated back to its degree."""
+
+    def to_bezier(self, copy: bool) -> pantr._pantr.bezier.BezierF64:
+        """The Bezier of a single-element B-spline (periodic and unclamped ones through open form); with `copy` false a Bezier-like B-spline shares its buffer."""
+
+    def to_beziers(self) -> tuple[list[int], list[pantr._pantr.bezier.BezierF64]]:
+        """The Bezier patches of every element, in C order, and the elements per direction."""
 
 class BsplineF32:
     """An immutable B-spline map (a space and control points in a shared, read-only buffer)."""
@@ -743,6 +835,31 @@ class BsplineF32:
     ) -> None:
         """Write a mixed partial derivative on a lattice into `out` (num_points, rank)."""
 
+    def slice(self, axis: int, value: float) -> BsplineF32:
+        """Fix one direction of a surface or a volume at a parameter value."""
+
+    def slice_point(self, axis: int, value: float) -> NDArray[numpy.float32]:
+        """The point of a curve at a parameter value (projected if rational)."""
+
+    def boundary(self, axis: int, side: int) -> BsplineF32:
+        """The boundary of a surface or a volume at the start (0) or the end (1) of a direction."""
+
+    def boundary_point(self, axis: int, side: int) -> NDArray[numpy.float32]:
+        """The end point of a curve (projected if rational)."""
+
+    def reversed(self, direction: int) -> BsplineF32:
+        """Reverse one direction."""
+
+    def permuted(self, permutation: Sequence[int]) -> BsplineF32:
+        """Reorder the directions."""
+
+    def transformed(
+        self,
+        matrix: Annotated[NDArray[numpy.float64], dict(order="C", device="cpu", writable=False)],
+        offset: Annotated[NDArray[numpy.float64], dict(order="C", device="cpu", writable=False)],
+    ) -> BsplineF32:
+        """Apply x -> A x + b to the geometry."""
+
     def insert_knots(
         self,
         new_knots: Sequence[
@@ -793,6 +910,12 @@ class BsplineF32:
 
     def derivative_keep_degree(self, direction: int) -> BsplineF32:
         """The partial derivative of a non-rational B-spline, elevated back to its degree."""
+
+    def to_bezier(self, copy: bool) -> pantr._pantr.bezier.BezierF32:
+        """The Bezier of a single-element B-spline (periodic and unclamped ones through open form); with `copy` false a Bezier-like B-spline shares its buffer."""
+
+    def to_beziers(self) -> tuple[list[int], list[pantr._pantr.bezier.BezierF32]]:
+        """The Bezier patches of every element, in C order, and the elements per direction."""
 
 def compute_inserted_knot_vector(
     knots: Annotated[

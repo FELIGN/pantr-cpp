@@ -7,6 +7,8 @@
 
 #include "pantr/bspline/bspline.hpp"
 #include "pantr/bspline/evaluate.hpp"
+#include "pantr/bspline/reparametrize.hpp"
+#include "pantr/bspline/slice.hpp"
 #include "pantr/bspline/space.hpp"
 #include "pantr/core/errors.hpp"
 #include "pantr/quad/points_lattice.hpp"
@@ -68,6 +70,67 @@ std::vector<int> narrow_orders(const std::vector<long long>& orders) {
 [[noreturn]] void raise_zero_division() {
   PyErr_SetString(PyExc_ZeroDivisionError, "division by zero");
   throw nb::python_error();
+}
+
+/// The extents of an array as a vector.
+template <class T>
+std::vector<std::size_t> shape_of(const Any<T>& a) {
+  std::vector<std::size_t> s(a.ndim());
+  for (std::size_t i = 0; i < s.size(); ++i) {
+    s[i] = a.shape(i);
+  }
+  return s;
+}
+
+/// Slicing, boundaries and the changes of parametrization of a B-spline. None reaches the pool,
+/// so no call releases the GIL.
+template <class T>
+void def_geometry_ops(nb::class_<bspline::Bspline<T>>& cls) {
+  using B = bspline::Bspline<T>;
+  cls.def(
+         "slice",
+         [](const B& b, long long axis, double value) { return bspline::slice<T>(b, axis, value); },
+         nb::arg("axis"), nb::arg("value"),
+         "Fix one direction of a surface or a volume at a parameter value.")
+      .def(
+          "slice_point",
+          [](const B& b, long long axis, double value) {
+            return to_numpy(bspline::slice_point<T>(b, axis, value));
+          },
+          nb::arg("axis"), nb::arg("value"),
+          "The point of a curve at a parameter value (projected if rational).")
+      .def(
+          "boundary",
+          [](const B& b, long long axis, long long side) {
+            return bspline::boundary<T>(b, axis, side);
+          },
+          nb::arg("axis"), nb::arg("side"),
+          "The boundary of a surface or a volume at the start (0) or the end (1) of a direction.")
+      .def(
+          "boundary_point",
+          [](const B& b, long long axis, long long side) {
+            return to_numpy(bspline::boundary_point<T>(b, axis, side));
+          },
+          nb::arg("axis"), nb::arg("side"), "The end point of a curve (projected if rational).")
+      .def(
+          "reversed",
+          [](const B& b, long long direction) { return bspline::reversed<T>(b, direction); },
+          nb::arg("direction"), "Reverse one direction.")
+      .def(
+          "permuted",
+          [](const B& b, const std::vector<long long>& permutation) {
+            return bspline::permuted<T>(b, permutation);
+          },
+          nb::arg("permutation"), "Reorder the directions.")
+      .def(
+          "transformed",
+          [](const B& b, const Any<double>& matrix, const Any<double>& offset) {
+            const std::vector<std::size_t> ms = shape_of<double>(matrix);
+            return bspline::transformed<T>(b, std::span<const double>(matrix.data(), matrix.size()),
+                                           ms,
+                                           std::span<const double>(offset.data(), offset.size()));
+          },
+          nb::arg("matrix"), nb::arg("offset"), "Apply x -> A x + b to the geometry.");
 }
 
 template <class T>
@@ -173,6 +236,7 @@ void def_bspline(nb::module_& m, const char* name) {
           "Write a mixed partial derivative at (n, dim) points into `out` (n, rank).");
   def_lattice_overloads(cls, std::type_identity<double>{});
   def_lattice_overloads(cls, std::type_identity<float>{});
+  def_geometry_ops<T>(cls);
 }
 
 }  // namespace

@@ -14,13 +14,31 @@ from pantr.bspline import (
     create_from_bezier,
     create_uniform_periodic_knots,
 )
-from pantr.bspline._bspline_to_beziers import _first_basis_per_element
 from pantr.bspline.spanwise_element_extraction import SpanwiseElementExtraction
 from tests.oracles import bspline_exact
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _first_basis_per_element(space_1d: BsplineSpace1D) -> npt.NDArray[np.intp]:
+    """Index of the first B-spline function supported on each element.
+
+    Read off the public basis tabulation at the element midpoints, an oracle independent of
+    ``first_basis_per_interval`` (which the decomposition uses).
+
+    Args:
+        space_1d (BsplineSpace1D): A 1D B-spline space.
+
+    Returns:
+        npt.NDArray[np.intp]: First supported function index per element.
+    """
+    unique_knots, _ = space_1d.get_unique_knots_and_multiplicity(in_domain=True)
+    unique_knots = np.asarray(unique_knots, dtype=np.float64)
+    midpoints = 0.5 * (unique_knots[:-1] + unique_knots[1:])
+    _, first_basis = space_1d.tabulate_basis(midpoints, validate=False)
+    return np.ascontiguousarray(first_basis, dtype=np.intp)
 
 
 def _make_periodic_bspline(
@@ -939,7 +957,7 @@ class TestToBeziers:
 class TestToBeziersSpanwiseParity:
     """Parity: to_beziers() control points match ``operator(idx).T @ ctrl_local``.
 
-    These tests catch drift between _to_beziers_impl and the extraction operators
+    These tests catch drift between ``to_beziers`` and the extraction operators
     cached by SpanwiseElementExtraction. The identity verified is::
 
         beziers[idx].control_points.reshape(N, rank) == M.T @ ctrl_local.reshape(N, rank)
@@ -950,9 +968,8 @@ class TestToBeziersSpanwiseParity:
     ``first_basis_d[i_d]`` (the index of the first supported function, which only
     equals ``i_d`` for multiplicity-1 interior knots).
 
-    The ``.T`` arises because ``_apply_bezier_extraction_1d_core`` computes
-    ``C_i^T @ P_local`` (column-convention operators matching the kernel at
-    ``_bspline_to_beziers.py:62``).
+    The ``.T`` arises because the decomposition computes ``C_i^T @ P_local`` along each direction
+    (column-convention operators, applied transposed by ``bspline::detail::mode_product``).
 
     Periodic spaces are excluded: ``SpanwiseElementExtraction`` raises
     ``NotImplementedError`` for them; periodic coverage lives in ``TestToBeziers``.
@@ -980,7 +997,7 @@ class TestToBeziersSpanwiseParity:
             # Single-element space: Bezier extraction is the identity everywhere,
             # so expected == ctrl_local. Exercises the identity short-circuit path.
             ([BsplineSpace1D([0.0, 0.0, 0.0, 1.0, 1.0, 1.0], 2)], 40),
-            # Degree-3 space: exercises order=4 in the Numba kernel and higher-degree
+            # Degree-3 space: exercises order=4 in the mode product and higher-degree
             # extraction operators with non-trivial entries.
             ([BsplineSpace1D([0.0, 0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0, 1.0], 3)], 50),
             # Repeated interior knots (multiplicity 2): the support offset advances

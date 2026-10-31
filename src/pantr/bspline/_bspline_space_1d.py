@@ -24,6 +24,7 @@ from numpy import typing as npt
 
 from .._ext import ext
 from ..basis import LagrangeVariant
+from ..basis._basis_tabulate import _variant_code
 from ..basis._basis_utils import (
     _allocate_or_validate_out,
     _compute_final_output_shape_1D,
@@ -31,11 +32,6 @@ from ..basis._basis_utils import (
     _normalize_points_1D,
     _reshaped_out,
     _validate_out_array,
-)
-from ._bspline_extraction import (
-    _tabulate_Bspline_Bezier_1D_extraction_impl,
-    _tabulate_Bspline_cardinal_1D_extraction_impl,
-    _tabulate_Bspline_Lagrange_1D_extraction_impl,
 )
 
 _cpp: Any = ext.bspline
@@ -882,6 +878,26 @@ class BsplineSpace1D:
             self._h.tabulate_basis_derivatives(p, n_deriv, values, first, False)
         return out_deriv, out_first_basis
 
+    def _extraction_out(
+        self, out: npt.NDArray[np.float32 | np.float64] | None
+    ) -> npt.NDArray[np.float32 | np.float64]:
+        """Allocate the extraction-operator array, or validate the caller's.
+
+        Args:
+            out (npt.NDArray[np.float32 | np.float64] | None): The caller's array, or None.
+
+        Returns:
+            npt.NDArray[np.float32 | np.float64]: ``out``, or a fresh
+            ``(num_intervals, degree + 1, degree + 1)`` array of the knots' dtype.
+
+        Raises:
+            ValueError: If ``out`` has another shape or dtype, or is not writeable.
+        """
+        order = self._degree + 1
+        return _allocate_or_validate_out(
+            out, (self._num_intervals, order, order), self._knots.dtype
+        )
+
     def tabulate_Bezier_extraction_operators(
         self, out: npt.NDArray[np.float32 | np.float64] | None = None
     ) -> npt.NDArray[np.float32 | np.float64]:
@@ -908,9 +924,10 @@ class BsplineSpace1D:
         Raises:
             ValueError: If `out` is provided and has incorrect shape or dtype.
         """
-        return _tabulate_Bspline_Bezier_1D_extraction_impl(
-            self.knots, self.degree, self.tolerance, out=out
-        )
+        ops = self._extraction_out(out)
+        with _kernel_buffer(ops, ops.shape) as buf:
+            self._h.bezier_extraction(buf)
+        return ops
 
     def tabulate_Lagrange_extraction_operators(
         self,
@@ -943,9 +960,10 @@ class BsplineSpace1D:
         Raises:
             ValueError: If `out` is provided and has incorrect shape or dtype.
         """
-        return _tabulate_Bspline_Lagrange_1D_extraction_impl(
-            self.knots, self.degree, self.tolerance, lagrange_variant=lagrange_variant, out=out
-        )
+        ops = self._extraction_out(out)
+        with _kernel_buffer(ops, ops.shape) as buf:
+            self._h.lagrange_extraction(_variant_code(lagrange_variant), buf)
+        return ops
 
     def tabulate_cardinal_extraction_operators(
         self, out: npt.NDArray[np.float32 | np.float64] | None = None
@@ -973,9 +991,10 @@ class BsplineSpace1D:
         Raises:
             ValueError: If `out` is provided and has incorrect shape or dtype.
         """
-        return _tabulate_Bspline_cardinal_1D_extraction_impl(
-            self.knots, self.degree, self.tolerance, out=out
-        )
+        ops = self._extraction_out(out)
+        with _kernel_buffer(ops, ops.shape) as buf:
+            self._h.cardinal_extraction(buf)
+        return ops
 
     def insert_knots(self, new_knots: npt.ArrayLike) -> BsplineSpace1D:
         """Return a new BsplineSpace1D with additional knots inserted.

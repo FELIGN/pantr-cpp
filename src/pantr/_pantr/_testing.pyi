@@ -478,3 +478,103 @@ def degree_reduce_1d_f32(
     decrement: int,
 ) -> tuple[NDArray[numpy.float32], NDArray[numpy.float32]]:
     """Degree reduce a 1D B-spline to Bezier form: (points (n, rank), knots) -> (points, knots)."""
+
+def bezier_extraction_1d_into(
+    knots: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    degree: int,
+    tol: float,
+    out: Annotated[NDArray[numpy.float64], dict(shape=(None, None, None), order="C", device="cpu")],
+) -> None:
+    """Write the Bezier extraction operators into `out`."""
+
+def lagrange_extraction_1d_into(
+    knots: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    degree: int,
+    tol: float,
+    variant: int,
+    out: Annotated[NDArray[numpy.float64], dict(shape=(None, None, None), order="C", device="cpu")],
+) -> None:
+    """Write the Lagrange extraction operators into `out`."""
+
+def cardinal_extraction_1d_into(
+    knots: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    degree: int,
+    tol: float,
+    out: Annotated[NDArray[numpy.float64], dict(shape=(None, None, None), order="C", device="cpu")],
+) -> None:
+    """Write the cardinal extraction operators into `out`."""
+
+def num_intervals_1d(
+    knots: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    degree: int,
+    tol: float,
+) -> int:
+    """The number of in-domain intervals of a knot vector with an explicit tolerance."""
+
+def cardinal_intervals_1d_into(
+    knots: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    degree: int,
+    tol: float,
+    out: Annotated[NDArray[numpy.bool_], dict(shape=(None,), order="C", device="cpu")],
+) -> None:
+    """Write the cardinal-interval flags of a knot vector with an explicit tolerance."""
+
+def bezier_extraction_1d_into_f32(
+    knots: Annotated[
+        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    degree: int,
+    tol: float,
+    out: Annotated[NDArray[numpy.float32], dict(shape=(None, None, None), order="C", device="cpu")],
+) -> None:
+    """Write the Bezier extraction operators into `out`."""
+
+def lagrange_extraction_1d_into_f32(
+    knots: Annotated[
+        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    degree: int,
+    tol: float,
+    variant: int,
+    out: Annotated[NDArray[numpy.float32], dict(shape=(None, None, None), order="C", device="cpu")],
+) -> None:
+    """Write the Lagrange extraction operators into `out`."""
+
+def cardinal_extraction_1d_into_f32(
+    knots: Annotated[
+        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    degree: int,
+    tol: float,
+    out: Annotated[NDArray[numpy.float32], dict(shape=(None, None, None), order="C", device="cpu")],
+) -> None:
+    """Write the cardinal extraction operators into `out`."""
+
+def num_intervals_1d_f32(
+    knots: Annotated[
+        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    degree: int,
+    tol: float,
+) -> int:
+    """The number of in-domain intervals of a knot vector with an explicit tolerance."""
+
+def cardinal_intervals_1d_into_f32(
+    knots: Annotated[
+        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    degree: int,
+    tol: float,
+    out: Annotated[NDArray[numpy.bool_], dict(shape=(None,), order="C", device="cpu")],
+) -> None:
+    """Write the cardinal-interval flags of a knot vector with an explicit tolerance."""

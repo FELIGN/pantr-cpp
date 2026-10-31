@@ -31,6 +31,9 @@ module.
   behind ``Bspline.elevate_degree`` and ``reduce_degree``.
 - The knot-removal helpers behind ``Bspline.remove_knots``: the control-point scale, the round-off
   floor, the stacked-point count, the homogeneous tolerance and the knot-class lookup.
+- The Bezier, Lagrange and cardinal extraction operators and the cardinal intervals of a raw knot
+  vector with an explicit tolerance (``bezier_extraction_1d`` and its siblings), which a space
+  only reaches with its own tolerance.
 """
 
 from __future__ import annotations
@@ -41,8 +44,11 @@ import numpy as np
 import numpy.typing as npt
 
 from ._ext import ext
+from .basis import LagrangeVariant
 from .basis._basis_1D import _Family
 from .basis._basis_lagrange import _get_lagrange_points
+from .basis._basis_tabulate import _variant_code
+from .basis._basis_utils import _allocate_or_validate_out, _validate_out_array
 from .bezier._find_roots import _get_state as root_provider_state
 from .bezier._find_roots import _set_state as set_root_provider_state
 from .change_basis import (
@@ -333,6 +339,150 @@ def degree_reduce_1d(
     return (out[1], out[0])
 
 
+def _extraction_intervals(
+    knots: npt.NDArray[np.float32 | np.float64], degree: int, tol: float
+) -> tuple[npt.NDArray[np.float32 | np.float64], int]:
+    """Validate the arguments of a raw extraction call and count its intervals.
+
+    Args:
+        knots (npt.NDArray[np.float32 | np.float64]): The knot vector.
+        degree (int): The degree.
+        tol (float): The absolute parametric tolerance.
+
+    Returns:
+        tuple[npt.NDArray[np.float32 | np.float64], int]: The knots as the compiled call takes
+        them, and the number of in-domain intervals.
+
+    Raises:
+        TypeError: If ``knots`` is not 1D.
+        ValueError: If ``tol`` is negative or the knots and the degree define no space.
+    """
+    k = np.ascontiguousarray(knots)
+    if k.ndim != 1:
+        raise TypeError("knots must be a 1D array")
+    return k, int(_by_dtype("num_intervals_1d", k.dtype)(k, degree, tol))
+
+
+def bezier_extraction_1d(
+    knots: npt.NDArray[np.float32 | np.float64],
+    degree: int,
+    tol: float,
+    out: npt.NDArray[np.float32 | np.float64] | None = None,
+) -> npt.NDArray[np.float32 | np.float64]:
+    """Get the Bezier extraction operators of a raw knot vector with an explicit tolerance.
+
+    Args:
+        knots (npt.NDArray[np.float32 | np.float64]): The knot vector.
+        degree (int): The degree.
+        tol (float): The absolute parametric tolerance, non-negative.
+        out (npt.NDArray[np.float32 | np.float64] | None): A C-contiguous array to fill, or None.
+
+    Returns:
+        npt.NDArray[np.float32 | np.float64]: ``(intervals, degree + 1, degree + 1)``; ``out``
+        when given.
+
+    Raises:
+        TypeError: If ``knots`` is not 1D.
+        ValueError: If ``tol`` is negative, the knots and the degree define no space, or ``out``
+            has another shape or dtype or is not writeable.
+    """
+    k, n = _extraction_intervals(knots, degree, tol)
+    ops = _allocate_or_validate_out(out, (n, degree + 1, degree + 1), k.dtype)
+    _by_dtype("bezier_extraction_1d_into", k.dtype)(k, degree, tol, ops)
+    return ops
+
+
+def lagrange_extraction_1d(
+    knots: npt.NDArray[np.float32 | np.float64],
+    degree: int,
+    tol: float,
+    lagrange_variant: LagrangeVariant = LagrangeVariant.EQUISPACES,
+    out: npt.NDArray[np.float32 | np.float64] | None = None,
+) -> npt.NDArray[np.float32 | np.float64]:
+    """Get the Lagrange extraction operators of a raw knot vector with an explicit tolerance.
+
+    Args:
+        knots (npt.NDArray[np.float32 | np.float64]): The knot vector.
+        degree (int): The degree.
+        tol (float): The absolute parametric tolerance, non-negative.
+        lagrange_variant (LagrangeVariant): The node distribution.
+        out (npt.NDArray[np.float32 | np.float64] | None): A C-contiguous array to fill, or None.
+
+    Returns:
+        npt.NDArray[np.float32 | np.float64]: ``(intervals, degree + 1, degree + 1)``; ``out``
+        when given.
+
+    Raises:
+        TypeError: If ``knots`` is not 1D.
+        ValueError: As :func:`bezier_extraction_1d`, or if the degree is beyond the Lagrange
+            matrix's.
+    """
+    k, n = _extraction_intervals(knots, degree, tol)
+    ops = _allocate_or_validate_out(out, (n, degree + 1, degree + 1), k.dtype)
+    _by_dtype("lagrange_extraction_1d_into", k.dtype)(
+        k, degree, tol, _variant_code(lagrange_variant), ops
+    )
+    return ops
+
+
+def cardinal_extraction_1d(
+    knots: npt.NDArray[np.float32 | np.float64],
+    degree: int,
+    tol: float,
+    out: npt.NDArray[np.float32 | np.float64] | None = None,
+) -> npt.NDArray[np.float32 | np.float64]:
+    """Get the cardinal extraction operators of a raw knot vector with an explicit tolerance.
+
+    Args:
+        knots (npt.NDArray[np.float32 | np.float64]): The knot vector.
+        degree (int): The degree.
+        tol (float): The absolute parametric tolerance, non-negative.
+        out (npt.NDArray[np.float32 | np.float64] | None): A C-contiguous array to fill, or None.
+
+    Returns:
+        npt.NDArray[np.float32 | np.float64]: ``(intervals, degree + 1, degree + 1)``; ``out``
+        when given.
+
+    Raises:
+        TypeError: If ``knots`` is not 1D.
+        ValueError: As :func:`lagrange_extraction_1d`.
+    """
+    k, n = _extraction_intervals(knots, degree, tol)
+    ops = _allocate_or_validate_out(out, (n, degree + 1, degree + 1), k.dtype)
+    _by_dtype("cardinal_extraction_1d_into", k.dtype)(k, degree, tol, ops)
+    return ops
+
+
+def cardinal_intervals_1d(
+    knots: npt.NDArray[np.float32 | np.float64],
+    degree: int,
+    tol: float,
+    out: npt.NDArray[np.bool_] | None = None,
+) -> npt.NDArray[np.bool_]:
+    """Flag the cardinal intervals of a raw knot vector with an explicit tolerance.
+
+    Args:
+        knots (npt.NDArray[np.float32 | np.float64]): The knot vector.
+        degree (int): The degree.
+        tol (float): The absolute parametric tolerance, non-negative.
+        out (npt.NDArray[np.bool_] | None): A C-contiguous boolean array to fill, or None.
+
+    Returns:
+        npt.NDArray[np.bool_]: One flag per in-domain interval; ``out`` when given.
+
+    Raises:
+        TypeError: If ``knots`` is not 1D.
+        ValueError: If ``tol`` is negative, the knots and the degree define no space, or ``out``
+            has another shape or dtype or is not writeable.
+    """
+    k, n = _extraction_intervals(knots, degree, tol)
+    flags = np.empty(n, dtype=np.bool_) if out is None else out
+    if out is not None:
+        _validate_out_array(out, (n,), np.bool_)
+    _by_dtype("cardinal_intervals_1d_into", k.dtype)(k, degree, tol, flags)
+    return flags
+
+
 BERNSTEIN: Final = _Family.BERNSTEIN
 """The Bernstein family, for :data:`gram_projection`."""
 CARDINAL_BSPLINE: Final = _Family.CARDINAL_BSPLINE
@@ -368,9 +518,12 @@ __all__ = [
     "bernstein_row_mirrored_f32",
     "bernstein_row_unmirrored",
     "bernstein_row_unmirrored_f32",
+    "bezier_extraction_1d",
     "bincoeff",
     "blossom_span",
     "blossom_span_f32",
+    "cardinal_extraction_1d",
+    "cardinal_intervals_1d",
     "change_basis_cache_clear",
     "change_basis_cache_size",
     "check_bincoeff_envelope",
@@ -399,6 +552,7 @@ __all__ = [
     "knot_scale",
     "knot_tolerance",
     "l2_reduction_operator",
+    "lagrange_extraction_1d",
     "newton_polish_scalar",
     "num_stacked_control_points",
     "oslo_matrix",

@@ -27,7 +27,6 @@ import numpy as np
 import pytest
 
 from pantr.bezier import Bezier
-from pantr.bspline import Bspline, BsplineSpace, BsplineSpace1D
 from pantr.grid import hierarchical_grid, uniform_grid
 
 # ---------------------------------------------------------------------------
@@ -51,29 +50,6 @@ def _bezier_2d() -> Bezier:
         ~pantr.bezier.Bezier: A ``dim == 2``, ``rank == 3`` Bézier.
     """
     return Bezier(np.arange(12.0).reshape(2, 2, 3))
-
-
-def _general_space_1d() -> BsplineSpace1D:
-    """Build a 1D space whose knots are *not* Bézier-like.
-
-    The interior knot matters: with Bézier-like knots the evaluation takes its Bernstein
-    branch and never reaches the kernel the corresponding cases use as a sentinel.
-
-    Returns:
-        ~pantr.bspline.BsplineSpace1D: A degree-2 space over ``[0, 1]`` with one interior
-        knot.
-    """
-    return BsplineSpace1D(np.array([0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0]), 2)
-
-
-def _bspline_1d() -> Bspline:
-    """Build a scalar 1D B-spline over :func:`_general_space_1d`.
-
-    Returns:
-        ~pantr.bspline.Bspline: A ``dim == 1`` B-spline.
-    """
-    space = BsplineSpace([_general_space_1d()])
-    return Bspline(space, np.arange(1.0, space.num_total_basis + 1.0))
 
 
 def _hierarchical_grid_2d() -> Any:
@@ -136,15 +112,10 @@ _CASES: tuple[_BarrierCase, ...] = (
         lambda: _hierarchical_grid_2d().collect_cell_bounds(),
     ),
     # -- pantr.bspline -----------------------------------------------------
-    # The basis tabulation (BsplineSpace1D.tabulate_basis and its derivatives) and the evaluation
-    # of a Bspline (evaluate, evaluate_derivatives) moved to C++ (whose pool is safe against
-    # concurrent callers), so they carry no barrier and have no case here.
-    _BarrierCase(
-        "_bspline_to_beziers._to_beziers_impl",
-        "pantr.bspline._bspline_to_beziers",
-        "_apply_bezier_extraction_1d_core",
-        lambda: _bspline_1d().to_beziers(),
-    ),
+    # The basis tabulation (BsplineSpace1D.tabulate_basis and its derivatives), the evaluation
+    # of a Bspline (evaluate, evaluate_derivatives) and the Bézier decomposition (to_beziers)
+    # moved to C++ (whose pool is safe against concurrent callers), so they carry no barrier and
+    # have no case here.
 )
 """The Layer 2 entry points whose barrier this module pins, one case each."""
 

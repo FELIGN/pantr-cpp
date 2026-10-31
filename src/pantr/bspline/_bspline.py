@@ -18,12 +18,9 @@ import numpy as np
 from numpy import typing as npt
 
 from .._ext import ext
-from .._transform_control_points import _apply_affine_to_control_points
 from ._bspline_derivative import _derivative_bspline
 from ._bspline_eval import _evaluate_Bspline, _evaluate_Bspline_deriv
 from ._bspline_locate import _locate_impl
-from ._bspline_slice import _slice_bspline
-from ._bspline_to_beziers import _to_beziers_impl
 
 _cpp: Any = ext.bspline
 """The compiled B-splines (private; untyped: one class per dtype)."""
@@ -36,6 +33,7 @@ if TYPE_CHECKING:
     from ..quad import PointsLattice
     from ..transform import AffineTransform
     from ._bspline_locate import _LocateContext
+    from ._bspline_space_1d import BsplineSpace1D
     from ._bspline_space_nd import BsplineSpace
 
 
@@ -314,13 +312,20 @@ class Bspline:
         """
         self._set_handle(other._h, other._space)
 
-    def _from_result(self, h: Any) -> Bspline:  # noqa: ANN401
+    def _from_result(
+        self,
+        h: Any,  # noqa: ANN401
+        old: Sequence[BsplineSpace1D] | None = None,
+    ) -> Bspline:
         """Wrap a compiled value an operation returned as a new B-spline.
 
         The directions the operation left alone keep their Python space objects.
 
         Args:
             h (Any): The compiled B-spline (of this B-spline's dtype).
+            old (Sequence[BsplineSpace1D] | None): The Python space of each direction of ``h``
+                that the operation may have left alone, in the order of ``h``'s directions
+                (this B-spline's own, by default).
 
         Returns:
             Bspline: A plain ``Bspline`` over the value, whose space is built from the
@@ -329,7 +334,8 @@ class Bspline:
         from ._bspline_space_1d import BsplineSpace1D  # noqa: PLC0415
         from ._bspline_space_nd import BsplineSpace  # noqa: PLC0415
 
-        old = self._space.spaces
+        if old is None:
+            old = self._space.spaces
         spaces = [
             o if n.same_rep(o._h) else BsplineSpace1D._from_handle(n)
             for n, o in zip(h.directions, old, strict=True)
@@ -1107,11 +1113,9 @@ class Bspline:
         Args:
             copy (bool): If ``True`` (default), the control points are
                 deep-copied into the new Bézier.  If ``False``, the Bézier
-                shares the same underlying control point array when possible
-                (direct extraction of a C-contiguous float32 or float64 array;
-                another layout or dtype is converted, which shares nothing) or
-                owns the freshly allocated array produced by the open-form
-                conversion.
+                shares this B-spline's own read-only control point array and keeps it
+                alive (a B-spline with Bézier-like knots), or owns the freshly allocated
+                array produced by the open-form conversion.
 
         Returns:
             ~pantr.bezier.Bezier: Equivalent Bézier representation.
@@ -1122,28 +1126,7 @@ class Bspline:
         """
         from ..bezier import Bezier as BezierCls  # noqa: PLC0415
 
-        if self._space.has_Bezier_like_knots():
-            if copy:
-                return BezierCls(self.control_points, is_rational=self._is_rational)
-            return BezierCls._borrow(self.control_points, self._is_rational)
-
-        # Already open but not Bezier-like → multi-element, cannot convert.
-        spaces = self._space.spaces
-        if all(s.has_open_knots() and not s.periodic for s in spaces):
-            raise ValueError(
-                "B-spline has more than one element per direction "
-                "and cannot be represented as a single Bézier."
-            )
-
-        # Periodic / non-open: convert to open form first.
-        open_bspline = self.to_open_bspline()
-        if not open_bspline.space.has_Bezier_like_knots():
-            raise ValueError(
-                "B-spline has more than one element per direction "
-                "and cannot be represented as a single Bézier."
-            )
-        cp = open_bspline.control_points.copy() if copy else open_bspline.control_points
-        return BezierCls(cp, is_rational=self._is_rational)
+        return BezierCls._from_handle(self._h.to_bezier(bool(copy)))
 
     def to_beziers(self) -> npt.NDArray[np.object_]:
         """Decompose into Bézier patches.
@@ -1179,8 +1162,27 @@ class Bspline:
             T-spline generalization :cite:p:`scott2011tsplines`).
         """
         if self._beziers_cache is None:
-            self._beziers_cache = _to_beziers_impl(self)
+            self._beziers_cache = self._decompose()
         return self._beziers_cache
+
+    def _decompose(self) -> npt.NDArray[np.object_]:
+        """Build the object array of the Bézier patches of every element.
+
+        Returns:
+            ``npt.NDArray[np.object_]``: The patches, shaped as the elements per direction.
+        """
+        from ..bezier import Bezier as BezierCls  # noqa: PLC0415
+
+        extents, handles = self._h.to_beziers()
+        # Every patch has the same shape: `degree + 1` per direction, then the coordinates.
+        shape = (*(d + 1 for d in self._space.degrees), self._shape[-1])
+        flat = np.empty(len(handles), dtype=object)
+        for i, h in enumerate(handles):
+            patch = object.__new__(BezierCls)
+            patch._set_handle(h, shape, self._dtype)
+            flat[i] = patch
+        result: npt.NDArray[np.object_] = flat.reshape(tuple(extents))
+        return result
 
     def multiply(self, other: Bspline) -> Bspline:
         """Return the exact pointwise product of this B-spline and another.
@@ -1276,36 +1278,7 @@ class Bspline:
             >>> srf.control_points[0, :, 0].tolist()
             [2.0, 0.0]
         """
-        if direction < 0 or direction >= self.dim:
-            raise ValueError(f"direction must be in [0, {self.dim}), got {direction}.")
-
-        from .._control_points_utils import _reverse_control_points  # noqa: PLC0415
-        from ._bspline_space_1d import BsplineSpace1D  # noqa: PLC0415
-        from ._bspline_space_nd import BsplineSpace  # noqa: PLC0415
-
-        # Reflect the knot vector: knots_new = a + b - knots[::-1].
-        old_space = self._space.spaces[direction]
-        knots = old_space.knots
-        a, b = old_space.domain
-        new_knots = (a + b) - knots[::-1]
-        new_space_1d = BsplineSpace1D(new_knots, old_space.degree, periodic=old_space.periodic)
-
-        new_spaces = list(self._space.spaces)
-        new_spaces[direction] = new_space_1d
-        new_space = BsplineSpace(new_spaces)
-
-        new_cp = _reverse_control_points(self.control_points, direction, in_place=False)
-        if old_space.periodic:
-            # The stored periodic points expand as full[j] = stored[j % n_stored];
-            # reversing the full sequence therefore needs a plain flip *plus* a
-            # cyclic shift by the ghost count n_full - n_stored.
-            n_stored = new_cp.shape[direction]
-            n_full = knots.shape[0] - old_space.degree - 1
-            shift = (n_full - n_stored) % n_stored
-            if shift:
-                new_cp = np.roll(new_cp, shift, axis=direction)
-
-        result = Bspline(new_space, new_cp, is_rational=self._is_rational)
+        result = self._from_result(self._h.reversed(_index(direction)))
         if in_place:
             self._adopt(result)
             return None
@@ -1356,21 +1329,18 @@ class Bspline:
             >>> swapped.control_points[0, 2].tolist()  # was control_points[2, 0]
             [4.0]
         """
-        from .._control_points_utils import _permute_control_points  # noqa: PLC0415
         from ._bspline_space_nd import BsplineSpace  # noqa: PLC0415
 
         perm = list(permutation)
+        # Checked here for the message, which spells the Python list; the compiled call checks it
+        # again.
         if sorted(perm) != list(range(self.dim)):
             raise ValueError(f"permutation must be a permutation of range({self.dim}), got {perm}.")
 
-        new_cp = _permute_control_points(self.control_points, perm, self.dim)
-
-        # Reorder 1D spaces.
-        old_spaces = self._space.spaces
-        new_spaces = tuple(old_spaces[i] for i in perm)
-        new_space = BsplineSpace(new_spaces)
-
-        result = Bspline(new_space, new_cp, is_rational=self._is_rational)
+        h = self._h.permuted([_index(i) for i in perm])
+        # The directions keep their Python space objects, in the new order.
+        result = object.__new__(Bspline)
+        result._set_handle(h, BsplineSpace(tuple(self._space.spaces[i] for i in perm)))
         if in_place:
             self._adopt(result)
             return None
@@ -1424,15 +1394,13 @@ class Bspline:
             >>> np.allclose(shifted.control_points, [[1.0, 2.0], [2.0, 3.0]])
             True
         """
-        # The transform always builds a new array (the control points are read-only).
-        new_cp = _apply_affine_to_control_points(
-            self.control_points,
-            self._is_rational,
-            affine.matrix,
-            affine.offset,
-            in_place=False,
+        h = self._h.transformed(
+            np.ascontiguousarray(affine.matrix, dtype=np.float64),
+            np.ascontiguousarray(affine.offset, dtype=np.float64),
         )
-        result = Bspline(self._space, new_cp, is_rational=self._is_rational)
+        # The space is the same object.
+        result = object.__new__(Bspline)
+        result._set_handle(h, self._space)
         if in_place:
             self._adopt(result)
             return None
@@ -1527,19 +1495,12 @@ class Bspline:
             >>> np.allclose(pt, volume.evaluate(np.array([[0.2, 0.5, 0.3]])))
             True
         """
-        if axis < 0 or axis >= self.dim:
-            raise ValueError(f"axis must be in [0, {self.dim}), got {axis}.")
-
-        space_d = self.space.spaces[axis]
-        domain = space_d.domain
-        tol = float(space_d.tolerance)
-        if value < float(domain[0]) - tol or value > float(domain[1]) + tol:
-            raise ValueError(
-                f"value {value} is outside the domain [{domain[0]}, {domain[1]}] "
-                f"of direction {axis}."
-            )
-
-        return _slice_bspline(self, axis, value)
+        ax = _index(axis)
+        if self.dim == 1:
+            point: npt.NDArray[np.float32 | np.float64] = self._h.slice_point(ax, _real(value))
+            return point
+        h = self._h.slice(ax, _real(value))
+        return self._from_result(h, self._other_spaces(ax))
 
     def boundary(self, axis: int, side: int) -> Bspline | npt.NDArray[np.float32 | np.float64]:
         """Extract the boundary of the B-spline along one parametric direction.
@@ -1576,13 +1537,24 @@ class Bspline:
         """
         if side not in (0, 1):
             raise ValueError(f"side must be 0 or 1, got {side}.")
-        if axis < 0 or axis >= self.dim:
-            raise ValueError(f"axis must be in [0, {self.dim}), got {axis}.")
+        ax = _index(axis)
+        end = 0 if side == 0 else 1
+        if self.dim == 1:
+            point: npt.NDArray[np.float32 | np.float64] = self._h.boundary_point(ax, end)
+            return point
+        h = self._h.boundary(ax, end)
+        return self._from_result(h, self._other_spaces(ax))
 
-        space_d = self.space.spaces[axis]
-        domain = space_d.domain
-        value = float(domain[0]) if side == 0 else float(domain[1])
-        return self.slice(axis, value)
+    def _other_spaces(self, axis: int) -> list[BsplineSpace1D]:
+        """Get the Python spaces of the directions other than one.
+
+        Args:
+            axis (int): The direction left out, in range.
+
+        Returns:
+            list[BsplineSpace1D]: The other directions' spaces, in order.
+        """
+        return [s for i, s in enumerate(self._space.spaces) if i != axis]
 
     # ------------------------------------------------------------------
     # Visualization

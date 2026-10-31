@@ -1,10 +1,10 @@
 """B-spline knot vector kernels still used by B-spline code not yet ported to C++.
 
-The knot classes, domain test, basis count and knot search here are the Numba
-kernels the unported modules (evaluation, knot insertion and removal, extraction,
-products, derivatives, degree change, slicing) still call; the spaces, the knot
-tolerance, the snapping and interval checks, the cardinal intervals and the knot
-factories are C++ (``include/pantr/bspline/knots.hpp`` and ``knot_factories.hpp``).
+The knot classes, domain test and basis count here are the Numba kernels the unported
+modules (the products and the rational derivative) still call; the spaces, the knot
+tolerance, the snapping and interval checks, the cardinal intervals, the extraction
+operators and the knot factories are C++ (``include/pantr/bspline/knots.hpp``,
+``extraction.hpp`` and ``knot_factories.hpp``).
 Each kernel is deleted with its last caller (the coexistence rule of the C++ port).
 
 Every ``tol`` argument in this module is an **absolute** parametric length, in the
@@ -22,39 +22,6 @@ import numpy as np
 import numpy.typing as npt
 
 from .._numba_compat import nb_jit
-from ..basis._basis_utils import _validate_out_array
-
-
-@nb_jit(
-    nopython=True,
-    cache=True,
-    parallel=False,
-)
-def _check_spline_info(knots: npt.NDArray[np.float32 | np.float64], degree: int) -> None:
-    """Validate basic constraints on B-spline knot vector and degree.
-
-    Performs core checks on a B-spline knot vector and polynomial degree,
-    raising an ValueError if any validation fails.
-
-    Args:
-        knots (npt.NDArray[np.float32 | np.float64]): 1D array representing the B-spline
-            knot vector to check.
-        degree (int): Non-negative polynomial degree for the B-spline.
-
-    Raises:
-        TypeError: If `knots` is not 1-dimensional.
-        ValueError: If `degree` is negative,
-            if there are fewer than `2*degree+2` knots, or if the knot vector
-            is not non-decreasing.
-    """
-    if knots.ndim != 1:
-        raise TypeError("knots must be a 1D array")
-    if degree < 0:
-        raise ValueError("degree must be non-negative")
-    if knots.size < (2 * degree + 2):
-        raise ValueError("knots must have at least 2*degree+2 elements")
-    if not np.all(np.diff(knots) >= knots.dtype.type(0.0)):
-        raise ValueError("knots must be non-decreasing")
 
 
 @nb_jit(
@@ -259,123 +226,6 @@ def _get_Bspline_num_basis_1D_impl(
     return num_basis
 
 
-@nb_jit(
-    nopython=True,
-    cache=True,
-    parallel=False,
-)
-def _get_Bspline_cardinal_intervals_1D_core(
-    knots: npt.NDArray[np.float32 | np.float64],
-    degree: int,
-    tol: float,
-    out: npt.NDArray[np.bool_],
-) -> None:
-    """Core implementation to compute cardinal intervals, writing to output array.
-
-    An interval is cardinal if it has the same length as the degree-1
-    previous and the degree-1 next intervals.
-
-    In the case of open knot vectors, this definition automatically
-    discards the first degree-1 and the last degree-1 intervals.
-
-    At ``degree == 0`` there are no neighbouring intervals to compare against, so the
-    equal-length condition holds vacuously and only the multiplicity gate below
-    decides the answer; see the in-body comment for why that is consistent with the
-    geometry.
-
-    Args:
-        knots (npt.NDArray[np.float32 | np.float64]): B-spline knot vector.
-        degree (int): B-spline degree.
-        tol (float): Tolerance for numerical comparisons.
-        out (npt.NDArray[np.bool_]): Output array where results will be written.
-            Must have the correct shape (no validation performed inside this
-            numba-compiled function).
-
-    Note:
-        This is a Numba-compiled function optimized for performance. It
-        expects pre-validated inputs and assumes the output array has the
-        correct shape. Inputs are assumed to be correct (no validation performed).
-        For general use, call _get_Bspline_cardinal_intervals_1D_impl instead.
-    """
-    _, mult = _get_unique_knots_and_multiplicity_impl(knots, degree, tol, in_domain=True)
-    num_intervals = len(mult) - 1
-
-    out.fill(np.False_)
-
-    if np.all(mult > 1):
-        return
-
-    knot_id = degree
-
-    # Note: this loop could be shortened by only looking at those
-    # intervals for which the multiplicity of the first knot is 1.
-    # This would require to compute knot_id differently.
-    for elem_id in range(num_intervals):
-        if mult[elem_id] == 1 and mult[elem_id + 1] == 1:
-            if degree == 0:
-                # The comparison window below spans ``2 * degree - 1`` knot intervals
-                # and its reference is the centre entry ``degree - 1``; at degree 0 the
-                # window is empty and that index addressed a zero-length array.  There
-                # is nothing to compare, so the length condition holds vacuously and
-                # this interval is cardinal -- it already passed the multiplicity gate
-                # above, which still applies at degree 0.  Consistent with the geometry
-                # either way: a degree-0 space has one basis function per interval, so
-                # its cardinal extraction operator is the 1x1 identity on every
-                # interval whatever this flag says.
-                out[elem_id] = np.True_
-            else:
-                local_knots = knots[knot_id - degree + 1 : knot_id + degree + 1]
-                lengths = np.diff(local_knots)
-                if np.all(np.abs(lengths - lengths[degree - 1]) <= tol):
-                    out[elem_id] = np.True_
-
-        knot_id += mult[elem_id + 1]
-
-
-def _get_Bspline_cardinal_intervals_1D_impl(
-    knots: npt.NDArray[np.float32 | np.float64],
-    degree: int,
-    tol: float,
-    out: npt.NDArray[np.bool_] | None = None,
-) -> npt.NDArray[np.bool_]:
-    """Get boolean array indicating whether intervals are cardinal.
-
-    An interval is cardinal if it has the same length as the degree-1
-    previous and the degree-1 next intervals.
-
-    In the case of open knot vectors, this definition automatically
-    discards the first degree-1 and the last degree-1 intervals.
-
-    Args:
-        knots (npt.NDArray[np.float32 | np.float64]): B-spline knot vector.
-        degree (int): B-spline degree.
-        tol (float): Tolerance for numerical comparisons.
-        out (npt.NDArray[np.bool_] | None): Optional output array where the result will be
-            stored. If None, a new array is allocated. Must have the correct shape and dtype
-            if provided. This follows NumPy's style for output arrays. Defaults to None.
-
-    Returns:
-        npt.NDArray[np.bool_]: Boolean array where True indicates cardinal intervals.
-            It has length equal to the number of intervals. If `out` was provided,
-            returns the same array.
-
-    Raises:
-        ValueError: If the knot vector or degree fails basic validation or if tol is negative.
-        ValueError: If `out` is provided and has incorrect shape or dtype.
-    """
-    _, mult = _get_unique_knots_and_multiplicity_impl(knots, degree, tol, in_domain=True)
-    num_intervals = len(mult) - 1
-
-    if out is None:
-        out = np.empty(num_intervals, dtype=np.bool_)
-    else:
-        _validate_out_array(out, (num_intervals,), np.bool_)
-
-    _get_Bspline_cardinal_intervals_1D_core(knots, degree, tol, out)
-
-    return out
-
-
 def _ensure_scalar_arrays(
     values: dict[str, float | int | np.floating[Any] | None],
 ) -> dict[str, npt.NDArray[np.generic]]:
@@ -498,82 +348,6 @@ def _get_knots_ends_and_dtype(
     return start_value, end_value, dtype_obj
 
 
-def _find_span(
-    knots: npt.NDArray[np.float32 | np.float64],
-    degree: int,
-    n_basis: int,
-    value: float,
-    tol: float,
-) -> tuple[int, float]:
-    """Find the knot span index for a parameter value (Piegl-Tiller convention).
-
-    Returns the span index ``k`` such that ``knots[k] <= u < knots[k+1]``,
-    with the convention that at the right boundary ``k = n_basis - 1``.
-
-    Args:
-        knots (npt.NDArray[np.float32 | np.float64]): B-spline knot vector.
-        degree (int): Polynomial degree.
-        n_basis (int): Number of basis functions.
-        value (float): Parameter value (must be in the domain).
-        tol (float): Tolerance for boundary clamping.
-
-    Returns:
-        tuple[int, float]: ``(k, u)`` where ``k`` is the span index and
-        ``u`` is the (possibly clamped) parameter value.
-
-    Note:
-        Inputs are assumed to be correct (no validation performed).
-    """
-    u = float(value)
-    u_left = float(knots[degree])
-    u_right = float(knots[n_basis])
-
-    # Clamp to domain boundaries.
-    if u <= u_left + tol:
-        return degree, u_left
-    if u >= u_right - tol:
-        return n_basis - 1, u_right
-
-    # Interior: binary search via searchsorted.
-    k = int(np.searchsorted(knots, u, side="right")) - 1
-    return k, u
-
-
-def _count_multiplicity(
-    knots: npt.NDArray[np.float32 | np.float64],
-    k: int,
-    degree: int,
-    u: float,
-    tol: float,
-) -> int:
-    """Count the multiplicity of ``u`` among the local knots around span ``k``.
-
-    Scans knots ``k``, ``k-1``, ... going left while they match ``u``
-    (within tolerance).  This gives the number of consecutive knots equal
-    to ``u`` ending at position ``k``.
-
-    Args:
-        knots (npt.NDArray[np.float32 | np.float64]): B-spline knot vector.
-        k (int): Span index from :func:`_find_span`.
-        degree (int): Polynomial degree.
-        u (float): Parameter value.
-        tol (float): Tolerance for knot coincidence tests.
-
-    Returns:
-        int: Multiplicity of ``u`` in the local knot neighborhood.
-
-    Note:
-        Inputs are assumed to be correct (no validation performed).
-    """
-    s = 0
-    for i in range(k, max(k - degree - 1, -1), -1):
-        if abs(float(knots[i]) - u) <= tol:
-            s += 1
-        else:
-            break
-    return s
-
-
 def _warmup_numba_functions() -> None:
     """Precompile numba functions with float64 signatures for faster first call.
 
@@ -587,16 +361,10 @@ def _warmup_numba_functions() -> None:
     degree_dummy = 2
 
     # Warmup each numba function with float64
-    _check_spline_info(knots_dummy, degree_dummy)
     _get_multiplicity_of_first_knot_in_domain_impl(knots_dummy, degree_dummy, tol_dummy)
     _get_unique_knots_and_multiplicity_impl(knots_dummy, degree_dummy, tol_dummy, False)
     _is_in_domain_impl(knots_dummy, degree_dummy, pts_dummy, tol_dummy)
     _get_Bspline_num_basis_1D_impl(knots_dummy, degree_dummy, False, tol_dummy)
-    # For cardinal intervals: with knots [0,0,0,1,1,1] and degree 2, we have 1 interval
-    out_cardinal_dummy = np.empty(1, dtype=np.bool_)
-    _get_Bspline_cardinal_intervals_1D_core(
-        knots_dummy, degree_dummy, tol_dummy, out_cardinal_dummy
-    )
 
 
 # Precompile numba functions on module import
@@ -604,10 +372,6 @@ def _warmup_numba_functions() -> None:
 
 
 __all__ = [
-    "_check_spline_info",
-    "_count_multiplicity",
-    "_find_span",
-    "_get_Bspline_cardinal_intervals_1D_impl",
     "_get_Bspline_num_basis_1D_impl",
     "_get_knots_ends_and_dtype",
     "_get_multiplicity_of_first_knot_in_domain_impl",

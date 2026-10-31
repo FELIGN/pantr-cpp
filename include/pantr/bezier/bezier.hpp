@@ -40,9 +40,9 @@ struct BezierRep {
 /// An immutable value (design §2.2): the control points are fixed at construction and shared,
 /// read-only, by every copy (a copy is a reference-count increment). Every operation constructs a
 /// new value. The buffer constructor is the one way to break that: a caller that hands it memory
-/// someone else may write (the Python binding's interim `borrow`, for a `copy=False` conversion
-/// from a B-spline not yet ported) makes a value that follows those writes, and a write during an
-/// operation is a data race.
+/// someone else may write makes a value that follows those writes, and a write during an
+/// operation is a data race. A conversion from a B-spline that shares its control points hands it
+/// an aliasing pointer into the B-spline's immutable buffer, which the Bézier then keeps alive.
 ///
 /// The control points have extents `(degree[0] + 1, ..., degree[dim - 1] + 1, cp_size)`, row-major.
 /// For a rational Bézier the last of the `cp_size` coordinates is the weight and the others are

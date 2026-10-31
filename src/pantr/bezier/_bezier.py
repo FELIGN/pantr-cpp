@@ -125,28 +125,6 @@ class Bezier:
         b._set_handle(h)
         return b
 
-    @classmethod
-    def _borrow(cls, control_points: npt.ArrayLike, is_rational: bool) -> Bezier:
-        """Build a Bézier over an array without copying it (a ``copy=False`` conversion).
-
-        A ``copy=False`` conversion from a :class:`~pantr.bspline.Bspline` shares its
-        control-point array, a read-only view of an immutable value: an in-place operation on the
-        B-spline replaces its compiled value and never writes into that array, so the Bézier
-        does not change. An array that needs a conversion (dtype, layout) is converted first,
-        which shares nothing.
-
-        Args:
-            control_points (npt.ArrayLike): The control points.
-            is_rational (bool): Whether the Bézier is rational.
-
-        Returns:
-            Bezier: The Bézier.
-        """
-        cp = _as_control_points(control_points)
-        b = object.__new__(cls)
-        b._set_handle(_class_for(cp.dtype).borrow(cp, bool(is_rational)), cp.shape, cp.dtype)
-        return b
-
     def __reduce__(self) -> tuple[Any, ...]:
         """Pickle through the constructor, with a subclass's own attributes as state.
 
@@ -1298,9 +1276,8 @@ def create_from_bspline(bspline: Bspline, *, copy: bool = True) -> Bezier:
             knot structure.
         copy (bool): If ``True`` (default), the control points are
             deep-copied into the new Bézier. If ``False``, the Bézier
-            shares the same underlying control point array (read-only
-            through the Bézier) when it is C-contiguous float32 or float64;
-            another layout or dtype is converted, which shares nothing.
+            shares the B-spline's own control point array (read-only
+            through the Bézier) and keeps it alive.
 
     Returns:
         Bezier: The equivalent Bézier.
@@ -1312,7 +1289,7 @@ def create_from_bspline(bspline: Bspline, *, copy: bool = True) -> Bezier:
         raise ValueError("B-spline does not have Bézier-like knots. Cannot convert to Bézier.")
     if copy:
         return Bezier(bspline.control_points, is_rational=bspline.is_rational)
-    return Bezier._borrow(bspline.control_points, bspline.is_rational)
+    return Bezier._from_handle(bspline._h.to_bezier(False))
 
 
 _VALUE_ATTRS = frozenset({"_h", "_shape", "_is_rational", "_dtype", "control_points"})

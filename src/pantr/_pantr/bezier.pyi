@@ -20,15 +20,6 @@ class BezierF64:
     ) -> None:
         """Validate and copy the control points."""
 
-    @staticmethod
-    def borrow(
-        control_points: Annotated[
-            NDArray[numpy.float64], dict(order="C", device="cpu", writable=False)
-        ],
-        rational: bool,
-    ) -> BezierF64:
-        """A Bezier over the caller's array, without copying it (interim)."""
-
     @property
     def shape(self) -> list[int]:
         """The control-point extents."""
@@ -130,15 +121,6 @@ class BezierF32:
         rational: bool,
     ) -> None:
         """Validate and copy the control points."""
-
-    @staticmethod
-    def borrow(
-        control_points: Annotated[
-            NDArray[numpy.float32], dict(order="C", device="cpu", writable=False)
-        ],
-        rational: bool,
-    ) -> BezierF32:
-        """A Bezier over the caller's array, without copying it (interim)."""
 
     @property
     def shape(self) -> list[int]:
