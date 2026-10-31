@@ -80,11 +80,13 @@
   arrays assuming at most `degree + 1` copies of a knot, and the C++ code refuses rather than
   read past them. For the knot to remove, the previous release returned the B-spline unchanged by
   default and with `num=1`, and removed up to `degree` copies under a large `tol` (through a
-  wrapped negative index). In the other operations its result depended on where the excess
-  stood: an excess at the first knot often gave a correct result, and otherwise it raised an
-  unrelated error ("The number of control points must be a multiple of ...", "Inserting these
-  knots would exceed the maximum multiplicity", `ZeroDivisionError`) or ended the process. The
-  non-rational `derivative()` with `keep_degree=False` still works on such a B-spline.
+  wrapped negative index). In the other operations the result depended on where the excess
+  stood: `elevate_degree`, `reduce_degree` and `derivative(keep_degree=True)` returned the right
+  function for most excesses at the first knot, and `reduce_degree` for most interior ones;
+  otherwise they raised an unrelated error ("The number of control points must be a multiple of
+  ...", "Inserting these knots would exceed the maximum multiplicity", `ZeroDivisionError`) or
+  ended the process, and the rational `derivative` raised, ended the process or, in a sampled
+  degree-1 case, returned another function. The non-rational `derivative()` with `keep_degree=False` still works on such a B-spline.
 - **`Bspline.reduce_degree` refuses a direction whose knot vector is not clamped** ("needs a
   clamped knot vector"); the previous release returned a different function or raised another
   error ("knots must be non-decreasing", "knot vector spans no interval", "A periodic knot vector
@@ -529,8 +531,8 @@
   extraction operators 1.0, the Lagrange extraction operators 2.5, the extraction applications
   4.3. These are maxima of samples, not bounds. Knot vectors are unchanged. Knot removal removes
   the same knots with the same control points on the generic instruction set; `reverse` and
-  `permute_directions` give the same values, and `transform` gives them up to one unit in the last
-  place on some instruction sets. The cardinal extraction operators inherit the differences of the
+  `permute_directions` give the same values, and `transform` gives the same values on the
+  default build and differs by up to 1.8 of these units on the generic instruction set. The cardinal extraction operators inherit the differences of the
   cardinal-to-Bernstein matrix computed in C++ (above), which grow with the degree and with
   non-uniform knots (largest seen: 22 at degree 3 and 1 383 at degree 5 for uniform open knots on
   one instruction set, 3 426 at degree 5 on another, 29 904 at degree 5 on non-uniform knots).
@@ -550,13 +552,14 @@
   `TypeError`, a NumPy scalar passed as the whole of `orders` is a `TypeError` (it was an
   `IndexError`), an order from `2**31` raises `ValueError` "derivative order N is too large"
   (the previous release tried to allocate the derivative table and failed with a `MemoryError`,
-  ran out of memory, or from `2**62` raised NumPy's `ValueError` "array is too big") and one from
+  ran out of memory, or from `2**62` raised a NumPy `ValueError`, "array is too big" or, for a
+  rational B-spline, "Maximum allowed dimension exceeded") and one from
   `2**63` a `TypeError`. The orders are checked before the
   points.
 - **A derivative whose recurrence divides by zero** (a point inside the tolerance band of an
   empty span) raises `ZeroDivisionError` in every dimension and at any number of points. The
-  previous release returned NaN or arbitrary values with one direction, and with two or three
-  raised below 4 096 points and returned NaN above; at such a point an order above the degree
+  previous release returned NaN, `inf` or 0.0 with one direction, and with two or three
+  raised up to 4 095 points and returned NaN from 4 096; at such a point an order above the degree
   returned 0.0 and now raises too.
 - A rational B-spline with a zero or NaN weight evaluates to `inf` or NaN without the NumPy
   `RuntimeWarning`s (such as "invalid value encountered in divide") the previous release emitted.
@@ -576,7 +579,9 @@
     was (the previous release compared it in `float64`); `split` compares its value in `float64`,
     as before.
   - `remove_knots`' `tol` is read as a Python float: `np.float16`, `Decimal`, `Fraction` and
-    objects with `__float__` are accepted, and a list is a `TypeError` (it was accepted).
+    objects with `__float__` are accepted (the previous release refused them), and a
+    one-element array is a `TypeError` (it was accepted); a list or tuple is still refused, now
+    with a `TypeError` instead of Numba's `TypingError`.
   - Directions, axes, counts, `regularity`, `num` and permutation entries go through
     `operator.index`: a float is a `TypeError`, where `subdivide(2, regularity=1.0)` (on
     `Bspline` and on `BsplineSpace1D`) and `remove_knots(..., num=1.0)` were accepted,
@@ -605,10 +610,11 @@
 - **`SpanwiseElementExtraction` takes any number of directions** (its `apply` family raised
   `NotImplementedError` beyond three) and **any memory layout** for the operand, `out`, `scratch`
   and the cell indices, through a temporary where needed. The previous kernels raised Numba's
-  typing errors for masked, strided and some Fortran-ordered arrays, and returned wrong values
+  typing errors for strided and some Fortran-ordered arrays, and for a masked array on the first
+  call of the function in a process (later calls accepted it), and returned wrong values
   for a Fortran-ordered matrix in one-cell `apply_MT_K_M` and `apply_M_K_MT` with two or three
-  directions. A masked `out` of `BsplineSpace1D.tabulate_*_extraction_operators` is accepted
-  (it was refused). `compact_ops_1d`, `idx_maps_1d` and `is_identity_mask_1d` are read-only views
+  directions. A masked `out` of `BsplineSpace1D.tabulate_*_extraction_operators` is accepted on
+  every call (it was refused on the first call of the function in a process). `compact_ops_1d`, `idx_maps_1d` and `is_identity_mask_1d` are read-only views
   over the C++ value. A first argument that is not a `BsplineSpace` raises `AttributeError` for
   `None` and `TypeError` for a `BsplineSpace1D` (both raised `AttributeError` on `.spaces`). When
   a call has two faults, a read-only or wrongly typed `scratch` is reported before a too-small
