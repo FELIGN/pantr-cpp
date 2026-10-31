@@ -71,6 +71,18 @@ template <StorageFloat T>
   return out;
 }
 
+/// The rank cutoff of `numpy.linalg.lstsq(rcond=None)` relative to the largest singular value.
+///
+/// Args:
+///     rows (Eigen::Index): Rows of the matrix.
+///     cols (Eigen::Index): Columns.
+///
+/// Returns:
+///     double: `eps(double) * max(rows, cols)` (numpy `_linalg.py`, `lstsq`).
+[[nodiscard]] inline double lstsq_rcond(Eigen::Index rows, Eigen::Index cols) {
+  return std::numeric_limits<double>::epsilon() * static_cast<double>((std::max)(rows, cols));
+}
+
 /// Solve `A X = B` in the least-squares sense with the minimum-norm solution, as
 /// `numpy.linalg.lstsq(a, b, rcond=None)` does (LAPACK `gelsd`).
 ///
@@ -110,8 +122,7 @@ template <StorageFloat T>
   const auto& s = svd.singularValues();
   const Eigen::Index cols = a.cols();
   // numpy's default rcond, then gelsd's comparison against the largest singular value.
-  const double rcond =
-      std::numeric_limits<double>::epsilon() * static_cast<double>((std::max)(a.rows(), cols));
+  const double rcond = lstsq_rcond(a.rows(), cols);
   const double cutoff = s.size() > 0 ? rcond * s(0) : 0.0;
   Eigen::Index rank = 0;
   while (rank < s.size() && s(rank) > cutoff) {

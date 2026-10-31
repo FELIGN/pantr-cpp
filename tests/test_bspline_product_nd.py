@@ -757,6 +757,7 @@ class TestCrossDirectionTolerance:
 
     @pytest.mark.xfail(
         strict=True,
+        raises=AssertionError,
         reason="The product groups each direction's knots at the largest tolerance of any "
         "direction, so knots closer than another direction's tolerance merge into one class, "
         "here of multiplicity above degree + 1, and the product is not f g. The previous "

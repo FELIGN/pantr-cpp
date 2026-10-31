@@ -1,6 +1,6 @@
 // The pointwise product of two B-splines (`multiply`), the quotient-rule derivative of a rational
-// B-spline (`derivative_rational`), and the minimum-norm least-squares solve both rest on
-// (`linalg::lstsq_min_norm`).
+// B-spline (`derivative_rational`), and the minimum-norm least-squares solves they rest on
+// (`linalg::lstsq_min_norm`, and `linalg::lstsq_min_norm_banded` with its QR `try_lstsq_banded`).
 //
 // Oracles; each test case names its own again.
 //  * Exact-rational evaluation. `bspline_exact_eval.hpp` evaluates a spline in exact rational
@@ -18,7 +18,7 @@
 //    `max(m_f + q, m_g + p)` over the operands that carry it (Curry-Schoenberg, as the header of
 //    product.hpp states); the multiplicities below are worked by hand, one comment each, not
 //    computed by that formula.
-//  * Constructed solutions. `lstsq_min_norm` is checked on systems whose answer is fixed by
+//  * Constructed solutions. Both solvers are checked on systems whose answer is fixed by
 //    construction or known in closed form (the normal equations, the pseudoinverse of a rank-one
 //    matrix, a diagonal matrix whose singular values are its entries).
 //
@@ -80,6 +80,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
@@ -1562,10 +1563,9 @@ bool solution_matches(const pantr::NdArray<T>& got, std::size_t rows, std::size_
 constexpr double kEpsDouble = std::numeric_limits<double>::epsilon();
 
 /// The error allowed for a solution of size `scale` from a backward-stable solve (SVD or QR) in
-/// double of
-/// a system of `n` unknowns and condition number `kappa_power` (the condition number, or its
-/// square for the residual-dependent part of an inconsistent system), then rounded to `T`:
-/// `32 n kappa eps_double scale + u_T scale`. The factor `32 n` is admitted as a heuristic: the
+/// double of a system of `n` unknowns and condition number `kappa_power` (the condition number, or
+/// its square for the residual-dependent part of an inconsistent system), then rounded to `T`: `32
+/// n kappa eps_double scale + u_T scale`. The factor `32 n` is admitted as a heuristic: the
 /// polynomial in `n` of an SVD solve's backward error is not derived here, only bounded generously
 /// for the sizes below; the second term is the rounding of the result to `T`.
 template <class T>
@@ -1772,9 +1772,27 @@ TEST_CASE_TEMPLATE("lstsq_min_norm_banded: a banded system with dense trailing c
   const la::RowMatrix<T> b = matrix_of<T>(m, 2, bv);
   for (const Eigen::Index border : {Eigen::Index{2}, Eigen::Index{0}}) {
     CAPTURE(border);
-    const pantr::NdArray<T> got = la::lstsq_min_norm_banded<T>(a, b, border);
-    CHECK(solution_matches<T>(got, n, 2, x, solve_tolerance<T>(n, 25.6, 6.0)));
+    const std::optional<pantr::NdArray<T>> got = la::try_lstsq_banded<T>(a, b, border);
+    REQUIRE(got.has_value());
+    CHECK(solution_matches<T>(*got, n, 2, x, solve_tolerance<T>(n, 25.6, 6.0)));
   }
+}
+
+TEST_CASE_TEMPLATE("try_lstsq_banded: the full-rank cases above are answered by the QR", T, double,
+                   float) {
+  // Oracle: the constructed solutions of the square and the overdetermined `lstsq_min_norm` cases
+  // above (kappa 5.83 and kappa^2 14.1). Both are far inside the certificate's margin, so the QR
+  // must answer them itself rather than leave them to the SVD.
+  const la::RowMatrix<T> sq = matrix_of<T>(3, 3, {2, 1, 0, 1, 2, 1, 0, 1, 2});
+  const std::optional<pantr::NdArray<T>> x_sq =
+      la::try_lstsq_banded<T>(sq, matrix_of<T>(3, 2, {1, 4.5, 2, 1, 5, -3.5}));
+  REQUIRE(x_sq.has_value());
+  CHECK(solution_matches<T>(*x_sq, 3, 2, {1, 2, -1, 0.5, 3, -2}, solve_tolerance<T>(3, 5.83, 3.0)));
+  const la::RowMatrix<T> tall = matrix_of<T>(4, 2, {1, 0, 1, 1, 1, 2, 1, 3});
+  const std::optional<pantr::NdArray<T>> x_tall =
+      la::try_lstsq_banded<T>(tall, matrix_of<T>(4, 1, {1, 3, 2, 5}));
+  REQUIRE(x_tall.has_value());
+  CHECK(solution_matches<T>(*x_tall, 2, 1, {1.1, 1.1}, solve_tolerance<T>(2, 14.2, 1.1)));
 }
 
 TEST_CASE_TEMPLATE("lstsq_min_norm_banded: where it cannot certify full rank it is the SVD", T,
@@ -1800,6 +1818,7 @@ TEST_CASE_TEMPLATE("lstsq_min_norm_banded: where it cannot certify full rank it 
   };
   for (const Fallback& c : cases) {
     CAPTURE(c.what);
+    CHECK_FALSE(la::try_lstsq_banded<T>(c.a, c.b).has_value());
     CHECK(same_bits<T>(la::lstsq_min_norm_banded<T>(c.a, c.b), la::lstsq_min_norm<T>(c.a, c.b)));
   }
 }

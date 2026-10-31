@@ -797,8 +797,8 @@ def _s4_bspline_cases() -> list[Case]:  # noqa: PLR0915
             setup_find_roots,
         )
 
-    # The product re-expresses its Bezier form on the minimal knot vector by a dense least-squares
-    # solve, whose cost is cubic in the number of intervals: `large` is 100 intervals.
+    # The product re-expresses its Bezier form on the minimal knot vector by a least-squares solve,
+    # a dense one (cubic in the number of intervals) on main: `large` is 100 intervals.
     for size, n in {"tiny": 1, "medium": 10, "large": 100}.items():
 
         def setup_multiply(n: int = n) -> Callable[[], Any]:

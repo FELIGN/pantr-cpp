@@ -1145,25 +1145,35 @@ class TestRationalBoundaryTypes:
         """Every case either matches ``evaluate_derivatives`` or is a documented refusal."""
         other_index = 0 if other is None else 1 + _BOUNDARY_KINDS.index(other)
         rng = np.random.default_rng((_BOUNDARY_KINDS.index(kind), degree, other_index))
-        for _ in range(3):
+        for rep in range(4):
             spaces = [_boundary_space(kind, degree, int(rng.integers(degree + 1, 6)), rng)]
             if other is not None:
                 spaces.append(_boundary_space(other, 2, int(rng.integers(3, 5)), rng))
+            # With a second direction, every other repetition differentiates direction 1.
+            direction = rep % 2 if other is not None else 0
+            if direction == 1:
+                spaces.reverse()
             space = BsplineSpace(spaces)
             nb = tuple(int(n) for n in space.num_basis)
             ctrl = rng.standard_normal((*nb, 3))
             ctrl[..., -1] = rng.uniform(0.5, 2.0, nb)
             f = Bspline(space, ctrl, is_rational=True)
             pts = rng.uniform(0.0, 1.0, (64, f.dim))
-            orders = [1] + [0] * (f.dim - 1)
+            orders = [0] * f.dim
+            orders[direction] = 1
             expected = f.evaluate_derivatives(pts, orders)
             for keep_degree in (False, True):
                 if self._refused(kind, degree):
                     with pytest.raises(ValueError):
-                        f.derivative(0, keep_degree=keep_degree)
+                        f.derivative(direction, keep_degree=keep_degree)
                     continue
-                f_prime = f.derivative(0, keep_degree=keep_degree)
+                f_prime = f.derivative(direction, keep_degree=keep_degree)
                 assert f_prime.is_rational
+                result = f_prime.space.spaces[direction]
+                if kind == "periodic":
+                    assert result.periodic
+                else:
+                    assert result.has_open_knots() and not result.periodic
                 np.testing.assert_allclose(f_prime.evaluate(pts), expected, rtol=0, atol=1e-8)
 
     def test_degree_1_unclamped_by_hand(self) -> None:

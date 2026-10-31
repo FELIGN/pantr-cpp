@@ -648,8 +648,10 @@
     minimal product knot vectors, and onto a periodic or unclamped boundary) by a banded QR where
     the previous release called LAPACK's SVD-based solver through NumPy. The QR's answer is kept
     only where it shows the system has full rank well clear of that solver's cutoff, and the
-    SVD (Eigen's) solves the rest; the cost of a projection then grows about with the square of
-    the number of intervals rather than its cube. Over 1 575 of the random products
+    SVD (Eigen's) solves the rest. For a product with an open direction the cost of that
+    projection then grows about with the square of the number of intervals rather than its cube;
+    the conversion to a periodic or unclamped boundary still forms a dense matrix product first,
+    as the previous release did, and stays close to cubic. Over 1 575 of the random products
     (one to three directions, open, unclamped and periodic operands in any pairing, polynomial and
     rational, `float32` and `float64`, domains of length 3e-4 to 3e3), the largest difference seen
     against the previous release, in units of `eps * max(1, |largest control value|)` of the
@@ -657,9 +659,9 @@
     open, so the largest differences are those of products with a periodic or unclamped operand.
     The 960 paired products differed by at most 7.6 (`float64`) and 4.4 (`float32`). These are
     maxima of samples, not bounds. On domains of other lengths the largest seen in `float64` was
-    the same; in `float32`, three two-direction products differed by far more, all of them
-    products in which the previous release read control points it had never written (see the
-    `multiply` entry under Fixed).
+    also 182; in `float32`, three two-direction products differed by up to `8.4e6` units, all
+    of them products in which the previous release read control points it had never written (see
+    the `multiply` entry under Fixed).
   - **The rational `derivative` moves in the last bits as well**, with the same knot vectors,
     degrees and boundary types to the bit (485 sampled derivatives, `keep_degree` either way). Over
     420 of them (one or two directions, open or periodic differentiated direction, `float32` and
