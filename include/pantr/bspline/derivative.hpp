@@ -172,10 +172,14 @@ template <StorageFloat T>
 /// Raises:
 ///     value_error: `direction` is out of range; the degree there is 0; `b` is rational; the
 ///         degree exceeds the exactness envelope of the binomial kernel (`bincoeff_max_n`); or the
-///         hodograph's own knot vector, `knots[1:-1]` at degree `p - 1`, is not clamped, since
-///         re-elevating it runs A5.9 and A5.9 assumes it is. A clamped direction always yields a
-///         clamped hodograph, and so does **any** direction of degree 1, whose hodograph is
-///         degree 0 and has no end runs to lack; every other unclamped direction is refused.
+///         hodograph's own knot vector, `knots[1:-1]` at degree `p - 1`, is not clamped or repeats
+///         a knot more than `p` times, since re-elevating it runs A5.9 and A5.9 assumes it is
+///         clamped and cannot walk such a run. A direction clamped at both ends yields a clamped
+///         hodograph, and so does **any** direction of degree 1, whose hodograph is degree 0 and
+///         has no end runs to lack; every other unclamped direction is refused. Clamped is not
+///         enough, though: an interior knot of multiplicity `p + 1` (a `C^-1` knot) becomes a run
+///         of `p + 1` in a hodograph of degree `p - 1`, one more than a knot may repeat, and the
+///         direction is refused, degree 1 included.
 template <StorageFloat T>
 [[nodiscard]] Bspline<T> derivative_keep_degree_nonrational(const Bspline<T>& b,
                                                             long long direction) {

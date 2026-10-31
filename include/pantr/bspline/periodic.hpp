@@ -397,7 +397,8 @@ class PeriodicChange {
 ///     points, extents `(n_per, cols)`.
 ///
 /// Raises:
-///     value_error: `m_bdy` is outside `[1, degree]`; the control points do not match the knots;
+///     value_error: `degree < 0` or fewer than `2 * degree + 2` knots; `m_bdy` is outside
+///         `[1, degree]`; the control points do not match the knots;
 ///         the end control points differ by more than the seam budget (clamped knots); the
 ///         interior breakpoints are inconsistent at the tolerance; the factor `R` is singular
 ///         (`numpy.linalg.LinAlgError` is a `ValueError`); or the residual exceeds the closure
@@ -410,6 +411,11 @@ template <StorageFloat T>
   const int p = degree;
   const auto pu = static_cast<std::size_t>(p);
 
+  // Before anything sized from the degree: with fewer than `2 * degree + 2` knots the domain ends
+  // read below are out of order or out of range, and the Oslo matrix shapes derived from them are
+  // those of no space (an Eigen assertion in a debug build, a `std::length_error` in a release
+  // one).
+  detail::check_domain_indexable(open_knots.size(), p);
   check_boundary_multiplicity(m_bdy, p);
   detail::check_net_matches("to_periodic", ctrl.extent(0), open_knots.size(), p);
 

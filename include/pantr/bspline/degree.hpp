@@ -142,11 +142,11 @@ void check_clamped_knots(std::span<const T> knots, int degree, std::string_view 
       continue;
     }
     if (i - run_start > static_cast<std::size_t>(degree) + 1) {
-      throw value_error(
-          std::string(what) + " cannot walk a knot vector that repeats the knot " +
-          py_repr(static_cast<double>(knots[run_start])) + " " + std::to_string(i - run_start) +
-          " times at degree " + std::to_string(degree) +
-          ": a knot may repeat at most degree + 1 = " + std::to_string(degree + 1) + " times.");
+      throw value_error(std::string(what) + " cannot walk a knot vector that repeats the knot " +
+                        detail::repr_of<T>(knots[run_start]) + " " + std::to_string(i - run_start) +
+                        " times at degree " + std::to_string(degree) +
+                        ": a knot may repeat at most degree + 1 = " + std::to_string(degree + 1) +
+                        " times.");
     }
     run_start = i;
   }
@@ -421,8 +421,9 @@ template <StorageFloat T>
 /// Count the Bézier segments a reduction sweep will produce, and the jumps among them.
 ///
 /// Counted with the sweep's own advance rule, so the output arrays can be sized exactly (a bound
-/// in terms of the number of knots alone is not an upper bound: it fails from 8 elements on at
-/// degree 5, and the kernel would then write past the end).
+/// in terms of the number of knots alone is not an upper bound at high degree, where a short vector
+/// still yields more segments than that bound allows, and the kernel would then write past the
+/// end).
 ///
 /// Args:
 ///     knots (std::span<const T>): The clamped knot vector.
@@ -645,7 +646,8 @@ template <StorageFloat T>
 ///
 /// Raises:
 ///     value_error: The degree or the net does not match the knots; `increment < 1`;
-///         `degree + increment` exceeds `bincoeff_max_n`; or the knot vector is not clamped.
+///         `degree + increment` exceeds `bincoeff_max_n`; the knot vector is not clamped; or it
+///         repeats a knot more than `degree + 1` times.
 template <StorageFloat T>
 [[nodiscard]] KnotsAndCtrl<T> elevate_degree_1d(int degree, mdview<const T, 2> ctrl,
                                                 std::span<const T> knots, int increment) {
@@ -672,11 +674,13 @@ template <StorageFloat T>
 ///     `detail::degree_reduce_kernel`).
 ///
 /// Raises:
-///     value_error: The degree pair is out of range, or the net does not match the knots.
+///     value_error: The degree pair is out of range, the net does not match the knots, the knot
+///         vector is not clamped, or it repeats a knot more than `degree + 1` times.
 template <StorageFloat T>
 [[nodiscard]] KnotsAndCtrl<T> reduce_degree_1d(int degree, mdview<const T, 2> ctrl,
                                                std::span<const T> knots, int decrement) {
   detail::check_net_matches("degree reduction", ctrl.extent(0), knots.size(), degree);
+  check_clamped_knots<T>(knots, degree, "Degree reduction", false);
   const auto op =
       bezier::cached_reduction_operator(bezier::ReductionKind::interpolating, degree, decrement);
   return detail::degree_reduce_kernel<T>(degree, ctrl, knots, decrement, *op);
@@ -740,10 +744,10 @@ template <StorageFloat T>
 
 namespace detail {
 
-/// Add two non-negative integers, saturating at the largest `long long`.
-[[nodiscard]] inline long long saturating_add(long long a, long long b) noexcept {
+/// Whether the sum of two non-negative integers exceeds the largest `long long`.
+[[nodiscard]] inline bool sum_overflows(long long a, long long b) noexcept {
   constexpr long long top = (std::numeric_limits<long long>::max)();
-  return b > top - a ? top : a + b;
+  return b > top - a;
 }
 
 }  // namespace detail
@@ -761,8 +765,10 @@ namespace detail {
 /// Raises:
 ///     value_error: The number of increments does not match the dimension; one is negative; none
 ///         is positive; an elevated degree exceeds the exactness envelope of the binomial kernel
-///         (`bincoeff_max_n`); or a direction to be elevated is not periodic and its knot vector
-///         is not clamped.
+///         (`bincoeff_max_n`, also when `degree + increment` overflows `long long`, which the
+///         message states as a bound and not as a degree); a direction to be elevated repeats a
+///         knot more than `degree + 1` times; or one is not periodic and its knot vector is not
+///         clamped.
 template <StorageFloat T>
 [[nodiscard]] Bspline<T> elevate_degree(const Bspline<T>& b,
                                         std::span<const long long> increments) {
@@ -787,7 +793,17 @@ template <StorageFloat T>
   const std::vector<BsplineSpace1D<T>>& spaces = whole.spaces();
   for (std::size_t d = 0; d < spaces.size(); ++d) {
     if (increments[d] > 0) {
-      const long long elevated = detail::saturating_add(spaces[d].degree(), increments[d]);
+      if (detail::sum_overflows(spaces[d].degree(), increments[d])) {
+        // The elevated degree does not fit a `long long`, so no number can be printed for it: the
+        // message gives the bound it exceeds, and does not state a degree it is not.
+        throw value_error("Degree elevation to a degree above " +
+                          std::to_string((std::numeric_limits<long long>::max)()) +
+                          " in direction " + std::to_string(d) +
+                          " is far beyond the largest degree, " + std::to_string(bincoeff_max_n) +
+                          ", that pantr's exact-integer binomial kernel can serve without an int64 "
+                          "overflow.");
+      }
+      const long long elevated = spaces[d].degree() + increments[d];
       check_bincoeff_envelope(elevated, "Degree elevation to degree " + std::to_string(elevated) +
                                             " in direction " + std::to_string(d));
     }
@@ -856,9 +872,9 @@ template <StorageFloat T>
 ///
 /// Raises:
 ///     value_error: Invalid decrements (the number does not match the dimension; one is negative;
-///         none is positive; one exceeds the degree); a direction to be reduced is not periodic and
-///         its knot vector is not clamped; or a rational result has a control weight that is not
-///         strictly positive.
+///         none is positive; one exceeds the degree); a direction to be reduced repeats a knot
+///         more than `degree + 1` times; one is not periodic and its knot vector is not clamped; or
+///         a rational result has a control weight that is not strictly positive.
 template <StorageFloat T>
 [[nodiscard]] Bspline<T> reduce_degree(const Bspline<T>& b, std::span<const long long> decrements) {
   if (decrements.size() != b.dim()) {

@@ -56,6 +56,18 @@ mdview<const T, 2> as_view(const In2D<T>& a) {
   return mdview<const T, 2>(a.data(), a.shape(0), a.shape(1));
 }
 
+/// The columns of a control net handed to a tolerance helper, refused at zero: the helpers divide
+/// the flat length by it, which is a division by zero (a hardware trap, not an exception) for a
+/// net of no columns.
+template <class T>
+std::size_t columns_of(const In2D<T>& ctrl) {
+  if (ctrl.shape(1) == 0) {
+    throw value_error("ctrl needs at least one column per control point, got shape (" +
+                      std::to_string(ctrl.shape(0)) + ", 0).");
+  }
+  return ctrl.shape(1);
+}
+
 /// One direction's knot values, or none to skip the direction.
 template <class T>
 using MaybeKnots = std::optional<In1D<T>>;
@@ -138,14 +150,14 @@ void def_testing(nb::module_& m, const std::string& suffix) {
   m.def(("control_point_scale" + suffix).c_str(),
         [](const In2D<T>& ctrl) {
           return bspline::control_point_scale<T>(std::span<const T>(ctrl.data(), ctrl.size()),
-                                                 ctrl.shape(1));
+                                                 columns_of(ctrl));
         },
         nb::arg("ctrl").noconvert(),
         "max(bounding-box diagonal, largest norm) of the rows of (points, coordinates).");
   m.def(("roundoff_deviation_floor" + suffix).c_str(),
         [](const In2D<T>& ctrl, long long degree, std::size_t num_stacked) {
           return bspline::roundoff_deviation_floor<T>(std::span<const T>(ctrl.data(), ctrl.size()),
-                                                      ctrl.shape(1), saturate_degree(degree),
+                                                      columns_of(ctrl), saturate_degree(degree),
                                                       num_stacked);
         },
         nb::arg("ctrl").noconvert(), nb::arg("degree"), nb::arg("num_stacked"),
@@ -153,7 +165,7 @@ void def_testing(nb::module_& m, const std::string& suffix) {
   m.def(("homogeneous_deviation_tolerance" + suffix).c_str(),
         [](const In2D<T>& ctrl, double tol) {
           return bspline::homogeneous_deviation_tolerance<T>(
-              std::span<const T>(ctrl.data(), ctrl.size()), ctrl.shape(1), tol);
+              std::span<const T>(ctrl.data(), ctrl.size()), columns_of(ctrl), tol);
         },
         nb::arg("ctrl").noconvert(), nb::arg("tol_euclidean"),
         "A projected-space deviation budget pulled back to homogeneous control points.");

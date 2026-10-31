@@ -892,6 +892,8 @@ class Bspline:
             ValueError: If any knot value is not found, is a boundary knot, or is
                 not an interior knot of the domain (a ghost knot of an unclamped
                 knot vector).
+            ValueError: If a knot to remove is repeated more than ``degree + 1``
+                times in the knot vector (a space accepts such a vector).
             TypeError: If ``num`` is not an integer.
         """
         # Periodic splines are not supported.

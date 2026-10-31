@@ -4,12 +4,15 @@
 // (bspline_exact_eval.hpp differentiates the recursive definition of the basis by the Leibniz
 // rule, so no hodograph formula of the library is reused), compared with the exact evaluation of
 // the derivative spline's stored control points. The two differ by the rounding of those control
-// points only. The derivative control points are `p (P[i+1] - P[i]) / (T[i+p+1] - T[i+1])`: a
-// difference, a product by the integer `p` and a quotient are each correctly rounded, so each
-// stored point is within `3 u` of its exact value (relative to itself, `u` the unit roundoff), and
-// since the basis is a partition of unity the spline is within `4 u max|Q|` (the fourth `u` is a
-// margin for a contracted multiply-add). The degree-keeping derivative adds an elevation, whose
-// tolerance is the conservative tier of `pantr::tolerance` (see test_bspline_degree.cpp).
+// points only. The derivative control points are `p (P[i+1] - P[i]) / (T[i+p+1] - T[i+1])`, formed
+// in the storage type with four roundings, each correct: the difference of control points, the
+// product by the integer `p`, the difference of knots in the denominator, and the quotient. Each
+// stored point is therefore within `gamma_4 = 4 u / (1 - 4 u)` of its exact value (relative to
+// itself, `u` the unit roundoff; the product of four factors `1 + delta`, `|delta| <= u`), and
+// since the basis is a partition of unity the spline is within `gamma_4 max|Q|`. No statement of
+// the kernel is contracted into a multiply-add, so no further term is owed. The degree-keeping
+// derivative adds an elevation, whose tolerance is the conservative tier of `pantr::tolerance`
+// (see test_bspline_degree.cpp).
 #include <doctest/doctest.h>
 
 #include "bspline_test_support.hpp"
@@ -51,8 +54,17 @@ double unit_roundoff() {
   return 0.5 * static_cast<double>(std::numeric_limits<T>::epsilon());
 }
 
-/// The largest absolute difference, over the tensor grid `lo + (hi - lo) (2k + 1) / 17`, between
-/// the exact value of `derived` and the exact `direction`-derivative of `original`.
+/// `gamma_4 = 4 u / (1 - 4 u)`: the relative error of a value formed by four correctly rounded
+/// operations (the derivative control points, see the file header).
+template <class T>
+double gamma_4() {
+  const double four_u = 4.0 * unit_roundoff<T>();
+  return four_u / (1.0 - four_u);
+}
+
+/// The largest absolute difference, over the tensor grid of `bspline_test::sample_points` (eight
+/// points spanning each direction's domain), between the exact value of `derived` and the exact
+/// `direction`-derivative of `original`.
 template <class T>
 double derivative_error(const bs::Bspline<T>& original, const bs::Bspline<T>& derived,
                         std::size_t direction) {
@@ -60,11 +72,8 @@ double derivative_error(const bs::Bspline<T>& original, const bs::Bspline<T>& de
   std::vector<std::vector<Rational>> axes(dim);
   for (std::size_t d = 0; d < dim; ++d) {
     const auto dom = original.space().spaces()[d].domain();
-    const Rational lo = oracle::exact(static_cast<double>(dom.first));
-    const Rational hi = oracle::exact(static_cast<double>(dom.second));
-    for (int k = 0; k < 4; ++k) {
-      axes[d].push_back(lo + (hi - lo) * Rational(2 * k + 1, 17));
-    }
+    axes[d] = bspline_test::sample_points(oracle::exact(static_cast<double>(dom.first)),
+                                          oracle::exact(static_cast<double>(dom.second)));
   }
   std::vector<int> orders(dim, 0);
   orders[direction] = 1;
@@ -135,7 +144,7 @@ TEST_CASE_TEMPLATE("derivative: equals the exact derivative of the exact evaluat
     const std::vector<T> all = knots_of<T>(b, 0);
     const std::vector<T> inner(all.begin() + 1, all.end() - 1);
     CHECK(knots_of<T>(d, 0) == inner);
-    CHECK(derivative_error<T>(b, d, 0) <= 4.0 * unit_roundoff<T>() * max_control_point<T>(d));
+    CHECK(derivative_error<T>(b, d, 0) <= gamma_4<T>() * max_control_point<T>(d));
   }
 }
 
@@ -147,7 +156,7 @@ TEST_CASE_TEMPLATE("derivative: a periodic direction stays periodic", T, double,
     const bs::Bspline<T> d = bs::derivative_nonrational<T>(b, 0);
     CHECK(d.space().spaces()[0].periodic());
     CHECK(d.degrees()[0] == static_cast<std::size_t>(degree - 1));
-    CHECK(derivative_error<T>(b, d, 0) <= 4.0 * unit_roundoff<T>() * max_control_point<T>(d));
+    CHECK(derivative_error<T>(b, d, 0) <= gamma_4<T>() * max_control_point<T>(d));
   }
 }
 
@@ -168,8 +177,7 @@ TEST_CASE_TEMPLATE("derivative: surfaces and volumes differentiate one direction
         CHECK(same_space(d.space().spaces()[k], b.space().spaces()[k]));
       }
     }
-    CHECK(derivative_error<T>(b, d, direction) <=
-          4.0 * unit_roundoff<T>() * max_control_point<T>(d));
+    CHECK(derivative_error<T>(b, d, direction) <= gamma_4<T>() * max_control_point<T>(d));
   }
 }
 

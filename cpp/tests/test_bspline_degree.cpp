@@ -45,6 +45,7 @@ using bspline_test::periodic_knots;
 using bspline_test::same_space;
 using bspline_test::sp;
 using bspline_test::tier_tolerance;
+using bspline_test::values;
 
 namespace {
 
@@ -197,11 +198,16 @@ TEST_CASE("degree elevation: the largest degree the binomial kernel serves, and 
       "coefficients wrap silently and the result is corrupted rather than merely inaccurate.";
   CHECK(message(pantr::bincoeff_max_n - 1) ==
         "Degree elevation to degree 62 in direction 0" + tail);
-  // An increment past what a degree can hold is refused the same way, not wrapped.
-  CHECK(message((std::numeric_limits<long long>::max)())
-            .find("Degree elevation to degree "
-                  "9223372036854775807 in direction 0 "
-                  "needs binomial coefficients") == 0);
+  // A degree that is exactly the largest `long long` is refused with that number, which is true.
+  constexpr long long top = (std::numeric_limits<long long>::max)();
+  CHECK(message(top - 2).find("Degree elevation to degree 9223372036854775807 in direction 0 "
+                              "needs binomial coefficients") == 0);
+  // An increment past what a degree can hold is refused, not wrapped, and the message states the
+  // bound the request exceeds and not a degree it is not: `2 + top` is not `top`.
+  CHECK(message(top) ==
+        "Degree elevation to a degree above 9223372036854775807 in direction 0 is far beyond the "
+        "largest degree, 61, that pantr's exact-integer binomial kernel can serve without an int64 "
+        "overflow.");
 
   // The direction is named: the second of two.
   const std::vector<Dir> two = {{clamped(2, {}), 2}, {clamped(2, {}), 2}};
@@ -243,6 +249,17 @@ TEST_CASE("degree elevation: refusals and their messages") {
   CHECK(message_of([&] { static_cast<void>(elevate<double>(too_many, {1})); }) ==
         "Degree elevation in direction 0 cannot walk a knot vector that repeats the knot 0.5 4 "
         "times at degree 2: a knot may repeat at most degree + 1 = 3 times.");
+
+  // The knot is spelled in the storage type: a float32 0.1 reads back as `0.1`, not as the double
+  // it widens to.
+  const std::vector<float> over_f = {0.0F, 0.0F, 0.0F, 0.1F, 0.1F, 0.1F, 0.1F, 1.0F, 1.0F, 1.0F};
+  const std::vector<float> cp_f(7, 1.0F);
+  CHECK(message_of([&] {
+          static_cast<void>(bs::elevate_degree_1d<float>(
+              2, pantr::mdview<const float, 2>(cp_f.data(), 7, 1), sp(over_f), 1));
+        }) ==
+        "Degree elevation cannot walk a knot vector that repeats the knot 0.1 4 times at "
+        "degree 2: a knot may repeat at most degree + 1 = 3 times.");
 }
 
 TEST_CASE_TEMPLATE("degree reduction: an elevated spline reduces back to the original", T, double,
@@ -421,6 +438,33 @@ TEST_CASE("degree reduction: refusals and their messages") {
   CHECK(got.find("Degree reduction in direction 0 needs a clamped knot vector: the decomposition "
                  "into Bézier segments takes the first 3 coefficients") == 0);
   CHECK(got.find("Reducing an unclamped direction is not supported;") != std::string::npos);
+
+  // The raw 1D entry point checks the same preconditions as the one above it: it used to walk an
+  // unclamped vector, and read past its arrays, on nine knots at degree 2 with six control points.
+  const std::vector<double> ramp = {0, 1, 2, 3, 4, 5, 6, 7, 8};
+  const std::vector<double> cp6 = values(6, 3U);
+  const std::string raw = message_of([&] {
+    static_cast<void>(bs::reduce_degree_1d<double>(
+        2, pantr::mdview<const double, 2>(cp6.data(), 6, 1), sp(ramp), 1));
+  });
+  CHECK(raw.find("Degree reduction needs a clamped knot vector: the decomposition into Bézier "
+                 "segments takes the first 3 coefficients") == 0);
+  CHECK(raw.find("this vector does not open or close with one.") != std::string::npos);
+  // And a clamped vector that repeats a knot more than degree + 1 times.
+  const std::vector<double> over = {0, 0, 0, 0.5, 0.5, 0.5, 0.5, 1, 1, 1};
+  const std::vector<double> cp7 = values(7, 3U);
+  CHECK(message_of([&] {
+          static_cast<void>(bs::reduce_degree_1d<double>(
+              2, pantr::mdview<const double, 2>(cp7.data(), 7, 1), sp(over), 1));
+        }) ==
+        "Degree reduction cannot walk a knot vector that repeats the knot 0.5 4 times at "
+        "degree 2: a knot may repeat at most degree + 1 = 3 times.");
+  // The N-D path refuses it too, naming the direction.
+  const std::vector<Dir> too_many = {{over, 2}};
+  const bs::Bspline<double> over_spline = make_spline<double>(too_many, 1, false, 1U);
+  CHECK(message_of([&] { static_cast<void>(reduce<double>(over_spline, {1})); }) ==
+        "Degree reduction in direction 0 cannot walk a knot vector that repeats the knot 0.5 4 "
+        "times at degree 2: a knot may repeat at most degree + 1 = 3 times.");
 }
 
 TEST_CASE("degree kernels: the clamped-ends test is by bit identity") {

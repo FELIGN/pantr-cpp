@@ -302,6 +302,43 @@ class TestErrors:
         for interior in (3.0, 4.0, 5.0):
             assert spline.remove_knots(interior, tol=1.0e9).space.spaces[0].knots.size == 8
 
+    @pytest.mark.parametrize(("degree", "copies"), [(1, 4), (2, 5), (1, 3), (2, 4)])
+    def test_a_knot_repeated_more_than_degree_plus_one_times_is_refused(
+        self, degree: int, copies: int
+    ) -> None:
+        """A knot of multiplicity above ``degree + 1`` cannot be removed.
+
+        A space accepts such a vector (the basis function over an empty interval is zero).
+        The removal kernel seeds a scratch row that lies below its buffer from multiplicity
+        ``degree + 3``; the previous implementation returned a result there only because a
+        negative index wraps in Numba. The refusal covers the default, an explicit
+        tolerance and an explicit ``num`` alike.
+        """
+        knots = np.concatenate([np.zeros(degree + 1), np.full(copies, 0.5), np.ones(degree + 1)])
+        space = BsplineSpace([BsplineSpace1D(knots, degree)])
+        spline = Bspline(space, np.arange(space.num_total_basis, dtype=np.float64).reshape(-1, 1))
+        match = (
+            rf"Knot removal cannot remove the knot 0\.5, which the knot vector repeats "
+            rf"{copies} times at degree {degree}: a knot may repeat at most "
+            rf"degree \+ 1 = {degree + 1} times\."
+        )
+
+        for kwargs in ({}, {"tol": 1.0e9}, {"num": 1}):
+            with pytest.raises(ValueError, match=match):
+                spline.remove_knots(0.5, **kwargs)
+
+    @pytest.mark.parametrize("degree", [1, 2, 3])
+    def test_a_knot_repeated_degree_plus_one_times_is_served(self, degree: int) -> None:
+        """The refusal starts above ``degree + 1``: a ``C^-1`` knot is the ordinary case."""
+        run = np.ones(degree + 1)
+        knots = np.concatenate([np.zeros(degree + 1), 0.5 * run, run])
+        space = BsplineSpace([BsplineSpace1D(knots, degree)])
+        spline = Bspline(space, np.arange(space.num_total_basis, dtype=np.float64).reshape(-1, 1))
+
+        result = spline.remove_knots(0.5, tol=1.0e9)
+
+        assert result.space.spaces[0].knots.size == knots.size - degree
+
     def test_num_must_be_an_integer(self) -> None:
         """``num`` is an integer like every other count: a float is refused."""
         b = _make_curve_p2()
@@ -671,11 +708,11 @@ class TestTheFloorSpansEveryStackedControlPoint:
         """Asserted on the count itself, because no behavioural test can catch this.
 
         Taking the reduced axis instead of the others is the natural way to get this
-        wrong.  It cannot be caught through ``remove_knots``: the floor carries a 48x
-        margin over the measured worst case, so *any* positive multiplier still admits
-        an exactly redundant knot.  Mutating the production line to ``ctrl.shape[axis]``
-        was confirmed to leave a round-trip test passing at 4-vs-4000 and at
-        4-vs-400000.  So the count is asserted directly, on a deliberately lopsided
+        wrong.  It is not caught through ``remove_knots`` by the tests here: the exactly
+        redundant knots they remove sit inside the floor under either count, so *any*
+        positive multiplier still admits them.  Mutating the production line to
+        ``ctrl.shape[axis]`` was confirmed to leave a round-trip test passing at 4-vs-4000
+        and at 4-vs-400000.  So the count is asserted directly, on a deliberately lopsided
         control net where the two candidate answers differ by three orders of magnitude.
         """
         from pantr._testing import num_stacked_control_points  # noqa: PLC0415
@@ -690,6 +727,29 @@ class TestTheFloorSpansEveryStackedControlPoint:
         assert num_stacked_control_points(vol.shape, 0) == 42
         assert num_stacked_control_points(vol.shape, 1) == 35
         assert num_stacked_control_points(vol.shape, 2) == 30
+
+    @pytest.mark.parametrize(
+        "name",
+        ["control_point_scale", "roundoff_deviation_floor", "homogeneous_deviation_tolerance"],
+    )
+    def test_a_net_of_no_columns_is_refused_not_divided_by(self, name: str) -> None:
+        """The compiled helpers divide the flat length by the column count.
+
+        A net of zero columns used to reach that division, which is a hardware trap (SIGFPE,
+        no exception) and ended the process. The compiled hooks are called directly, since the
+        wrappers in ``pantr._testing`` reshape first and fail earlier on this shape.
+        """
+        from pantr._testing import _by_dtype  # noqa: PLC0415
+
+        helper = _by_dtype(name, np.float64)
+        args = {
+            "control_point_scale": (),
+            "roundoff_deviation_floor": (3, 1),
+            "homogeneous_deviation_tolerance": (1.0e-3,),
+        }[name]
+
+        with pytest.raises(ValueError, match="needs at least one column per control point"):
+            helper(np.zeros((3, 0)), *args)
 
     def test_a_lopsided_surface_stays_lossless_along_either_axis(self) -> None:
         """The behavioural half: whichever axis is reduced, the redundant knot goes."""

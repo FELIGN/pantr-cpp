@@ -160,9 +160,30 @@ double tier_tolerance(const bs::Bspline<T>& b) {
          (std::max)(1.0, oracle::max_abs_control_point<T>(b));
 }
 
+/// Eight sample points of one direction, `lo + (hi - lo) n / 800` for the `n` below.
+///
+/// They span the whole domain: the first and the last lie within 1% of its ends, so the first and
+/// the last control point of a clamped direction (each supported on the end span alone) weigh in
+/// the comparison, and a corrupted last control point cannot pass unseen. None is a knot of a
+/// dyadic mesh, or of a decimal one on tenths: `n / 800` is dyadic only for `n` a multiple of 25,
+/// and a multiple of a tenth only for `n` a multiple of 80, and no `n` below is either.
+///
+/// Args:
+///     lo (const Rational&): The start of the direction's domain.
+///     hi (const Rational&): The end of the direction's domain.
+///
+/// Returns:
+///     std::vector<Rational>: The points, ascending.
+inline std::vector<Rational> sample_points(const Rational& lo, const Rational& hi) {
+  std::vector<Rational> points;
+  for (const int n : {7, 117, 227, 337, 447, 557, 667, 797}) {
+    points.push_back(lo + (hi - lo) * Rational(n, 800));
+  }
+  return points;
+}
+
 /// The largest exact difference of any stored coordinate between two splines, over the tensor
-/// grid of the points `lo + (hi - lo) (2k + 1) / 17`, `k = 0..3`, of the first spline's domain
-/// (none of them a knot of a dyadic mesh).
+/// grid of `sample_points` in each direction of the first spline's domain.
 template <class T>
 double exact_difference(const bs::Bspline<T>& a, const bs::Bspline<T>& b) {
   const std::size_t dim = a.dim();
@@ -170,11 +191,8 @@ double exact_difference(const bs::Bspline<T>& a, const bs::Bspline<T>& b) {
   std::vector<std::vector<Rational>> axes(dim);
   for (std::size_t d = 0; d < dim; ++d) {
     const auto dom = a.space().spaces()[d].domain();
-    const Rational lo = oracle::exact(static_cast<double>(dom.first));
-    const Rational hi = oracle::exact(static_cast<double>(dom.second));
-    for (int k = 0; k < 4; ++k) {
-      axes[d].push_back(lo + (hi - lo) * Rational(2 * k + 1, 17));
-    }
+    axes[d] = sample_points(oracle::exact(static_cast<double>(dom.first)),
+                            oracle::exact(static_cast<double>(dom.second)));
   }
   double worst = 0.0;
   std::vector<std::size_t> idx(dim, 0);

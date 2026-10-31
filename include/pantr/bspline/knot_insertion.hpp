@@ -161,16 +161,20 @@ template <StorageFloat T>
 ///     KnotsAndCtrl<T>: The clamped knot vector and the corresponding control points.
 ///
 /// Raises:
-///     value_error: The control points do not match the knots; or the knot vector already has
-///         multiplicity `degree + 1` at both ends and is not periodic.
+///     value_error: `degree < 0` or fewer than `2 * degree + 2` knots; the control points do not
+///         match the knots (a periodic direction with no control points cannot be wrapped); or the
+///         knot vector already has multiplicity `degree + 1` at both ends and is not periodic.
 template <StorageFloat T>
 [[nodiscard]] KnotsAndCtrl<T> to_open_1d(std::span<const T> knots, int degree,
                                          mdview<const T, 2> ctrl, bool periodic, double tol) {
+  // Before any index: a negative degree is an index of `SIZE_MAX` below, and too few knots read
+  // past the vector at the domain ends.
+  detail::check_domain_indexable(knots.size(), degree);
   const auto p = static_cast<std::size_t>(degree);
   const std::size_t n_stored = ctrl.extent(0);
   const std::size_t cols = ctrl.extent(1);
   if (periodic) {
-    if (knots.size() < 2 * p + 2 || n_stored == 0) {
+    if (n_stored == 0) {
       throw value_error(
           "to_open: " + std::to_string(n_stored) + " control-point rows cannot be wrapped over " +
           std::to_string(knots.size()) + " knots at degree " + std::to_string(degree) + ".");
@@ -258,11 +262,14 @@ template <StorageFloat T>
 ///     std::vector<T>: The knot values to insert, ascending.
 ///
 /// Raises:
-///     value_error: `n_subdivisions < 2`, or the regularity is outside `[-1, degree - 1]`.
+///     value_error: `degree < 0` or fewer than `2 * degree + 2` knots (the classes of an empty
+///         vector have no first knot); `n_subdivisions < 2`; or the regularity is outside
+///         `[-1, degree - 1]`.
 template <StorageFloat T>
 [[nodiscard]] std::vector<T> compute_uniform_subdivision_knots(
     std::span<const T> knots, int degree, double tol, long long n_subdivisions,
     std::optional<long long> regularity = std::nullopt) {
+  detail::check_domain_indexable(knots.size(), degree);
   if (n_subdivisions < 2) {
     throw value_error("n_subdivisions must be >= 2, got " + std::to_string(n_subdivisions));
   }

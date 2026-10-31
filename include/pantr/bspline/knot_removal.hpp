@@ -47,14 +47,18 @@ namespace pantr::bspline {
 /// land. Each step is one divided difference of the previous result, so an `eps`-sized error enters
 /// at every one of the `degree + 1` of them and the largest quantity any of them handles is the
 /// control-point scale. The steps are *not* convex combinations (the `1 / alpha` in the recurrence
-/// can amplify), so this is an operation count and not a proved bound; the eight epsilons per step
-/// are the same doubling of the strict tier that `knot_merge_safety` applies, covering an FMA
-/// contraction and a differing summation order on top of the count.
+/// can amplify), so this is an operation count and not a proved bound.
 ///
-/// **Checked** by a test (`cpp/tests/test_bspline_knot_removal.cpp`): an exactly removable knot,
-/// one just inserted, is removed under the default floor over degrees, ranks and geometry scales,
-/// with a margin against `8 (degree + 1)`, and the margin shows no trend with the degree, so the
-/// `degree + 1` is headroom the derivation asks for and not a term fitted to data.
+/// **The multiplier is a heuristic.** `removal_floor_safety = 2.0` doubles the strict tier, as
+/// `knot_merge_safety` does, for an FMA contraction and a differing summation order on top of the
+/// count; it is admitted as a heuristic and not derived. The floor can therefore be tight, or
+/// insufficient, for the removal of several copies of one knot, where each copy reconstructs from
+/// the previous copy's rounding: the default can leave a copy that an explicit tolerance removes.
+/// `cpp/tests/test_bspline_knot_removal.cpp` pins one such case as a known limitation, and also
+/// removes single knots and several copies of one under the default floor on non-rational nets over
+/// a range of degrees ("a knot just inserted comes out" and "a repeated knot comes out as often as
+/// it was inserted"). Those cases show the default admits the removals they build; they do not
+/// bound how far the floor sits above the round-off of an arbitrary one.
 ///
 /// All of that describes **one** control point, which is what a curve has per index. See
 /// `roundoff_deviation_floor` for the `sqrt` that a surface or a volume adds.
@@ -99,7 +103,11 @@ template <StorageFloat T>
         lo[c] = (std::min)(lo[c], x);
         hi[c] = (std::max)(hi[c], x);
       }
-      sq += x * x;
+      // A statement of its own, so no multiply-add is contracted: the budget compares against a
+      // distance of a few units of round-off, and a fused rung would round it differently from the
+      // others.
+      const double square = x * x;
+      sq += square;
     }
     const double norm = std::sqrt(sq);
     if (std::isnan(magnitude)) {
@@ -110,7 +118,8 @@ template <StorageFloat T>
   double diag_sq = 0.0;
   for (std::size_t c = 0; c < cols; ++c) {
     const double extent = hi[c] - lo[c];
-    diag_sq += extent * extent;
+    const double square = extent * extent;
+    diag_sq += square;
   }
   const double diagonal = std::sqrt(diag_sq);
   // Python's `max(diagonal, magnitude)`: the second wins only when strictly larger, so a NaN
@@ -125,9 +134,8 @@ template <StorageFloat T>
 /// them. That count is the product of the basis counts excluding `axis`: one for a curve.
 ///
 /// Kept as its own function because getting it the wrong way round (taking the reduced axis
-/// instead of the others) is a mistake no behavioural test can catch: the floor carries a large
-/// margin, so any positive multiplier still admits the removal. Only a direct assertion on this
-/// number can.
+/// instead of the others) changes the floor by a factor the removal tests are not built to
+/// separate; a direct assertion on this number is what pins it.
 ///
 /// Args:
 ///     shape (std::span<const std::size_t>): The control-net extents `(*num_basis, cp_size)`.
@@ -258,7 +266,8 @@ template <StorageFloat T>
 ///     tol_euclidean (double): The caller's deviation budget, a distance in projected space.
 ///
 /// Returns:
-///     double: The equivalent budget on homogeneous control points.
+///     double: The equivalent budget on homogeneous control points; NaN, with no error, when a
+///     weight or a coordinate is NaN.
 ///
 /// Raises:
 ///     value_error: Any weight is non-positive. The conversion divides by the weights to recover
@@ -291,7 +300,8 @@ template <StorageFloat T>
     double sq = 0.0;
     for (std::size_t c = 0; c + 1 < cols; ++c) {
       const double x = static_cast<double>(ctrl[r * cols + c]) / w;
-      sq += x * x;
+      const double square = x * x;  // its own statement: no contraction (see control_point_scale)
+      sq += square;
     }
     const double norm = std::sqrt(sq);
     if (std::isnan(p_max)) {
@@ -387,7 +397,7 @@ template <StorageFloat T>
 ///     knot_value (double): The knot value to remove.
 ///     knot_index (std::size_t): The index `r` of the last knot of the class of `knot_value`, with
 ///         `degree + multiplicity <= r <= n` (a knot strictly inside the domain).
-///     multiplicity (int): The multiplicity `s` of that class.
+///     multiplicity (int): The multiplicity `s` of that class, `1 <= s <= degree + 1`.
 ///     num (int): The most removals to attempt. **Load-bearing for memory safety**: see the note.
 ///     tol (double): The largest Euclidean distance between the two intermediate control-point
 ///         approximations that still accepts a removal.
@@ -399,17 +409,21 @@ template <StorageFloat T>
 ///     Inputs are assumed to be correct (no validation performed). For general use, call
 ///     `remove_knot_1d`.
 ///
-///     **Precondition on `num`, memory safety and not merely correctness:**
-///     `2 * num <= degree + multiplicity`. The scratch buffer `temp` is sized `(2 degree + 1,
-///     rank)` once, before the removal loop. Pass `t` writes up to row `last + 1 - off` with `off =
-///     first - 1`; since `first` decreases and `last` increases by one per pass, that highest row
-///     is `degree - s + 2 t + 2`, growing by two each time. Keeping it within `2 degree` gives `t
-///     <= (degree + s - 2) / 2` for the final pass `t = num - 1`, which is the bound above. The
-///     same passes read control rows `off` and `last + 1`, which the precondition on `knot_index`
-///     keeps inside `[0, n]`: `off >= s - num >= 0` and `last + 1 <= r <= n`. `remove_knot_1d`
-///     establishes both by capping `num` at `min(multiplicity, degree)`, which implies the bound
-///     and is one removal conservative for some pairs (`degree = 4`, `multiplicity = 2` would admit
-///     `num = 3`), and by refusing a knot that is not strictly inside the domain.
+///     **Preconditions on `multiplicity` and `num`, memory safety and not merely correctness:**
+///     `multiplicity <= degree + 1` and `2 * num <= degree + multiplicity`. The scratch buffer
+///     `temp` is sized `(2 degree + 1, rank)` once, before the removal loop. Pass `t` writes up to
+///     row `last + 1 - off` with `off = first - 1`; since `first` decreases and `last` increases by
+///     one per pass, that highest row is `degree - s + 2 t + 2`, growing by two each time. Keeping
+///     it within `2 degree` gives `t <= (degree + s - 2) / 2` for the final pass `t = num - 1`,
+///     which is the bound on `num`. The lowest row it writes is the seed row `degree - s + 2` of
+///     the first pass (`t = 0`), which is negative from `s = degree + 3` (a write below `temp`) and
+///     zero at `s = degree + 2` (the seed of the left end overwritten): `s <= degree + 1` keeps it
+///     at 1 or above. The same passes read control rows `off` and `last + 1`, which the
+///     precondition on `knot_index` keeps inside `[0, n]`: `off >= s - num >= 0` and `last + 1 <=
+///     r <= n`. `remove_knot_1d` establishes all three by refusing a knot of multiplicity above
+///     `degree + 1`, by capping `num` at `min(multiplicity, degree)`, which implies the bound on
+///     `num` and is one removal conservative for some pairs (`degree = 4`, `multiplicity = 2` would
+///     admit `num = 3`), and by refusing a knot that is not strictly inside the domain.
 template <StorageFloat T>
 [[nodiscard]] RemovalResult<T> remove_knot_kernel(int degree, std::span<const T> knots,
                                                   mdview<const T, 2> ctrl, double knot_value,
@@ -608,8 +622,10 @@ template <StorageFloat T>
 ///
 /// Raises:
 ///     value_error: `num < 1`; `knot_value` is not found in the knot vector; it is a boundary knot
-///         of the domain, or not strictly inside it (a ghost knot of an unclamped vector); or the
-///         control points do not match the knots.
+///         of the domain, or not strictly inside it (a ghost knot of an unclamped vector); its knot
+///         is repeated more than `degree + 1` times (a space accepts such a vector, since the
+///         basis function over an empty interval is zero, and the kernel's scratch rows do not
+///         reach it); or the control points do not match the knots.
 template <StorageFloat T>
 [[nodiscard]] RemovalResult<T> remove_knot_1d(std::span<const T> knots, int degree,
                                               mdview<const T, 2> ctrl, double knot_value,
@@ -643,10 +659,23 @@ template <StorageFloat T>
                       py_repr(domain_hi) + "].");
   }
 
+  // The kernel seeds its scratch row `degree - s + 2`, which is below the buffer from `s = degree +
+  // 3` (and on top of the other seed at `s = degree + 2`): a knot may repeat at most `degree + 1`
+  // times there, as `check_clamped_knots` demands of the degree kernels. The Numba kernel this
+  // replaces survived such a knot only through a negative index wrapping to the buffer's last row.
+  if (s > static_cast<std::int64_t>(degree) + 1) {
+    throw value_error("Knot removal cannot remove the knot " + py_repr(knot_value) +
+                      ", which the knot vector repeats " + std::to_string(s) + " times at degree " +
+                      std::to_string(degree) + ": a knot may repeat at most degree + 1 = " +
+                      std::to_string(degree + 1) + " times.");
+  }
+
   // Cap at the actual multiplicity (and at degree per the algorithm). This clamp is load-bearing
   // for memory safety, not just a sanity bound: the kernel sizes its scratch buffer for
   // `2 num <= degree + s` and writes outside it past that. `min(s, degree)` implies that bound, so
-  // the clamp has to stay, including when the caller supplied `num` explicitly.
+  // the clamp has to stay, including when the caller supplied `num` explicitly. It holds only for
+  // `s <= degree + 1`, which the refusal above establishes (the seed row is the lower bound; this
+  // clamp is the upper one).
   const long long max_removals =
       (std::min)(static_cast<long long>(s), static_cast<long long>(degree));
   const long long capped = num.has_value() ? (std::min)(*num, max_removals) : max_removals;
@@ -677,7 +706,8 @@ template <StorageFloat T>
 ///
 /// Raises:
 ///     value_error: A direction is periodic; `knot_values.size() != dim`; every direction is
-///         skipped; or as `remove_knot_1d` and `homogeneous_deviation_tolerance` for a direction.
+///         skipped; or as `remove_knot_1d` (including a knot repeated more than `degree + 1`
+///         times) and `homogeneous_deviation_tolerance` for a direction.
 template <StorageFloat T>
 [[nodiscard]] Bspline<T> remove_knots(const Bspline<T>& b,
                                       std::span<const std::span<const T>> knot_values,

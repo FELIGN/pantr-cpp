@@ -898,6 +898,27 @@ TEST_CASE("knot kernels refuse a degree the knot vector cannot hold, before inde
       static_cast<void>(bs::compute_inserted_knot_vector<double>(sp(k), 2, sp(add), 1e-12)));
   CHECK_NOTHROW(static_cast<void>(bs::validate_restrict_bounds<double>(sp(k), 2, 1e-12, bounds)));
 
+  // The raw conversions and the subdivision knots indexed before they checked: `to_open_1d` read
+  // `knots[SIZE_MAX]` at degree -1, the subdivision dereferenced an empty vector, and
+  // `to_periodic_1d` built Oslo matrices of no space on 13 knots at degree 7.
+  const std::vector<double> five{0.0, 1.0, 2.0, 3.0, 4.0};
+  const std::vector<double> cp7 = values(7, 1);
+  const mdview<const double, 2> ctrl7(cp7.data(), 7, 1);
+  refused([&] { return bs::to_open_1d<double>(sp(five), -1, ctrl7, true, 1e-12); }, negative);
+  refused([&] { return bs::to_open_1d<double>(sp(k), 9, ctrl, true, 1e-12); }, too_few);
+  refused([&] { return bs::to_open_1d<double>(sp(k), 9, ctrl, false, 1e-12); }, too_few);
+  const std::vector<double> none;
+  refused([&] { return bs::compute_uniform_subdivision_knots<double>(sp(none), 2, 1e-12, 2); },
+          too_few);
+  refused([&] { return bs::compute_uniform_subdivision_knots<double>(sp(k), -1, 1e-12, 2); },
+          negative);
+  const std::vector<double> thirteen{0.0, 1.0, 2.0, 3.0,  4.0,  5.0, 6.0,
+                                     7.0, 8.0, 9.0, 10.0, 11.0, 12.0};
+  const std::vector<double> cp5 = values(5, 1);
+  const mdview<const double, 2> ctrl5(cp5.data(), 5, 1);
+  refused([&] { return bs::to_periodic_1d<double>(sp(thirteen), 7, ctrl5, 1, 1e-12); }, too_few);
+  refused([&] { return bs::to_periodic_1d<double>(sp(thirteen), -1, ctrl5, 1, 1e-12); }, negative);
+
   // The whole-direction entry points, which check the control net first.
   for (const int degree : {9, -1}) {
     const std::string& message = degree < 0 ? negative : too_few;
@@ -1074,7 +1095,6 @@ TEST_CASE("inherited: blossom span below a clamped start" * doctest::should_fail
   // span `degree`, here 2. The search returns the last span instead.
   const std::vector<double> kn{0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0};
   CHECK(bs::detail::blossom_span<double>(sp(kn), -8.9e-16, 3) == 2);
-  CHECK(bs::detail::blossom_span<double>(sp(kn), -1.0, 3) == 2);
 }
 
 TEST_CASE("inherited: blossom value below a clamped start" * doctest::should_fail()) {

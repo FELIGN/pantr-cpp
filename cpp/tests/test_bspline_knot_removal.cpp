@@ -219,9 +219,10 @@ TEST_CASE("knot removal: the round-off floor is the derivation's closed form") {
 }
 
 TEST_CASE("knot removal: the stacked point count is the product of the other extents") {
-  // Asserted on the count itself, because no behavioural test can catch this: the floor carries a
-  // large margin, so any positive multiplier still admits an exactly redundant knot. A lopsided
-  // net separates the two natural mistakes by three orders of magnitude.
+  // Asserted on the count itself, because the removal tests above are not built to separate the
+  // two natural mistakes (the reduced axis instead of the others): they would change the floor by a
+  // factor the exactly redundant knots of those tests may or may not notice. A lopsided net
+  // separates the two mistakes by three orders of magnitude.
   const std::vector<std::size_t> lopsided = {7, 4003, 3};
   CHECK(bs::num_stacked_control_points(lopsided, 0) == 4003);
   CHECK(bs::num_stacked_control_points(lopsided, 1) == 7);
@@ -346,6 +347,94 @@ TEST_CASE("knot removal: a knot outside the domain is refused, not read out of b
     CAPTURE(v);
     const bs::Bspline<double> r = remove_in<double>(b, 0, {v}, std::nullopt, 1.0e9);
     CHECK(knots_of<double>(r, 0).size() == k.size() - 1);
+  }
+}
+
+TEST_CASE("knot removal: KNOWN LIMITATION, the default floor can leave a copy of a repeated knot") {
+  // This documents what the default does today; it is not what it should do. The floor is an
+  // operation count with a heuristic multiplier (`removal_floor_safety`, see knot_removal.hpp), and
+  // the removal of several copies of one knot reconstructs each copy from the previous one's
+  // rounding. For a rational degree-5 curve with three copies of a knot near the start of the
+  // domain, the default removes fewer copies than an explicit tolerance of the conservative tier
+  // does, although every copy is redundant by construction (the inserted knots are exactly
+  // removable), so the knot vector keeps a knot the spline does not need.
+  //
+  // Existence over a sweep, not one pinned case: whether the deviation of the last copy lands just
+  // above or just below the floor is decided by the rounding of the insertion that built the input,
+  // which differs between instruction-set rungs, so the seed that leaves a copy is not the same on
+  // every one. The sweep asks that some seed does, which holds wherever the verdict is decided by
+  // rounding at that size.
+  constexpr int degree = 5;
+  constexpr int copies = 3;
+  int left_a_copy = 0;
+  for (unsigned seed = 0; seed < 128; ++seed) {
+    CAPTURE(seed);
+    const auto dirs = std::vector<Dir>{{clamped(degree, {0.25, 0.75}), degree}};
+    const bs::Bspline<double> original = make_spline<double>(dirs, 2, true, seed);
+    const bs::Bspline<double> inserted =
+        insert_in<double>(original, 0, std::vector<double>(copies, 0.0625));
+
+    // An explicit tolerance of the conservative tier removes every copy: they are redundant.
+    const bs::Bspline<double> explicit_tol =
+        remove_in<double>(inserted, 0, {0.0625}, std::nullopt, tier_tolerance(original));
+    CHECK(knots_of<double>(explicit_tol, 0) == knots_of<double>(original, 0));
+
+    // The default removes at most as many, and for some seeds fewer.
+    const bs::Bspline<double> by_default =
+        remove_in<double>(inserted, 0, {0.0625}, std::nullopt, std::nullopt);
+    CHECK(knots_of<double>(by_default, 0).size() >= knots_of<double>(original, 0).size());
+    if (knots_of<double>(by_default, 0).size() > knots_of<double>(original, 0).size()) {
+      ++left_a_copy;
+    }
+  }
+  CHECK(left_a_copy > 0);
+}
+
+TEST_CASE("knot removal: a knot repeated more than degree + 1 times is refused, not walked") {
+  // A space accepts such a vector (the basis function over an empty interval is zero). The kernel
+  // seeds its scratch row `degree - s + 2` for a knot of multiplicity `s`: from `s = degree + 3`
+  // that row is below the buffer (the sanitizer builds of this test report the write), and at
+  // `s = degree + 2` it is the other seed's row. The Numba kernel this replaces survived only
+  // because a negative index wraps there. Multiplicity `degree + 1` itself (a C^-1 knot) is served.
+  for (int p = 1; p <= 4; ++p) {
+    for (const int extra : {1, 2, 3}) {
+      const int s = p + extra;
+      CAPTURE(p);
+      CAPTURE(s);
+      // A knot vector with exactly `s` copies of 0.5.
+      std::vector<double> interior{0.25};
+      interior.insert(interior.end(), static_cast<std::size_t>(s), 0.5);
+      interior.push_back(0.75);
+      const auto many = std::vector<Dir>{{clamped(p, interior), p}};
+      const bs::Bspline<double> b = make_spline<double>(many, 2, false, 17U);
+      for (const std::optional<double> tol :
+           {std::optional<double>{}, std::optional<double>{1.0e9},
+            std::optional<double>{std::numeric_limits<double>::infinity()}}) {
+        for (const std::optional<long long> num :
+             {std::optional<long long>{}, std::optional<long long>{1}}) {
+          const std::string msg =
+              message_of([&] { static_cast<void>(remove_in<double>(b, 0, {0.5}, num, tol)); });
+          if (s > p + 1) {
+            CHECK(msg == "Knot removal cannot remove the knot 0.5, which the knot vector repeats " +
+                             std::to_string(s) + " times at degree " + std::to_string(p) +
+                             ": a knot may repeat at most degree + 1 = " + std::to_string(p + 1) +
+                             " times.");
+          } else {
+            CHECK(msg == "<no exception>");
+          }
+        }
+      }
+    }
+  }
+  // The raw 1D entry point refuses it too (degree 1 with four copies, degree 2 with five).
+  for (const int p : {1, 2}) {
+    const std::vector<double> interior(static_cast<std::size_t>(p + 3), 0.5);
+    const std::vector<double> k = clamped(p, interior);
+    const std::vector<double> cp = values(k.size() - static_cast<std::size_t>(p) - 1, 5U);
+    CHECK_THROWS_AS(static_cast<void>(bs::remove_knot_1d<double>(
+                        sp(k), p, pantr::mdview<const double, 2>(cp.data(), cp.size(), 1), 0.5,
+                        std::nullopt, 1e-12, std::numeric_limits<double>::infinity())),
+                    pantr::value_error);
   }
 }
 
