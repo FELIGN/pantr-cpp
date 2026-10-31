@@ -1,0 +1,303 @@
+{
+ "protocol": {
+  "k": 10,
+  "repeats": 30,
+  "threads": [
+   1,
+   8
+  ],
+  "cpus": "0-7",
+  "reference": "main",
+  "argv": [
+   "benchmarks/compare.py",
+   "--out-dir",
+   "benchmarks/results/2026-10-31-s4c-ac6-fix",
+   "--side",
+   "main=<main src>",
+   "--side",
+   "branch=<branch src>",
+   "--k",
+   "10",
+   "--threads",
+   "1",
+   "8",
+   "--cpus",
+   "0-7",
+   "--filter",
+   "^S4\\.bspline_multiply"
+  ]
+ },
+ "sides": {
+  "main": {
+   "commit": "11ab436abd94edf8f414d1ec2d9ed0bf77e38e89",
+   "extension": "none"
+  },
+  "branch": {
+   "commit": "c77a658fffb0710adbd7a9d27e94abdd6b77e740",
+   "extension": "pantr._pantr_v4 (v4, _pantr_v4.abi3.so)"
+  }
+ },
+ "machine": {
+  "cpu": "Intel(R) Xeon(R) Gold 6148 CPU @ 2.40GHz",
+  "platform": "Linux-5.15.0-144-generic-x86_64-with-glibc2.35",
+  "affinity": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7
+  ],
+  "governor": "schedutil"
+ },
+ "cases": {
+  "S4.bspline_multiply.tiny@t1": {
+   "what": {
+    "main": "multiply two 1-interval cubics",
+    "branch": "multiply two 1-interval cubics"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 194290.81818181818,
+     "range_ns": 10977.95454545453,
+     "process_medians_ns": [
+      192786.7727272727,
+      191750.0909090909,
+      193715.13636363635,
+      199695.86363636365,
+      189512.5,
+      195730.68181818182,
+      192432.54545454544,
+      200490.45454545453,
+      194949.0,
+      194866.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 11554.711590157154,
+     "range_ns": 998.0189598689576,
+     "process_medians_ns": [
+      10785.812121212122,
+      11567.016129032258,
+      11465.564516129032,
+      11721.074829931973,
+      11542.40705128205,
+      11626.532894736842,
+      11319.154605263157,
+      11632.610389610389,
+      11409.70253164557,
+      11783.83108108108
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_multiply.medium@t1": {
+   "what": {
+    "main": "multiply two 10-interval cubics",
+    "branch": "multiply two 10-interval cubics"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 1015325.375,
+     "range_ns": 161880.0,
+     "process_medians_ns": [
+      1019044.75,
+      1047776.75,
+      1163563.0,
+      1054189.75,
+      1011606.0,
+      1001683.0,
+      1009965.5,
+      1006199.25,
+      1006355.25,
+      1033018.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 55260.47147147147,
+     "range_ns": 1937.647522522515,
+     "process_medians_ns": [
+      54084.81081081081,
+      54492.22222222222,
+      54541.95945945946,
+      55059.875,
+      55476.65277777778,
+      56022.45833333333,
+      55422.05405405405,
+      55098.88888888889,
+      55576.98611111111,
+      55906.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_multiply.large@t1": {
+   "what": {
+    "main": "multiply two 100-interval cubics",
+    "branch": "multiply two 100-interval cubics"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 34045189.25,
+     "range_ns": 963255.5,
+     "process_medians_ns": [
+      34485181.5,
+      33521926.0,
+      33746529.0,
+      33782250.0,
+      34190580.5,
+      33983204.5,
+      34141761.5,
+      34107174.0,
+      33964958.0,
+      34157865.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 3621785.25,
+     "range_ns": 92401.0,
+     "process_medians_ns": [
+      3629242.0,
+      3682964.0,
+      3622766.0,
+      3612241.0,
+      3629364.5,
+      3620804.5,
+      3606147.0,
+      3618979.0,
+      3634322.0,
+      3590563.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_multiply.tiny@t8": {
+   "what": {
+    "main": "multiply two 1-interval cubics",
+    "branch": "multiply two 1-interval cubics"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 193368.725,
+     "range_ns": 82526.39204545453,
+     "process_medians_ns": [
+      191354.04545454544,
+      193693.7,
+      193043.75,
+      270773.9375,
+      188247.54545454547,
+      192671.0,
+      264911.9375,
+      193817.9090909091,
+      194055.63636363635,
+      188689.04545454544
+     ]
+    },
+    "branch": {
+     "statistic_ns": 11807.052699530515,
+     "range_ns": 4750.365089940042,
+     "process_medians_ns": [
+      12116.626666666667,
+      11548.8954248366,
+      15988.197368421053,
+      11827.077702702703,
+      11815.038732394367,
+      11367.25,
+      11333.996774193549,
+      11799.066666666666,
+      11237.832278481012,
+      12350.040816326531
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_multiply.medium@t8": {
+   "what": {
+    "main": "multiply two 10-interval cubics",
+    "branch": "multiply two 10-interval cubics"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 1013090.75,
+     "range_ns": 55573.25,
+     "process_medians_ns": [
+      1025457.6666666667,
+      1005155.75,
+      1012397.5,
+      1040494.5,
+      984921.25,
+      1014489.75,
+      1039638.75,
+      1013784.0,
+      1007831.25,
+      1011063.1666666666
+     ]
+    },
+    "branch": {
+     "statistic_ns": 55667.6875,
+     "range_ns": 21869.422008547,
+     "process_medians_ns": [
+      55617.305555555555,
+      55718.069444444445,
+      76815.01923076922,
+      56429.27272727273,
+      55207.75,
+      56118.25,
+      55426.16666666667,
+      55302.41428571429,
+      55729.94594594595,
+      54945.59722222222
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_multiply.large@t8": {
+   "what": {
+    "main": "multiply two 100-interval cubics",
+    "branch": "multiply two 100-interval cubics"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 34266634.25,
+     "range_ns": 1209527.5,
+     "process_medians_ns": [
+      34122463.0,
+      34283583.0,
+      33496465.0,
+      34638624.0,
+      33429096.5,
+      34508494.0,
+      34249685.5,
+      34560344.0,
+      34060751.0,
+      34626377.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 3624815.0,
+     "range_ns": 1307482.0,
+     "process_medians_ns": [
+      3615280.0,
+      3623158.0,
+      4906165.5,
+      3641315.0,
+      3615410.5,
+      3637871.5,
+      3622581.0,
+      3626472.0,
+      3665488.0,
+      3598683.5
+     ],
+     "flagged": false
+    }
+   }
+  }
+ }
+}
