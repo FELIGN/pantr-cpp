@@ -74,12 +74,19 @@ NumpyArray<T> copy_out(const NdArray<T>& a) {
 }
 
 template <class T>
-nb::list list_out(const std::vector<NdArray<T>>& arrays) {
-  nb::list out;
+std::vector<NumpyArray<T>> list_out(const std::vector<NdArray<T>>& arrays) {
+  std::vector<NumpyArray<T>> out;
+  out.reserve(arrays.size());
   for (const NdArray<T>& a : arrays) {
-    out.append(copy_out(a));
+    out.push_back(copy_out(a));
   }
   return out;
+}
+
+/// The suffix naming a dtype in the binding's function names (`f32`, `f64`).
+template <class T>
+std::string tag() {
+  return sizeof(T) == 4 ? "f32" : "f64";
 }
 
 using Derivs = std::vector<std::optional<std::pair<long long, long long>>>;
@@ -100,82 +107,71 @@ void def_tensor_collocation(nb::module_& m, const char* name) {
   nb::class_<TC> cls(
       m, name, "The staged tensor-product collocation system (matrices built from the nodes).");
   cls.def_prop_ro(
-         "matrices", [](const TC& t) { return list_out(t.matrices()); },
+         "matrices", [](const TC& t) { return list_out(t.matrices()); }, nb::rv_policy::move,
          "The per-direction collocation matrices, with their derivative rows (copies).")
       .def_prop_ro(
-          "grid_shape",
-          [](const TC& t) {
-            const std::vector<std::size_t> g = t.grid_shape();
-            nb::list out;
-            for (std::size_t v : g) {
-              out.append(v);
-            }
-            return nb::tuple(out);
-          },
-          "The node grid's extents.");
+          "grid_shape", [](const TC& t) { return t.grid_shape(); }, "The node grid's extents.");
   const auto solve = [](const TC& t, const Any<double>& values, std::size_t rank, double tol) {
     return to_numpy(t.template solve<double>(flat_of(values), rank, tol));
   };
   const auto solve32 = [](const TC& t, const Any<float>& values, std::size_t rank, double tol) {
     return to_numpy(t.template solve<float>(flat_of(values), rank, tol));
   };
-  cls.def("solve", solve, nb::arg("values").noconvert(), nb::arg("rank"), nb::arg("tol"),
-          "The coefficients `(n_0, ..., n_{d-1}, rank)` of values on the node grid.")
-      .def("solve", solve32, nb::arg("values").noconvert(), nb::arg("rank"), nb::arg("tol"));
+  cls.def("solve_f64", solve, nb::arg("values").noconvert(), nb::arg("rank"), nb::arg("tol"),
+          "The coefficients `(n_0, ..., n_{d-1}, rank)` of float64 values on the node grid.")
+      .def("solve_f32", solve32, nb::arg("values").noconvert(), nb::arg("rank"), nb::arg("tol"),
+           "The coefficients of float32 values on the node grid.");
 }
 
 template <class T, class P>
 void def_tensor_collocation_factory(nb::module_& m) {
-  m.def(
-      "tensor_collocation",
-      [](const bspline::BsplineSpace<T>& space, const std::vector<Vec<P>>& nodes,
-         const Derivs& derivatives) {
-        std::vector<std::span<const P>> spans;
-        spans.reserve(nodes.size());
-        for (const Vec<P>& v : nodes) {
-          spans.emplace_back(v.data(), v.shape(0));
-        }
-        try {
-          return bspline::TensorCollocation<P>(space, spans, to_derivs(derivatives));
-        } catch (const std::domain_error&) {
-          raise_zero_division();
-        }
-      },
-      nb::arg("space"), nb::arg("nodes").noconvert(), nb::arg("derivatives"),
-      "Build the tensor-product collocation system of `space` at `nodes`.");
+  m.def(("tensor_collocation_" + tag<P>()).c_str(),
+        [](const bspline::BsplineSpace<T>& space, const std::vector<Vec<P>>& nodes,
+           const Derivs& derivatives) {
+          std::vector<std::span<const P>> spans;
+          spans.reserve(nodes.size());
+          for (const Vec<P>& v : nodes) {
+            spans.emplace_back(v.data(), v.shape(0));
+          }
+          try {
+            return bspline::TensorCollocation<P>(space, spans, to_derivs(derivatives));
+          } catch (const std::domain_error&) {
+            raise_zero_division();
+          }
+        },
+        nb::arg("space"), nb::arg("nodes").noconvert(), nb::arg("derivatives"),
+        "Build the tensor-product collocation system of `space` at `nodes`.");
 }
 
 template <class P, class C>
 void def_solve_kronecker(nb::module_& m) {
-  m.def(
-      "solve_kronecker",
-      [](const std::vector<Mat<P>>& matrices, const Any<C>& rhs, double tol) {
-        std::vector<NdArray<P>> mats;
-        mats.reserve(matrices.size());
-        for (const Mat<P>& a : matrices) {
-          NdArray<P> c({a.shape(0), a.shape(1)}, for_overwrite);
-          std::copy(a.data(), a.data() + a.size(), c.data());
-          mats.push_back(std::move(c));
-        }
-        const std::vector<std::size_t> shape = shape_of(rhs);
-        return to_numpy(bspline::solve_kronecker<P, C>(mats, flat_of(rhs), shape, tol));
-      },
-      nb::arg("matrices").noconvert(), nb::arg("rhs").noconvert(), nb::arg("tol"),
-      "Solve a Kronecker system one direction at a time (the fitting solve rule).");
+  m.def(("solve_kronecker_" + tag<P>() + "_" + tag<C>()).c_str(),
+        [](const std::vector<Mat<P>>& matrices, const Any<C>& rhs, double tol) {
+          std::vector<NdArray<P>> mats;
+          mats.reserve(matrices.size());
+          for (const Mat<P>& a : matrices) {
+            NdArray<P> c({a.shape(0), a.shape(1)}, for_overwrite);
+            std::copy(a.data(), a.data() + a.size(), c.data());
+            mats.push_back(std::move(c));
+          }
+          const std::vector<std::size_t> shape = shape_of(rhs);
+          return to_numpy(bspline::solve_kronecker<P, C>(mats, flat_of(rhs), shape, tol));
+        },
+        nb::arg("matrices").noconvert(), nb::arg("rhs").noconvert(), nb::arg("tol"),
+        "Solve a Kronecker system one direction at a time (the fitting solve rule).");
 }
 
 template <class T, class P, class C>
 void def_fit_scattered(nb::module_& m) {
-  m.def(
-      "fit_scattered",
-      [](const bspline::BsplineSpace<T>& space, const Mat<P>& pts, const Mat<C>& values,
-         double tol) {
-        return to_numpy(bspline::fit_scattered_coefficients<T, P, C>(
-            space, mdview<const P, 2>(pts.data(), pts.shape(0), pts.shape(1)),
-            mdview<const C, 2>(values.data(), values.shape(0), values.shape(1)), tol));
-      },
-      nb::arg("space"), nb::arg("pts").noconvert(), nb::arg("values").noconvert(), nb::arg("tol"),
-      "The coefficients `(n_0, ..., n_{d-1}, rank)` fitted to values at scattered points.");
+  m.def(("fit_scattered_" + tag<P>() + "_" + tag<C>()).c_str(),
+        [](const bspline::BsplineSpace<T>& space, const Mat<P>& pts, const Mat<C>& values,
+           double tol) {
+          return to_numpy(bspline::fit_scattered_coefficients<T, P, C>(
+              space, mdview<const P, 2>(pts.data(), pts.shape(0), pts.shape(1)),
+              mdview<const C, 2>(values.data(), values.shape(0), values.shape(1)), tol));
+        },
+        nb::arg("space"), nb::arg("pts").noconvert(), nb::arg("values").noconvert(), nb::arg("tol"),
+        "The coefficients `(n_0, ..., n_{d-1}, rank)` fitted to values at scattered points.");
 }
 
 template <class T>
@@ -193,24 +189,20 @@ void def_l2(nb::module_& m, const char* name) {
          },
          nb::arg("space"), nb::arg("n_quad"), nb::arg("lobatto"), nb::arg("boundary_interpolation"))
       .def_prop_ro(
-          "nodes", [](const L2& p) { return list_out(p.nodes()); },
+          "nodes", [](const L2& p) { return list_out(p.nodes()); }, nb::rv_policy::move,
           "Per direction, the global quadrature nodes (copies).")
       .def_prop_ro(
-          "weights", [](const L2& p) { return list_out(p.weights()); },
+          "weights", [](const L2& p) { return list_out(p.weights()); }, nb::rv_policy::move,
           "Per direction, the quadrature weights (copies).")
       .def_prop_ro(
-          "mass", [](const L2& p) { return list_out(p.mass()); },
+          "mass", [](const L2& p) { return list_out(p.mass()); }, nb::rv_policy::move,
           "Per direction, the mass matrix with its boundary rows (copies).")
       .def_prop_ro(
           "traces",
           [](const L2& p) {
-            nb::list out;
+            std::vector<std::vector<int>> out;
             for (const bspline::BoundaryTrace& t : p.traces()) {
-              nb::list sides;
-              for (int s : t.side) {
-                sides.append(s);
-              }
-              out.append(nb::tuple(sides));
+              out.push_back(t.side);
             }
             return out;
           },
@@ -218,11 +210,11 @@ void def_l2(nb::module_& m, const char* name) {
       .def(
           "trace_nodes",
           [](const L2& p, std::size_t trace) {
-            nb::list out;
+            std::vector<NumpyArray<T>> out;
             for (const std::vector<T>& x : p.trace_nodes(trace)) {
               NdArray<T> a({x.size()}, for_overwrite);
               std::copy(x.begin(), x.end(), a.data());
-              out.append(to_numpy(std::move(a)));
+              out.push_back(to_numpy(std::move(a)));
             }
             return out;
           },
@@ -243,26 +235,25 @@ void def_l2(nb::module_& m, const char* name) {
     }
     return to_numpy(p.template project<float>(flat_of(values), spans, tol));
   };
-  cls.def("project", project, nb::arg("values").noconvert(), nb::arg("traces").noconvert(),
+  cls.def("project_f64", project, nb::arg("values").noconvert(), nb::arg("traces").noconvert(),
           nb::arg("tol"), "The coefficients of one component from its lattice and trace values.")
-      .def("project", project32, nb::arg("values").noconvert(), nb::arg("traces").noconvert(),
+      .def("project_f32", project32, nb::arg("values").noconvert(), nb::arg("traces").noconvert(),
            nb::arg("tol"));
 }
 
 template <class T, class C>
 void def_assemble_load(nb::module_& m) {
-  m.def(
-      "assemble_load_1d",
-      [](const bspline::BsplineSpace1D<T>& space, const Any<C>& values, const Vec<T>& nodes,
-         const Vec<T>& weights, std::size_t axis) {
-        const std::vector<std::size_t> shape = shape_of(values);
-        return to_numpy(bspline::assemble_load_1d<T, C>(
-            space, flat_of(values), shape, std::span<const T>(nodes.data(), nodes.shape(0)),
-            std::span<const T>(weights.data(), weights.shape(0)), axis));
-      },
-      nb::arg("space"), nb::arg("values").noconvert(), nb::arg("nodes").noconvert(),
-      nb::arg("weights").noconvert(), nb::arg("axis"),
-      "Contract one axis of `values` with the weighted basis at quadrature nodes.");
+  m.def(("assemble_load_1d_" + tag<C>()).c_str(),
+        [](const bspline::BsplineSpace1D<T>& space, const Any<C>& values, const Vec<T>& nodes,
+           const Vec<T>& weights, std::size_t axis) {
+          const std::vector<std::size_t> shape = shape_of(values);
+          return to_numpy(bspline::assemble_load_1d<T, C>(
+              space, flat_of(values), shape, std::span<const T>(nodes.data(), nodes.shape(0)),
+              std::span<const T>(weights.data(), weights.shape(0)), axis));
+        },
+        nb::arg("space"), nb::arg("values").noconvert(), nb::arg("nodes").noconvert(),
+        nb::arg("weights").noconvert(), nb::arg("axis"),
+        "Contract one axis of `values` with the weighted basis at quadrature nodes.");
 }
 
 template <class T>

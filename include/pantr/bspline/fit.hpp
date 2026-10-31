@@ -110,9 +110,9 @@ struct RowRange {
 ///
 /// Raises:
 ///     value_error: `count` differs from the number of rows in `range` (NumPy's broadcast message).
-///     std::domain_error: The derivative recurrence met a zero divisor (a knot repeated more than
-///         `degree + 1` times at the domain end); the binding raises `ZeroDivisionError`, as the
-///         previous implementation's float division did.
+///     std::domain_error: The derivative recurrence met a zero divisor (an empty clamped span at
+///         that domain end, as an unclamped knot vector repeating its end knot has); the binding
+///         raises `ZeroDivisionError`, as the previous implementation's float division did.
 template <StorageFloat T, StorageFloat P>
 void put_derivative_rows(const BsplineSpace1D<T>& space, P x, long long count, RowRange range,
                          NdArray<P>& mat) {
@@ -307,13 +307,16 @@ template <StorageFloat C>
 ///     NdArray<C>: Extents `(n_0, ..., n_{d-1})`.
 ///
 /// Raises:
-///     value_error: Inconsistent extents, or an SVD fails.
+///     value_error: Inconsistent extents, an empty right-hand side, or an SVD failure.
 template <StorageFloat P, StorageFloat C>
 [[nodiscard]] NdArray<C> solve_kronecker(const std::vector<NdArray<P>>& matrices,
                                          std::span<const C> rhs, std::span<const std::size_t> shape,
                                          double tol) {
   if (shape.size() != matrices.size() || checked_product(shape) != rhs.size()) {
     throw value_error("solve_kronecker: one matrix per axis of the right-hand side is needed.");
+  }
+  if (rhs.empty()) {
+    throw value_error("solve_kronecker: the right-hand side is empty (a direction has no node).");
   }
   std::vector<std::size_t> cur(shape.begin(), shape.end());
   NdArray<C> current(std::vector<std::size_t>(cur), for_overwrite);

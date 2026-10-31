@@ -90,6 +90,18 @@ def _linalg_dtype(dtype: np.dtype[Any]) -> np.dtype[Any]:
     return _F32 if dtype == _F32 else _F64
 
 
+def _tag(dtype: np.dtype[Any]) -> str:
+    """Return the suffix naming a float32 or float64 dtype in the compiled names.
+
+    Args:
+        dtype (np.dtype): float32 or float64.
+
+    Returns:
+        str: ``"f32"`` or ``"f64"``.
+    """
+    return "f32" if dtype == _F32 else "f64"
+
+
 def _derivative_count(n: Any) -> int:  # noqa: ANN401
     """Normalize one boundary derivative count as the previous code used it.
 
@@ -168,7 +180,8 @@ def _tensor_collocation(
     mat_dtype = _linalg_dtype(np.dtype(dtype))
     arrays = [np.ascontiguousarray(a, dtype=mat_dtype) for a in node_arrays]
     derivs = _normalize_boundary_derivatives(space, boundary_derivatives)
-    return _cpp.tensor_collocation(space._h, arrays, derivs), mat_dtype
+    build = getattr(_cpp, "tensor_collocation_" + _tag(mat_dtype))
+    return build(space._h, arrays, derivs), mat_dtype
 
 
 def _solve_tensor(
@@ -194,11 +207,18 @@ def _solve_tensor(
 
     Returns:
         npt.NDArray: ``(*num_basis, rank)`` coefficients in ``value_dtype``.
+
+    Raises:
+        ValueError: No node in some direction (NumPy's reshape message, as before).
     """
+    if values.size == 0:
+        # The previous solve reshaped the empty value tensor along its first axis.
+        raise ValueError(f"cannot reshape array of size 0 into shape ({values.shape[0]},newaxis)")
     compute = _linalg_dtype(np.result_type(mat_dtype, value_dtype))
     rank = int(values.shape[-1])
     resolved = float(resolve_svd_tolerance(mat_dtype, tol))
-    ctrl = system.solve(np.ascontiguousarray(values, dtype=compute), rank, resolved)
+    solve = system.solve_f32 if compute == _F32 else system.solve_f64
+    ctrl = solve(np.ascontiguousarray(values, dtype=compute), rank, resolved)
     return np.asarray(ctrl).astype(value_dtype, copy=False)
 
 
@@ -652,7 +672,8 @@ def _fit_from_scattered(
     resolved = float(resolve_svd_tolerance(node_dtype, tol))
     pts = np.ascontiguousarray(nodes, dtype=node_dtype)
     vals = np.ascontiguousarray(values.reshape(n_pts, rank), dtype=compute)
-    ctrl = _cpp.fit_scattered(space._h, pts, vals, resolved)
+    fit = getattr(_cpp, f"fit_scattered_{_tag(node_dtype)}_{_tag(compute)}")
+    ctrl = fit(space._h, pts, vals, resolved)
     return Bspline(space, np.asarray(ctrl).astype(result_dtype, copy=False))
 
 
@@ -740,9 +761,8 @@ def l2_project_bspline(  # noqa: PLR0913
             _trace_values(func, projection, t, comp_idx, n_components, compute)
             for t in range(n_traces)
         ]
-        ctrl_components.append(
-            projection.project(np.ascontiguousarray(comp, dtype=compute), traces, resolved)
-        )
+        project = projection.project_f32 if compute == _F32 else projection.project_f64
+        ctrl_components.append(project(np.ascontiguousarray(comp, dtype=compute), traces, resolved))
 
     ctrl = np.stack(ctrl_components, axis=-1)
     return Bspline(space, ctrl)
@@ -885,7 +905,8 @@ def _solve_kronecker(
     compute = _linalg_dtype(np.result_type(mat_dtype, _native(rhs.dtype)))
     resolved = float(resolve_svd_tolerance(mat_dtype, tol))
     mats = [np.ascontiguousarray(m, dtype=mat_dtype) for m in matrices]
-    result = _cpp.solve_kronecker(mats, np.ascontiguousarray(rhs, dtype=compute), resolved)
+    solve = getattr(_cpp, f"solve_kronecker_{_tag(mat_dtype)}_{_tag(compute)}")
+    result = solve(mats, np.ascontiguousarray(rhs, dtype=compute), resolved)
     return np.array(result, dtype=rhs.dtype)
 
 
@@ -917,7 +938,7 @@ def _assemble_load_1d(
     space_dtype = _linalg_dtype(np.dtype(space.dtype))
     compute = _linalg_dtype(np.result_type(space_dtype, _native(func_values.dtype)))
     return np.asarray(
-        _cpp.assemble_load_1d(
+        getattr(_cpp, "assemble_load_1d_" + _tag(compute))(
             space._h,
             np.ascontiguousarray(func_values, dtype=compute),
             np.ascontiguousarray(quad_nodes, dtype=space_dtype),

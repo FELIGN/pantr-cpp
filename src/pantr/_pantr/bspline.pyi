@@ -1339,60 +1339,58 @@ class TensorCollocationF64:
     """The staged tensor-product collocation system (matrices built from the nodes)."""
 
     @property
-    def matrices(self) -> list:
+    def matrices(self) -> list[NDArray[numpy.float64]]:
         """The per-direction collocation matrices, with their derivative rows (copies)."""
 
     @property
-    def grid_shape(self) -> tuple:
+    def grid_shape(self) -> list[int]:
         """The node grid's extents."""
 
-    @overload
-    def solve(
+    def solve_f64(
         self,
         values: Annotated[NDArray[numpy.float64], dict(order="C", device="cpu", writable=False)],
         rank: int,
         tol: float,
     ) -> NDArray[numpy.float64]:
-        """The coefficients `(n_0, ..., n_{d-1}, rank)` of values on the node grid."""
+        """The coefficients `(n_0, ..., n_{d-1}, rank)` of float64 values on the node grid."""
 
-    @overload
-    def solve(
+    def solve_f32(
         self,
         values: Annotated[NDArray[numpy.float32], dict(order="C", device="cpu", writable=False)],
         rank: int,
         tol: float,
-    ) -> NDArray[numpy.float32]: ...
+    ) -> NDArray[numpy.float32]:
+        """The coefficients of float32 values on the node grid."""
 
 class TensorCollocationF32:
     """The staged tensor-product collocation system (matrices built from the nodes)."""
 
     @property
-    def matrices(self) -> list:
+    def matrices(self) -> list[NDArray[numpy.float32]]:
         """The per-direction collocation matrices, with their derivative rows (copies)."""
 
     @property
-    def grid_shape(self) -> tuple:
+    def grid_shape(self) -> list[int]:
         """The node grid's extents."""
 
-    @overload
-    def solve(
+    def solve_f64(
         self,
         values: Annotated[NDArray[numpy.float64], dict(order="C", device="cpu", writable=False)],
         rank: int,
         tol: float,
     ) -> NDArray[numpy.float64]:
-        """The coefficients `(n_0, ..., n_{d-1}, rank)` of values on the node grid."""
+        """The coefficients `(n_0, ..., n_{d-1}, rank)` of float64 values on the node grid."""
 
-    @overload
-    def solve(
+    def solve_f32(
         self,
         values: Annotated[NDArray[numpy.float32], dict(order="C", device="cpu", writable=False)],
         rank: int,
         tol: float,
-    ) -> NDArray[numpy.float32]: ...
+    ) -> NDArray[numpy.float32]:
+        """The coefficients of float32 values on the node grid."""
 
 @overload
-def tensor_collocation(
+def tensor_collocation_f64(
     space: BsplineSpaceF64,
     nodes: Sequence[
         Annotated[
@@ -1402,27 +1400,7 @@ def tensor_collocation(
     derivatives: Sequence[tuple[int, int] | None],
 ) -> TensorCollocationF64: ...
 @overload
-def tensor_collocation(
-    space: BsplineSpaceF64,
-    nodes: Sequence[
-        Annotated[
-            NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
-        ]
-    ],
-    derivatives: Sequence[tuple[int, int] | None],
-) -> TensorCollocationF32: ...
-@overload
-def tensor_collocation(
-    space: BsplineSpaceF32,
-    nodes: Sequence[
-        Annotated[
-            NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
-        ]
-    ],
-    derivatives: Sequence[tuple[int, int] | None],
-) -> TensorCollocationF32: ...
-@overload
-def tensor_collocation(
+def tensor_collocation_f64(
     space: BsplineSpaceF32,
     nodes: Sequence[
         Annotated[
@@ -1434,7 +1412,28 @@ def tensor_collocation(
     """Build the tensor-product collocation system of `space` at `nodes`."""
 
 @overload
-def solve_kronecker(
+def tensor_collocation_f32(
+    space: BsplineSpaceF64,
+    nodes: Sequence[
+        Annotated[
+            NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
+        ]
+    ],
+    derivatives: Sequence[tuple[int, int] | None],
+) -> TensorCollocationF32: ...
+@overload
+def tensor_collocation_f32(
+    space: BsplineSpaceF32,
+    nodes: Sequence[
+        Annotated[
+            NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
+        ]
+    ],
+    derivatives: Sequence[tuple[int, int] | None],
+) -> TensorCollocationF32:
+    """Build the tensor-product collocation system of `space` at `nodes`."""
+
+def solve_kronecker_f64_f64(
     matrices: Sequence[
         Annotated[
             NDArray[numpy.float64],
@@ -1443,9 +1442,10 @@ def solve_kronecker(
     ],
     rhs: Annotated[NDArray[numpy.float64], dict(order="C", device="cpu", writable=False)],
     tol: float,
-) -> NDArray[numpy.float64]: ...
-@overload
-def solve_kronecker(
+) -> NDArray[numpy.float64]:
+    """Solve a Kronecker system one direction at a time (the fitting solve rule)."""
+
+def solve_kronecker_f32_f32(
     matrices: Sequence[
         Annotated[
             NDArray[numpy.float32],
@@ -1454,9 +1454,10 @@ def solve_kronecker(
     ],
     rhs: Annotated[NDArray[numpy.float32], dict(order="C", device="cpu", writable=False)],
     tol: float,
-) -> NDArray[numpy.float32]: ...
-@overload
-def solve_kronecker(
+) -> NDArray[numpy.float32]:
+    """Solve a Kronecker system one direction at a time (the fitting solve rule)."""
+
+def solve_kronecker_f32_f64(
     matrices: Sequence[
         Annotated[
             NDArray[numpy.float32],
@@ -1465,9 +1466,10 @@ def solve_kronecker(
     ],
     rhs: Annotated[NDArray[numpy.float64], dict(order="C", device="cpu", writable=False)],
     tol: float,
-) -> NDArray[numpy.float64]: ...
-@overload
-def solve_kronecker(
+) -> NDArray[numpy.float64]:
+    """Solve a Kronecker system one direction at a time (the fitting solve rule)."""
+
+def solve_kronecker_f64_f32(
     matrices: Sequence[
         Annotated[
             NDArray[numpy.float64],
@@ -1480,7 +1482,7 @@ def solve_kronecker(
     """Solve a Kronecker system one direction at a time (the fitting solve rule)."""
 
 @overload
-def fit_scattered(
+def fit_scattered_f64_f64(
     space: BsplineSpaceF64,
     pts: Annotated[
         NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu", writable=False)
@@ -1491,7 +1493,20 @@ def fit_scattered(
     tol: float,
 ) -> NDArray[numpy.float64]: ...
 @overload
-def fit_scattered(
+def fit_scattered_f64_f64(
+    space: BsplineSpaceF32,
+    pts: Annotated[
+        NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu", writable=False)
+    ],
+    values: Annotated[
+        NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu", writable=False)
+    ],
+    tol: float,
+) -> NDArray[numpy.float64]:
+    """The coefficients `(n_0, ..., n_{d-1}, rank)` fitted to values at scattered points."""
+
+@overload
+def fit_scattered_f32_f32(
     space: BsplineSpaceF64,
     pts: Annotated[
         NDArray[numpy.float32], dict(shape=(None, None), order="C", device="cpu", writable=False)
@@ -1502,7 +1517,20 @@ def fit_scattered(
     tol: float,
 ) -> NDArray[numpy.float32]: ...
 @overload
-def fit_scattered(
+def fit_scattered_f32_f32(
+    space: BsplineSpaceF32,
+    pts: Annotated[
+        NDArray[numpy.float32], dict(shape=(None, None), order="C", device="cpu", writable=False)
+    ],
+    values: Annotated[
+        NDArray[numpy.float32], dict(shape=(None, None), order="C", device="cpu", writable=False)
+    ],
+    tol: float,
+) -> NDArray[numpy.float32]:
+    """The coefficients `(n_0, ..., n_{d-1}, rank)` fitted to values at scattered points."""
+
+@overload
+def fit_scattered_f32_f64(
     space: BsplineSpaceF64,
     pts: Annotated[
         NDArray[numpy.float32], dict(shape=(None, None), order="C", device="cpu", writable=False)
@@ -1513,7 +1541,20 @@ def fit_scattered(
     tol: float,
 ) -> NDArray[numpy.float64]: ...
 @overload
-def fit_scattered(
+def fit_scattered_f32_f64(
+    space: BsplineSpaceF32,
+    pts: Annotated[
+        NDArray[numpy.float32], dict(shape=(None, None), order="C", device="cpu", writable=False)
+    ],
+    values: Annotated[
+        NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu", writable=False)
+    ],
+    tol: float,
+) -> NDArray[numpy.float64]:
+    """The coefficients `(n_0, ..., n_{d-1}, rank)` fitted to values at scattered points."""
+
+@overload
+def fit_scattered_f64_f32(
     space: BsplineSpaceF64,
     pts: Annotated[
         NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu", writable=False)
@@ -1524,40 +1565,7 @@ def fit_scattered(
     tol: float,
 ) -> NDArray[numpy.float32]: ...
 @overload
-def fit_scattered(
-    space: BsplineSpaceF32,
-    pts: Annotated[
-        NDArray[numpy.float32], dict(shape=(None, None), order="C", device="cpu", writable=False)
-    ],
-    values: Annotated[
-        NDArray[numpy.float32], dict(shape=(None, None), order="C", device="cpu", writable=False)
-    ],
-    tol: float,
-) -> NDArray[numpy.float32]: ...
-@overload
-def fit_scattered(
-    space: BsplineSpaceF32,
-    pts: Annotated[
-        NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu", writable=False)
-    ],
-    values: Annotated[
-        NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu", writable=False)
-    ],
-    tol: float,
-) -> NDArray[numpy.float64]: ...
-@overload
-def fit_scattered(
-    space: BsplineSpaceF32,
-    pts: Annotated[
-        NDArray[numpy.float32], dict(shape=(None, None), order="C", device="cpu", writable=False)
-    ],
-    values: Annotated[
-        NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu", writable=False)
-    ],
-    tol: float,
-) -> NDArray[numpy.float64]: ...
-@overload
-def fit_scattered(
+def fit_scattered_f64_f32(
     space: BsplineSpaceF32,
     pts: Annotated[
         NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu", writable=False)
@@ -1580,26 +1588,25 @@ class L2ProjectionF64:
         boundary_interpolation: Sequence[tuple[bool, bool]],
     ) -> None: ...
     @property
-    def nodes(self) -> list:
+    def nodes(self) -> list[NDArray[numpy.float64]]:
         """Per direction, the global quadrature nodes (copies)."""
 
     @property
-    def weights(self) -> list:
+    def weights(self) -> list[NDArray[numpy.float64]]:
         """Per direction, the quadrature weights (copies)."""
 
     @property
-    def mass(self) -> list:
+    def mass(self) -> list[NDArray[numpy.float64]]:
         """Per direction, the mass matrix with its boundary rows (copies)."""
 
     @property
-    def traces(self) -> list:
+    def traces(self) -> list[list[int]]:
         """The boundary traces in application order: per direction -1 (free), 0 (start), 1 (end)."""
 
-    def trace_nodes(self, trace: int) -> list:
+    def trace_nodes(self, trace: int) -> list[NDArray[numpy.float64]]:
         """Per direction, the nodes a trace samples."""
 
-    @overload
-    def project(
+    def project_f64(
         self,
         values: Annotated[NDArray[numpy.float64], dict(order="C", device="cpu", writable=False)],
         traces: Sequence[
@@ -1609,8 +1616,7 @@ class L2ProjectionF64:
     ) -> NDArray[numpy.float64]:
         """The coefficients of one component from its lattice and trace values."""
 
-    @overload
-    def project(
+    def project_f32(
         self,
         values: Annotated[NDArray[numpy.float32], dict(order="C", device="cpu", writable=False)],
         traces: Sequence[
@@ -1630,26 +1636,25 @@ class L2ProjectionF32:
         boundary_interpolation: Sequence[tuple[bool, bool]],
     ) -> None: ...
     @property
-    def nodes(self) -> list:
+    def nodes(self) -> list[NDArray[numpy.float32]]:
         """Per direction, the global quadrature nodes (copies)."""
 
     @property
-    def weights(self) -> list:
+    def weights(self) -> list[NDArray[numpy.float32]]:
         """Per direction, the quadrature weights (copies)."""
 
     @property
-    def mass(self) -> list:
+    def mass(self) -> list[NDArray[numpy.float32]]:
         """Per direction, the mass matrix with its boundary rows (copies)."""
 
     @property
-    def traces(self) -> list:
+    def traces(self) -> list[list[int]]:
         """The boundary traces in application order: per direction -1 (free), 0 (start), 1 (end)."""
 
-    def trace_nodes(self, trace: int) -> list:
+    def trace_nodes(self, trace: int) -> list[NDArray[numpy.float32]]:
         """Per direction, the nodes a trace samples."""
 
-    @overload
-    def project(
+    def project_f64(
         self,
         values: Annotated[NDArray[numpy.float64], dict(order="C", device="cpu", writable=False)],
         traces: Sequence[
@@ -1659,8 +1664,7 @@ class L2ProjectionF32:
     ) -> NDArray[numpy.float64]:
         """The coefficients of one component from its lattice and trace values."""
 
-    @overload
-    def project(
+    def project_f32(
         self,
         values: Annotated[NDArray[numpy.float32], dict(order="C", device="cpu", writable=False)],
         traces: Sequence[
@@ -1670,7 +1674,7 @@ class L2ProjectionF32:
     ) -> NDArray[numpy.float32]: ...
 
 @overload
-def assemble_load_1d(
+def assemble_load_1d_f64(
     space: BsplineSpace1DF64,
     values: Annotated[NDArray[numpy.float64], dict(order="C", device="cpu", writable=False)],
     nodes: Annotated[
@@ -1682,7 +1686,21 @@ def assemble_load_1d(
     axis: int,
 ) -> NDArray[numpy.float64]: ...
 @overload
-def assemble_load_1d(
+def assemble_load_1d_f64(
+    space: BsplineSpace1DF32,
+    values: Annotated[NDArray[numpy.float64], dict(order="C", device="cpu", writable=False)],
+    nodes: Annotated[
+        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    weights: Annotated[
+        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    axis: int,
+) -> NDArray[numpy.float64]:
+    """Contract one axis of `values` with the weighted basis at quadrature nodes."""
+
+@overload
+def assemble_load_1d_f32(
     space: BsplineSpace1DF32,
     values: Annotated[NDArray[numpy.float32], dict(order="C", device="cpu", writable=False)],
     nodes: Annotated[
@@ -1694,19 +1712,7 @@ def assemble_load_1d(
     axis: int,
 ) -> NDArray[numpy.float32]: ...
 @overload
-def assemble_load_1d(
-    space: BsplineSpace1DF32,
-    values: Annotated[NDArray[numpy.float64], dict(order="C", device="cpu", writable=False)],
-    nodes: Annotated[
-        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
-    ],
-    weights: Annotated[
-        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
-    ],
-    axis: int,
-) -> NDArray[numpy.float64]: ...
-@overload
-def assemble_load_1d(
+def assemble_load_1d_f32(
     space: BsplineSpace1DF64,
     values: Annotated[NDArray[numpy.float32], dict(order="C", device="cpu", writable=False)],
     nodes: Annotated[

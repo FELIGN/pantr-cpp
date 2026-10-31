@@ -5,10 +5,14 @@
 /// per direction, the `degree + 1` points are equispaced inside the knot interval holding the
 /// function's Greville abscissa, and the weights are the function's row of the inverse of the
 /// local collocation block there. On one interval the `degree + 1` nonzero B-splines span the
-/// polynomials of that degree, so the local interpolant recovers their coefficients exactly and
-/// the operator reproduces the space (`Q B_j = B_j`) (T. Lyche and K. Mørken, *Spline Methods*,
-/// local spline interpolation; E. T. Y. Lee, *Marsden's identity*, CAGD 13, 1996). All of it is
-/// computed in `double`, as before; a caller rounds the coefficients to the space's type.
+/// polynomials of that degree, so where the chosen interval lies in the function's support the
+/// local interpolant recovers its coefficient exactly and the operator reproduces the space
+/// (`Q B_j = B_j`). Two cases inherited from the previous release break that: a Greville abscissa
+/// on a break of full multiplicity picks the interval to its right, outside the support, and in
+/// a periodic space the abscissae are read in sorted order rather than per function; both are
+/// pinned as known failures in the tests. Points, local blocks, weights and coefficients are
+/// `double`, as before (the blocks are tabulated over the space's own knots, so a `float` space's
+/// rounded knots carry into them); a caller rounds the coefficients to the space's type.
 #pragma once
 
 #include "pantr/bspline/bspline.hpp"
