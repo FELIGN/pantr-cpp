@@ -44,8 +44,9 @@
   rational `derivative()` in either setting, since both re-elevate. It used to return a
   function that disagrees with the true derivative. A non-rational `derivative()` with
   `keep_degree=False`, and a non-rational direction of degree 1, are unaffected. A rational
-  direction of degree 1 is differentiated whether or not it is clamped, where the previous release
-  raised `ValueError` (see the rational `derivative` under Changed).
+  direction of degree 1 that is not clamped at both ends (unclamped, or clamped at one end only)
+  is differentiated, where the previous release raised `ValueError` (see the rational `derivative`
+  under Changed); a periodic one whose seam is `C^0` is refused as before.
 - **A rational `derivative()` on a periodic direction with a C^0 seam is refused**
   (seam multiplicity equal to the degree). The derivative is discontinuous at the seam and
   has no periodic form; the error says so. Before, the same input raised a misleading
@@ -615,11 +616,11 @@
   `NotImplementedError`), and an object that is not a space, or `orders=1.0`, fails with another
   message. `find_roots` checks `tol` straight after the type of its first argument, so a `tol`
   that is not positive, cannot be compared with `0.0` or cannot be converted to a float (a
-  one-element array on NumPy 2.4, an integer past the range of a float) is reported before a
+  one-dimensional one-element array on NumPy 2.4, an integer past the range of a float) is reported before a
   B-spline that is not univariate, not scalar valued, of degree 0 or rational with a
-  non-positive weight (the previous release reported those first). A `Bezier` given as `other` to
-  the `multiply` of a one-direction B-spline raises `TypeError` from the binding, where it raised
-  `AttributeError` ("... has no attribute 'space'").
+  non-positive weight (the previous release reported those first). A `Bezier` with the B-spline's
+  number of directions, dtype and rank given as `other` to `multiply` raises `TypeError` from the
+  binding, where it raised `AttributeError` ("... has no attribute 'space'").
 - **`SpanwiseElementExtraction` takes any number of directions** (its `apply` family raised
   `NotImplementedError` beyond three) and **any memory layout** for the operand, `out`, `scratch`
   and the cell indices, through a temporary where needed. The previous kernels raised Numba's
@@ -662,7 +663,9 @@
     maxima of samples, not bounds. On domains of other lengths the largest seen in `float64` was
     also 182; in `float32`, three two-direction products differed by up to `8.4e6` units, all
     of them products in which the previous release read control points it had never written (see
-    the `multiply` entry under Fixed).
+    the `multiply` entry under Fixed). In those products the projection is also rank deficient,
+    so the two releases' minimum-norm solutions can differ by thousands of units in `float64` as
+    well, even where the unwritten control points are zero.
   - **The rational `derivative` moves in the last bits as well**, with the same knot vectors,
     degrees and boundary types to the bit (485 sampled derivatives, `keep_degree` either way). Over
     420 of them (one or two directions, open or periodic differentiated direction, `float32` and
@@ -674,12 +677,12 @@
     dimensions except for the concatenation axis must match exactly ..."). A direction of degree 2
     or more that is not clamped is still refused, as above.
   - **A NaN or infinite control point or weight no longer makes `multiply` or the rational
-    `derivative` emit NumPy's `RuntimeWarning`** ("invalid value encountered in add", "in
-    multiply", "in subtract" or "in at"). With one such value placed at random in an operand
+    `derivative` emit NumPy's `RuntimeWarning`s** ("invalid value encountered in ..."; the
+    sampled ones were in `add`, `at`, `multiply`, `subtract`, `reduce` and `divide`). With one such value placed at random in an operand
     (open, one or two directions, `float32` and `float64`), the previous release warned in 89 of
     300 products and 107 of 200 derivatives and the new release in none. The result is non-finite
     in both releases in all 300 products, and at the same control points in all 200 derivatives;
-    in 6 of the products the new result has more non-finite control points than the previous one.
+    the number of non-finite control points can differ between the releases, in either direction.
   - **The domain-mismatch message of `multiply` prints the domain ends as Python floats**
     (`f and g must share the same parametric domain. Got (0.0, 1.0) and (0.0, 2.0).`, or
     `... domain in direction 1. Got ...` for several directions), where it printed NumPy scalars
@@ -695,8 +698,9 @@
     degree-1 hodograph) cannot walk a knot vector that repeats the knot 0.5 3 times at degree 1:
     a knot may repeat at most degree + 1 = 2 times."), for either `keep_degree`. The previous
     release raised `ValueError` "The number of control points must be a multiple of the number
-    of basis functions" in 28 of the 30 cases sampled (degrees 1 to 5, multiplicities `degree + 1`
-    to `degree + 3`) and ended the process in the other 2, both with `keep_degree=True`. A
+    of basis functions" in most of the 30 cases sampled (degrees 1 to 5, multiplicities `degree + 1`
+    to `degree + 3`) and ended the process in some runs of the others, with either
+    `keep_degree` (which cases crash varies from run to run). A
     multiplicity of `degree` is accepted by both.
   - **`find_roots` returns the previous release's roots to the bit for an open B-spline**, and
     raises its exceptions with its messages: 885 sampled successful calls and 95 failing ones
@@ -714,8 +718,9 @@
     NumPy `float16` or `longdouble` scalar and an object that has `__float__` and orders against
     `0.0` are accepted; the previous release raised `TypeError` for a `Decimal` and for such an
     object, Numba's `TypingError` for a `Fraction` and a `longdouble`, and `NotImplementedError`
-    ("float16") for a `float16`. A one-element array is a `TypeError` ("only 0-dimensional arrays
-    can be converted to Python scalars") on NumPy 2.4.6, where it was accepted. Another 31 values
+    ("float16") for a `float16`. A one-dimensional one-element array is a `TypeError` ("only
+    0-dimensional arrays can be converted to Python scalars") on NumPy 2.4.6, where it was
+    accepted; a 1x1 array raised another error before and raises this one now. Another 31 values
     (a `bool`, an `int`, NumPy `float32`, `float64`, integer and `bool` scalars, a 0-d and a
     two-element array, `None`, NaN, infinities, zero, negative and subnormal values, a string, a
     list, a complex number, an object with only `__float__`, an integer too large for a float) give
@@ -747,9 +752,8 @@
   with the Numba kernels and NumPy code they held, whose work is now done in C++.
   `pantr.cad._compat` keeps the two breakpoint helpers it took from `_bspline_product` as its own.
   What tests reach of the root finder and of the knot classes is in `pantr._testing`. The warmup
-  thread that `import pantr` starts compiled the knot-class and root-finder kernels (the
-  `_warmup_numba_functions` of `_bspline_knots` and `_bspline_roots_core`); it now compiles
-  nothing and only sets the event that the remaining warmup barriers wait on.
+  thread that `import pantr` starts compiled Numba kernels across the package (by this change only
+  the knot-class and root-finder ones were left); it now compiles nothing and only sets the event that the remaining warmup barriers wait on.
 
 ### Fixed
 - **`Bspline.multiply` no longer returns values that depend on memory it never wrote.** The
@@ -760,7 +764,9 @@
   writes. The previous release read them as `numpy.empty` left them, so the result could change
   from call to call on the same input, up to `1e37` or NaN. They are now zero and the result is
   repeatable. It is still not `f g` on such input, as it was not before: the grouping itself is
-  unchanged.
+  unchanged. The previous release could also raise `numpy.linalg.LinAlgError` ("SVD did not
+  converge in Linear Least Squares") there; no such input raising it on the new release was
+  found.
 - **`SpanwiseElementExtraction`'s batch applications no longer race on an overlapping `out`.**
   A batch of cells whose operators are all the identity accepted any `out` overlapping the
   operand, and its cells then read entries other cells had written, so the result depended on the
