@@ -651,7 +651,8 @@
     SVD (Eigen's) solves the rest. For a product with an open direction the cost of that
     projection then grows about with the square of the number of intervals rather than its cube;
     the conversion to a periodic or unclamped boundary still forms a dense matrix product first,
-    as the previous release did, and stays close to cubic. Over 1 575 of the random products
+    as the previous release did, whose cost is cubic, so those products gain less. Over 1 575 of
+    the random products
     (one to three directions, open, unclamped and periodic operands in any pairing, polynomial and
     rational, `float32` and `float64`, domains of length 3e-4 to 3e3), the largest difference seen
     against the previous release, in units of `eps * max(1, |largest control value|)` of the
