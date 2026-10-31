@@ -114,8 +114,16 @@ TEST_CASE_TEMPLATE("mode product: equals the definition, in every mode, window a
           }
           const std::vector<int> op_i = small_ints(rows * cols, seed++, 4);
           const std::vector<int> x_i = small_ints(x_total, seed++, 8);
-          const std::vector<T> op(op_i.begin(), op_i.end());
-          const std::vector<T> x(x_i.begin(), x_i.end());
+          const auto as_t = [](const std::vector<int>& v) {
+            std::vector<T> out;
+            out.reserve(v.size());
+            for (const int e : v) {
+              out.push_back(static_cast<T>(e));
+            }
+            return out;
+          };
+          const std::vector<T> op = as_t(op_i);
+          const std::vector<T> x = as_t(x_i);
           const std::int64_t sentinel = -77;
           std::size_t y_total = 1;
           for (const std::size_t e : y_extents) {

@@ -1136,7 +1136,10 @@ TEST_CASE_TEMPLATE(
 
   std::vector<std::vector<P>> lattice_axes;
   for (const auto& a : axes) {
-    lattice_axes.emplace_back(a.begin(), a.end());
+    std::vector<P>& axis = lattice_axes.emplace_back();
+    for (const auto v : a) {
+      axis.push_back(static_cast<P>(v));
+    }
   }
   const std::vector<P> pts = product_rows<P>(lattice_axes);
   const std::size_t n = pts.size() / 2;
