@@ -71,6 +71,7 @@ include/pantr/                  # THE public C++ API, header-only (pantr::pantr)
   core/        errors.hpp format.hpp ndarray.hpp mdspan.hpp lazy.hpp simd.hpp exact_rational.hpp
   parallel/    pool.hpp parallel_for.hpp affinity.hpp work_model.hpp
   linalg/      dense.hpp (thin Eigen front: solve, lstsq, svd_truncated, qr_solve, pinv, inv, eigh)
+               banded_lstsq.hpp (banded Givens QR for products, SVD fallback below)
   tolerance.hpp
   quad/ basis/ change_basis/ geometry/ transform/ bezier/ roots/ bspline/ grid/ thb/ extraction/ partition/ cad/ multipatch/
   mpi/
@@ -646,7 +647,7 @@ outcomes the suite asserts are discrete.
 | `_solve_1d` rectangular, Bezier fits | truncated SVD, `100*eps*s_max` | `JacobiSVD` (small) / `BDCSVD` | rank at the threshold can flip with last bits; the threshold is relative and derived; tests at the threshold are the hazard (U3). |
 | `change_basis` (4 sites) | `solve(G, C)`, `solve(forward, I)` | `PartialPivLU` | none beyond conditioning, which the degree limits already bound. |
 | `_bspline_knot_insertion.to_periodic` | `qr`, `solve(R, Q.T@b)` | `HouseholderQR` + triangular solve | residual check raises on gross violation: threshold unchanged. |
-| products (`multiply`, 6 sites), THB prolongation | `lstsq(rcond=None)` (gelsd) | `BDCSVD`, cutoff `eps * max(m, n) * s_max` (`_linalg.py:2530`, gelsd's `S(i) <= RCOND*S(1)`) | rank decision at the cutoff; min-norm solution identical in exact arithmetic. |
+| products (`multiply`, 6 sites), THB prolongation | `lstsq(rcond=None)` (gelsd) | products: banded Givens QR (`banded_lstsq.hpp`), kept only where its full-rank certificate clears the cutoff by a margin, else `BDCSVD`; THB: `BDCSVD`. Cutoff `eps * max(m, n) * s_max` (`_linalg.py:2530`, gelsd's `S(i) <= RCOND*S(1)`) | rank decision at the cutoff; min-norm solution identical in exact arithmetic. The QR path answers only full-rank systems, where the least-squares solution is unique. |
 | THB restriction | `pinv` | `BDCSVD`, cutoff `1e-15 * s_max` (numpy 2.4 default, `_linalg.py:2240`; not `max(m,n)*eps`, which is `lstsq`'s) | as above. |
 | QI local blocks | `inv`, singular -> `ValueError` | `PartialPivLU`, exact-zero-pivot -> `value_error` | same message. |
 | `locate` health check | `svd` of the Jacobian | `JacobiSVD` (tiny) | singular-value ratio test unchanged. |
