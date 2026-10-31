@@ -22,7 +22,8 @@
 /// The arithmetic follows the Python implementation this replaces step by step, including where it
 /// rounded in the storage type `T` (knot arithmetic on `float32` arrays) and where in `double`
 /// (Python floats, and `numpy.linalg.lstsq`, which decomposes in `double`;
-/// `linalg::lstsq_min_norm`). The one-direction and the multi-direction paths of that
+/// `linalg::lstsq_min_norm_banded`, which gives its solution by a banded QR where the
+/// system has certified full column rank). The one-direction and the multi-direction paths of that
 /// implementation differ in one tolerance, the one at which the open product's knots are grouped
 /// before a boundary conversion (`convert_product_boundary`); both are kept.
 #pragma once
@@ -40,6 +41,7 @@
 #include "pantr/core/mdspan.hpp"
 #include "pantr/core/ndarray.hpp"
 #include "pantr/core/scalar.hpp"
+#include "pantr/linalg/banded_lstsq.hpp"
 #include "pantr/linalg/dense.hpp"
 
 #include <algorithm>
@@ -406,15 +408,25 @@ template <StorageFloat T>
   if (target == ProductBoundary::periodic) {
     const auto n_full = static_cast<Eigen::Index>(ghost.size()) - r - 1;
     const auto n_per = static_cast<Eigen::Index>(num_basis<T>(ghost, r, true, tol_typed));
-    Mat wrap = Mat::Zero(n_full, n_per);
+    // `chain` times the wrap matrix (ghost column `i` onto periodic column `i % n_per`), with the
+    // periodic columns that receive a wrapped ghost column, `[0, n_wrap)`, moved last: they are the
+    // dense trailing columns of the banded solve, and the rest stay banded.
+    const Eigen::Index n_wrap = (std::min)(n_full - n_per, n_per);
+    const auto moved = [&](Eigen::Index c) { return c < n_wrap ? n_per - n_wrap + c : c - n_wrap; };
+    Mat system = Mat::Zero(chain.rows(), n_per);
     for (Eigen::Index i = 0; i < n_full; ++i) {
-      wrap(i, i % n_per) = T(1);
+      system.col(moved(i % n_per)) += chain.col(i);
     }
-    const Mat system = chain * wrap;
-    NdArray<T> ctrl = linalg::lstsq_min_norm<T>(system, rhs);
+    const NdArray<T> x = linalg::lstsq_min_norm_banded<T>(system, rhs, n_wrap);
+    NdArray<T> ctrl({static_cast<std::size_t>(n_per), x.shape()[1]}, for_overwrite);
+    const std::size_t cols = x.shape()[1];
+    for (Eigen::Index c = 0; c < n_per; ++c) {
+      std::copy_n(x.data() + static_cast<std::size_t>(moved(c)) * cols, cols,
+                  ctrl.data() + static_cast<std::size_t>(c) * cols);
+    }
     return {BsplineSpace1D<T>(std::span<const T>(ghost), r, true), std::move(ctrl)};
   }
-  NdArray<T> ctrl = linalg::lstsq_min_norm<T>(chain, rhs);
+  NdArray<T> ctrl = linalg::lstsq_min_norm_banded<T>(chain, rhs);
   return {BsplineSpace1D<T>(std::span<const T>(ghost), r), std::move(ctrl)};
 }
 
@@ -600,7 +612,7 @@ template <StorageFloat T>
         const Mat rhs =
             Eigen::Map<const Mat>(flat.data_handle(), static_cast<Eigen::Index>(flat.extent(0)),
                                   static_cast<Eigen::Index>(flat.extent(1)));
-        NdArray<T> ctrl = linalg::lstsq_min_norm<T>(Mat(linalg::as_matrix(oslo)), rhs);
+        NdArray<T> ctrl = linalg::lstsq_min_norm_banded<T>(Mat(linalg::as_matrix(oslo)), rhs);
         return {BsplineSpace1D<T>(std::span<const T>(knots_opt[d]), r), std::move(ctrl)};
       });
 }

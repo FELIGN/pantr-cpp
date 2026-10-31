@@ -69,6 +69,7 @@
 #include <pantr/bspline/product.hpp>
 #include <pantr/core/errors.hpp>
 #include <pantr/core/ndarray.hpp>
+#include <pantr/linalg/banded_lstsq.hpp>
 #include <pantr/linalg/dense.hpp>
 #include <pantr/tolerance.hpp>
 
@@ -77,6 +78,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <span>
 #include <string>
@@ -1535,7 +1537,8 @@ bool solution_matches(const pantr::NdArray<T>& got, std::size_t rows, std::size_
 
 constexpr double kEpsDouble = std::numeric_limits<double>::epsilon();
 
-/// The error allowed for a solution of size `scale` from a backward-stable SVD solve in double of
+/// The error allowed for a solution of size `scale` from a backward-stable solve (SVD or QR) in
+/// double of
 /// a system of `n` unknowns and condition number `kappa_power` (the condition number, or its
 /// square for the residual-dependent part of an inconsistent system), then rounded to `T`:
 /// `32 n kappa eps_double scale + u_T scale`. The factor `32 n` is admitted as a heuristic: the
@@ -1544,6 +1547,31 @@ constexpr double kEpsDouble = std::numeric_limits<double>::epsilon();
 template <class T>
 double solve_tolerance(std::size_t n, double kappa_power, double scale) {
   return (32.0 * static_cast<double>(n) * kappa_power * kEpsDouble + unit_roundoff<T>()) * scale;
+}
+
+/// A least-squares solver under test.
+template <class T>
+using Solver = pantr::NdArray<T> (*)(const la::RowMatrix<T>&, const la::RowMatrix<T>&);
+
+/// The SVD solver and the banded QR one, which promises the SVD's answer up to rounding; every
+/// `lstsq_min_norm` case below runs on both.
+template <class T>
+std::array<std::pair<const char*, Solver<T>>, 2> solvers() {
+  return {
+      {{"lstsq_min_norm", [](const la::RowMatrix<T>& a,
+                             const la::RowMatrix<T>& b) { return la::lstsq_min_norm<T>(a, b); }},
+       {"lstsq_min_norm_banded", [](const la::RowMatrix<T>& a, const la::RowMatrix<T>& b) {
+          return la::lstsq_min_norm_banded<T>(a, b);
+        }}}};
+}
+
+/// Whether two arrays hold the same values bit for bit, NaNs included at the same places.
+template <class T>
+bool same_bits(const pantr::NdArray<T>& x, const pantr::NdArray<T>& y) {
+  if (!std::ranges::equal(x.shape(), y.shape())) {
+    return false;
+  }
+  return std::memcmp(x.data(), y.data(), x.flat().size() * sizeof(T)) == 0;
 }
 
 }  // namespace
@@ -1556,8 +1584,11 @@ TEST_CASE_TEMPLATE("lstsq_min_norm: a square full-rank system returns its constr
   const la::RowMatrix<T> a = matrix_of<T>(3, 3, {2, 1, 0, 1, 2, 1, 0, 1, 2});
   const std::vector<double> x = {1, 2, -1, 0.5, 3, -2};
   const la::RowMatrix<T> b = matrix_of<T>(3, 2, {1, 4.5, 2, 1, 5, -3.5});
-  const pantr::NdArray<T> got = la::lstsq_min_norm<T>(a, b);
-  CHECK(solution_matches<T>(got, 3, 2, x, solve_tolerance<T>(3, 5.83, 3.0)));
+  for (const auto& [name, solve] : solvers<T>()) {
+    CAPTURE(name);
+    const pantr::NdArray<T> got = solve(a, b);
+    CHECK(solution_matches<T>(got, 3, 2, x, solve_tolerance<T>(3, 5.83, 3.0)));
+  }
 }
 
 TEST_CASE_TEMPLATE(
@@ -1568,8 +1599,11 @@ TEST_CASE_TEMPLATE(
   // 1.1. A^T A = (4, 6; 6, 14) has eigenvalues 9 +- sqrt 61, so kappa(A)^2 = 14.1.
   const la::RowMatrix<T> a = matrix_of<T>(4, 2, {1, 0, 1, 1, 1, 2, 1, 3});
   const la::RowMatrix<T> b = matrix_of<T>(4, 1, {1, 3, 2, 5});
-  const pantr::NdArray<T> got = la::lstsq_min_norm<T>(a, b);
-  CHECK(solution_matches<T>(got, 2, 1, {1.1, 1.1}, solve_tolerance<T>(2, 14.2, 1.1)));
+  for (const auto& [name, solve] : solvers<T>()) {
+    CAPTURE(name);
+    const pantr::NdArray<T> got = solve(a, b);
+    CHECK(solution_matches<T>(got, 2, 1, {1.1, 1.1}, solve_tolerance<T>(2, 14.2, 1.1)));
+  }
 }
 
 TEST_CASE_TEMPLATE("lstsq_min_norm: an underdetermined system returns the minimum-norm solution", T,
@@ -1579,8 +1613,11 @@ TEST_CASE_TEMPLATE("lstsq_min_norm: an underdetermined system returns the minimu
   // sqrt 2 where (1, 2, 0), another solution, has sqrt 5. kappa(A) = sqrt 3.
   const la::RowMatrix<T> a = matrix_of<T>(2, 3, {1, 0, 1, 0, 1, 1});
   const la::RowMatrix<T> b = matrix_of<T>(2, 1, {1, 2});
-  const pantr::NdArray<T> got = la::lstsq_min_norm<T>(a, b);
-  CHECK(solution_matches<T>(got, 3, 1, {0, 1, 1}, solve_tolerance<T>(3, 1.8, 1.0)));
+  for (const auto& [name, solve] : solvers<T>()) {
+    CAPTURE(name);
+    const pantr::NdArray<T> got = solve(a, b);
+    CHECK(solution_matches<T>(got, 3, 1, {0, 1, 1}, solve_tolerance<T>(3, 1.8, 1.0)));
+  }
 }
 
 TEST_CASE_TEMPLATE("lstsq_min_norm: a rank-deficient matrix gives the pseudoinverse solution", T,
@@ -1593,9 +1630,12 @@ TEST_CASE_TEMPLATE("lstsq_min_norm: a rank-deficient matrix gives the pseudoinve
   // cutoff its reciprocal would dominate the answer.
   const la::RowMatrix<T> a = matrix_of<T>(3, 2, {1, 1, 1, 1, 1, 1});
   const la::RowMatrix<T> b = matrix_of<T>(3, 2, {2, 1, 2, 0, 2, 0});
-  const pantr::NdArray<T> got = la::lstsq_min_norm<T>(a, b);
-  CHECK(solution_matches<T>(got, 2, 2, {1, 1.0 / 6.0, 1, 1.0 / 6.0},
-                            solve_tolerance<T>(2, 1.0, 1.0)));
+  for (const auto& [name, solve] : solvers<T>()) {
+    CAPTURE(name);
+    const pantr::NdArray<T> got = solve(a, b);
+    CHECK(solution_matches<T>(got, 2, 2, {1, 1.0 / 6.0, 1, 1.0 / 6.0},
+                              solve_tolerance<T>(2, 1.0, 1.0)));
+  }
 }
 
 TEST_CASE_TEMPLATE("lstsq_min_norm: a null column of the matrix gets the entry zero", T, double,
@@ -1605,9 +1645,12 @@ TEST_CASE_TEMPLATE("lstsq_min_norm: a null column of the matrix gets the entry z
   // 5 - 4 = 1.
   const la::RowMatrix<T> a = matrix_of<T>(2, 3, {1, 0, 2, 0, 0, 3});
   const la::RowMatrix<T> b = matrix_of<T>(2, 1, {5, 6});
-  const pantr::NdArray<T> got = la::lstsq_min_norm<T>(a, b);
-  CHECK(solution_matches<T>(got, 3, 1, {1, 0, 2}, solve_tolerance<T>(3, 4.0, 2.0)));
-  CHECK(got.data()[1] == T(0));
+  for (const auto& [name, solve] : solvers<T>()) {
+    CAPTURE(name);
+    const pantr::NdArray<T> got = solve(a, b);
+    CHECK(solution_matches<T>(got, 3, 1, {1, 0, 2}, solve_tolerance<T>(3, 4.0, 2.0)));
+    CHECK(got.data()[1] == T(0));
+  }
 }
 
 TEST_CASE_TEMPLATE(
@@ -1640,13 +1683,16 @@ TEST_CASE_TEMPLATE(
       const la::RowMatrix<T> a = tall ? matrix_of<T>(3, 2, {c.s1, 0, 0, s2, 0, 0})
                                       : matrix_of<T>(2, 3, {c.s1, 0, 0, 0, s2, 0});
       const la::RowMatrix<T> b = tall ? matrix_of<T>(3, 1, {1, 1, 0}) : matrix_of<T>(2, 1, {1, 1});
-      const pantr::NdArray<T> got = la::lstsq_min_norm<T>(a, b);
-      const double first = 1.0 / static_cast<double>(static_cast<T>(c.s1));
-      const double second = c.kept ? 1.0 / static_cast<double>(static_cast<T>(s2)) : 0.0;
-      CHECK(solution_matches<T>(
-          got, tall ? 2 : 3, 1,
-          tall ? std::vector<double>{first, second} : std::vector<double>{first, second, 0},
-          solve_tolerance<T>(2, 1.0, (std::max)(first, second))));
+      for (const auto& [name, solve] : solvers<T>()) {
+        CAPTURE(name);
+        const pantr::NdArray<T> got = solve(a, b);
+        const double first = 1.0 / static_cast<double>(static_cast<T>(c.s1));
+        const double second = c.kept ? 1.0 / static_cast<double>(static_cast<T>(s2)) : 0.0;
+        CHECK(solution_matches<T>(
+            got, tall ? 2 : 3, 1,
+            tall ? std::vector<double>{first, second} : std::vector<double>{first, second, 0},
+            solve_tolerance<T>(2, 1.0, (std::max)(first, second))));
+      }
     }
   }
 }
@@ -1658,10 +1704,80 @@ TEST_CASE("lstsq_min_norm: a single-precision matrix is decomposed in double") {
   // is (1, 1 / stored 1e-9), not (1, 0).
   const la::RowMatrix<float> a = matrix_of<float>(2, 2, {1, 0, 0, 1e-9});
   const la::RowMatrix<float> b = matrix_of<float>(2, 1, {1, 1});
-  const pantr::NdArray<float> got = la::lstsq_min_norm<float>(a, b);
   const double stored = static_cast<double>(static_cast<float>(1e-9));
-  CHECK(
-      solution_matches<float>(got, 2, 1, {1.0, 1.0 / stored}, solve_tolerance<float>(2, 1.0, 1e9)));
+  for (const auto& [name, solve] : solvers<float>()) {
+    CAPTURE(name);
+    const pantr::NdArray<float> got = solve(a, b);
+    CHECK(solution_matches<float>(got, 2, 1, {1.0, 1.0 / stored},
+                                  solve_tolerance<float>(2, 1.0, 1e9)));
+  }
+}
+
+TEST_CASE_TEMPLATE("lstsq_min_norm_banded: a banded system with dense trailing columns", T, double,
+                   float) {
+  // Oracle: a solution fixed by construction. A (8 x 6) has, in its first four columns, a 2 in
+  // column i / 2 of row i and a 1 after it in odd rows; column 4 is 0.5 in the first four rows and
+  // column 5 alternates 1, -1. Held dense (`border` 2), the last two columns leave the rest banded
+  // with width 2; with `border` 0 every row spans up to all six columns, and the answer is the
+  // same. B = A X with X = (j + 1, -(j + 1)) by row j. kappa_2(A) = 25.5 (numpy.linalg.cond).
+  const std::size_t m = 8;
+  const std::size_t n = 6;
+  std::vector<double> av(m * n, 0.0);
+  for (std::size_t i = 0; i < m; ++i) {
+    const std::size_t j = i / 2;
+    av[i * n + j] = 2.0;
+    if (i % 2 == 1 && j + 1 < 4) {
+      av[i * n + j + 1] = 1.0;
+    }
+    av[i * n + 4] = i < 4 ? 0.5 : 0.0;
+    av[i * n + 5] = (i % 2 == 0) ? 1.0 : -1.0;
+  }
+  std::vector<double> x(n * 2);
+  for (std::size_t j = 0; j < n; ++j) {
+    x[j * 2] = static_cast<double>(j + 1);
+    x[j * 2 + 1] = -static_cast<double>(j + 1);
+  }
+  std::vector<double> bv(m * 2, 0.0);
+  for (std::size_t i = 0; i < m; ++i) {
+    for (std::size_t j = 0; j < n; ++j) {
+      bv[i * 2] += av[i * n + j] * x[j * 2];
+      bv[i * 2 + 1] += av[i * n + j] * x[j * 2 + 1];
+    }
+  }
+  const la::RowMatrix<T> a = matrix_of<T>(m, n, av);
+  const la::RowMatrix<T> b = matrix_of<T>(m, 2, bv);
+  for (const Eigen::Index border : {Eigen::Index{2}, Eigen::Index{0}}) {
+    CAPTURE(border);
+    const pantr::NdArray<T> got = la::lstsq_min_norm_banded<T>(a, b, border);
+    CHECK(solution_matches<T>(got, n, 2, x, solve_tolerance<T>(n, 25.6, 6.0)));
+  }
+}
+
+TEST_CASE_TEMPLATE("lstsq_min_norm_banded: where it cannot certify full rank it is the SVD", T,
+                   double, float) {
+  // Oracle: `lstsq_min_norm` itself, bit for bit, on each input the documented fallbacks name: a
+  // non-finite right-hand side (the NaN must spread as the SVD spreads it), a ratio of singular
+  // values between the SVD's cutoff and the QR's margin sqrt(eps) (1e-10 here), one at the
+  // cutoff (1e-17), an exactly dependent column, and more columns than rows.
+  const T nan = std::numeric_limits<T>::quiet_NaN();
+  struct Fallback {
+    const char* what;
+    la::RowMatrix<T> a;
+    la::RowMatrix<T> b;
+  };
+  la::RowMatrix<T> b_nan = matrix_of<T>(3, 1, {1, 2, 3});
+  b_nan(1, 0) = nan;
+  const std::vector<Fallback> cases = {
+      {"non-finite b", matrix_of<T>(3, 2, {2, 1, 0, 2, 1, 0}), b_nan},
+      {"ratio 1e-10", matrix_of<T>(3, 2, {1, 0, 0, 1e-10, 0, 0}), matrix_of<T>(3, 1, {1, 1, 1})},
+      {"ratio 1e-17", matrix_of<T>(3, 2, {1, 0, 0, 1e-17, 0, 0}), matrix_of<T>(3, 1, {1, 1, 1})},
+      {"dependent column", matrix_of<T>(3, 2, {1, 2, 2, 4, 3, 6}), matrix_of<T>(3, 1, {1, 0, 1})},
+      {"wide", matrix_of<T>(2, 3, {1, 0, 1, 0, 1, 1}), matrix_of<T>(2, 1, {1, 2})},
+  };
+  for (const Fallback& c : cases) {
+    CAPTURE(c.what);
+    CHECK(same_bits<T>(la::lstsq_min_norm_banded<T>(c.a, c.b), la::lstsq_min_norm<T>(c.a, c.b)));
+  }
 }
 
 TEST_CASE_TEMPLATE("lstsq_min_norm: a non-finite entry of the matrix is refused", T, double,
@@ -1677,8 +1793,11 @@ TEST_CASE_TEMPLATE("lstsq_min_norm: a non-finite entry of the matrix is refused"
       a.data()[at] = bad;
       CAPTURE(static_cast<double>(bad));
       CAPTURE(at);
-      CHECK_THROWS_WITH_AS(static_cast<void>(la::lstsq_min_norm<T>(a, b)),
-                           "SVD did not converge in Linear Least Squares", pantr::value_error);
+      for (const auto& [name, solve] : solvers<T>()) {
+        CAPTURE(name);
+        CHECK_THROWS_WITH_AS(static_cast<void>(solve(a, b)),
+                             "SVD did not converge in Linear Least Squares", pantr::value_error);
+      }
     }
   }
 }

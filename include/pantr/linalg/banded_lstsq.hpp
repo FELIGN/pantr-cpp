@@ -1,0 +1,278 @@
+/// @file banded_lstsq.hpp
+/// @brief `lstsq_min_norm` for a banded matrix of full column rank, by a banded Givens QR.
+///
+/// The changes of representation in `bspline/product.hpp` solve least-squares systems whose matrix
+/// is a knot-insertion (Oslo) matrix or a product of two: each row's nonzeros sit in a run of
+/// consecutive columns about the degree long, and a periodic wrap adds a few dense columns. A
+/// dense SVD of such a matrix costs `O(m n^2)`. The row-by-row Givens QR here (the scheme of
+/// de Boor's `BCHFAC`/`BCHSLV` and Dierckx's FITPACK for B-spline least squares) costs
+/// `O(m (w + k)^2)` for a band of width `w` and `k` dense trailing columns, and the rank
+/// certificate below `O(n^2 (w + k))`.
+#pragma once
+
+#include "pantr/config.hpp"
+#include "pantr/core/ndarray.hpp"
+#include "pantr/core/scalar.hpp"
+#include "pantr/linalg/dense.hpp"
+
+#include <Eigen/Core>
+
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <limits>
+#include <vector>
+
+namespace pantr::linalg {
+
+namespace detail {
+
+/// An upper-triangular `R` stored as a band plus dense trailing columns, with `Q^T B` beside it.
+///
+/// Row `j` holds `R(j, j + t)` for `t < w` and `j + t < n0` in `band`, and `R(j, n0 + t)` for
+/// `t < k` in `border`, where `n0 = n - k`. Rows of `A` are rotated in one at a time.
+///
+/// Attributes:
+///     n (Eigen::Index): Columns of `A`.
+///     n0 (Eigen::Index): Columns of the banded part, `n - k`.
+///     w (Eigen::Index): Band width.
+///     k (Eigen::Index): Dense trailing columns.
+///     band (Eigen::MatrixXd): `(n, w)`.
+///     border (Eigen::MatrixXd): `(n, k)`.
+///     rhs (Eigen::MatrixXd): `(n, cols of B)`, the leading rows of `Q^T B`.
+///     filled (std::vector<char>): Whether row `j` of `R` has been set.
+struct BandedQr {
+  Eigen::Index n;
+  Eigen::Index n0;
+  Eigen::Index w;
+  Eigen::Index k;
+  Eigen::MatrixXd band;
+  Eigen::MatrixXd border;
+  Eigen::MatrixXd rhs;
+  std::vector<char> filled;
+
+  /// Diagonal entry `R(j, j)`.
+  [[nodiscard]] double diag(Eigen::Index j) const {
+    return j < n0 ? band(j, 0) : border(j, j - n0);
+  }
+
+  /// Back-substitute `R x = y` in place for the rows `[0, last]` (the rows below are zero).
+  ///
+  /// Note:
+  ///     Inputs are assumed to be correct (no validation performed): every row is filled.
+  void back_substitute(Eigen::Ref<Eigen::MatrixXd> y, Eigen::Index last) const {
+    for (Eigen::Index i = last; i >= 0; --i) {
+      for (Eigen::Index c = 0; c < y.cols(); ++c) {
+        double s = y(i, c);
+        if (i < n0) {
+          const Eigen::Index top = (std::min)(w, n0 - i);
+          for (Eigen::Index t = 1; t < top; ++t) {
+            s -= band(i, t) * y(i + t, c);
+          }
+        }
+        for (Eigen::Index t = (std::max)(Eigen::Index{0}, i + 1 - n0); t < k; ++t) {
+          s -= border(i, t) * y(n0 + t, c);
+        }
+        y(i, c) = s / diag(i);
+      }
+    }
+  }
+};
+
+/// Rotate a pair of rows by the Givens rotation that zeros `b` against `a`; returns `(c, s)`.
+inline void givens(double a, double b, double& c, double& s) {
+  const double r = std::hypot(a, b);
+  c = a / r;
+  s = b / r;
+}
+
+}  // namespace detail
+
+/// Solve `A X = B` as `lstsq_min_norm` does, by a banded Givens QR where `A` has certified full
+/// column rank, else by `lstsq_min_norm` itself.
+///
+/// The last `border` columns of `A` are treated as dense; in the others, the band width is the
+/// widest run, over the rows, from a row's first to its last nonzero. Any matrix is solved
+/// correctly; the cost is low only when that run is short.
+///
+/// The QR path is kept when `A` and `B` are finite, `A` has at least as many rows as columns,
+/// every column reaches a nonzero pivot, and `1 / ||R^-1||_F > sqrt(eps) ||A||_F` for the
+/// computed factor `R`. The left side is at most `s_min(R)` and the right side at least
+/// `sqrt(eps) s_max(A)`, so the test says that `s_min / s_max` of the factored matrix exceeds
+/// `sqrt(eps)`, about `1.5e-8`. `lstsq_min_norm` drops a singular value only at or below
+/// `eps * max(m, n) * s_max`; the QR's backward error and the computed inverse's error move the
+/// ratio by amounts of order `m n eps` and `n sqrt(eps)` relative, so the margin covers both while
+/// `m * n * eps` stays well below `sqrt(eps)` (`m * n` below about `8e6`), which the test also
+/// requires. This is argued here, not proved formally. Under it the SVD would keep every singular
+/// value, and its minimum-norm solution is the unique least-squares solution the QR computes: the
+/// two differ by rounding, not by rank.
+///
+/// A non-finite `B` takes the SVD path, so that a NaN or an infinity spreads through the solution
+/// as it did there. Everything is computed in `double` and the solution rounded to `T`, as
+/// `lstsq_min_norm` does.
+///
+/// Args:
+///     a (const RowMatrix<T>&): Extents `(m, n)`.
+///     b (const RowMatrix<T>&): Extents `(m, cols)`.
+///     border (Eigen::Index): Trailing columns of `a` held dense, in `[0, n]`. Defaults to 0.
+///
+/// Returns:
+///     NdArray<T>: Extents `(n, cols)`.
+///
+/// Raises:
+///     value_error: As `lstsq_min_norm`, on the inputs that reach it.
+///
+/// Note:
+///     `a` and `b` are assumed to have the same number of rows and `border` to be in range (no
+///     validation performed).
+template <StorageFloat T>
+[[nodiscard]] NdArray<T> lstsq_min_norm_banded(const RowMatrix<T>& a, const RowMatrix<T>& b,
+                                               Eigen::Index border = 0) {
+  const Eigen::Index m = a.rows();
+  const Eigen::Index n = a.cols();
+  const Eigen::Index nb = b.cols();
+  constexpr double eps = std::numeric_limits<double>::epsilon();
+  const double margin = std::sqrt(eps);
+  // `m * n * eps` within an eighth of the margin: the size bound of the argument above.
+  const bool small_enough = static_cast<double>(m) * static_cast<double>(n) * eps < margin / 8.0;
+  if (n == 0 || m < n || !small_enough || !a.allFinite() || !b.allFinite()) {
+    return lstsq_min_norm<T>(a, b);
+  }
+
+  detail::BandedQr qr;
+  qr.n = n;
+  qr.k = border;
+  qr.n0 = n - border;
+  qr.w = 1;
+  for (Eigen::Index i = 0; i < m; ++i) {
+    Eigen::Index first = qr.n0;
+    Eigen::Index last = -1;
+    for (Eigen::Index j = 0; j < qr.n0; ++j) {
+      if (a(i, j) != T(0)) {
+        first = (std::min)(first, j);
+        last = j;
+      }
+    }
+    qr.w = (std::max)(qr.w, last - first + 1);
+  }
+  qr.band = Eigen::MatrixXd::Zero(n, qr.w);
+  qr.border = Eigen::MatrixXd::Zero(n, qr.k);
+  qr.rhs = Eigen::MatrixXd::Zero(n, nb);
+  qr.filled.assign(static_cast<std::size_t>(n), 0);
+
+  Eigen::VectorXd wb(qr.w);
+  Eigen::VectorXd wk(qr.k);
+  Eigen::VectorXd wr(nb);
+  double a_norm_sq = 0.0;
+  for (Eigen::Index i = 0; i < m; ++i) {
+    Eigen::Index j = 0;
+    while (j < qr.n0 && a(i, j) == T(0)) {
+      ++j;
+    }
+    wb.setZero();
+    for (Eigen::Index t = 0; t < qr.w && j + t < qr.n0; ++t) {
+      wb(t) = static_cast<double>(a(i, j + t));
+    }
+    for (Eigen::Index t = 0; t < qr.k; ++t) {
+      wk(t) = static_cast<double>(a(i, qr.n0 + t));
+    }
+    for (Eigen::Index c = 0; c < nb; ++c) {
+      wr(c) = static_cast<double>(b(i, c));
+    }
+    a_norm_sq += wb.squaredNorm() + wk.squaredNorm();
+    // The banded columns: rotate the row into `R` row by row until it is consumed.
+    bool consumed = false;
+    for (; j < qr.n0 && !consumed; ++j) {
+      if (wb(0) != 0.0) {
+        const auto row = static_cast<std::size_t>(j);
+        if (qr.filled[row] == 0) {
+          qr.band.row(j) = wb.transpose();
+          qr.border.row(j) = wk.transpose();
+          qr.rhs.row(j) = wr.transpose();
+          qr.filled[row] = 1;
+          consumed = true;
+          break;
+        }
+        double c = 0.0;
+        double s = 0.0;
+        detail::givens(qr.band(j, 0), wb(0), c, s);
+        for (Eigen::Index t = 0; t < qr.w; ++t) {
+          const double u = qr.band(j, t);
+          qr.band(j, t) = c * u + s * wb(t);
+          wb(t) = c * wb(t) - s * u;
+        }
+        for (Eigen::Index t = 0; t < qr.k; ++t) {
+          const double u = qr.border(j, t);
+          qr.border(j, t) = c * u + s * wk(t);
+          wk(t) = c * wk(t) - s * u;
+        }
+        for (Eigen::Index t = 0; t < nb; ++t) {
+          const double u = qr.rhs(j, t);
+          qr.rhs(j, t) = c * u + s * wr(t);
+          wr(t) = c * wr(t) - s * u;
+        }
+      }
+      // Shift the band window one column right; the entry leaving it is zero in exact arithmetic.
+      for (Eigen::Index t = 1; t < qr.w; ++t) {
+        wb(t - 1) = wb(t);
+      }
+      wb(qr.w - 1) = 0.0;
+      if ((wb.array() == 0.0).all()) {
+        break;
+      }
+    }
+    // The dense trailing columns.
+    for (Eigen::Index t0 = 0; t0 < qr.k && !consumed; ++t0) {
+      const Eigen::Index jj = qr.n0 + t0;
+      if (wk(t0) == 0.0) {
+        continue;
+      }
+      const auto row = static_cast<std::size_t>(jj);
+      if (qr.filled[row] == 0) {
+        qr.border.row(jj) = wk.transpose();
+        qr.rhs.row(jj) = wr.transpose();
+        qr.filled[row] = 1;
+        consumed = true;
+        break;
+      }
+      double c = 0.0;
+      double s = 0.0;
+      detail::givens(qr.border(jj, t0), wk(t0), c, s);
+      for (Eigen::Index t = t0; t < qr.k; ++t) {
+        const double u = qr.border(jj, t);
+        qr.border(jj, t) = c * u + s * wk(t);
+        wk(t) = c * wk(t) - s * u;
+      }
+      wk(t0) = 0.0;  // zero in exact arithmetic; below the diagonal of any later row
+      for (Eigen::Index t = 0; t < nb; ++t) {
+        const double u = qr.rhs(jj, t);
+        qr.rhs(jj, t) = c * u + s * wr(t);
+        wr(t) = c * wr(t) - s * u;
+      }
+    }
+  }
+  if (std::any_of(qr.filled.begin(), qr.filled.end(), [](char f) { return f == 0; })) {
+    return lstsq_min_norm<T>(a, b);
+  }
+
+  // ||R^-1||_F, one column at a time: column `j` of `R^-1` solves `R x = e_j`, zero below `j`.
+  double inv_sq = 0.0;
+  Eigen::MatrixXd col(n, 1);
+  for (Eigen::Index j = 0; j < n; ++j) {
+    col.setZero();
+    col(j, 0) = 1.0;
+    qr.back_substitute(col, j);
+    inv_sq += col.topRows(j + 1).squaredNorm();
+  }
+  // Written so that a NaN or an overflow to infinity fails the test.
+  if (!(std::sqrt(inv_sq) * margin * std::sqrt(a_norm_sq) < 1.0)) {
+    return lstsq_min_norm<T>(a, b);
+  }
+
+  qr.back_substitute(qr.rhs, n - 1);
+  NdArray<T> out({static_cast<std::size_t>(n), static_cast<std::size_t>(nb)}, for_overwrite);
+  Eigen::Map<RowMatrix<T>>(out.data(), n, nb) = qr.rhs.template cast<T>();
+  return out;
+}
+
+}  // namespace pantr::linalg
