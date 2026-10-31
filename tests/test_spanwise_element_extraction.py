@@ -14,28 +14,31 @@ Covers:
   identity predicates — no numerical tolerance.
 - Cell-index normalization (flat int, tuple, list, ndarray; negative indices
   rejected; IndexError / ValueError / TypeError on invalid input).
-- 1D spaces and rejection of dim > 3 via :exc:`NotImplementedError`.
+- 1D spaces, and spaces of more than three directions.
 - Batch :meth:`apply_many` / :meth:`apply_transpose_many` /
   :meth:`apply_MT_K_M_many` / :meth:`apply_M_K_MT_many`: round-trip match
   against per-cell :meth:`apply` for all (d, op_kind, target, dtype) combos,
   flat and per-direction index forms, user-provided ``out``/``scratch`` for all
   four variants (including bilateral), empty batch for all four variants,
   batch-size-1, aliasing rejection, wrong ``out`` shape, and validation errors
-  for :func:`_allocate_or_validate_scratch_many`.
+  for the batch ``scratch``.
 - :func:`normalize_cell_indices`: flat-to-2D conversion, per-direction
   pass-through, negative index rejection, float input rejection, and error cases.
 """
 
 from __future__ import annotations
 
-import sys
+import copy
+import gc
+import pickle
+import threading
 from typing import Any
 
 import numpy as np
 import numpy.typing as npt
 import pytest
 
-from pantr._numba_compat import nb_jit
+from pantr._testing import bezier_identity_mask, lagrange_identity_mask, required_scratch_size
 from pantr.basis import LagrangeVariant
 from pantr.bspline import (
     BsplineSpace,
@@ -44,22 +47,7 @@ from pantr.bspline import (
     SpanwiseElementExtraction,
     make_struct_view,
 )
-from pantr.bspline._extraction_helpers import (
-    _allocate_or_validate_scratch_many,
-    _prepare_apply_many_call,
-    _required_scratch_size,
-)
-from pantr.bspline._extraction_kernels import (
-    apply_kron_apply_many_1d,
-    apply_kron_apply_many_2d,
-    apply_kron_apply_many_3d,
-)
-from pantr.bspline.spanwise_element_extraction import (
-    _bezier_structural_identity_mask,
-    _lagrange_structural_identity_mask,
-    normalize_cell_indices,
-    operand_shape,
-)
+from pantr.bspline.spanwise_element_extraction import normalize_cell_indices, operand_shape
 
 RNG = np.random.default_rng(20260421)
 
@@ -168,17 +156,17 @@ def test_bezier_structural_identity_mask_only_at_full_multiplicity_knots() -> No
     # element 0: mults (3,2) → False; element 1: (2,3) → False
     # element 2: (3,2) → False; element 3: (2,3) → False
     sp1 = BsplineSpace1D([0, 0, 0, 1, 1, 2, 2, 2, 3, 3, 4, 4, 4], 2)
-    mask = _bezier_structural_identity_mask(sp1)
+    mask = bezier_identity_mask(sp1)
     assert not mask.any()
 
     # Fully C⁻¹ space: all interior knots have mult = degree+1 = 3
     sp2 = BsplineSpace1D([0, 0, 0, 1, 1, 1, 2, 2, 2], 2)
-    mask2 = _bezier_structural_identity_mask(sp2)
+    mask2 = bezier_identity_mask(sp2)
     assert mask2.all()
 
     # Smooth space (mult 1 everywhere): no identity
     sp3 = BsplineSpace1D([0, 0, 0, 1, 2, 3, 3, 3], 2)
-    mask3 = _bezier_structural_identity_mask(sp3)
+    mask3 = bezier_identity_mask(sp3)
     assert not mask3.any()
 
 
@@ -187,7 +175,7 @@ def test_bezier_structural_identity_mask_partial() -> None:
     # degree 2; knots [0,0,0,1,1,1,2,2,3,3,3] → in-domain mults [3, 3, 2, 3]
     # element 0 [0,1]: (3,3) → True; element 1 [1,2]: (3,2) → False; element 2 [2,3]: (2,3) → False
     sp1 = BsplineSpace1D([0, 0, 0, 1, 1, 1, 2, 2, 3, 3, 3], 2)
-    mask = _bezier_structural_identity_mask(sp1)
+    mask = bezier_identity_mask(sp1)
     expected = np.array([True, False, False])
     np.testing.assert_array_equal(mask, expected)
 
@@ -195,7 +183,7 @@ def test_bezier_structural_identity_mask_partial() -> None:
 def test_bezier_structural_identity_mask_degree0() -> None:
     """Degree-0 space: threshold is 1, every knot qualifies, so all elements are identity."""
     sp1 = BsplineSpace1D([0, 1, 2, 3], 0)
-    mask = _bezier_structural_identity_mask(sp1)
+    mask = bezier_identity_mask(sp1)
     assert mask.all()
     assert len(mask) == sp1.num_intervals
 
@@ -204,7 +192,7 @@ def test_lagrange_structural_identity_degree0_all_identity() -> None:
     """Lagrange degree-0 space: every element is identity, regardless of variant."""
     sp1 = BsplineSpace1D([0, 1, 2, 3], 0)
     for variant in LagrangeVariant:
-        mask = _lagrange_structural_identity_mask(sp1, variant)
+        mask = lagrange_identity_mask(sp1, variant)
         assert mask.all()
         assert len(mask) == sp1.num_intervals
 
@@ -218,7 +206,7 @@ def test_lagrange_structural_identity_smooth_space_never_identity() -> None:
         knots = [0.0] * (degree + 1) + [1.0, 2.0] + [3.0] * (degree + 1)
         sp1 = BsplineSpace1D(knots, degree)
         for variant in LagrangeVariant:
-            mask = _lagrange_structural_identity_mask(sp1, variant)
+            mask = lagrange_identity_mask(sp1, variant)
             assert not mask.any(), f"degree {degree}, variant {variant} should yield no identity"
 
 
@@ -227,7 +215,7 @@ def test_lagrange_structural_identity_degree1_c_minus1_equispaced() -> None:
     # For degree 1 the Lagrange nodes {0, 1} coincide with Bernstein abscissae → lagr_to_bzr = I
     sp1 = BsplineSpace1D([0, 0, 1, 1, 2, 2, 3, 3], 1)
     for variant in (LagrangeVariant.EQUISPACES, LagrangeVariant.GAUSS_LOBATTO_LEGENDRE):
-        mask = _lagrange_structural_identity_mask(sp1, variant)
+        mask = lagrange_identity_mask(sp1, variant)
         assert mask.all(), f"C⁻¹ degree-1 space should be all-identity for variant {variant}"
 
 
@@ -235,7 +223,7 @@ def test_lagrange_structural_identity_degree2_never_identity() -> None:
     """Degree-2 spaces are never Lagrange-identity regardless of variant or knot vector."""
     sp1 = BsplineSpace1D([0, 0, 0, 1, 1, 1, 2, 2, 2], 2)  # C⁻¹, so bezier is identity
     for variant in LagrangeVariant:
-        mask = _lagrange_structural_identity_mask(sp1, variant)
+        mask = lagrange_identity_mask(sp1, variant)
         assert not mask.any(), f"degree-2 should yield no identity for variant {variant}"
 
 
@@ -544,15 +532,48 @@ def test_1d_space_apply_matches_dense() -> None:
 # ---------------------------------------------------------------- dim > 3
 
 
-def test_dim_4_apply_raises_not_implemented() -> None:
-    """Calling any apply variant on a 4D space raises NotImplementedError."""
-    sp1 = BsplineSpace1D([0, 0, 0, 1, 2, 2, 2], 2)
-    sp = BsplineSpace([sp1, sp1, sp1, sp1])
-    ext = SpanwiseElementExtraction(sp, "bezier")
+def _space_nd(d: int) -> BsplineSpace:
+    """A small ``d``-dimensional space (degree 2, four elements per direction)."""
+    sp1 = BsplineSpace1D([0, 0, 0, 1, 2, 3, 3, 3], 2)
+    return BsplineSpace([sp1] * d)
+
+
+@pytest.mark.parametrize("d", [4, 5])
+@pytest.mark.parametrize("target", ["bezier", "cardinal"])
+def test_more_than_three_directions_apply(d: int, target: str) -> None:
+    """Any dimension works: all four apply variants match the dense Kronecker reference.
+
+    Main supported ``d in {1, 2, 3}`` and raised ``NotImplementedError`` for the rest.
+    """
+    ext = SpanwiseElementExtraction(_space_nd(d), target)  # type: ignore[arg-type]
+    assert ext.dim == d
+    cell = tuple([1] * d)
+    flat = int(np.ravel_multi_index(cell, ext.num_intervals))
     n_in = int(np.prod(ext.input_shape_per_dir))
-    v = np.zeros(n_in, dtype=ext.dtype)
-    with pytest.raises(NotImplementedError):
-        ext.apply(v, 0)
+    n_out = int(np.prod(ext.output_shape_per_dir))
+    M = ext.operator(flat)
+    assert M.shape == (n_out, n_in)
+    v = RNG.standard_normal(n_in)
+    np.testing.assert_allclose(ext.apply(v, cell), M @ v, atol=1e-11)
+    w = RNG.standard_normal(n_out)
+    np.testing.assert_allclose(ext.apply_transpose(w, flat), M.T @ w, atol=1e-11)
+    K = RNG.standard_normal((n_out, n_out))
+    np.testing.assert_allclose(ext.apply_MT_K_M(K, flat), M.T @ K @ M, atol=1e-9)
+    K2 = RNG.standard_normal((n_in, n_in))
+    np.testing.assert_allclose(ext.apply_M_K_MT(K2, flat), M @ K2 @ M.T, atol=1e-9)
+
+
+def test_more_than_three_directions_apply_many() -> None:
+    """The batch applies of a 4D space match the one-cell applies."""
+    ext = SpanwiseElementExtraction(_space_nd(4), "bezier")
+    n_in = int(np.prod(ext.input_shape_per_dir))
+    n_out = int(np.prod(ext.output_shape_per_dir))
+    flat = np.array([0, 17, 40, ext.num_total_intervals - 1])
+    v = RNG.standard_normal((flat.size, n_in))
+    out = ext.apply_many(v, flat)
+    assert out.shape == (flat.size, n_out)
+    for c, f in enumerate(flat):
+        np.testing.assert_allclose(out[c], ext.apply(v[c], int(f)), atol=1e-12)
 
 
 # ---------------------------------------------------------------- negative indices
@@ -867,16 +888,6 @@ def test_batch_apply_out_of_range_cell_index_raises() -> None:
         ext.apply_many(np.zeros((1, n_in)), np.array([ext.num_total_intervals]))
 
 
-def test_batch_apply_dim4_raises_not_implemented() -> None:
-    """A 4D space raises NotImplementedError for all batch apply variants."""
-    sp1 = BsplineSpace1D([0, 0, 0, 1, 2, 2, 2], 2)
-    sp = BsplineSpace([sp1, sp1, sp1, sp1])
-    ext = SpanwiseElementExtraction(sp, "bezier")
-    n_in = int(np.prod(ext.input_shape_per_dir))
-    with pytest.raises(NotImplementedError):
-        ext.apply_many(np.zeros((1, n_in)), np.array([0]))
-
-
 def test_batch_apply_size_one_matches_per_cell() -> None:
     """A batch of exactly one cell produces the same result as the per-cell method."""
     ext = SpanwiseElementExtraction(_space_2d(), "bezier")
@@ -900,7 +911,7 @@ def test_batch_apply_bilateral_accepts_user_out_and_scratch() -> None:
 
     # MT_K_M: operand (n_cells, N_out, N_out) → out (n_cells, N_in, N_in)
     K_mtk = rng.standard_normal((n_cells, n_out, n_out))
-    scratch_sz = _required_scratch_size(ext.input_shape_per_dir, ext.output_shape_per_dir, "MT_K_M")
+    scratch_sz = required_scratch_size(ext.input_shape_per_dir, ext.output_shape_per_dir, "MT_K_M")
     out_mtk = np.zeros((n_cells, n_in, n_in))
     scratch_mtk = np.zeros((n_cells, max(scratch_sz, 1)))
     result_mtk = ext.apply_MT_K_M_many(K_mtk, flat, out=out_mtk, scratch=scratch_mtk)
@@ -911,9 +922,7 @@ def test_batch_apply_bilateral_accepts_user_out_and_scratch() -> None:
 
     # M_K_MT: operand (n_cells, N_in, N_in) → out (n_cells, N_out, N_out)
     K_mkt = rng.standard_normal((n_cells, n_in, n_in))
-    scratch_sz2 = _required_scratch_size(
-        ext.input_shape_per_dir, ext.output_shape_per_dir, "M_K_MT"
-    )
+    scratch_sz2 = required_scratch_size(ext.input_shape_per_dir, ext.output_shape_per_dir, "M_K_MT")
     out_mkt = np.zeros((n_cells, n_out, n_out))
     scratch_mkt = np.zeros((n_cells, max(scratch_sz2, 1)))
     result_mkt = ext.apply_M_K_MT_many(K_mkt, flat, out=out_mkt, scratch=scratch_mkt)
@@ -1031,41 +1040,44 @@ def test_batch_apply_wrong_out_shape_raises() -> None:
         ext.apply_many(v, flat, out=np.zeros((n_cells, n_out + 1)))
 
 
-def test_allocate_or_validate_scratch_many_rejects_invalid() -> None:
-    """All five rejection branches in ``_allocate_or_validate_scratch_many`` raise ValueError."""
-    n_cells, width, dtype = 4, 8, np.float64
+def test_batch_scratch_rejects_invalid() -> None:
+    """Every rejection branch of the batch ``scratch`` raises ValueError, with its message."""
+    ext = SpanwiseElementExtraction(_space_2d(), "bezier")
+    n_in = int(np.prod(ext.input_shape_per_dir))
+    need = required_scratch_size(ext.input_shape_per_dir, ext.output_shape_per_dir, "apply")
+    n_cells, dtype = 4, np.float64
+    v = np.zeros((n_cells, n_in))
+    cells = np.arange(n_cells)
 
     # Wrong ndim
     with pytest.raises(ValueError, match="2D"):
-        _allocate_or_validate_scratch_many(np.zeros(n_cells * width), n_cells, width, dtype)
+        ext.apply_many(v, cells, scratch=np.zeros(n_cells * need))
 
     # Wrong dtype
     with pytest.raises(ValueError, match="dtype"):
-        _allocate_or_validate_scratch_many(
-            np.zeros((n_cells, width), dtype=np.float32), n_cells, width, dtype
-        )
+        ext.apply_many(v, cells, scratch=np.zeros((n_cells, need), dtype=np.float32))
 
     # Wrong shape[0]
     with pytest.raises(ValueError, match="n_cells"):
-        _allocate_or_validate_scratch_many(
-            np.zeros((n_cells + 1, width), dtype=dtype), n_cells, width, dtype
-        )
+        ext.apply_many(v, cells, scratch=np.zeros((n_cells + 1, need), dtype=dtype))
 
-    # Too narrow (scratch.shape[1] < alloc_width = max(width, 1))
+    # Too narrow (scratch.shape[1] < the required width)
     with pytest.raises(ValueError, match="width"):
-        _allocate_or_validate_scratch_many(
-            np.zeros((n_cells, width - 1), dtype=dtype), n_cells, width, dtype
-        )
+        ext.apply_many(v, cells, scratch=np.zeros((n_cells, need - 1), dtype=dtype))
 
-    # d=1 case: scratch_size_per_cell=0 so alloc_width=1; shape[1]=0 must be rejected
+    # d=1 case: the vector kernels need no scratch, so the required width is 1; 0 is rejected
+    ext1 = SpanwiseElementExtraction(_space_1d(), "bezier")
+    v1 = np.zeros((n_cells, ext1.input_shape_per_dir[0]))
     with pytest.raises(ValueError, match="width"):
-        _allocate_or_validate_scratch_many(np.zeros((n_cells, 0), dtype=dtype), n_cells, 0, dtype)
+        ext1.apply_many(
+            v1, cells[:n_cells] % ext1.num_total_intervals, scratch=np.zeros((n_cells, 0))
+        )
 
     # Not writeable
-    ro = np.zeros((n_cells, width), dtype=dtype)
+    ro = np.zeros((n_cells, need), dtype=dtype)
     ro.flags.writeable = False
     with pytest.raises(ValueError, match="writeable"):
-        _allocate_or_validate_scratch_many(ro, n_cells, width, dtype)
+        ext.apply_many(v, cells, scratch=ro)
 
 
 # ---------------------------------------------------------------- compact storage
@@ -1213,150 +1225,27 @@ def test_all_non_identity_compact_shape() -> None:
         )
 
 
-def test_idx_maps_1d_wrong_tuple_length_validation() -> None:
-    """``_prepare_apply_many_call`` rejects idx_maps_1d whose tuple length != d."""
-    sp = _space_2d()
-    ext = SpanwiseElementExtraction(sp, "bezier")
-    flat = np.array([0, 1, 2], dtype=np.intp)
-    idx2d = normalize_cell_indices(flat, ext.num_intervals)
-    n_in = int(np.prod(ext.input_shape_per_dir))
-    v = RNG.random((3, n_in))
+@pytest.mark.parametrize("target", ["bezier", "lagrange", "cardinal"])
+@pytest.mark.parametrize("space_factory", [_space_1d, _space_2d, _space_3d])
+def test_idx_maps_index_the_compact_stack(space_factory: Any, target: str) -> None:
+    """Every ``idx_maps_1d`` entry, identity elements included, is a row of the compact stack.
 
-    # d=2 space but only 1 idx_map tuple element
-    with pytest.raises(ValueError, match="idx_maps_1d"):
-        _prepare_apply_many_call(
-            ext.compact_ops_1d,
-            (np.zeros(ext.num_intervals[0], dtype=np.intp),),
-            ext.is_identity_mask_1d,
-            idx2d,
-            v,
-            None,
-            None,
-            "apply",
-        )
-
-
-def test_idx_maps_1d_validation_in_prepare_many_call() -> None:
-    """``_prepare_apply_many_call`` validates idx_maps_1d length and dtype."""
-    sp = _space_2d()
-    ext = SpanwiseElementExtraction(sp, "bezier")
-    flat = np.array([0, 1, 2], dtype=np.intp)
-    idx2d = normalize_cell_indices(flat, ext.num_intervals)
-    n_in = int(np.prod(ext.input_shape_per_dir))
-    v = RNG.random((3, n_in))
-
-    # Wrong element-length for idx_maps_1d (each map has length 1 instead of n_el_k)
-    bad_idx_map = (np.zeros(1, dtype=np.intp), np.zeros(1, dtype=np.intp))
-    with pytest.raises(ValueError, match="idx_maps_1d"):
-        _prepare_apply_many_call(
-            ext.compact_ops_1d,
-            bad_idx_map,
-            ext.is_identity_mask_1d,
-            idx2d,
-            v,
-            None,
-            None,
-            "apply",
-        )
-
-    # Non-integer idx_map — deliberately pass wrong dtype to trigger validation error
-    bad_float_map: Any = (
-        np.zeros(ext.num_intervals[0], dtype=np.float64),
-        np.zeros(ext.num_intervals[1], dtype=np.intp),
-    )
-    with pytest.raises(ValueError, match="integer"):
-        _prepare_apply_many_call(
-            ext.compact_ops_1d,
-            bad_float_map,
-            ext.is_identity_mask_1d,
-            idx2d,
-            v,
-            None,
-            None,
-            "apply",
-        )
-
-    # idx_map 2D instead of 1D
-    bad_2d_map = (
-        np.zeros((ext.num_intervals[0], 2), dtype=np.intp),
-        np.zeros(ext.num_intervals[1], dtype=np.intp),
-    )
-    with pytest.raises(ValueError, match="1D"):
-        _prepare_apply_many_call(
-            ext.compact_ops_1d,
-            bad_2d_map,
-            ext.is_identity_mask_1d,
-            idx2d,
-            v,
-            None,
-            None,
-            "apply",
-        )
-
-
-def _one_dir_apply_many_args(
-    idx_map: npt.NDArray[np.intp],
-    is_identity: npt.NDArray[np.bool_],
-) -> tuple[Any, ...]:
-    """Build a minimal 1-direction ``_prepare_apply_many_call`` argument tuple.
-
-    A 2-row operator stack over 3 elements, so the only valid ``idx_map`` entries
-    are 0 and 1. Two cells, both addressing element 2 -- the element whose
-    ``idx_map`` entry the tests below poison.
+    The batch applies read ``compact_ops_1d[k][idx_maps_1d[k][e]]`` for every element they visit,
+    so an entry outside ``[0, n_compact)`` would read outside the stack. The arrays are built by
+    the library (a caller cannot hand a malformed map to an apply), so the property is that the
+    maps it builds are in range, and that identity elements carry the unused row 0.
     """
-    ops_1d = (np.zeros((2, 3, 3), dtype=np.float64),)
-    cell_indices = np.array([[2], [2]], dtype=np.intp)
-    operand = np.zeros((2, 3), dtype=np.float64)
-    return (ops_1d, (idx_map,), (is_identity,), cell_indices, operand, None, None, "apply")
-
-
-def test_idx_map_negative_value_rejected() -> None:
-    """A negative ``idx_map`` entry must be rejected, even on an identity element.
-
-    ``idx_map = [0, 1, -5]`` against a 2-operator stack: the old check looked only
-    at the *upper* bound and only at the non-identity entries, so a negative value
-    on an identity-flagged element passed validation entirely. It then reached the
-    kernel, which raised ``IndexError`` with the JIT disabled and read out of bounds
-    under real JIT -- a negative index is legal in NumPy but not in a kernel
-    compiled without bounds checking, and will be undefined behaviour once ported.
-
-    The entry is on an identity element deliberately: the batch kernels fetch
-    ``ops_0[idx_map_0[i0]]`` as an *argument* to ``apply_kron_1d``, so the row is
-    read before the identity mask can short-circuit on it.
-    """
-    idx_map = np.array([0, 1, -5], dtype=np.intp)
-    is_identity = np.array([False, False, True])
-
-    with pytest.raises(ValueError, match=r"outside \[0, 2\)"):
-        _prepare_apply_many_call(*_one_dir_apply_many_args(idx_map, is_identity))
-
-
-def test_idx_map_too_large_value_on_identity_element_rejected() -> None:
-    """An over-range entry on an identity element must be rejected too.
-
-    The old upper-bound check filtered by ``~mask`` first, so this slipped through
-    for the same reason as the negative case above.
-    """
-    idx_map = np.array([0, 1, 7], dtype=np.intp)
-    is_identity = np.array([False, False, True])
-
-    with pytest.raises(ValueError, match=r"outside \[0, 2\)"):
-        _prepare_apply_many_call(*_one_dir_apply_many_args(idx_map, is_identity))
-
-
-def test_idx_map_in_range_values_accepted() -> None:
-    """Valid entries must still pass, identity-flagged or not.
-
-    Guards against the tightened check simply rejecting everything, and pins the
-    convention that identity elements carry 0.
-    """
-    idx_map = np.array([0, 1, 0], dtype=np.intp)
-    is_identity = np.array([False, False, True])
-
-    kernel, args, out = _prepare_apply_many_call(*_one_dir_apply_many_args(idx_map, is_identity))
-
-    assert out.shape == (2, 3)
-    kernel(*args)
+    ext = SpanwiseElementExtraction(space_factory(), target)  # type: ignore[arg-type]
+    for idx_map, compact, mask in zip(
+        ext.idx_maps_1d, ext.compact_ops_1d, ext.is_identity_mask_1d, strict=True
+    ):
+        assert int(idx_map.min()) >= 0
+        assert int(idx_map.max()) < compact.shape[0]
+        assert np.all(idx_map[mask] == 0)
+        # The non-identity elements address the stack in order, each row once.
+        np.testing.assert_array_equal(
+            idx_map[~mask], np.arange(int(np.sum(~mask)), dtype=idx_map.dtype)
+        )
 
 
 # ---------------------------------------------------------------- struct view
@@ -1444,99 +1333,29 @@ def test_struct_view_unpacks_by_position_and_name() -> None:
     assert dim == view.dim
 
 
-# A small set of @njit functions that unbox an ExtractionStructView and drive
-# the Layer-3 batch kernels purely through the view's fields.  These exist
-# solely to prove that the struct view is passable into Numba code in the
-# same way that the (ops_1d, idx_maps_1d, is_identity_mask_1d, ...) tuple
-# bundle is.
+def _apply_many_from_view(
+    view: ExtractionStructView, cell_indices: npt.NDArray[np.intp], v: npt.NDArray[Any]
+) -> npt.NDArray[Any]:
+    """Apply the batch operators using nothing but the view's fields and ``numpy.kron``.
 
-
-@nb_jit(nopython=True, cache=True)
-def _njit_apply_many_1d_via_view(  # pragma: no cover -- executed through Numba.
-    view: ExtractionStructView,
-    cell_indices: npt.NDArray[Any],
-    v: npt.NDArray[Any],
-    out: npt.NDArray[Any],
-    scratch: npt.NDArray[Any],
-) -> None:
-    apply_kron_apply_many_1d(
-        view.compact_ops_1d[0],
-        view.idx_maps_1d[0],
-        view.is_identity_mask_1d[0],
-        cell_indices,
-        v,
-        out,
-        scratch,
-    )
-
-
-@nb_jit(nopython=True, cache=True)
-def _njit_apply_many_2d_via_view(  # pragma: no cover -- executed through Numba.
-    view: ExtractionStructView,
-    cell_indices: npt.NDArray[Any],
-    v: npt.NDArray[Any],
-    out: npt.NDArray[Any],
-    scratch: npt.NDArray[Any],
-) -> None:
-    apply_kron_apply_many_2d(
-        view.compact_ops_1d[0],
-        view.compact_ops_1d[1],
-        view.idx_maps_1d[0],
-        view.idx_maps_1d[1],
-        view.is_identity_mask_1d[0],
-        view.is_identity_mask_1d[1],
-        cell_indices,
-        v,
-        out,
-        scratch,
-    )
-
-
-@nb_jit(nopython=True, cache=True)
-def _njit_apply_many_3d_via_view(  # pragma: no cover -- executed through Numba.
-    view: ExtractionStructView,
-    cell_indices: npt.NDArray[Any],
-    v: npt.NDArray[Any],
-    out: npt.NDArray[Any],
-    scratch: npt.NDArray[Any],
-) -> None:
-    apply_kron_apply_many_3d(
-        view.compact_ops_1d[0],
-        view.compact_ops_1d[1],
-        view.compact_ops_1d[2],
-        view.idx_maps_1d[0],
-        view.idx_maps_1d[1],
-        view.idx_maps_1d[2],
-        view.is_identity_mask_1d[0],
-        view.is_identity_mask_1d[1],
-        view.is_identity_mask_1d[2],
-        cell_indices,
-        v,
-        out,
-        scratch,
-    )
-
-
-@nb_jit(nopython=True, cache=True)
-def _njit_read_scalar_fields(  # pragma: no cover -- executed through Numba.
-    view: ExtractionStructView,
-) -> int:
-    # Exercises Numba's unboxing of the scalar/UniTuple-of-int fields.
-    total = view.dim
-    for n in view.num_intervals:
-        total += n
-    for n in view.input_shape_per_dir:
-        total += n
-    for n in view.output_shape_per_dir:
-        total += n
-    return total
-
-
-_VIEW_NJIT_KERNELS = {
-    1: _njit_apply_many_1d_via_view,
-    2: _njit_apply_many_2d_via_view,
-    3: _njit_apply_many_3d_via_view,
-}
+    This is what a consumer of the view can do with it: read, per direction, the compact
+    operators, the map from elements to rows and the identity flags, and form each element's
+    operator.
+    """
+    out = np.empty((cell_indices.shape[0], int(np.prod(view.output_shape_per_dir))), v.dtype)
+    for c, cell in enumerate(cell_indices):
+        factors = []
+        for k in range(view.dim):
+            n_out, n_in = view.output_shape_per_dir[k], view.input_shape_per_dir[k]
+            if view.is_identity_mask_1d[k][cell[k]]:
+                factors.append(np.eye(n_out, n_in, dtype=v.dtype))
+            else:
+                factors.append(view.compact_ops_1d[k][view.idx_maps_1d[k][cell[k]]])
+        operator = factors[0]
+        for factor in factors[1:]:
+            operator = np.kron(operator, factor)
+        out[c] = operator @ v[c]
+    return out
 
 
 @pytest.mark.parametrize("target", ["bezier", "lagrange", "cardinal"])
@@ -1544,68 +1363,47 @@ _VIEW_NJIT_KERNELS = {
     ("space_factory", "dim"),
     [(_space_1d, 1), (_space_2d, 2), (_space_3d, 3)],
 )
-def test_struct_view_is_numba_callable(space_factory: Any, dim: int, target: str) -> None:
-    """An ``@njit`` function unboxes the view and drives the Layer-3 batch kernel."""
+def test_struct_view_reproduces_the_batch_apply(space_factory: Any, dim: int, target: str) -> None:
+    """The view's fields are enough to rebuild every element operator, and agree with the class.
+
+    Main's view fed Numba kernels; the property it served is that its arrays, read by a consumer,
+    describe the operators the class applies.
+    """
     ext = SpanwiseElementExtraction(space_factory(), target)  # type: ignore[arg-type]
     view = make_struct_view(ext)
+    assert view.dim == dim
 
     n_in = int(np.prod(ext.input_shape_per_dir))
-    n_out = int(np.prod(ext.output_shape_per_dir))
     cell_indices = normalize_cell_indices(
         np.arange(ext.num_total_intervals, dtype=np.intp), ext.num_intervals
     )
     n_cells = cell_indices.shape[0]
     v = RNG.standard_normal((n_cells, n_in)).astype(ext.dtype)
-    out = np.empty((n_cells, n_out), dtype=ext.dtype)
-    scratch_size = _required_scratch_size(
-        ext.input_shape_per_dir, ext.output_shape_per_dir, "apply"
-    )
-    scratch = np.empty((n_cells, max(scratch_size, 1)), dtype=ext.dtype)
-
-    kernel = _VIEW_NJIT_KERNELS[dim]
-    kernel(view, cell_indices, v, out, scratch)
 
     expected = ext.apply_many(v, cell_indices)
-    np.testing.assert_allclose(out, expected, rtol=1e-12, atol=1e-12)
-
-
-def test_struct_view_scalar_fields_are_numba_unboxable() -> None:
-    """``dim`` and the per-direction int tuples unbox cleanly inside an ``@njit`` function."""
-    ext = SpanwiseElementExtraction(_space_2d(), "bezier")
-    view = make_struct_view(ext)
-    expected = (
-        view.dim
-        + sum(view.num_intervals)
-        + sum(view.input_shape_per_dir)
-        + sum(view.output_shape_per_dir)
+    np.testing.assert_allclose(
+        _apply_many_from_view(view, cell_indices, v), expected, rtol=1e-12, atol=1e-12
     )
-    assert _njit_read_scalar_fields(view) == expected
 
 
-def test_struct_view_float32_is_numba_callable() -> None:
-    """``@njit`` unboxing works for float32 operator arrays (distinct Numba specialisation)."""
+def test_struct_view_float32_reproduces_the_batch_apply() -> None:
+    """The same for a float32 space."""
     knots = np.array([0, 0, 0, 1, 2, 3, 3, 3], dtype=np.float32)
     sp1 = BsplineSpace1D(knots, 2)
     ext = SpanwiseElementExtraction(BsplineSpace([sp1, sp1]), "bezier")
     assert ext.dtype == np.float32
     view = make_struct_view(ext)
+    assert all(a.dtype == np.float32 for a in view.compact_ops_1d)
 
     n_in = int(np.prod(ext.input_shape_per_dir))
-    n_out = int(np.prod(ext.output_shape_per_dir))
     cell_indices = normalize_cell_indices(
         np.arange(ext.num_total_intervals, dtype=np.intp), ext.num_intervals
     )
-    n_cells = cell_indices.shape[0]
-    v = RNG.standard_normal((n_cells, n_in)).astype(np.float32)
-    out = np.empty((n_cells, n_out), dtype=np.float32)
-    scratch_size = _required_scratch_size(
-        ext.input_shape_per_dir, ext.output_shape_per_dir, "apply"
-    )
-    scratch = np.empty((n_cells, max(scratch_size, 1)), dtype=np.float32)
-
-    _njit_apply_many_2d_via_view(view, cell_indices, v, out, scratch)
+    v = RNG.standard_normal((cell_indices.shape[0], n_in)).astype(np.float32)
     expected = ext.apply_many(v, cell_indices)
-    np.testing.assert_allclose(out, expected, rtol=1e-5, atol=1e-5)
+    np.testing.assert_allclose(
+        _apply_many_from_view(view, cell_indices, v), expected, rtol=1e-5, atol=1e-5
+    )
 
 
 # ---------------------------------------------------------------- factors()
@@ -1735,49 +1533,220 @@ def test_factors_validation() -> None:
         ext.factors("0")  # type: ignore[arg-type]
 
 
-# ---------------------------------------------------------------- numba warmup
+# ---------------------------------------------------------------- arrays of any layout
 
 
-class TestNumbaWarmup:
-    """The batch apply funnel waits for the import-time JIT warmup, as its siblings do."""
+def _operand_and_out_shapes(
+    ext: SpanwiseElementExtraction, op_kind: str
+) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    """The shapes of one cell's operand and result for ``op_kind``."""
+    return operand_shape(ext, op_kind)  # type: ignore[arg-type]
 
-    def test_the_batch_funnel_calls_the_barrier(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """``apply_many`` reaches the barrier before it reaches a kernel.
 
-        ``pantr/__init__.py`` compiles its kernels on a background thread, and numba's
-        default workqueue threading layer is not safe against a concurrent
-        ``parallel=True`` call from another thread: the process *aborts* rather than
-        raising, taking the whole session with it. Every other Layer 2 entry point over
-        parallel kernels calls :func:`pantr._numba_compat.wait_for_jit_warmup` first;
-        this one did not, and ``_extraction_kernels`` holds twelve ``parallel=True`` batch
-        kernels reached from the four ``*_many`` public methods.
+@pytest.mark.parametrize("op_kind", _OP_KINDS)
+def test_per_cell_apply_accepts_any_layout(op_kind: str) -> None:
+    """Strided, Fortran-ordered and read-only operands, and strided ``out`` and ``scratch``, work.
 
-        Asserting the *call* rather than the absence of the crash follows
-        ``tests/test_bspline_locate.py``, and for the reason given there: the barrier is
-        a once-per-process event, so by the time any in-process test runs the warmup is
-        long finished and nothing in-process can observe the race. What this pins is the
-        contract -- delete the call and this test fails.
-        """
-        calls: list[str] = []
-        module = sys.modules["pantr.bspline._extraction_helpers"]
-        real_dispatch = module._dispatch_apply_many
+    Main refused them with a Numba typing error.
+    """
+    ext = SpanwiseElementExtraction(_space_2d(), "bezier")
+    in_shape, out_shape = _operand_and_out_shapes(ext, op_kind)
+    fn = _per_cell_method(ext, op_kind)
+    operand = RNG.standard_normal(in_shape)
+    expected = fn(operand, 7)
 
-        def _record_barrier() -> None:
-            calls.append("barrier")
+    padded = np.repeat(operand, 2, axis=-1)[..., ::2]  # same values, strides (.., 16)
+    assert not padded.flags.c_contiguous
+    np.testing.assert_array_equal(fn(padded, 7), expected)
+    np.testing.assert_array_equal(fn(np.asfortranarray(operand), 7), expected)
+    read_only = operand.copy()
+    read_only.flags.writeable = False
+    np.testing.assert_array_equal(fn(read_only, 7), expected)
 
-        def _record_dispatch(d: int, op_kind: Any) -> Any:
-            calls.append("dispatch")
-            return real_dispatch(d, op_kind)
+    big = np.zeros(tuple(2 * n for n in out_shape))
+    strided_out = big[(slice(None, None, 2),) * len(out_shape)]
+    assert not strided_out.flags.c_contiguous
+    result = fn(operand, 7, out=strided_out)
+    assert result is strided_out
+    np.testing.assert_array_equal(strided_out, expected)
 
-        monkeypatch.setattr(module, "wait_for_jit_warmup", _record_barrier)
-        monkeypatch.setattr(module, "_dispatch_apply_many", _record_dispatch)
+    wide = np.full(4096, 7.0)
+    np.testing.assert_array_equal(fn(operand, 7, scratch=wide[::2]), expected)
+    # The caller's scratch is scratch: its contents are never read.
+    np.testing.assert_array_equal(fn(operand, 7, scratch=np.full(4096, np.nan)), expected)
 
-        ext = SpanwiseElementExtraction(_space_2d(), "bezier")
-        n_in = ext.input_shape_per_dir[0] * ext.input_shape_per_dir[1]
-        operand = RNG.standard_normal((2, n_in)).astype(ext.dtype)
-        ext.apply_many(operand, [0, 1])
 
-        assert "barrier" in calls, "apply_many must wait for the JIT warmup"
-        assert calls.index("barrier") < calls.index("dispatch"), (
-            f"the barrier must precede the kernel lookup; got {calls[:3]}"
+@pytest.mark.parametrize("op_kind", _OP_KINDS)
+def test_batch_apply_accepts_any_layout(op_kind: str) -> None:
+    """Batch operands, ``out``, ``scratch`` and cell indices of any layout work."""
+    ext = SpanwiseElementExtraction(_space_2d(), "bezier")
+    in_shape, out_shape = _operand_and_out_shapes(ext, op_kind)
+    fn = _batch_method(ext, op_kind)
+    cells = np.array([0, 7, 35, 12])
+    operand = RNG.standard_normal((cells.size, *in_shape))
+    expected = fn(operand, cells)
+
+    padded = np.repeat(operand, 2, axis=-1)[..., ::2]
+    assert not padded.flags.c_contiguous
+    np.testing.assert_array_equal(fn(padded, cells), expected)
+    np.testing.assert_array_equal(fn(np.asfortranarray(operand), cells), expected)
+
+    multi = np.stack(np.unravel_index(cells, ext.num_intervals), axis=1)
+    np.testing.assert_array_equal(fn(operand, np.asfortranarray(multi)), expected)
+    np.testing.assert_array_equal(fn(operand, np.repeat(multi, 2, axis=0)[::2]), expected)
+
+    big = np.zeros((2 * cells.size, *out_shape))
+    strided_out = big[::2]
+    result = fn(operand, cells, out=strided_out)
+    assert result is strided_out
+    np.testing.assert_array_equal(strided_out, expected)
+
+    wide = np.full((cells.size, 4096), 7.0)
+    np.testing.assert_array_equal(fn(operand, cells, scratch=wide[:, ::2]), expected)
+
+
+def test_scratch_sharing_memory_with_the_operand_or_out_raises() -> None:
+    """A scratch that overlaps the operand or ``out`` is refused, one cell and batch.
+
+    Main ran the application on it and returned numbers corrupted by its own intermediates.
+    """
+    ext = SpanwiseElementExtraction(_space_2d(), "bezier")
+    buf = np.concatenate([RNG.standard_normal(9), np.zeros(4096)])
+    with pytest.raises(ValueError, match="scratch must not overlap"):
+        ext.apply(buf[:9], 7, scratch=buf)
+    with pytest.raises(ValueError, match="scratch must not overlap"):
+        ext.apply(buf[:9].copy(), 7, out=buf[:9], scratch=buf)
+    cells = np.array([0, 7])
+    shared = np.zeros(2 * 4096)
+    with pytest.raises(ValueError, match="scratch must not overlap"):
+        ext.apply_many(
+            np.ones((2, 9)),
+            cells,
+            out=shared[:18].reshape(2, 9),
+            scratch=shared.reshape(2, 4096),
         )
+
+
+# ---------------------------------------------------------------- the value and its arrays
+
+
+@pytest.mark.parametrize("target", ["bezier", "lagrange", "cardinal"])
+def test_returned_arrays_are_read_only_views_that_outlive_the_extraction(target: str) -> None:
+    """The compact arrays, maps and masks are read-only views of the compiled value.
+
+    They keep the value alive: the extraction object can be dropped and collected.
+    """
+    ext = SpanwiseElementExtraction(_space_2d(), target)  # type: ignore[arg-type]
+    compact, idx_maps, masks = ext.compact_ops_1d, ext.idx_maps_1d, ext.is_identity_mask_1d
+    snapshot = [a.copy() for a in (*compact, *idx_maps, *masks)]
+    for array in (*compact, *idx_maps, *masks):
+        assert not array.flags.writeable
+        assert not array.flags.owndata
+        with pytest.raises(ValueError, match="read-only"):
+            array.flat[0] = 0
+        with pytest.raises(ValueError, match="cannot set WRITEABLE"):
+            array.flags.writeable = True
+    del ext
+    gc.collect()
+    for kept, array in zip(snapshot, (*compact, *idx_maps, *masks), strict=True):
+        np.testing.assert_array_equal(array, kept)
+
+
+def test_extraction_is_not_changed_by_its_inputs() -> None:
+    """The space is copied into the value: later work on other objects cannot reach it."""
+    ext = SpanwiseElementExtraction(_space_2d(), "cardinal")
+    before = ext.operator(7).copy()
+    other = SpanwiseElementExtraction(_space_3d(), "bezier")
+    other.apply(np.ones(27), 0)
+    np.testing.assert_array_equal(ext.operator(7), before)
+
+
+class _Tagged(SpanwiseElementExtraction):
+    """A subclass with an attribute of its own, to see what pickling and copying keep."""
+
+
+@pytest.mark.parametrize("target", ["bezier", "lagrange", "cardinal"])
+def test_pickle_and_copy_round_trip(target: str) -> None:
+    """Pickle and the copies rebuild an equal extraction, subclass attributes included."""
+    ext = _Tagged(_space_2d(), target, lagrange_variant=LagrangeVariant.GAUSS_LOBATTO_LEGENDRE)  # type: ignore[arg-type]
+    ext.tag = "mine"  # type: ignore[attr-defined]
+    _ = ext.ops_1d  # a cached property is not part of the pickled state
+    v = RNG.standard_normal(int(np.prod(ext.input_shape_per_dir)))
+    expected = ext.apply(v, 11)
+    for clone in (
+        pickle.loads(pickle.dumps(ext)),
+        copy.copy(ext),
+        copy.deepcopy(ext),
+    ):
+        assert type(clone) is _Tagged
+        assert clone.tag == "mine"  # type: ignore[attr-defined]
+        assert clone.target == target
+        assert clone.lagrange_variant is LagrangeVariant.GAUSS_LOBATTO_LEGENDRE
+        assert clone.num_intervals == ext.num_intervals
+        np.testing.assert_array_equal(clone.apply(v, 11), expected)
+        for a, b in zip(clone.compact_ops_1d, ext.compact_ops_1d, strict=True):
+            np.testing.assert_array_equal(a, b)
+        assert clone is not ext
+
+
+def test_copy_shares_the_value_and_deepcopy_copies_the_space() -> None:
+    """A copy shares the compiled value; a deep copy also copies the space object."""
+    ext = SpanwiseElementExtraction(_space_2d(), "bezier")
+    shallow = copy.copy(ext)
+    assert shallow._h is ext._h
+    assert shallow.space is ext.space
+    deep = copy.deepcopy(ext)
+    assert deep._h is ext._h
+    assert deep.space is not ext.space
+    assert deep.num_intervals == ext.num_intervals
+
+
+def test_previous_release_pickle_state_is_rebuilt() -> None:
+    """A state pickled by the previous release (plain attributes) rebuilds the value."""
+    ext = SpanwiseElementExtraction(_space_2d(), "cardinal")
+    state = {
+        "_space": ext.space,
+        "_target": "cardinal",
+        "_lagrange_variant": LagrangeVariant.EQUISPACES,
+        "_compact_ops_1d": ext.compact_ops_1d,
+        "_idx_maps_1d": ext.idx_maps_1d,
+        "_is_identity_mask_1d": ext.is_identity_mask_1d,
+        "ops_1d": ext.ops_1d,
+        "extra": 3,
+    }
+    clone = object.__new__(SpanwiseElementExtraction)
+    clone.__setstate__(state)
+    assert clone.extra == 3  # type: ignore[attr-defined]
+    np.testing.assert_array_equal(clone.operator(7), ext.operator(7))
+
+
+def test_invalid_lagrange_variant_is_refused() -> None:
+    """A ``lagrange_variant`` that is not a Lagrange variant raises (main took any object)."""
+    with pytest.raises(ValueError, match="is not a valid LagrangeVariant"):
+        SpanwiseElementExtraction(_space_2d(), "lagrange", lagrange_variant="nope")  # type: ignore[arg-type]
+    # The variant is ignored by the other targets, as it always was.
+    ext = SpanwiseElementExtraction(_space_2d(), "bezier", lagrange_variant="nope")  # type: ignore[arg-type]
+    assert ext.lagrange_variant == "nope"
+
+
+def test_concurrent_applies_on_one_extraction() -> None:
+    """Several Python threads applying on one extraction see the single-thread results."""
+    ext = SpanwiseElementExtraction(_space_3d(), "bezier")
+    n_in = int(np.prod(ext.input_shape_per_dir))
+    cells = np.arange(ext.num_total_intervals)
+    operand = RNG.standard_normal((cells.size, n_in))
+    expected = ext.apply_many(operand, cells)
+    results: list[npt.NDArray[np.float32 | np.float64] | None] = [None] * 6
+
+    def work(slot: int) -> None:
+        for _ in range(5):
+            results[slot] = ext.apply_many(operand, cells)
+
+    threads = [threading.Thread(target=work, args=(i,)) for i in range(len(results))]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    for r in results:
+        assert r is not None
+        np.testing.assert_array_equal(r, expected)

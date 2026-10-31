@@ -780,6 +780,96 @@ def _s4_bspline_cases() -> list[Case]:  # noqa: PLR0915
     return cases
 
 
+def _s4_extraction_cases() -> list[Case]:
+    """The spanwise element extraction cases of the S4 stage (C5.2): construction and application.
+
+    A cubic space of ``n`` uniform intervals per direction in three directions: ``tiny`` is 2 per
+    direction, ``medium`` 10 (1e3 elements), ``large`` 46 (97 336 elements, the largest a batch of
+    the shape below reasonably is). The per-cell ``apply`` is timed as a Python loop over cells:
+    one call on ``tiny``, then 1e3 and, on ``large``, 1e4 calls (main spends tens of microseconds
+    in each, so a full 1e5-cell loop would take seconds per repeat). The batch ``apply_many`` runs
+    every element of the space.
+    """
+    from pantr.bspline import (  # noqa: PLC0415
+        BsplineSpace,
+        BsplineSpace1D,
+        SpanwiseElementExtraction,
+        create_uniform_open_knots,
+    )
+
+    degree = 3
+    side = {"tiny": 2, "medium": 10, "large": 46}
+    loop = {"tiny": 1, "medium": 1_000, "large": 10_000}
+    cases: list[Case] = []
+
+    def cubic_space(n: int) -> BsplineSpace:
+        knots = create_uniform_open_knots(n, degree)
+        return BsplineSpace([BsplineSpace1D(knots, degree)] * 3)
+
+    for size, n in side.items():
+
+        def setup_construct(n: int = n) -> Callable[[], Any]:
+            space = cubic_space(n)
+            return lambda: SpanwiseElementExtraction(space, "bezier")
+
+        cases.append(
+            Case(
+                f"S4.spanwise_extraction_construct.{size}",
+                "S4",
+                size,
+                f"SpanwiseElementExtraction(cubic space, {n} intervals per direction, 'bezier')",
+                setup_construct,
+            )
+        )
+
+    for size, calls in loop.items():
+
+        def setup_apply(calls: int = calls, n: int = side[size]) -> Callable[[], Any]:
+            ext = SpanwiseElementExtraction(cubic_space(n), "bezier")
+            n_in = int(np.prod(ext.input_shape_per_dir))
+            v = np.random.default_rng(1234).random(n_in)
+            total = ext.num_total_intervals
+            cells = [int(c) for c in np.linspace(0, total - 1, calls).astype(np.intp)]
+
+            def run() -> object:
+                out = None
+                for cell in cells:
+                    out = ext.apply(v, cell)
+                return out
+
+            return run
+
+        cases.append(
+            Case(
+                f"S4.spanwise_extraction_apply.{size}",
+                "S4",
+                size,
+                f"{calls} calls of apply on a cubic 3D extraction, {side[size]}^3 elements",
+                setup_apply,
+            )
+        )
+
+    for size, n in side.items():
+
+        def setup_apply_many(n: int = n) -> Callable[[], Any]:
+            ext = SpanwiseElementExtraction(cubic_space(n), "bezier")
+            n_in = int(np.prod(ext.input_shape_per_dir))
+            cells = np.arange(ext.num_total_intervals)
+            v = np.random.default_rng(1234).random((cells.size, n_in))
+            return lambda: ext.apply_many(v, cells)
+
+        cases.append(
+            Case(
+                f"S4.spanwise_extraction_apply_many.{size}",
+                "S4",
+                size,
+                f"apply_many over all {n}^3 elements of a cubic 3D extraction",
+                setup_apply_many,
+            )
+        )
+    return cases
+
+
 def all_cases() -> list[Case]:
     """Return every case this tree can run.
 
@@ -793,5 +883,6 @@ def all_cases() -> list[Case]:
         + _s2_approx_roots_cases()
         + _s4_space_cases()
         + _s4_bspline_cases()
+        + _s4_extraction_cases()
         + _r6_cases()
     )

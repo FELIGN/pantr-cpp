@@ -50,5 +50,6 @@
 #include "pantr/bspline/slice.hpp"
 #include "pantr/bspline/space.hpp"
 #include "pantr/bspline/space_1d.hpp"
+#include "pantr/bspline/spanwise_extraction.hpp"
 #include "pantr/bspline/to_beziers.hpp"
 #include "pantr/change_basis.hpp"

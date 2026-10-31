@@ -34,10 +34,15 @@ module.
 - The Bezier, Lagrange and cardinal extraction operators and the cardinal intervals of a raw knot
   vector with an explicit tolerance (``bezier_extraction_1d`` and its siblings), which a space
   only reaches with its own tolerance.
+- The Kronecker application on arbitrary per-direction factors (``kron_apply``), which the element
+  operators of ``SpanwiseElementExtraction`` are a special case of, its per-cell scratch size
+  (``required_scratch_size``) and the structural identity masks of the Bezier and Lagrange
+  extraction operators of a 1D space (``bezier_identity_mask``, ``lagrange_identity_mask``).
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any, Final
 
 import numpy as np
@@ -51,6 +56,13 @@ from .basis._basis_tabulate import _variant_code
 from .basis._basis_utils import _allocate_or_validate_out, _validate_out_array
 from .bezier._find_roots import _get_state as root_provider_state
 from .bezier._find_roots import _set_state as set_root_provider_state
+from .bspline._bspline_space_1d import BsplineSpace1D
+from .bspline.spanwise_element_extraction import (
+    _OP_CODES,
+    OpKind,
+    _operation_shapes,
+    _validate_op_kind,
+)
 from .change_basis import (
     _BERNSTEIN_TO_CARDINAL_MAX_DEGREE,
     _BERNSTEIN_TO_LAGRANGE_MAX_DEGREE,
@@ -483,6 +495,126 @@ def cardinal_intervals_1d(
     return flags
 
 
+def bezier_identity_mask(space_1d: BsplineSpace1D) -> npt.NDArray[np.bool_]:
+    """Flag the intervals of a 1D space whose Bezier extraction operator is the identity.
+
+    Args:
+        space_1d (BsplineSpace1D): The space.
+
+    Returns:
+        npt.NDArray[np.bool_]: One flag per interval: both bounding knots have multiplicity
+        ``degree + 1`` or more.
+    """
+    out = np.empty(space_1d.num_intervals, dtype=np.bool_)
+    space_1d._h.bezier_identity_mask(out)
+    return out
+
+
+def lagrange_identity_mask(
+    space_1d: BsplineSpace1D, variant: LagrangeVariant | str
+) -> npt.NDArray[np.bool_]:
+    """Flag the intervals of a 1D space whose Lagrange extraction operator is the identity.
+
+    A degree-0 space flags every interval. Otherwise the intervals are those of
+    :func:`bezier_identity_mask` when the Lagrange-to-Bernstein matrix of ``variant`` is the
+    identity, and none when it is not.
+
+    Args:
+        space_1d (BsplineSpace1D): The space.
+        variant (LagrangeVariant | str): The Lagrange node distribution.
+
+    Returns:
+        npt.NDArray[np.bool_]: One flag per interval.
+
+    Raises:
+        ValueError: If ``variant`` is not a Lagrange variant, or the degree is beyond the degrees
+            the Lagrange-to-Bernstein matrix can be built for.
+    """
+    out = np.empty(space_1d.num_intervals, dtype=np.bool_)
+    _by_dtype("lagrange_identity_mask", space_1d.knots.dtype)(
+        space_1d._h, _variant_code(variant), out
+    )
+    return out
+
+
+def required_scratch_size(
+    input_shape_per_dir: tuple[int, ...], output_shape_per_dir: tuple[int, ...], op_kind: OpKind
+) -> int:
+    """Get the scratch entries an element operation needs for one cell.
+
+    Args:
+        input_shape_per_dir (tuple[int, ...]): The columns of each direction's operator.
+        output_shape_per_dir (tuple[int, ...]): The rows of each direction's operator.
+        op_kind (OpKind): ``"apply"``, ``"apply_T"``, ``"MT_K_M"`` or ``"M_K_MT"``.
+
+    Returns:
+        int: Twice the larger intermediate result of the contraction, 0 when one stage does it
+        all; enough for any identity pattern.
+
+    Raises:
+        ValueError: If ``op_kind`` is unknown, or the two tuples differ in length or are empty.
+    """
+    kind = _validate_op_kind(op_kind)
+    return int(
+        _t.required_scratch_size(
+            _OP_CODES[kind], list(output_shape_per_dir), list(input_shape_per_dir)
+        )
+    )
+
+
+def kron_apply(  # noqa: PLR0913 -- the operation, its factors, flags, operand and two buffers.
+    factors: Sequence[npt.NDArray[np.float32 | np.float64]],
+    identity: Sequence[bool],
+    operand: npt.NDArray[np.float32 | np.float64],
+    op_kind: OpKind,
+    *,
+    out: npt.NDArray[np.float32 | np.float64] | None = None,
+    scratch: npt.NDArray[np.float32 | np.float64] | None = None,
+) -> npt.NDArray[np.float32 | np.float64]:
+    """Apply ``kron(F_0, ..., F_{d-1})`` to an operand, as one cell of an extraction does.
+
+    The element operations of :class:`~pantr.bspline.SpanwiseElementExtraction` on factors that
+    need not come from a space: ``"apply"`` is ``M v``, ``"apply_T"`` is ``M^T v``, ``"MT_K_M"``
+    is ``M^T K M`` and ``"M_K_MT"`` is ``M K M^T``. A factor flagged identity must be square and
+    is not read.
+
+    Args:
+        factors (Sequence[npt.NDArray[np.float32 | np.float64]]): The 2D factors, one per
+            direction, of the operand's dtype.
+        identity (Sequence[bool]): Per direction, whether the factor is the identity.
+        operand (npt.NDArray[np.float32 | np.float64]): The vector or the square matrix.
+        op_kind (OpKind): The operation.
+        out (npt.NDArray[np.float32 | np.float64] | None): The result array to fill (C-contiguous;
+            it may be ``operand`` when every direction is identity), or ``None`` to allocate.
+        scratch (npt.NDArray[np.float32 | np.float64] | None): At least
+            :func:`required_scratch_size` entries, or ``None`` to allocate.
+
+    Returns:
+        npt.NDArray[np.float32 | np.float64]: The result.
+
+    Raises:
+        ValueError: If the factors or the flags are inconsistent, an identity factor is not
+            square, the operand or ``out`` has another size than the operation needs, ``out``
+            overlaps the operand (unless every direction is identity), or the scratch is too small
+            or overlaps either.
+    """
+    kind = _validate_op_kind(op_kind)
+    dtype = np.dtype(operand.dtype)
+    rows = tuple(int(f.shape[0]) for f in factors)
+    cols = tuple(int(f.shape[1]) for f in factors)
+    _, out_shape = _operation_shapes(cols, rows, kind)
+    result = _allocate_or_validate_out(out, out_shape, dtype)
+    _by_dtype("kron_apply", dtype)(
+        _OP_CODES[kind],
+        [np.ascontiguousarray(f) for f in factors],
+        list(identity),
+        np.ascontiguousarray(operand),
+        result,
+        scratch,
+    )
+    return result
+
+
 BERNSTEIN: Final = _Family.BERNSTEIN
 """The Bernstein family, for :data:`gram_projection`."""
 CARDINAL_BSPLINE: Final = _Family.CARDINAL_BSPLINE
@@ -519,6 +651,7 @@ __all__ = [
     "bernstein_row_unmirrored",
     "bernstein_row_unmirrored_f32",
     "bezier_extraction_1d",
+    "bezier_identity_mask",
     "bincoeff",
     "blossom_span",
     "blossom_span_f32",
@@ -551,8 +684,10 @@ __all__ = [
     "interpolating_reduction_operator",
     "knot_scale",
     "knot_tolerance",
+    "kron_apply",
     "l2_reduction_operator",
     "lagrange_extraction_1d",
+    "lagrange_identity_mask",
     "newton_polish_scalar",
     "num_stacked_control_points",
     "oslo_matrix",
@@ -563,6 +698,7 @@ __all__ = [
     "projected_relative_deviation",
     "reduction_cache_clear",
     "reduction_cache_size",
+    "required_scratch_size",
     "root_provider_capabilities",
     "root_provider_state",
     "roundoff_deviation_floor",

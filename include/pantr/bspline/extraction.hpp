@@ -197,6 +197,19 @@ void right_multiply_in_place(mdview<T, 3> out, const NdArray<T>& matrix) {
       {std::span<T>(out.data_handle(), total), std::span<const std::size_t>(extents)});
 }
 
+/// Refuse a mask output that does not hold one flag per interval.
+///
+/// Raises:
+///     value_error: `out.size() != n` ("Output array has shape ..., but expected shape ...").
+inline void check_mask_size(std::size_t n, std::span<const bool> out) {
+  if (out.size() != n) {
+    const std::size_t got[1] = {out.size()};
+    const std::size_t want[1] = {n};
+    throw value_error("Output array has shape " + py_repr(std::span<const std::size_t>(got)) +
+                      ", but expected shape " + py_repr(std::span<const std::size_t>(want)));
+  }
+}
+
 /// Overwrite with the identity the operators of the flagged intervals.
 ///
 /// Args:
@@ -397,15 +410,52 @@ template <StorageFloat T>
 void bezier_structural_identity_mask(const BsplineSpace1D<T>& space, std::span<bool> out) {
   const std::span<const std::int64_t> mult = space.unique_knots_and_multiplicity(true).second;
   const std::size_t n = mult.size() - 1;
-  if (out.size() != n) {
-    const std::size_t got[1] = {out.size()};
-    const std::size_t want[1] = {n};
-    throw value_error("Output array has shape " + py_repr(std::span<const std::size_t>(got)) +
-                      ", but expected shape " + py_repr(std::span<const std::size_t>(want)));
-  }
+  detail::check_mask_size(n, out);
   const std::int64_t threshold = static_cast<std::int64_t>(space.degree()) + 1;
   for (std::size_t e = 0; e < n; ++e) {
     out[e] = mult[e] >= threshold && mult[e + 1] >= threshold;
+  }
+}
+
+/// Flag the intervals whose Lagrange extraction operator is structurally the identity.
+///
+/// A degree-0 space has the 1x1 operator `[[1]]` on every interval. Otherwise the operator is the
+/// Bézier one times the Lagrange-to-Bernstein matrix, so it is the identity exactly where the
+/// Bézier operator is and that matrix is the identity (the Lagrange nodes are the Bernstein
+/// abscissae `i / degree`: degree 1 with equispaced, Gauss-Lobatto or Chebyshev-Lobatto nodes);
+/// for any other matrix no interval is flagged.
+///
+/// Args:
+///     space (const BsplineSpace1D<T>&): The space.
+///     variant (basis::LagrangeVariant): The Lagrange node distribution.
+///     out (std::span<bool>): One flag per interval.
+///
+/// Raises:
+///     value_error: `out` does not hold `num_intervals()` flags; or, for a degree above 0, the
+///         degree is beyond the degrees the Lagrange-to-Bernstein matrix of `variant` can be built
+///         for.
+template <StorageFloat T>
+void lagrange_structural_identity_mask(const BsplineSpace1D<T>& space,
+                                       basis::LagrangeVariant variant, std::span<bool> out) {
+  detail::check_mask_size(static_cast<std::size_t>(space.num_intervals()), out);
+  if (space.degree() == 0) {
+    std::fill(out.begin(), out.end(), true);
+    return;
+  }
+  const auto matrix =
+      change_basis::cached<T>(change_basis::Kind::lagrange_to_bernstein, space.degree(), variant);
+  const auto order = static_cast<std::size_t>(space.degree()) + 1;
+  const T* entries = matrix->data();
+  bool is_identity = true;
+  for (std::size_t i = 0; i < order; ++i) {
+    for (std::size_t j = 0; j < order; ++j) {
+      is_identity = is_identity && entries[i * order + j] == (i == j ? T{1} : T{0});
+    }
+  }
+  if (is_identity) {
+    bezier_structural_identity_mask<T>(space, out);
+  } else {
+    std::fill(out.begin(), out.end(), false);
   }
 }
 

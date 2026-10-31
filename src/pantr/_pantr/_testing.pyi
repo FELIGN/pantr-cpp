@@ -6,6 +6,8 @@ from typing import Annotated, overload
 import numpy
 from numpy.typing import NDArray
 
+import pantr._pantr.bspline
+
 def count_threads_used(chunks: int, hold_us: int) -> int:
     """Count the distinct threads that run a parallel loop of `chunks` chunks holding `hold_us` microseconds each."""
 
@@ -578,3 +580,50 @@ def cardinal_intervals_1d_into_f32(
     out: Annotated[NDArray[numpy.bool_], dict(shape=(None,), order="C", device="cpu")],
 ) -> None:
     """Write the cardinal-interval flags of a knot vector with an explicit tolerance."""
+
+def kron_apply(
+    op: int,
+    factors: Sequence[
+        Annotated[
+            NDArray[numpy.float64],
+            dict(shape=(None, None), order="C", device="cpu", writable=False),
+        ]
+    ],
+    identity: Sequence[bool],
+    operand: Annotated[NDArray[numpy.float64], dict(order="C", device="cpu", writable=False)],
+    out: Annotated[NDArray[numpy.float64], dict(order="C", device="cpu")],
+    scratch: Annotated[NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu")] | None,
+) -> None:
+    """Apply kron(factors) to a flat operand, as one cell of a SpanwiseElementExtraction does."""
+
+def lagrange_identity_mask(
+    space: pantr._pantr.bspline.BsplineSpace1DF64,
+    variant: int,
+    out: Annotated[NDArray[numpy.bool_], dict(shape=(None,), order="C", device="cpu")],
+) -> None:
+    """Write which intervals have an identity Lagrange extraction operator into `out`."""
+
+def kron_apply_f32(
+    op: int,
+    factors: Sequence[
+        Annotated[
+            NDArray[numpy.float32],
+            dict(shape=(None, None), order="C", device="cpu", writable=False),
+        ]
+    ],
+    identity: Sequence[bool],
+    operand: Annotated[NDArray[numpy.float32], dict(order="C", device="cpu", writable=False)],
+    out: Annotated[NDArray[numpy.float32], dict(order="C", device="cpu")],
+    scratch: Annotated[NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu")] | None,
+) -> None:
+    """Apply kron(factors) to a flat operand, as one cell of a SpanwiseElementExtraction does."""
+
+def lagrange_identity_mask_f32(
+    space: pantr._pantr.bspline.BsplineSpace1DF32,
+    variant: int,
+    out: Annotated[NDArray[numpy.bool_], dict(shape=(None,), order="C", device="cpu")],
+) -> None:
+    """Write which intervals have an identity Lagrange extraction operator into `out`."""
+
+def required_scratch_size(op: int, rows: Sequence[int], cols: Sequence[int]) -> int:
+    """The scratch entries an operation on factors of these shapes needs per cell."""

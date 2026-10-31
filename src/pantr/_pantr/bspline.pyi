@@ -972,3 +972,337 @@ def refine_to_common_space_1d_f32(
     a: BsplineF32, b: BsplineF32, direction: int
 ) -> tuple[BsplineF32, BsplineF32]:
     """Insert into each of two B-splines the knots the other has in one direction and it lacks."""
+
+class SpanwiseExtractionF64:
+    """An immutable set of element operators of a tensor-product space onto a target basis."""
+
+    def __init__(self, space: BsplineSpaceF64, target: int, variant: int) -> None:
+        """Build the operators (target 0 Bezier, 1 Lagrange, 2 cardinal); refuses periodic directions."""
+
+    @property
+    def dim(self) -> int:
+        """The number of directions."""
+
+    @property
+    def num_intervals(self) -> list[int]:
+        """The intervals per direction."""
+
+    @property
+    def input_shape_per_dir(self) -> list[int]:
+        """The columns of each direction's operator."""
+
+    @property
+    def output_shape_per_dir(self) -> list[int]:
+        """The rows of each direction's operator."""
+
+    @property
+    def num_identity_elements(self) -> int:
+        """The elements whose operator is the identity in every direction."""
+
+    def compact_ops(self, k: int) -> Annotated[NDArray[numpy.float64], dict(writable=False)]:
+        """Read-only view of direction `k`'s non-identity operators."""
+
+    def idx_map(self, k: int) -> Annotated[NDArray[numpy.int64], dict(writable=False)]:
+        """Read-only view of direction `k`'s row of each interval."""
+
+    def identity_mask(self, k: int) -> Annotated[NDArray[numpy.bool_], dict(writable=False)]:
+        """Read-only view of which intervals of direction `k` are identity."""
+
+    def required_scratch(self, op: int) -> int:
+        """The scratch entries an application of one cell needs."""
+
+    def kron_operator(
+        self,
+        cell: Sequence[int],
+        out: Annotated[NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu")],
+    ) -> None:
+        """Write the Kronecker operator of the element `cell` into `out`."""
+
+    def apply_many(
+        self,
+        v: Annotated[
+            NDArray[numpy.float64],
+            dict(shape=(None, None), order="C", device="cpu", writable=False),
+        ],
+        cells: Annotated[
+            NDArray[numpy.int64], dict(shape=(None, None), order="C", device="cpu", writable=False)
+        ],
+        out: Annotated[NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu")],
+        scratch: Annotated[
+            NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu")
+        ]
+        | None,
+    ) -> None:
+        """Write M_c v[c] for every cell (rows of `cells`) into `out`."""
+
+    def apply_transpose_many(
+        self,
+        v: Annotated[
+            NDArray[numpy.float64],
+            dict(shape=(None, None), order="C", device="cpu", writable=False),
+        ],
+        cells: Annotated[
+            NDArray[numpy.int64], dict(shape=(None, None), order="C", device="cpu", writable=False)
+        ],
+        out: Annotated[NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu")],
+        scratch: Annotated[
+            NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu")
+        ]
+        | None,
+    ) -> None:
+        """Write M_c^T v[c] for every cell into `out`."""
+
+    def apply_mt_k_m_many(
+        self,
+        k: Annotated[
+            NDArray[numpy.float64],
+            dict(shape=(None, None, None), order="C", device="cpu", writable=False),
+        ],
+        cells: Annotated[
+            NDArray[numpy.int64], dict(shape=(None, None), order="C", device="cpu", writable=False)
+        ],
+        out: Annotated[
+            NDArray[numpy.float64], dict(shape=(None, None, None), order="C", device="cpu")
+        ],
+        scratch: Annotated[
+            NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu")
+        ]
+        | None,
+    ) -> None:
+        """Write M_c^T K[c] M_c for every cell into `out`."""
+
+    def apply_m_k_mt_many(
+        self,
+        k: Annotated[
+            NDArray[numpy.float64],
+            dict(shape=(None, None, None), order="C", device="cpu", writable=False),
+        ],
+        cells: Annotated[
+            NDArray[numpy.int64], dict(shape=(None, None), order="C", device="cpu", writable=False)
+        ],
+        out: Annotated[
+            NDArray[numpy.float64], dict(shape=(None, None, None), order="C", device="cpu")
+        ],
+        scratch: Annotated[
+            NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu")
+        ]
+        | None,
+    ) -> None:
+        """Write M_c K[c] M_c^T for every cell into `out`."""
+
+    def apply(
+        self,
+        v: Annotated[
+            NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+        ],
+        cell: Sequence[int],
+        out: Annotated[NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu")],
+        scratch: Annotated[NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu")]
+        | None,
+    ) -> None:
+        """Write M v for the element `cell` (an interval per direction) into `out`."""
+
+    def apply_transpose(
+        self,
+        v: Annotated[
+            NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+        ],
+        cell: Sequence[int],
+        out: Annotated[NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu")],
+        scratch: Annotated[NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu")]
+        | None,
+    ) -> None:
+        """Write M^T v for the element `cell` into `out`."""
+
+    def apply_mt_k_m(
+        self,
+        k: Annotated[
+            NDArray[numpy.float64],
+            dict(shape=(None, None), order="C", device="cpu", writable=False),
+        ],
+        cell: Sequence[int],
+        out: Annotated[NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu")],
+        scratch: Annotated[NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu")]
+        | None,
+    ) -> None:
+        """Write M^T K M for the element `cell` into `out`."""
+
+    def apply_m_k_mt(
+        self,
+        k: Annotated[
+            NDArray[numpy.float64],
+            dict(shape=(None, None), order="C", device="cpu", writable=False),
+        ],
+        cell: Sequence[int],
+        out: Annotated[NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu")],
+        scratch: Annotated[NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu")]
+        | None,
+    ) -> None:
+        """Write M K M^T for the element `cell` into `out`."""
+
+class SpanwiseExtractionF32:
+    """An immutable set of element operators of a tensor-product space onto a target basis."""
+
+    def __init__(self, space: BsplineSpaceF32, target: int, variant: int) -> None:
+        """Build the operators (target 0 Bezier, 1 Lagrange, 2 cardinal); refuses periodic directions."""
+
+    @property
+    def dim(self) -> int:
+        """The number of directions."""
+
+    @property
+    def num_intervals(self) -> list[int]:
+        """The intervals per direction."""
+
+    @property
+    def input_shape_per_dir(self) -> list[int]:
+        """The columns of each direction's operator."""
+
+    @property
+    def output_shape_per_dir(self) -> list[int]:
+        """The rows of each direction's operator."""
+
+    @property
+    def num_identity_elements(self) -> int:
+        """The elements whose operator is the identity in every direction."""
+
+    def compact_ops(self, k: int) -> Annotated[NDArray[numpy.float32], dict(writable=False)]:
+        """Read-only view of direction `k`'s non-identity operators."""
+
+    def idx_map(self, k: int) -> Annotated[NDArray[numpy.int64], dict(writable=False)]:
+        """Read-only view of direction `k`'s row of each interval."""
+
+    def identity_mask(self, k: int) -> Annotated[NDArray[numpy.bool_], dict(writable=False)]:
+        """Read-only view of which intervals of direction `k` are identity."""
+
+    def required_scratch(self, op: int) -> int:
+        """The scratch entries an application of one cell needs."""
+
+    def kron_operator(
+        self,
+        cell: Sequence[int],
+        out: Annotated[NDArray[numpy.float32], dict(shape=(None, None), order="C", device="cpu")],
+    ) -> None:
+        """Write the Kronecker operator of the element `cell` into `out`."""
+
+    def apply_many(
+        self,
+        v: Annotated[
+            NDArray[numpy.float32],
+            dict(shape=(None, None), order="C", device="cpu", writable=False),
+        ],
+        cells: Annotated[
+            NDArray[numpy.int64], dict(shape=(None, None), order="C", device="cpu", writable=False)
+        ],
+        out: Annotated[NDArray[numpy.float32], dict(shape=(None, None), order="C", device="cpu")],
+        scratch: Annotated[
+            NDArray[numpy.float32], dict(shape=(None, None), order="C", device="cpu")
+        ]
+        | None,
+    ) -> None:
+        """Write M_c v[c] for every cell (rows of `cells`) into `out`."""
+
+    def apply_transpose_many(
+        self,
+        v: Annotated[
+            NDArray[numpy.float32],
+            dict(shape=(None, None), order="C", device="cpu", writable=False),
+        ],
+        cells: Annotated[
+            NDArray[numpy.int64], dict(shape=(None, None), order="C", device="cpu", writable=False)
+        ],
+        out: Annotated[NDArray[numpy.float32], dict(shape=(None, None), order="C", device="cpu")],
+        scratch: Annotated[
+            NDArray[numpy.float32], dict(shape=(None, None), order="C", device="cpu")
+        ]
+        | None,
+    ) -> None:
+        """Write M_c^T v[c] for every cell into `out`."""
+
+    def apply_mt_k_m_many(
+        self,
+        k: Annotated[
+            NDArray[numpy.float32],
+            dict(shape=(None, None, None), order="C", device="cpu", writable=False),
+        ],
+        cells: Annotated[
+            NDArray[numpy.int64], dict(shape=(None, None), order="C", device="cpu", writable=False)
+        ],
+        out: Annotated[
+            NDArray[numpy.float32], dict(shape=(None, None, None), order="C", device="cpu")
+        ],
+        scratch: Annotated[
+            NDArray[numpy.float32], dict(shape=(None, None), order="C", device="cpu")
+        ]
+        | None,
+    ) -> None:
+        """Write M_c^T K[c] M_c for every cell into `out`."""
+
+    def apply_m_k_mt_many(
+        self,
+        k: Annotated[
+            NDArray[numpy.float32],
+            dict(shape=(None, None, None), order="C", device="cpu", writable=False),
+        ],
+        cells: Annotated[
+            NDArray[numpy.int64], dict(shape=(None, None), order="C", device="cpu", writable=False)
+        ],
+        out: Annotated[
+            NDArray[numpy.float32], dict(shape=(None, None, None), order="C", device="cpu")
+        ],
+        scratch: Annotated[
+            NDArray[numpy.float32], dict(shape=(None, None), order="C", device="cpu")
+        ]
+        | None,
+    ) -> None:
+        """Write M_c K[c] M_c^T for every cell into `out`."""
+
+    def apply(
+        self,
+        v: Annotated[
+            NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
+        ],
+        cell: Sequence[int],
+        out: Annotated[NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu")],
+        scratch: Annotated[NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu")]
+        | None,
+    ) -> None:
+        """Write M v for the element `cell` (an interval per direction) into `out`."""
+
+    def apply_transpose(
+        self,
+        v: Annotated[
+            NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
+        ],
+        cell: Sequence[int],
+        out: Annotated[NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu")],
+        scratch: Annotated[NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu")]
+        | None,
+    ) -> None:
+        """Write M^T v for the element `cell` into `out`."""
+
+    def apply_mt_k_m(
+        self,
+        k: Annotated[
+            NDArray[numpy.float32],
+            dict(shape=(None, None), order="C", device="cpu", writable=False),
+        ],
+        cell: Sequence[int],
+        out: Annotated[NDArray[numpy.float32], dict(shape=(None, None), order="C", device="cpu")],
+        scratch: Annotated[NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu")]
+        | None,
+    ) -> None:
+        """Write M^T K M for the element `cell` into `out`."""
+
+    def apply_m_k_mt(
+        self,
+        k: Annotated[
+            NDArray[numpy.float32],
+            dict(shape=(None, None), order="C", device="cpu", writable=False),
+        ],
+        cell: Sequence[int],
+        out: Annotated[NDArray[numpy.float32], dict(shape=(None, None), order="C", device="cpu")],
+        scratch: Annotated[NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu")]
+        | None,
+    ) -> None:
+        """Write M K M^T for the element `cell` into `out`."""

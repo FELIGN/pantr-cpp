@@ -42,7 +42,8 @@ set(_pantr_test_sources
     test_bspline_reparametrize.cpp
     test_bspline_mode_product.cpp
     test_bspline_extraction.cpp
-    test_bspline_to_beziers.cpp)
+    test_bspline_to_beziers.cpp
+    test_spanwise_extraction.cpp)
 add_executable(pantr_tests ${_pantr_test_sources})
 target_link_libraries(pantr_tests PRIVATE pantr::pantr pantr_native_arch pantr_doctest
                                           pantr_cxx_warnings)
