@@ -51,10 +51,10 @@
 - **`reduce_degree` on a rational `Bezier` or `Bspline` refuses a reduction that makes a
   control weight zero or negative.** The result would have a pole on the domain and would
   not be a NURBS. `Bezier.minimize_degree` already declined such reductions.
-- **The extraction dispatchers refuse an identity-flagged operator that is not square.**
-  The identity branch of the kernels assumes a square operator and used to read past the
-  operand. No public path builds such an operator; direct callers of the Layer 2 helpers
-  were exposed.
+- **The raw Kronecker application refuses an identity-flagged operator that is not square**
+  (`pantr._testing.kron_apply` and the C++ `pantr::bspline::apply_kron`, which replace the
+  private Layer 2 extraction dispatchers). The identity branch assumes a square operator and
+  used to read past the operand. No public path builds such an operator.
 - **Complex `PointsLattice` coordinates are refused** (`ValueError`), and a non-integer
   point count given to `create_lagrange_points_lattice` raises `TypeError` instead of being
   truncated. A complex lattice used to keep its dtype, which no tabulation could use.
@@ -64,7 +64,30 @@
   the Chebyshev second-kind nodes silently. The variant is now converted once, for the C++
   library, which knows the five families and nothing else; except in `tabulate_lagrange`, which
   still checks its degrees first, it is checked before the count or degree
-  (`compute_bernstein_to_lagrange_1d` already refused it).
+  (`compute_bernstein_to_lagrange_1d` already refused it). The same holds for
+  `BsplineSpace1D.tabulate_Lagrange_extraction_operators` and for `SpanwiseElementExtraction`
+  with `target="lagrange"`, which treated any other value as the equispaced variant; lower-case
+  string values are still accepted, and the other targets still ignore the variant.
+- **`Bspline.remove_knots` refuses a knot that is not an interior knot of the domain** (a knot
+  outside the domain of an unclamped direction): `ValueError` "Cannot remove knot v: it is not
+  an interior knot of the domain [lo, hi]." The previous release read and wrote past its arrays
+  for such a knot and returned a B-spline with other values.
+- **A knot repeated more than `degree + 1` times is refused** with a `ValueError` naming the
+  knot, its multiplicity and the degree: by `Bspline.remove_knots` when it is the knot to
+  remove, and by `elevate_degree`, `reduce_degree`, `derivative(keep_degree=True)` and the
+  rational `derivative` for any such knot. For the knot to remove, the previous release
+  returned the B-spline unchanged by default and with `num=1`, and removed up to `degree` copies
+  under a large `tol` (through a wrapped negative index); in the other operations it raised an
+  unrelated "The number of control points must be a multiple of ..." or ended the process. The
+  non-rational `derivative()` with `keep_degree=False` still works on such a B-spline.
+- **`Bspline.reduce_degree` refuses a direction whose knot vector is not clamped** ("needs a
+  clamped knot vector"); the previous release returned a different function or raised "knots
+  must be non-decreasing".
+- **A NaN `value` in `Bspline.slice`** raises `ValueError` ("value nan is outside the domain");
+  it was an `IndexError` raised after reading past the knots.
+- **A `scratch` array of `SpanwiseElementExtraction`'s `apply` family that overlaps the operand
+  or `out`** raises `ValueError` ("scratch must not overlap the operand or out"); the previous
+  kernels used it as working memory and returned corrupted values.
 
 ### Changed
 - **pantr needs Python 3.12 or later.** pantr is becoming a C++ library with a compiled
@@ -209,11 +232,8 @@
   `control_points` is a read-only view; `reverse()` returns an independent Bézier (it shared
   memory with the original through `np.flip`); `reverse`, `permute_directions` and `transform`
   with `in_place=True` replace the value the object holds, so a `control_points` array read
-  before the call keeps the values it had. `Bezier.to_bspline(copy=False)` gives a B-spline
-  holding that read-only view, which cannot then be changed in place. `create_from_bspline` and
-  `Bspline.to_bezier` with `copy=False` still share the B-spline's array (read-only through the
-  Bézier) when it is a C-contiguous float32 or float64 array, as before; an array of another
-  layout (a reversed view, say) or dtype is converted, so the Bézier no longer shares it.
+  before the call keeps the values it had. The conversions between `Bezier` and `Bspline` with
+  `copy=False` are described with `Bspline` below.
 - **`Bezier` keeps `float32` and stores every other real dtype as `float64`**: integers as
   before, and now booleans, `float16`, `longdouble` and byte-swapped arrays (`">f4"` becomes
   native `float32`). The previous release stored those dtypes as given and then failed in
@@ -350,8 +370,7 @@
   `_build_bernstein_pinv`, `_build_nd_bernstein_vandermonde`, `_fit_from_scattered`,
   `_fit_from_values`, `_find_roots._validate_coeff_array`, `_dispatch_single`,
   `_CLIP_MIN_DEGREE`, `_CLIP_COEFF_RANGE_LIMIT` and `_SUPPORTED_DTYPES`, are gone with the Numba
-  kernels and NumPy code they held, whose work is now done in C++. The B-spline reduction's
-  weight check moved to `pantr.bspline._bspline_degree`.
+  kernels and NumPy code they held, whose work is now done in C++.
 - **`BsplineSpace1D`, `BsplineSpace`, the knot factories (`create_uniform_open_knots`,
   `create_uniform_periodic_knots`, `create_cardinal_knots`, `create_uniform_space`) and
   `get_greville_abscissae` run in pantr's C++ library**; names, signatures, defaults and messages
@@ -458,8 +477,127 @@
   `_tabulate_Bernstein_basis_deriv_1D_serial_core` and `_bspline_knots._validate_float_dtype`, are
   gone with the Numba kernels and
   NumPy code they held, whose work is now done in C++.
+- **`Bspline` and `SpanwiseElementExtraction` are C++ values** behind their Python classes, and
+  every `Bspline` operation of this section's list runs in C++: evaluation and derivatives, knot
+  insertion and removal, `to_open_bspline`, `to_periodic`, `subdivide`, `restrict`, `split`,
+  `elevate_degree`, `reduce_degree`, the non-rational `derivative`, `slice`, `boundary`,
+  `reverse`, `permute_directions`, `transform`, `to_bezier` and `to_beziers`, together with
+  `BsplineSpace1D.insert_knots`, `subdivide` and its three `tabulate_*_extraction_operators`.
+  (`multiply`, `find_roots`, `locate` and the rational `derivative`, which uses `multiply`, keep
+  their previous implementation for now.)
+- **A `Bspline` is immutable**, as a `Bezier` is: the constructor copies the control points
+  (into a C-contiguous array whatever the input layout), so a later write to the array it was
+  given no longer changes the B-spline; `control_points` is a read-only view that cannot be made
+  writable; the B-splines returned by `reverse`, `slice`, `boundary` and `permute_directions`
+  hold read-only, C-contiguous control points (`reverse()` returned a view of the original
+  through a flip, and the others writable arrays); `reverse`, `permute_directions` and `transform`
+  with `in_place=True` replace the value and the space the object holds, so an array read before
+  the call keeps its values and `control_points` is a new array afterwards.
+  `Bezier.to_bspline(copy=False)` and `create_from_bezier(copy=False)` copy, so the B-spline no
+  longer shares the Bézier's array. `Bspline.to_bezier(copy=False)` and
+  `create_from_bspline(..., copy=False)` share the B-spline's own buffer, read-only, so an
+  in-place operation on the B-spline no longer shows in that Bézier; a B-spline that is not open
+  is converted to open form without the copies the previous release made. Constructing a
+  `Bspline` therefore takes time proportional to its control points, where it took a constant
+  time, plus the call that builds the compiled value.
+- **`Bspline` and `SpanwiseElementExtraction` pickle and copy explicitly** (`__reduce__`,
+  `__copy__`, `__deepcopy__`, which share the immutable value). Subclasses and their attributes
+  survive. A `Bspline` pickled by the previous release still loads; one pickled now does not load
+  in the previous release. The cached Bézier decomposition and point-inversion state of a
+  `Bspline` are not pickled, so a B-spline on which `locate` ran now pickles (it raised).
+- **Values move in the last bits**, since the C++ code orders its sums and products differently.
+  Largest difference seen against the previous release over the sampled cases, in units of
+  `eps * max(1, |largest value|)` of the dtype (one to three directions, open, non-open and
+  periodic knots, rational and polynomial, `float32` and `float64`): evaluation 1.6, derivatives
+  6.9, knot insertion, `to_open_bspline`, `to_periodic`, `subdivide`, `restrict` and `split` 3.5,
+  `elevate_degree` 3.9, `reduce_degree` 3.5, `derivative` 4.7, `slice` 1.8, `boundary` 0.8,
+  `to_beziers` 1.1, the Bézier extraction operators 0.5, the Lagrange extraction operators 2.5,
+  the extraction applications 1.6. Knot vectors are unchanged. Knot removal removes the same knots
+  with the same control points on the generic instruction set; `reverse` and `permute_directions`
+  give the same values, and `transform` gives them except for a single-control-point periodic
+  B-spline of degree 0, by one unit in the last place. The cardinal extraction operators inherit
+  the differences of the cardinal-to-Bernstein matrix computed in C++ (above), which grow with the
+  degree (largest seen: 22 at degree 3, 1383 at degree 5).
+- **`Bspline` evaluation and `to_beziers` run on pantr's thread pool**, as do the batch
+  applications of `SpanwiseElementExtraction`, with the GIL released. A lattice of two or more
+  directions is contracted direction by direction, so the value on a lattice equals the value at
+  the same points only to rounding, where it was bitwise equal. A one-direction B-spline with
+  Bézier-like knots is evaluated through the Bernstein basis, as several directions already were.
+  A one-direction `PointsLattice` of the other float dtype is evaluated with the basis in the
+  lattice's dtype (it was the B-spline's).
+- **`Bspline.evaluate_derivatives` checks `orders` as integers in every dimension.** With one
+  direction, `len(orders) != 1` raises `ValueError` "len(orders) must equal spline.dim (1), got
+  n" (the previous release raised `IndexError` for `[]` and ignored the extra entries otherwise),
+  and a negative order reads "orders[0] must be >= 0, got -1" (it read "n_deriv must be >= 0,
+  got -1"). Each order goes through `operator.index`: `bool` and objects with `__index__` are
+  accepted, a float order is a `TypeError`, a NumPy scalar passed as the whole of `orders` is a
+  `TypeError` (it was an `IndexError`), an order from `2**31` raises `ValueError` "derivative
+  order N is too large" (it was a `MemoryError`) and one from `2**63` a `TypeError`. The orders
+  are checked before the points.
+- **A derivative whose recurrence divides by zero** (a point inside the tolerance band of an
+  empty span) raises `ZeroDivisionError` in every dimension; with one direction the previous
+  release returned NaN or arbitrary values.
+- A rational B-spline with a zero or NaN weight evaluates to `inf` or NaN without the NumPy
+  `RuntimeWarning` ("invalid value encountered in divide") the previous release emitted.
+- The out-of-domain message of `Bspline.evaluate` prints the domain with Python floats
+  (`(0.0, 1.0)`, not `(np.float64(0.0), np.float64(1.0))`), and other domain messages print a
+  `float32` value at `float32` precision (`2e-09`, not `1.999999943436137e-09`). With one
+  direction, an invalid `out` is reported before an out-of-domain point, as several directions
+  already did.
+- **Arguments of the ported `Bspline` operations are read as the C++ entry points take them:**
+  - `restrict` and `split` read bounds and values as Python floats: `np.float16` and
+    `np.float32` bounds now work (they raised an unrelated "knots must have at least
+    2*degree+2 elements"), a `Decimal` or any object with `__float__` is accepted, a string is
+    a `TypeError` ("expected a real number, got str"), and `split(0, 10**400)` raises
+    `OverflowError` (it raised `ValueError`). For a `float32` B-spline an `np.float64` bound is
+    compared in `float32`, as a Python float was; the previous release compared it in `float64`.
+  - Directions, axes, counts, `regularity`, `num` and permutation entries go through
+    `operator.index`: a float is a `TypeError`, where `subdivide(2, regularity=1.0)` (on
+    `Bspline` and on `BsplineSpace1D`) and `remove_knots(..., num=1.0)` were accepted,
+    `Bspline.subdivide([1.0])` skipped the direction and `[0.5]` raised `ValueError`; a float,
+    `bool` array or other non-integer axis or direction out of range is a `TypeError` (it was a
+    `ValueError` for some); objects with `__index__` are accepted, as is a list of booleans as a
+    permutation; `remove_knots` accepts a 0-d integer `num` and a `Fraction` `tol` (they raised
+    Numba's `TypingError`). `boundary`'s `side` keeps the previous handling.
+  - An integer argument past 64 bits is reported saturated at `9223372036854775807` in the
+    message, and `subdivide(10**30)` (on `Bspline` and `BsplineSpace1D`) raises `ValueError` "...
+    would insert more knots than an array can hold." (NumPy's "Maximum allowed size exceeded"
+    before).
+  - Messages print values as floats where they echoed an integer argument ("got 1.0.", "value
+    2.0 is outside"), `True` as `1`, and list every out-of-domain knot to insert without NumPy's
+    array padding. `insert_knots` checks that every direction's `new_knots` is one-dimensional
+    before inserting any.
+  - A singular least-squares system in `to_periodic` would raise `ValueError` "Singular matrix"
+    (`numpy.linalg.LinAlgError`, a `ValueError` subclass, before); no input reaching it was found.
+- **`SpanwiseElementExtraction` takes any number of directions** (its `apply` family raised
+  `NotImplementedError` beyond three) and **any memory layout** for the operand, `out`, `scratch`
+  and the cell indices (non-contiguous, Fortran-ordered and masked arrays raised Numba's typing
+  errors); such arrays go through a temporary. `compact_ops_1d`, `idx_maps_1d` and
+  `is_identity_mask_1d` are read-only views over the C++ value. A first argument that is not a
+  `BsplineSpace` raises `AttributeError` for `None` and `TypeError` for a `BsplineSpace1D` (both
+  raised `AttributeError` on `.spaces`). When a call has two faults, a read-only or wrongly typed
+  `scratch` is reported before a too-small one or an aliasing `out`. `ExtractionStructView` keeps
+  its fields, now holding those views; the Numba kernels it was meant to feed are gone.
+- The private modules `pantr.bspline._bspline_basis_core`, `_bspline_knot_insertion_core`,
+  `_bspline_restrict`, `_bspline_split`, `_bspline_blossom`, `_bspline_blossom_core`,
+  `_bspline_degree`, `_bspline_degree_core`, `_bspline_knot_removal`,
+  `_bspline_knot_removal_core`, `_bspline_slice`, `_bspline_to_beziers`, `_bspline_extraction`,
+  `_extraction_kernels`, `_extraction_helpers` and `pantr._transform_control_points`, the
+  evaluation kernels of `_bspline_eval`, `Bspline._control_points`, `Bezier._borrow`, and the
+  helpers `_bspline_knots._check_spline_info`, `_find_span`, `_count_multiplicity`,
+  `_find_knot_index_and_multiplicity` and `_get_Bspline_cardinal_intervals_1D_core` and `_impl`,
+  `_control_points_utils._reverse_control_points` and `_permute_control_points`, and
+  `spanwise_element_extraction._bezier_structural_identity_mask` and
+  `_lagrange_structural_identity_mask`, are gone with the Numba kernels and NumPy code they held.
+  What tests reach of them is in `pantr._testing`.
 
 ### Fixed
+- **`SpanwiseElementExtraction`'s batch applications no longer race on an overlapping `out`.**
+  A batch of cells whose operators are all the identity accepted any `out` overlapping the
+  operand, and its cells then read entries other cells had written, so the result depended on the
+  number of threads. Such a batch now overwrites its operand only when `out` is the operand
+  itself; any other overlap is refused with the existing "out must not alias the operand"
+  message.
 - **`find_roots` no longer loses roots that Bezier clipping found.** Clipping collected its
   candidates in a fixed buffer of `3 * degree + 4` entries and silently dropped any past it, which
   polynomials with many exact, evenly spaced roots fill: at degree 7 with roots `1/8, ..., 7/8`,
