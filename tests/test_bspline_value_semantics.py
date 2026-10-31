@@ -168,7 +168,13 @@ def test_control_points_of_another_layout_are_copied_c_contiguous() -> None:
         pytest.param(np.zeros(3, dtype=np.int64), "Got int64 control points and float64", id="int"),
         pytest.param(np.zeros(3, dtype=np.float16), "Got float16 control points", id="float16"),
         pytest.param(
-            np.zeros(3, dtype=np.longdouble), "float128|float96|longdouble", id="longdouble"
+            np.zeros(3, dtype=np.longdouble),
+            "float128|float96|longdouble",
+            id="longdouble",
+            marks=pytest.mark.skipif(
+                np.dtype(np.longdouble) == np.dtype(np.float64),
+                reason="longdouble is float64 here (MSVC), so it is the space's dtype",
+            ),
         ),
         pytest.param(np.zeros(3, dtype=bool), "Got bool control points", id="bool"),
         pytest.param(np.zeros(3, dtype=">f8"), "Got >f8 control points", id="byte-swapped"),
