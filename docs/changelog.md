@@ -85,8 +85,9 @@
   function for most excesses at the first knot, and `reduce_degree` for most interior ones;
   otherwise they raised an unrelated error ("The number of control points must be a multiple of
   ...", "Inserting these knots would exceed the maximum multiplicity", `ZeroDivisionError`) or
-  ended the process, and the rational `derivative` raised, ended the process or, in a sampled
-  degree-1 case, returned another function. The non-rational `derivative()` with `keep_degree=False` still works on such a B-spline.
+  ended the process, except that `reduce_degree` returned another function in one sampled
+  degree-1 case; the rational `derivative` raised, ended the process or, in a sampled degree-1
+  case, returned another function. The non-rational `derivative()` with `keep_degree=False` still works on such a B-spline.
 - **`Bspline.reduce_degree` refuses a direction whose knot vector is not clamped** ("needs a
   clamped knot vector"); the previous release returned a different function or raised another
   error ("knots must be non-decreasing", "knot vector spans no interval", "A periodic knot vector
@@ -552,15 +553,17 @@
   `TypeError`, a NumPy scalar passed as the whole of `orders` is a `TypeError` (it was an
   `IndexError`), an order from `2**31` raises `ValueError` "derivative order N is too large"
   (the previous release tried to allocate the derivative table and failed with a `MemoryError`,
-  ran out of memory, or from `2**62` raised a NumPy `ValueError`, "array is too big" or, for a
-  rational B-spline, "Maximum allowed dimension exceeded") and one from
+  ran out of memory, or from `2**58` raised a NumPy `ValueError`, "array is too big" (from
+  `2**63 - 1`, "Maximum allowed dimension exceeded" for a rational B-spline or with two
+  directions)) and one from
   `2**63` a `TypeError`. The orders are checked before the
   points.
 - **A derivative whose recurrence divides by zero** (a point inside the tolerance band of an
   empty span) raises `ZeroDivisionError` in every dimension and at any number of points. The
-  previous release returned NaN, `inf` or 0.0 with one direction, and with two or three
-  raised up to 4 095 points and returned NaN from 4 096; at such a point an order above the degree
-  returned 0.0 and now raises too.
+  previous release returned NaN, `±inf` or 0.0 with one direction, and with two or three
+  raised up to 4 095 points and returned NaN from 4 096; at such a point an order above the
+  degree returned 0.0 with one direction, and with two or three from 4 096 points (it raised
+  below), and now raises too.
 - A rational B-spline with a zero or NaN weight evaluates to `inf` or NaN without the NumPy
   `RuntimeWarning`s (such as "invalid value encountered in divide") the previous release emitted.
 - The out-of-domain messages of `Bspline.evaluate` and `evaluate_derivatives` print the domain
@@ -579,9 +582,10 @@
     was (the previous release compared it in `float64`); `split` compares its value in `float64`,
     as before.
   - `remove_knots`' `tol` is read as a Python float: `np.float16`, `Decimal`, `Fraction` and
-    objects with `__float__` are accepted (the previous release refused them), and a
-    one-element array is a `TypeError` (it was accepted); a list or tuple is still refused, now
-    with a `TypeError` instead of Numba's `TypingError`.
+    objects with `__float__` are accepted (the previous release refused them); on NumPy 2.4 and
+    later a one-element array is a `TypeError` (it was accepted), while earlier NumPy versions
+    convert it with a `DeprecationWarning`; a list or tuple is still refused, now with a
+    `TypeError` instead of Numba's `TypingError`.
   - Directions, axes, counts, `regularity`, `num` and permutation entries go through
     `operator.index`: a float is a `TypeError`, where `subdivide(2, regularity=1.0)` (on
     `Bspline` and on `BsplineSpace1D`) and `remove_knots(..., num=1.0)` were accepted,
@@ -610,11 +614,13 @@
 - **`SpanwiseElementExtraction` takes any number of directions** (its `apply` family raised
   `NotImplementedError` beyond three) and **any memory layout** for the operand, `out`, `scratch`
   and the cell indices, through a temporary where needed. The previous kernels raised Numba's
-  typing errors for strided and some Fortran-ordered arrays, and for a masked array on the first
-  call of the function in a process (later calls accepted it), and returned wrong values
+  typing errors for strided and some Fortran-ordered arrays, and for a masked array until the
+  function had been called once with an ordinary array in the process (afterwards it was
+  accepted), and returned wrong values
   for a Fortran-ordered matrix in one-cell `apply_MT_K_M` and `apply_M_K_MT` with two or three
   directions. A masked `out` of `BsplineSpace1D.tabulate_*_extraction_operators` is accepted on
-  every call (it was refused on the first call of the function in a process). `compact_ops_1d`, `idx_maps_1d` and `is_identity_mask_1d` are read-only views
+  every call (it was refused until the function had been called once with an ordinary array in
+  the process). `compact_ops_1d`, `idx_maps_1d` and `is_identity_mask_1d` are read-only views
   over the C++ value. A first argument that is not a `BsplineSpace` raises `AttributeError` for
   `None` and `TypeError` for a `BsplineSpace1D` (both raised `AttributeError` on `.spaces`). When
   a call has two faults, a read-only or wrongly typed `scratch` is reported before a too-small
