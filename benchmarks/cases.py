@@ -899,11 +899,134 @@ def _s4_extraction_cases() -> list[Case]:
     return cases
 
 
+def _s5_fit_cases() -> list[Case]:
+    """The fitting cases of the S5 stage (C5.1): interpolation, fits, L2 projection and QI.
+
+    Each size grows the space so that a cost exponent shows between ``medium`` and ``large``
+    (the previous release solved dense systems; their cost is cubic in the number of functions):
+
+    - ``interpolate_bspline``: a 1D cubic space of 4, 100 and 1000 intervals at its Greville
+      abscissae (a square system).
+    - ``fit_bspline_tensor``: a 2D bicubic space of 2, 16 and 128 intervals per direction, fitted
+      to values on a grid of twice as many nodes as functions per direction (overdetermined).
+    - ``fit_bspline_scattered``: a 2D bicubic space of 1, 6 and 20 intervals per direction,
+      fitted to four random points per function.
+    - ``l2_project_bspline``: a 1D cubic space of 4, 100 and 1000 intervals, default quadrature.
+    - ``quasi_interpolate_bspline``: a 2D bicubic space of 2, 30 and 100 intervals per direction.
+
+    The function sampled is a cheap closed form, so the timing is the fit's own.
+    """
+    from pantr.bspline import (  # noqa: PLC0415
+        create_uniform_space,
+        fit_bspline,
+        interpolate_bspline,
+        l2_project_bspline,
+        quasi_interpolate_bspline,
+    )
+
+    def f_lattice(lat: Any) -> Any:  # noqa: ANN401
+        pts = lat.get_all_points(order="C")
+        return np.sin(3.0 * pts.sum(axis=1))
+
+    def f_points(p: Any) -> Any:  # noqa: ANN401
+        return np.sin(3.0 * p.sum(axis=1))
+
+    cases: list[Case] = []
+    one_d = {"tiny": 4, "medium": 100, "large": 1000}
+    for size, n in one_d.items():
+
+        def setup_interp(n: int = n) -> Callable[[], Any]:
+            space = create_uniform_space(3, n)
+            return lambda: interpolate_bspline(f_lattice, space)
+
+        cases.append(
+            Case(
+                f"S5.interpolate_bspline.{size}",
+                "S5",
+                size,
+                f"interpolate_bspline on a 1D cubic space of {n} intervals (Greville nodes)",
+                setup_interp,
+            )
+        )
+
+        def setup_l2(n: int = n) -> Callable[[], Any]:
+            space = create_uniform_space(3, n)
+            return lambda: l2_project_bspline(f_lattice, space)
+
+        cases.append(
+            Case(
+                f"S5.l2_project_bspline.{size}",
+                "S5",
+                size,
+                f"l2_project_bspline on a 1D cubic space of {n} intervals",
+                setup_l2,
+            )
+        )
+
+    tensor = {"tiny": 2, "medium": 16, "large": 128}
+    for size, n in tensor.items():
+
+        def setup_tensor(n: int = n) -> Callable[[], Any]:
+            space = create_uniform_space([3, 3], [n, n])
+            m = 2 * (n + 3)
+            x = np.linspace(0.0, 1.0, m)
+            values = np.sin(3.0 * (x[:, None] + x[None, :]))
+            return lambda: fit_bspline(values, [x, x], space)
+
+        cases.append(
+            Case(
+                f"S5.fit_bspline_tensor.{size}",
+                "S5",
+                size,
+                f"fit_bspline on a 2D bicubic space of {n}^2 intervals, {2 * (n + 3)}^2 grid nodes",
+                setup_tensor,
+            )
+        )
+
+    scattered = {"tiny": 1, "medium": 6, "large": 20}
+    for size, n in scattered.items():
+
+        def setup_scattered(n: int = n) -> Callable[[], Any]:
+            space = create_uniform_space([3, 3], [n, n])
+            count = 4 * (n + 3) ** 2
+            pts = np.random.default_rng(1234).random((count, 2))
+            values = np.sin(3.0 * pts.sum(axis=1))
+            return lambda: fit_bspline(values, pts, space)
+
+        cases.append(
+            Case(
+                f"S5.fit_bspline_scattered.{size}",
+                "S5",
+                size,
+                f"fit_bspline on a 2D bicubic space of {n}^2 intervals, {4 * (n + 3) ** 2} points",
+                setup_scattered,
+            )
+        )
+
+    qi = {"tiny": 2, "medium": 30, "large": 100}
+    for size, n in qi.items():
+
+        def setup_qi(n: int = n) -> Callable[[], Any]:
+            space = create_uniform_space([3, 3], [n, n])
+            return lambda: quasi_interpolate_bspline(f_points, space)
+
+        cases.append(
+            Case(
+                f"S5.quasi_interpolate_bspline.{size}",
+                "S5",
+                size,
+                f"quasi_interpolate_bspline on a 2D bicubic space of {n}^2 intervals",
+                setup_qi,
+            )
+        )
+    return cases
+
+
 def all_cases() -> list[Case]:
     """Return every case this tree can run.
 
     Returns:
-        list[Case]: The S1 cases, the S2 cases, the S4 cases, then the r6 cases.
+        list[Case]: The S1 cases, the S2 cases, the S4 cases, the S5 cases, then the r6 cases.
     """
     return (
         _s1_cases()
@@ -913,5 +1036,6 @@ def all_cases() -> list[Case]:
         + _s4_space_cases()
         + _s4_bspline_cases()
         + _s4_extraction_cases()
+        + _s5_fit_cases()
         + _r6_cases()
     )
