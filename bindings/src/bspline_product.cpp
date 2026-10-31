@@ -1,6 +1,8 @@
 // _pantr.bspline: the product of two B-splines, the rational derivative built on it, and the
-// roots of a scalar B-spline; in _testing, the root finder's kernel and merge. One translation unit
-// for the three because each reaches Eigen's SVD (the product's change of representation).
+// roots of a scalar B-spline; in _testing, the root finder's kernel and merge; in _kernels, the
+// knot classes of a raw knot vector. The product and the rational derivative reach Eigen's SVD
+// (the product's change of representation); the roots share the translation unit as the third
+// operation of the same stage.
 #include "arrays.hpp"
 #include "interface.hpp"
 
@@ -19,6 +21,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <span>
 #include <string>
@@ -59,7 +62,12 @@ void def_product(nb::class_<bspline::Bspline<T>>& cls) {
           [](const B& b, std::optional<double> tol, std::optional<long long> max_insertions) {
             std::optional<int> budget;
             if (max_insertions) {
-              budget = static_cast<int>(*max_insertions);
+              // A test hook; a budget beyond `int` is refused rather than wrapped.
+              if (*max_insertions > (std::numeric_limits<int>::max)()) {
+                throw value_error("max_insertions must fit an int, got " +
+                                  std::to_string(*max_insertions));
+              }
+              budget = static_cast<int>((std::max)(*max_insertions, -1LL));
             }
             const bspline::BsplineRootSet r = bspline::find_roots<T>(b, tol, budget);
             return std::make_tuple(doubles(r.roots), static_cast<std::int32_t>(r.status),

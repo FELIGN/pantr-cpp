@@ -139,9 +139,10 @@ class TestMultiplicityCounting:
     def test_boundary_multiplicities_ignore_a_near_boundary_knot(self, base: float) -> None:
         """The boundary multiplicities must report the true multiplicity at any scale.
 
-        Read as the first and last in-domain multiplicities of the space, which the product-space
-        knot construction (``include/pantr/bspline/product.hpp``) and, through the same pattern,
-        ``to_open_bspline`` / ``to_periodic`` rely on.
+        Read as the first and last in-domain multiplicities of the space. The end-run count the
+        product's boundary conversion uses (``detail::boundary_multiplicities`` in
+        ``include/pantr/bspline/product.hpp``) is pinned on the same data in
+        ``cpp/tests/test_bspline_product.cpp``.
         """
         knots = np.array([1.0, 1.0, 1.0, 1.5, 2.0, 2.0, 2.0]) * base
         knots[0] -= INSIDE_LEAK * base

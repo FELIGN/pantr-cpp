@@ -29,7 +29,9 @@
 #include "pantr/core/ndarray.hpp"
 #include "pantr/core/scalar.hpp"
 
+#include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <span>
 #include <string>
 #include <utility>

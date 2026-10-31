@@ -23,8 +23,8 @@
 /// rounded in the storage type `T` (knot arithmetic on `float32` arrays) and where in `double`
 /// (Python floats, and `numpy.linalg.lstsq`, which decomposes in `double`;
 /// `linalg::lstsq_min_norm`). The one-direction and the multi-direction paths of that
-/// implementation differ in two tolerances (which knots count as one breakpoint of the product);
-/// both are kept, named where they apply.
+/// implementation differ in one tolerance, the one at which the open product's knots are grouped
+/// before a boundary conversion (`convert_product_boundary`); both are kept.
 #pragma once
 
 #include "pantr/bezier/product.hpp"

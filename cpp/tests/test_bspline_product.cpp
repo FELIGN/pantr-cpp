@@ -1682,3 +1682,27 @@ TEST_CASE_TEMPLATE("lstsq_min_norm: a non-finite entry of the matrix is refused"
     }
   }
 }
+
+// Oracle: the knot vector itself. Its end runs are three copies of each domain end, the outer copy
+// moved inside by a relative 1e-6 (far beyond the knot tolerance at every scale), so two copies
+// of each end lie within the tolerance and the third does not. The count must stay two at every
+// scale: a relative-tolerance leak (a fixed `rtol` window) would absorb the moved copy. Ported
+// from the meaning of tests/test_knot_tolerance_absolute.py's boundary-multiplicity test, which
+// read the same count through the product module's Python helper before the port. `double` only,
+// as there: in `float` the 1e-6 move is inside the knot tolerance (8 eps(float) times the scale).
+TEST_CASE_TEMPLATE("product: end-run multiplicities ignore a near-boundary knot at every scale", T,
+                   double) {
+  for (const double base : {1.0, 100.0, 1e6}) {
+    std::vector<T> knots;
+    for (const double k : {1.0, 1.0, 1.0, 1.5, 2.0, 2.0, 2.0}) {
+      knots.push_back(static_cast<T>(k * base));
+    }
+    knots.front() = static_cast<T>(static_cast<double>(knots.front()) - 1e-6 * base);
+    knots.back() = static_cast<T>(static_cast<double>(knots.back()) + 1e-6 * base);
+    const pantr::bspline::BsplineSpace1D<T> space(std::span<const T>(knots), 2, false, false);
+    const auto [left, right] =
+        pantr::bspline::detail::boundary_multiplicities<T>(space, space.tolerance());
+    CHECK(left == 2);
+    CHECK(right == 2);
+  }
+}
