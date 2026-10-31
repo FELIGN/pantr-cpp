@@ -68,6 +68,7 @@ NB_MODULE(PANTR_EXT_MODULE_NAME, m) {
   pantr::bindings::register_bspline_extraction(bspline);
   pantr::bindings::register_bspline_spanwise(bspline);
   pantr::bindings::register_bspline_product(bspline);
+  pantr::bindings::register_bspline_fit(bspline);
   nb::module_ kernels = m.def_submodule(
       "_kernels", "Ported kernels for Python callers not yet ported (private, interim).");
   pantr::bindings::register_bezier_kernels(kernels);

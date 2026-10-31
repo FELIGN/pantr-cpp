@@ -10,10 +10,12 @@ matrix on one knot-interval cell inside ``supp(B_β)``.  On a single cell the
 local interpolation recovers their exact coefficients and the operator is a
 projector onto the spline space (``Q B_β = B_β``).
 
-The same low-level helpers (:func:`_interval_interior_points`,
-:func:`_local_weight_row`, :func:`_tensor_point_grid`, :func:`_contract_weights`,
-:func:`_evaluate_func`) and :data:`QIKind` back the hierarchical quasi-interpolant
-in ``_thb_quasi_interpolation``.
+The tensor-product operator is built and applied in C++
+(``include/pantr/bspline/quasi_interpolate.hpp``): it lists the points to sample, this module
+calls ``f`` on them, and C++ contracts the samples with the weights. The NumPy helpers below
+(:func:`_interval_interior_points`, :func:`_local_weight_row`, :func:`_tensor_point_grid`,
+:func:`_contract_weights`) and :data:`QIKind` back the hierarchical quasi-interpolant in
+``_thb_quasi_interpolation``, which is not ported yet; :func:`_evaluate_func` serves both.
 
 Main exports:
 
@@ -23,14 +25,17 @@ Main exports:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal, get_args
+from typing import TYPE_CHECKING, Any, Literal, get_args
 
 import numpy as np
 from numpy import typing as npt
 
+from .._ext import ext
 from ._bspline import Bspline
-from ._bspline_space_factory import get_greville_abscissae
 from ._bspline_space_nd import BsplineSpace
+
+_cpp: Any = ext.bspline
+"""The compiled quasi-interpolants (private; untyped: one class per dtype)."""
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -143,39 +148,6 @@ def _contract_weights(
     return result
 
 
-def _llm_tp_direction_data(
-    space1d: BsplineSpace1D,
-) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
-    """Precompute per-function local points and weights for a 1D space.
-
-    For each basis function the local interval is the knot span containing its
-    Greville abscissa (well inside the support, limiting extrapolation).
-
-    Args:
-        space1d (BsplineSpace1D): The 1D B-spline space.
-
-    Returns:
-        tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]: ``(points, weights)``,
-        each of shape ``(num_basis, degree + 1)``.
-    """
-    order = space1d.degree + 1
-    n_basis = space1d.num_basis
-    greville = np.asarray(get_greville_abscissae(space1d), dtype=np.float64)
-    breakpoints, _ = space1d.get_unique_knots_and_multiplicity(in_domain=True)
-    breaks = np.asarray(breakpoints, dtype=np.float64)
-    n_intervals = breaks.shape[0] - 1
-
-    points = np.empty((n_basis, order), dtype=np.float64)
-    weights = np.empty((n_basis, order), dtype=np.float64)
-    for j in range(n_basis):
-        mu = int(np.searchsorted(breaks, greville[j], side="right")) - 1
-        mu = min(max(mu, 0), n_intervals - 1)
-        pts = _interval_interior_points(float(breaks[mu]), float(breaks[mu + 1]), order)
-        points[j] = pts
-        weights[j] = _local_weight_row(space1d, pts, j)
-    return points, weights
-
-
 # ---------------------------------------------------------------------------
 # Batched evaluation helper
 # ---------------------------------------------------------------------------
@@ -272,26 +244,9 @@ def quasi_interpolate_bspline(
         valid = ", ".join(repr(v) for v in get_args(QIKind))
         raise ValueError(f"Unknown kind {kind!r}; expected one of {valid}.")
 
-    dim = space.dim
-    num_basis = tuple(space.num_basis)
-    dir_data = [_llm_tp_direction_data(space.spaces[k]) for k in range(dim)]
-
-    multi_indices = list(np.ndindex(*num_basis))
-    orders = tuple(d + 1 for d in space.degrees)
-    block = int(np.prod(orders))
-
-    all_points = np.empty((len(multi_indices) * block, dim), dtype=np.float64)
-    for f_idx, multi in enumerate(multi_indices):
-        per_dir = [dir_data[k][0][multi[k]] for k in range(dim)]
-        all_points[f_idx * block : (f_idx + 1) * block] = _tensor_point_grid(per_dir)
-
-    values, rank, scalar = _evaluate_func(func, all_points)
-    value_tensor = values.reshape(len(multi_indices), *orders, rank)
-
-    coeffs = np.empty((len(multi_indices), rank), dtype=np.float64)
-    for f_idx, multi in enumerate(multi_indices):
-        weights = [dir_data[k][1][multi[k]] for k in range(dim)]
-        coeffs[f_idx] = _contract_weights(weights, value_tensor[f_idx])
-
-    control_points = coeffs.reshape(*num_basis, rank).astype(space.dtype, copy=False)
+    cls = _cpp.QuasiInterpolationF32 if space.dtype == np.float32 else _cpp.QuasiInterpolationF64
+    qi = cls(space._h)  # the local functionals, built before func is sampled
+    values, _rank, _scalar = _evaluate_func(func, qi.points())
+    coeffs = np.asarray(qi.coefficients(np.ascontiguousarray(values)))
+    control_points = coeffs.astype(space.dtype, copy=False)
     return Bspline(space, control_points)

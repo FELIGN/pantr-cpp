@@ -113,7 +113,8 @@ struct Rotation {
 /// `s_min(A) >= s_min(R) - gamma U`. Each column of the computed inverse is backward stable, so
 /// `L` is off from `1 / ||R^-1||_F` by a relative `n eps kappa_F(R) < n eps / tau <= 1 / (4 m)`,
 /// at most a half. Then `s_min(A) >= U (tau / 2 - gamma) > rcond U >= rcond s_max(A)` with
-/// `rcond = lstsq_rcond(m, n)`, the cutoff below which `lstsq_min_norm` drops a singular value: the
+/// `rcond = lstsq_rcond(m, n)` by default, the cutoff below which `lstsq_min_norm` drops a singular
+/// value (a caller whose dense path truncates at another relative cutoff passes that one): the
 /// SVD would keep all of them, its minimum-norm solution is the unique least-squares solution
 /// the QR computes, and the two differ by rounding, not by rank. The steps bound exact singular
 /// values; the SVD thresholds computed ones, which the margin above the cutoff also covers. For
@@ -130,6 +131,8 @@ struct Rotation {
 ///     a (const RowMatrix<T>&): Extents `(m, n)`.
 ///     b (const RowMatrix<T>&): Extents `(m, cols)`.
 ///     border (Eigen::Index): Trailing columns of `a` held dense, in `[0, n]`. Defaults to 0.
+///     rcond (std::optional<double>): The relative cutoff of the dense path the answer stands for,
+///         finite and `>= 0`; `lstsq_rcond(m, n)` when absent.
 ///
 /// Returns:
 ///     std::optional<NdArray<T>>: Extents `(n, cols)`, or no value where the QR's answer is not
@@ -139,16 +142,17 @@ struct Rotation {
 ///     `a` and `b` are assumed to have the same number of rows and `border` to be in range (no
 ///     validation performed).
 template <StorageFloat T>
-[[nodiscard]] std::optional<NdArray<T>> try_lstsq_banded(const RowMatrix<T>& a,
-                                                         const RowMatrix<T>& b,
-                                                         Eigen::Index border = 0) {
+[[nodiscard]] std::optional<NdArray<T>> try_lstsq_banded(
+    const RowMatrix<T>& a, const RowMatrix<T>& b, Eigen::Index border = 0,
+    std::optional<double> rcond = std::nullopt) {
   const Eigen::Index m = a.rows();
   const Eigen::Index n = a.cols();
   const Eigen::Index nb = b.cols();
   constexpr double eps = std::numeric_limits<double>::epsilon();
   const auto md = static_cast<double>(m);
   const auto nd = static_cast<double>(n);
-  const double tau = (std::max)(std::sqrt(eps), 4.0 * md * nd * eps + 4.0 * lstsq_rcond(m, n));
+  const double cutoff = rcond ? *rcond : lstsq_rcond(m, n);
+  const double tau = (std::max)(std::sqrt(eps), 4.0 * md * nd * eps + 4.0 * cutoff);
   if (m < n || !a.allFinite() || !b.allFinite()) {
     return std::nullopt;
   }

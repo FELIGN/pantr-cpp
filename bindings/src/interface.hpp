@@ -94,6 +94,11 @@ void register_bspline_spanwise_testing(nanobind::module_& m);
 /// `bspline` submodule.
 void register_bspline_product(nanobind::module_& m);
 
+/// Register the staged B-spline fits (tensor-product collocation, scattered fit, L2 projection,
+/// quasi-interpolation) and the solve and load kernels the distributed fits reach, in the
+/// `bspline` submodule. After `register_bspline`.
+void register_bspline_fit(nanobind::module_& m);
+
 /// Register the Morken-Reimers kernel, its merge and its insertion budget in the `_testing`
 /// submodule.
 void register_bspline_product_testing(nanobind::module_& m);
