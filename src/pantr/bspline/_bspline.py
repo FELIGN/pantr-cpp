@@ -95,17 +95,36 @@ class Bspline:
             ValueError: If the B-spline has rank smaller than 1.
         """
         arr = np.asarray(control_points)
-        dtype = np.dtype(space.dtype)  # IndexError for a space with no direction, as before
-        cls = _class_for(dtype)
-        # The count is checked before the dtype, as before; the compiled constructor checks it
-        # again.
-        cls.cp_size_for(space._h, int(arr.size))
+        dtype = space.dtype  # IndexError for a space with no direction, as before
+        # The count is checked before the dtype, as before, with the compiled constructor's
+        # message (the constructor checks it again, and the rank). It is checked here, and the
+        # shape and flags below are set without a binding call, so that constructing costs
+        # little more than the previous pure-Python constructor (design/python_wrappers.md).
+        num_total = space.num_total_basis
+        size = arr.size
+        if size % num_total != 0:
+            raise ValueError(
+                "The number of control points must be a multiple of the number of basis "
+                f"functions.Got {size} control points and {num_total} basis functions."
+            )
         if arr.dtype != dtype:
             raise ValueError(
                 f"The control points must have the same dtype as the B-spline space."
                 f"Got {arr.dtype} control points and {dtype} B-spline space."
             )
-        self._set_handle(cls(space._h, np.ascontiguousarray(arr), bool(is_rational)), space)
+        rational = bool(is_rational)
+        f32 = dtype == _F32
+        h = (_cpp.BsplineF32 if f32 else _cpp.BsplineF64)(
+            space._h, arr if arr.flags.c_contiguous else np.ascontiguousarray(arr), rational
+        )
+        d = self.__dict__
+        d["_h"] = h
+        d["_space"] = space
+        d["_shape"] = (*space.num_basis, size // num_total)
+        d["_is_rational"] = rational
+        d["_dtype"] = _F32 if f32 else _F64
+        d["_beziers_cache"] = None
+        d["_locate_cache"] = None
 
     def _set_handle(
         self,
@@ -1679,18 +1698,6 @@ def _extra_state(b: Bspline) -> dict[str, Any]:
     """
     skip = _VALUE_ATTRS | _CACHE_ATTRS | {"_space"}
     return {k: v for k, v in b.__dict__.items() if k not in skip}
-
-
-def _class_for(dtype: np.dtype[Any]) -> Any:  # noqa: ANN401
-    """Get the compiled class of a dtype.
-
-    Args:
-        dtype (np.dtype): ``float32`` or ``float64``.
-
-    Returns:
-        Any: ``BsplineF32`` or ``BsplineF64``.
-    """
-    return _cpp.BsplineF32 if dtype == _F32 else _cpp.BsplineF64
 
 
 def _rebuild_bspline(
