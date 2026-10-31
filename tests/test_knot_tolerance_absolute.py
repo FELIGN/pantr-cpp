@@ -47,10 +47,7 @@ from pantr.bspline import (
     THBSplineSpace,
     create_uniform_space,
 )
-from pantr.bspline._bspline_knots import (
-    _get_unique_knots_and_multiplicity_impl,
-    _is_in_domain_impl,
-)
+from pantr.bspline._bspline_knots import _get_unique_knots_and_multiplicity_impl
 from pantr.bspline._bspline_product import _get_boundary_mults
 from pantr.grid import hierarchical_grid, uniform_grid
 
@@ -61,6 +58,36 @@ SCALES = (1.0, 100.0, 1e6)
 # Relative perturbation sitting strictly inside the leaked ``rtol=1e-5`` window and
 # far outside the strict float64 knot tolerance (1e-15).
 INSIDE_LEAK = 1e-6
+
+
+def _in_domain(
+    knots: npt.NDArray[np.float64], tol: float, pts: npt.NDArray[np.float64]
+) -> npt.NDArray[np.bool_]:
+    """Return, per point, whether a degree-2 space with tolerance ``tol`` accepts it.
+
+    The space is built with the stored tolerance ``tol`` (``_from_state``) and the points are
+    probed one at a time through ``tabulate_basis``, which refuses a point outside the domain.
+
+    Args:
+        knots (npt.NDArray[np.float64]): The knot vector, taken as stored.
+        tol (float): The absolute tolerance of the space.
+        pts (npt.NDArray[np.float64]): The points.
+
+    Returns:
+        npt.NDArray[np.bool_]: ``False`` where the point is refused as outside the domain.
+    """
+    space = BsplineSpace1D._from_state(knots, 2, False, tol)
+    out = np.empty(pts.shape, dtype=np.bool_)
+    for i, p in enumerate(pts):
+        try:
+            space.tabulate_basis(np.array([p]))
+        except ValueError as exc:
+            if "outside the knot vector domain" not in str(exc):
+                raise
+            out[i] = False
+        else:
+            out[i] = True
+    return out
 
 
 class TestMultiplicityCounting:
@@ -142,7 +169,7 @@ class TestDomainGate:
         tol = 1e-10
         pts = np.array([hi + INSIDE_LEAK * hi, hi + 10.0])
 
-        assert not np.any(_is_in_domain_impl(knots, 2, pts, tol))
+        assert not np.any(_in_domain(knots, tol, pts))
 
     @pytest.mark.parametrize("hi", SCALES)
     def test_gate_is_symmetric_in_undershoot_and_overshoot(self, hi: float) -> None:
@@ -166,8 +193,8 @@ class TestDomainGate:
         just_in = np.array([-0.5 * tol, hi + 0.5 * tol])
         just_out = np.array([-2.0 * tol, hi + 2.0 * tol])
 
-        np.testing.assert_array_equal(_is_in_domain_impl(knots, 2, just_in, tol), [True, True])
-        np.testing.assert_array_equal(_is_in_domain_impl(knots, 2, just_out, tol), [False, False])
+        np.testing.assert_array_equal(_in_domain(knots, tol, just_in), [True, True])
+        np.testing.assert_array_equal(_in_domain(knots, tol, just_out), [False, False])
 
     def test_band_stays_tol_wide_when_tol_falls_below_one_ulp(self) -> None:
         """The admitted band must be ``tol`` wide even where ``tol < ulp(knot_end)``.
@@ -195,7 +222,7 @@ class TestDomainGate:
         just_past = np.array([np.nextafter(hi, np.inf)])
         assert float(just_past[0]) - hi > tol
 
-        assert not bool(_is_in_domain_impl(knots, 2, just_past, tol)[0])
+        assert not bool(_in_domain(knots, tol, just_past)[0])
 
     @pytest.mark.parametrize("hi", SCALES)
     def test_evaluate_rejects_an_out_of_domain_point(self, hi: float) -> None:

@@ -24,7 +24,6 @@ from pantr.bspline._bspline_knots import (
     _get_Bspline_num_basis_1D_impl,
     _get_multiplicity_of_first_knot_in_domain_impl,
     _get_unique_knots_and_multiplicity_impl,
-    _is_in_domain_impl,
 )
 from pantr.change_basis import compute_lagrange_to_bernstein_1d
 from pantr.tolerance import get_strict
@@ -602,35 +601,50 @@ class TestGetUniqueKnotsAndMultiplicity:
         np.testing.assert_array_equal(multiplicities, expected_mults)
 
 
+def _in_domain(space: BsplineSpace1D, pts: npt.NDArray[np.float64]) -> npt.NDArray[np.bool_]:
+    """Return, per point, whether the space accepts it (the C++ in-domain test behind evaluation).
+
+    Args:
+        space (BsplineSpace1D): The space.
+        pts (npt.NDArray[np.float64]): The points, probed one at a time.
+
+    Returns:
+        npt.NDArray[np.bool_]: ``False`` where ``tabulate_basis`` refuses the point as outside the
+            domain.
+    """
+    out = np.empty(pts.shape, dtype=np.bool_)
+    for i, p in enumerate(pts):
+        try:
+            space.tabulate_basis(np.array([p]))
+        except ValueError as exc:
+            if "outside the knot vector domain" not in str(exc):
+                raise
+            out[i] = False
+        else:
+            out[i] = True
+    return out
+
+
 class TestIsInDomain:
-    """Test the _is_in_domain_impl function."""
+    """Test the in-domain gate of the C++ space, reached through ``tabulate_basis``."""
 
     def test_points_in_domain(self) -> None:
         """Test that points within domain return True."""
-        knots = np.array([0.0, 0.0, 0.0, 1.0, 1.0, 1.0], dtype=np.float64)
-        degree = 2
+        space = BsplineSpace1D(np.array([0.0, 0.0, 0.0, 1.0, 1.0, 1.0]), 2)
         pts = np.array([0.0, 0.5, 1.0], dtype=np.float64)
-        tol = 1e-10
-        result = _is_in_domain_impl(knots, degree, pts, tol)
-        np.testing.assert_array_equal(result, [True, True, True])
+        np.testing.assert_array_equal(_in_domain(space, pts), [True, True, True])
 
     def test_points_outside_domain(self) -> None:
         """Test that points outside domain return False."""
-        knots = np.array([0.0, 0.0, 0.0, 1.0, 1.0, 1.0], dtype=np.float64)
-        degree = 2
+        space = BsplineSpace1D(np.array([0.0, 0.0, 0.0, 1.0, 1.0, 1.0]), 2)
         pts = np.array([-0.1, 1.1], dtype=np.float64)
-        tol = 1e-10
-        result = _is_in_domain_impl(knots, degree, pts, tol)
-        np.testing.assert_array_equal(result, [False, False])
+        np.testing.assert_array_equal(_in_domain(space, pts), [False, False])
 
     def test_boundary_points(self) -> None:
         """Test that boundary points return True."""
-        knots = np.array([0.0, 0.0, 0.0, 1.0, 1.0, 1.0], dtype=np.float64)
-        degree = 2
+        space = BsplineSpace1D(np.array([0.0, 0.0, 0.0, 1.0, 1.0, 1.0]), 2)
         pts = np.array([0.0, 1.0], dtype=np.float64)
-        tol = 1e-10
-        result = _is_in_domain_impl(knots, degree, pts, tol)
-        np.testing.assert_array_equal(result, [True, True])
+        np.testing.assert_array_equal(_in_domain(space, pts), [True, True])
 
 
 class TestComputeNumBasis:

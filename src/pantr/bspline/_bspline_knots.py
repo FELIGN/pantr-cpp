@@ -140,54 +140,6 @@ def _get_unique_knots_and_multiplicity_impl(
     cache=True,
     parallel=False,
 )
-def _is_in_domain_impl(
-    knots: npt.NDArray[np.float32 | np.float64],
-    degree: int,
-    pts: npt.NDArray[np.float32 | np.float64],
-    tol: float,
-) -> npt.NDArray[np.bool_]:
-    """Check if points are within the B-spline domain (up to tolerance).
-
-    Args:
-        knots (npt.NDArray[np.float32 | np.float64]): B-spline knot vector.
-        degree (int): B-spline degree.
-        pts (npt.NDArray[np.float32 | np.float64]): Points to check.
-        tol (float): Tolerance for numerical comparisons.
-
-    Returns:
-        npt.NDArray[np.bool_]: Boolean array where True indicates points
-            are within the domain. It has the same length as the number of points.
-
-    Note:
-        Inputs are assumed to be correct (no validation performed).
-    """
-    knot_begin, knot_end = knots[degree], knots[-degree - 1]
-    # ``tol`` is an absolute tolerance, so the admitted band is exactly ``tol`` wide at
-    # each end.  ``np.isclose`` would carry its default ``rtol=1e-5`` and, since the
-    # rtol leg attaches to the second operand, accept an overshoot of
-    # ``1e-5 * |knot_end|`` at the right end while rejecting ``tol``-sized undershoot
-    # at a left end sitting at zero -- an asymmetry that is an accident of argument
-    # order.
-    #
-    # The difference is formed first and only then compared against ``tol``.  Shifting
-    # the bound instead (``pts <= knot_end + tol``) reads more directly but is not the
-    # same predicate in floating point: ``knot_end + tol`` rounds to the nearest
-    # representable value, so once ``tol`` drops below ``ulp(knot_end)`` the effective
-    # tolerance becomes ``ulp(knot_end)`` rather than ``tol`` -- 1.16e-10 instead of a
-    # requested 1e-10 on a domain ending at 1e6.  Subtracting first is exact here
-    # (Sterbenz, for the nearby points that decide the boundary), so the band stays
-    # ``tol`` wide at every scale.
-    return np.logical_and(  # type: ignore[no-any-return]
-        (knot_begin < pts) | (np.abs(knot_begin - pts) <= tol),
-        (pts < knot_end) | (np.abs(pts - knot_end) <= tol),
-    )
-
-
-@nb_jit(
-    nopython=True,
-    cache=True,
-    parallel=False,
-)
 def _get_Bspline_num_basis_1D_impl(
     knots: npt.NDArray[np.float32 | np.float64],
     degree: int,
@@ -356,14 +308,12 @@ def _warmup_numba_functions() -> None:
     """
     # Small dummy arrays for warmup
     knots_dummy = np.array([0.0, 0.0, 0.0, 1.0, 1.0, 1.0], dtype=np.float64)
-    pts_dummy = np.array([0.5], dtype=np.float64)
     tol_dummy = 1e-10
     degree_dummy = 2
 
     # Warmup each numba function with float64
     _get_multiplicity_of_first_knot_in_domain_impl(knots_dummy, degree_dummy, tol_dummy)
     _get_unique_knots_and_multiplicity_impl(knots_dummy, degree_dummy, tol_dummy, False)
-    _is_in_domain_impl(knots_dummy, degree_dummy, pts_dummy, tol_dummy)
     _get_Bspline_num_basis_1D_impl(knots_dummy, degree_dummy, False, tol_dummy)
 
 
@@ -376,5 +326,4 @@ __all__ = [
     "_get_knots_ends_and_dtype",
     "_get_multiplicity_of_first_knot_in_domain_impl",
     "_get_unique_knots_and_multiplicity_impl",
-    "_is_in_domain_impl",
 ]
