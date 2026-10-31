@@ -98,6 +98,11 @@ class BasisAt {
   BasisAt(std::vector<Rational> knots, int degree, const Rational& x)
       : u_(std::move(knots)), x_(x), degree_(degree), span_(span_of(u_, degree, x)) {}
 
+  /// As above, on the polynomial piece of the given span rather than the one `x` falls in: the
+  /// piece of an element evaluated at its right end, where `span_of` would pick the next element.
+  BasisAt(std::vector<Rational> knots, int degree, const Rational& x, std::size_t span)
+      : u_(std::move(knots)), x_(x), degree_(degree), span_(span) {}
+
   /// The span `x` is evaluated on.
   [[nodiscard]] std::size_t span() const { return span_; }
 

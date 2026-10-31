@@ -1478,6 +1478,8 @@ class Bspline:
             for ``dim == 1`` the result is projected to physical coordinates.
 
         Raises:
+            TypeError: If ``axis`` is not an integer (a float, for instance) or
+                ``value`` is not a real number (a string, for instance).
             ValueError: If ``axis`` is out of range ``[0, dim)``.
             ValueError: If ``value`` is outside the domain of the specified
                 direction.
@@ -1520,6 +1522,7 @@ class Bspline:
             or a NumPy array of shape ``(rank,)`` when ``dim == 1``.
 
         Raises:
+            TypeError: If ``axis`` is not an integer (a float, for instance).
             ValueError: If ``axis`` is out of range ``[0, dim)``.
             ValueError: If ``side`` is not 0 or 1.
 

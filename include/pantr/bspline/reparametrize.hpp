@@ -43,7 +43,7 @@ namespace pantr::bspline {
 ///     value_error: `direction` is out of range; or the reflected knots define no space.
 template <StorageFloat T>
 [[nodiscard]] Bspline<T> reversed(const Bspline<T>& b, long long direction) {
-  const std::size_t d = bezier::detail::checked_direction(direction, b.dim());
+  const std::size_t d = bezier::detail::checked_direction(direction, b.dim(), "direction");
   const BsplineSpace<T> whole = b.space();
   const BsplineSpace1D<T>& old_space = whole.spaces()[d];
   const std::span<const T> knots = old_space.knots();

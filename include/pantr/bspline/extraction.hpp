@@ -21,13 +21,17 @@
 #include "pantr/change_basis.hpp"
 #include "pantr/config.hpp"
 #include "pantr/core/errors.hpp"
+#include "pantr/core/format.hpp"
 #include "pantr/core/mdspan.hpp"
 #include "pantr/core/ndarray.hpp"
 #include "pantr/core/scalar.hpp"
 
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <vector>
 
@@ -120,21 +124,54 @@ void bezier_extraction_core(std::span<const T> knots, int degree, double tol,
   }
 }
 
-/// Refuse a negative tolerance and a knot vector and degree that define no space.
+/// Refuse a tolerance that is not a finite non-negative number, and a knot vector and degree that
+/// define no space.
 ///
 /// Raises:
-///     value_error: `tol < 0` ("tol must be non-negative"; a NaN tolerance passes), or as
-///         `check_knots_and_degree`.
+///     value_error: `tol < 0` ("tol must be non-negative"); `tol` NaN or infinite ("tol must be
+///         finite"; a NaN passes every comparison, so it is named rather than tested by `<`); or
+///         as `check_knots_and_degree`.
 template <StorageFloat T>
 void check_extraction_input(std::span<const T> knots, int degree, double tol) {
   if (tol < 0) {
     throw value_error("tol must be non-negative");
   }
+  if (!std::isfinite(tol)) {
+    throw value_error("tol must be finite, got " + py_repr(tol));
+  }
   check_knots_and_degree<T>(knots, degree);
 }
 
+/// Validate a raw operator request and group its knots: the classes of the in-domain knots.
+///
+/// The core writes the start-insertion block and the per-interval identity into an output of
+/// `classes - 1` intervals, so a tolerance that merges the whole domain into one class (zero
+/// intervals) is refused here, before any output is sized or written.
+///
+/// Args:
+///     knots (std::span<const T>): The knot vector.
+///     degree (int): The degree.
+///     tol (double): Absolute parametric tolerance.
+///
+/// Returns:
+///     KnotClasses<T>: The in-domain classes, at least two.
+///
+/// Raises:
+///     value_error: As `check_extraction_input`; or the classes are fewer than two ("knot vector
+///         spans no interval ...", as `BsplineSpace1D` refuses the same vector).
+template <StorageFloat T>
+[[nodiscard]] KnotClasses<T> classify_for_extraction(std::span<const T> knots, int degree,
+                                                     double tol) {
+  check_extraction_input<T>(knots, degree, tol);
+  KnotClasses<T> cls = unique_knots_and_multiplicity<T>(knots, degree, tol, true);
+  check_space_has_an_interval<T>(knots, degree,
+                                 static_cast<long long>(cls.multiplicities.size()) - 1, tol);
+  return cls;
+}
+
 /// The extents `(intervals, degree + 1, degree + 1)` an operator array has.
-inline std::array<std::size_t, 3> extraction_extents(std::size_t num_intervals, int degree) {
+[[nodiscard]] inline std::array<std::size_t, 3> extraction_extents(std::size_t num_intervals,
+                                                                   int degree) {
   const auto order = static_cast<std::size_t>(degree) + 1;
   return {num_intervals, order, order};
 }
@@ -154,9 +191,31 @@ void right_multiply_in_place(mdview<T, 3> out, const NdArray<T>& matrix) {
   const std::vector<T> source(out.data_handle(), out.data_handle() + total);
   const std::size_t extents[3] = {n, order, order};
   // out[i][r][c] = sum_k source[i][r][k] * M[k][c]: the transpose of M applied along the last mode.
-  mode_product<T>(matrix.flat(), order, order, true, std::span<const T>(source),
-                  std::span<const std::size_t>(extents), 2, std::span<T>(out.data_handle(), total),
-                  std::span<const std::size_t>(extents));
+  const ModeOperator<T> op{matrix.flat(), order, order, true};
+  mode_product_whole<T>(
+      op, {std::span<const T>(source), std::span<const std::size_t>(extents)}, 2,
+      {std::span<T>(out.data_handle(), total), std::span<const std::size_t>(extents)});
+}
+
+/// Overwrite with the identity the operators of the flagged intervals.
+///
+/// Args:
+///     operators (T*): `flags.size() * order * order` values; the blocks of the flagged intervals
+///         are overwritten.
+///     order (std::size_t): `degree + 1`.
+///     flags (std::span<const bool>): One flag per interval.
+template <StorageFloat T>
+void set_identity_where(T* operators, std::size_t order, std::span<const bool> flags) {
+  for (std::size_t e = 0; e < flags.size(); ++e) {
+    if (!flags[e]) {
+      continue;
+    }
+    T* block = operators + e * order * order;
+    std::fill(block, block + order * order, static_cast<T>(0));
+    for (std::size_t i = 0; i < order; ++i) {
+      block[i * order + i] = static_cast<T>(1);
+    }
+  }
 }
 
 }  // namespace detail
@@ -170,12 +229,12 @@ void right_multiply_in_place(mdview<T, 3> out, const NdArray<T>& matrix) {
 ///     out (mdview<T, 3>): Extents `(intervals, degree + 1, degree + 1)`; written.
 ///
 /// Raises:
-///     value_error: `tol < 0`; the knots or the degree define no space; `out` has other extents.
+///     value_error: `tol` is negative, NaN or infinite; the knots or the degree define no space;
+///         `tol` merges the whole domain into one knot (no interval); `out` has other extents.
 template <StorageFloat T>
 void bezier_extraction_operators(std::span<const T> knots, int degree, double tol,
                                  mdview<T, 3> out) {
-  detail::check_extraction_input<T>(knots, degree, tol);
-  const KnotClasses<T> cls = unique_knots_and_multiplicity<T>(knots, degree, tol, true);
+  const KnotClasses<T> cls = detail::classify_for_extraction<T>(knots, degree, tol);
   basis::detail::check_out<T, 3>(out,
                                  detail::extraction_extents(cls.multiplicities.size() - 1, degree));
   detail::bezier_extraction_core<T>(knots, degree, tol, cls.multiplicities, out.data_handle());
@@ -188,8 +247,7 @@ void bezier_extraction_operators(std::span<const T> knots, int degree, double to
 template <StorageFloat T>
 [[nodiscard]] NdArray<T> bezier_extraction_operators(std::span<const T> knots, int degree,
                                                      double tol) {
-  detail::check_extraction_input<T>(knots, degree, tol);
-  const KnotClasses<T> cls = unique_knots_and_multiplicity<T>(knots, degree, tol, true);
+  const KnotClasses<T> cls = detail::classify_for_extraction<T>(knots, degree, tol);
   const auto ext = detail::extraction_extents(cls.multiplicities.size() - 1, degree);
   NdArray<T> out(std::vector<std::size_t>(ext.begin(), ext.end()), for_overwrite);
   detail::bezier_extraction_core<T>(knots, degree, tol, cls.multiplicities, out.data());
@@ -244,8 +302,7 @@ template <StorageFloat T>
 template <StorageFloat T>
 void lagrange_extraction_operators(std::span<const T> knots, int degree, double tol,
                                    basis::LagrangeVariant variant, mdview<T, 3> out) {
-  detail::check_extraction_input<T>(knots, degree, tol);
-  const KnotClasses<T> cls = unique_knots_and_multiplicity<T>(knots, degree, tol, true);
+  const KnotClasses<T> cls = detail::classify_for_extraction<T>(knots, degree, tol);
   basis::detail::check_out<T, 3>(out,
                                  detail::extraction_extents(cls.multiplicities.size() - 1, degree));
   const auto matrix =
@@ -287,8 +344,7 @@ void lagrange_extraction_operators(const BsplineSpace1D<T>& space, basis::Lagran
 template <StorageFloat T>
 void cardinal_extraction_operators(std::span<const T> knots, int degree, double tol,
                                    mdview<T, 3> out) {
-  detail::check_extraction_input<T>(knots, degree, tol);
-  const KnotClasses<T> cls = unique_knots_and_multiplicity<T>(knots, degree, tol, true);
+  const KnotClasses<T> cls = detail::classify_for_extraction<T>(knots, degree, tol);
   const std::size_t n_elems = cls.multiplicities.size() - 1;
   basis::detail::check_out<T, 3>(out, detail::extraction_extents(n_elems, degree));
   const auto matrix = change_basis::cached<T>(change_basis::Kind::cardinal_to_bernstein, degree,
@@ -298,17 +354,8 @@ void cardinal_extraction_operators(std::span<const T> knots, int degree, double 
   // `std::vector<bool>` is not a span of `bool`, so the flags live in a plain array.
   const std::unique_ptr<bool[]> flags(new bool[n_elems]);
   cardinal_intervals<T>(knots, degree, tol, std::span<bool>(flags.get(), n_elems));
-  const auto order = static_cast<std::size_t>(degree) + 1;
-  for (std::size_t e = 0; e < n_elems; ++e) {
-    if (!flags[e]) {
-      continue;
-    }
-    T* block = out.data_handle() + e * order * order;
-    std::fill(block, block + order * order, static_cast<T>(0));
-    for (std::size_t i = 0; i < order; ++i) {
-      block[i * order + i] = static_cast<T>(1);
-    }
-  }
+  detail::set_identity_where<T>(out.data_handle(), static_cast<std::size_t>(degree) + 1,
+                                std::span<const bool>(flags.get(), n_elems));
 }
 
 /// Compute the cardinal extraction operators of a space (see the raw overload).
@@ -316,9 +363,25 @@ void cardinal_extraction_operators(std::span<const T> knots, int degree, double 
 /// Args:
 ///     space (const BsplineSpace1D<T>&): The space.
 ///     out (mdview<T, 3>): Extents `(intervals, degree + 1, degree + 1)`; written.
+///
+/// Raises:
+///     value_error: `out` has other extents, or the degree is beyond the cardinal-to-Bernstein
+///         matrix (checked before anything is written).
 template <StorageFloat T>
 void cardinal_extraction_operators(const BsplineSpace1D<T>& space, mdview<T, 3> out) {
-  cardinal_extraction_operators<T>(space.knots(), space.degree(), space.tolerance(), out);
+  const auto n_elems = static_cast<std::size_t>(space.num_intervals());
+  basis::detail::check_out<T, 3>(out, detail::extraction_extents(n_elems, space.degree()));
+  const auto matrix = change_basis::cached<T>(change_basis::Kind::cardinal_to_bernstein,
+                                              space.degree(), basis::LagrangeVariant::equispaces);
+  // The space's own classes, as the Bézier overload reads them, and its own cardinal flags.
+  detail::bezier_extraction_core<T>(space.knots(), space.degree(), space.tolerance(),
+                                    space.unique_knots_and_multiplicity(true).second,
+                                    out.data_handle());
+  detail::right_multiply_in_place<T>(out, *matrix);
+  const std::unique_ptr<bool[]> flags(new bool[n_elems]);
+  space.cardinal_intervals(std::span<bool>(flags.get(), n_elems));
+  detail::set_identity_where<T>(out.data_handle(), static_cast<std::size_t>(space.degree()) + 1,
+                                std::span<const bool>(flags.get(), n_elems));
 }
 
 /// Flag the intervals whose Bézier extraction operator is structurally the identity: both bounding

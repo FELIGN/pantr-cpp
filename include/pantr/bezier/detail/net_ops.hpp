@@ -15,25 +15,29 @@
 #include <cstddef>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 namespace pantr::bezier::detail {
 
-/// Check a direction against the dimension.
+/// Check a direction (a parametric axis) against the dimension.
 ///
 /// Args:
 ///     direction (long long): The direction.
 ///     dim (std::size_t): The parametric dimension.
+///     noun (std::string_view): What the caller calls it in its signature (`"direction"`,
+///         `"axis"`), the first word of the message.
 ///
 /// Returns:
 ///     std::size_t: `direction`.
 ///
 /// Raises:
-///     value_error: `direction` is not in `[0, dim)`.
-inline std::size_t checked_direction(long long direction, std::size_t dim) {
+///     value_error: `direction` is not in `[0, dim)`; the message starts with `noun`.
+[[nodiscard]] inline std::size_t checked_direction(long long direction, std::size_t dim,
+                                                   std::string_view noun) {
   if (direction < 0 || direction >= static_cast<long long>(dim)) {
-    throw value_error("direction must be in [0, " + std::to_string(dim) + "), got " +
+    throw value_error(std::string(noun) + " must be in [0, " + std::to_string(dim) + "), got " +
                       std::to_string(direction) + ".");
   }
   return static_cast<std::size_t>(direction);

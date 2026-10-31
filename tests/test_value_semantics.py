@@ -834,8 +834,9 @@ def test_copy_false_bezier_outlives_the_bspline_and_its_array(
     The points shared are the B-spline's own read-only copy of the control points (the constructor
     copies), not the caller's. The Bézier holds the B-spline's compiled representation (an
     aliasing pointer), not a Python array, so what is observed here is that the values survive;
-    that the representation is released with the last Bézier is pinned by the C++ test
-    ``to_bezier shares the buffer with copy off`` (``test_bspline_to_beziers.cpp``).
+    that the representation is released with the last Bézier is pinned by the C++ test case
+    ``to_bezier: a single-element spline converts, sharing its buffer only on request``
+    (``test_bspline_to_beziers.cpp``, a ``use_count`` check).
     """
     cp = _curve(dtype)
     expected = cp.copy()
@@ -856,22 +857,54 @@ def test_copy_false_bezier_outlives_the_bspline_and_its_array(
     gc.collect()
 
 
+@pytest.mark.parametrize("keep_one", [True, False], ids=["one-kept", "last-dropped-on-thread"])
 @pytest.mark.parametrize("convert", _CONVERTERS)
-def test_copy_false_bezier_dropped_on_another_thread(convert: Callable[[Bspline], Bezier]) -> None:
-    """The last reference may go on a thread that is not the one that made the Bézier."""
+def test_copy_false_bezier_dropped_on_another_thread(
+    convert: Callable[[Bspline], Bezier], keep_one: bool
+) -> None:
+    """References to a shared Bézier may go on other threads while the others still evaluate.
+
+    Every Python reference to the B-spline wrapper and to its arrays is gone before the threads
+    start, so the Bézier handles are the only owners of the compiled representation (an aliasing
+    pointer). Each worker evaluates the Bézier it holds against the closed form, then drops it on
+    its own thread. With ``keep_one`` a further handle stays on this thread, and must still
+    evaluate correctly after the workers' drops (a reference count that fell too far would have
+    freed the points under it); without it the last drop is a worker's, and a fresh Bézier built
+    afterwards must evaluate correctly over whatever was freed.
+    """
+    expected = _curve()
     for _ in range(8):
-        cp = _curve()
-        bs = _bspline_over(cp)
+        bs = _bspline_over(expected.copy())
         shared = bs.control_points
         holders = [[convert(bs)] for _ in range(4)]
-        del cp, bs, shared
+        keeper = convert(bs) if keep_one else None
+        del bs, shared
         gc.collect()
-        threads = [threading.Thread(target=h.clear) for h in holders]
+        failures: list[str] = []
+
+        def work(holder: list[Bezier], failures: list[str] = failures) -> None:
+            bez = holder.pop()
+            try:
+                _assert_curve_matches(bez, expected, np.float64)
+                np.testing.assert_array_equal(bez.control_points, expected)
+            except AssertionError as exc:  # a worker's failure is not raised in the main thread
+                failures.append(str(exc))
+
+        threads = [threading.Thread(target=work, args=(h,)) for h in holders]
         for thread in threads:
             thread.start()
         for thread in threads:
             thread.join(timeout=60)
         assert not any(thread.is_alive() for thread in threads)
+        assert failures == []
+        gc.collect()
+
+        # Allocate over whatever the drops freed, so a dangling pointer would read these instead.
+        junk: list[npt.NDArray[Any]] = [np.full(expected.shape, -777.0) for _ in range(256)]
+        survivor = keeper if keeper is not None else convert(_bspline_over(expected.copy()))
+        np.testing.assert_array_equal(survivor.control_points, expected)
+        _assert_curve_matches(survivor, expected, np.float64)
+        del keeper, survivor, junk
         gc.collect()
 
 

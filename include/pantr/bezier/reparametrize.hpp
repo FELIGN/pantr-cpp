@@ -37,7 +37,7 @@ namespace pantr::bezier {
 ///     value_error: `direction` is out of range.
 template <StorageFloat T>
 [[nodiscard]] Bezier<T> reversed(const Bezier<T>& b, long long direction) {
-  const std::size_t d = detail::checked_direction(direction, b.dim());
+  const std::size_t d = detail::checked_direction(direction, b.dim(), "direction");
   return Bezier<T>(detail::flip_along_axis<T>(b.control_points(), b.shape(), d), b.rational());
 }
 

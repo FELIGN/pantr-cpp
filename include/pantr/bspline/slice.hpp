@@ -7,6 +7,8 @@
 /// `degree - s` rounds, and at multiplicity `degree` or more the slice is a control point.
 #pragma once
 
+#include "pantr/bezier/detail/along_axis.hpp"
+#include "pantr/bezier/detail/net_ops.hpp"
 #include "pantr/bspline/bspline.hpp"
 #include "pantr/bspline/detail/refine_common.hpp"
 #include "pantr/bspline/space.hpp"
@@ -22,6 +24,7 @@
 #include <cstddef>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace pantr::bspline {
@@ -175,7 +178,11 @@ template <StorageFloat T>
       const double right_knot = static_cast<double>(knots[i + k + 1]);
       const double denom = right_knot - left_knot;
       // Repeated knots in the window make the denominator exactly zero, and the weight is then 0.
-      // An exact test: the difference of two knots of a space is zero or at least its tolerance.
+      // The test is exact, not a tolerance: a space built from a stored tolerance (no snapping) can
+      // hold two knots less than its tolerance apart, whose denominator is small and nonzero. That
+      // is safe: `left_knot <= knots[k] <= u <= knots[k + 1] <= right_knot` (the indices run
+      // `k - degree + 1 .. k` and `k + 1 ..`), and a correctly rounded subtraction is monotone, so
+      // `alpha` is in [0, 1] whatever the denominator.
       const double alpha = denom == 0.0 ? 0.0 : (span.u - left_knot) / denom;
       // The weights are formed in double and rounded to `T`, as the operands they multiply.
       corner_cut_rows<T>(work.data() + i * rest, work.data() + (i + 1) * rest, rest,
@@ -184,18 +191,6 @@ template <StorageFloat T>
   }
   std::copy_n(work.data(), rest, out.data());
   return out;
-}
-
-/// Check a direction against the dimension, with the message `Bspline.slice` gives.
-///
-/// Raises:
-///     value_error: `axis` is not in `[0, dim)`.
-inline std::size_t checked_axis(long long axis, std::size_t dim) {
-  if (axis < 0 || axis >= static_cast<long long>(dim)) {
-    throw value_error("axis must be in [0, " + std::to_string(dim) + "), got " +
-                      std::to_string(axis) + ".");
-  }
-  return static_cast<std::size_t>(axis);
 }
 
 /// Check that a parameter lies in the domain of a direction, up to the space's tolerance.
@@ -264,8 +259,9 @@ template <StorageFloat T>
 ///
 /// Args:
 ///     b (const Bspline<T>&): The B-spline, of dimension two or more (`slice_point` is the
-///     curve's). axis (long long): The direction to fix, in `[0, dim)`. value (double): The
-///     parameter, in the direction's domain up to the space's tolerance.
+///         curve's).
+///     axis (long long): The direction to fix, in `[0, dim)`.
+///     value (double): The parameter, in the direction's domain up to the space's tolerance.
 ///
 /// Returns:
 ///     Bspline<T>: The B-spline of the other directions, rational as `b` is.
@@ -278,7 +274,7 @@ template <StorageFloat T>
   if (b.dim() < 2) {
     throw value_error("slice: a curve has no lower-dimensional B-spline; use slice_point.");
   }
-  const std::size_t d = detail::checked_axis(axis, b.dim());
+  const std::size_t d = bezier::detail::checked_direction(axis, b.dim(), "axis");
   const BsplineSpace<T> whole = b.space();
   detail::check_slice_value<T>(whole.spaces()[d], d, value);
   NdArray<T> net = detail::slice_net<T>(b, d, value);
@@ -311,7 +307,7 @@ template <StorageFloat T>
   if (b.dim() != 1) {
     throw value_error("slice_point: only a curve slices to a point; use slice.");
   }
-  const std::size_t d = detail::checked_axis(axis, b.dim());
+  const std::size_t d = bezier::detail::checked_direction(axis, b.dim(), "axis");
   detail::check_slice_value<T>(b.space().spaces()[d], d, value);
   const NdArray<T> row = detail::slice_net<T>(b, d, value);
   return detail::project_point<T>(row, b.rational());
@@ -333,7 +329,7 @@ template <StorageFloat T>
 template <StorageFloat T>
 [[nodiscard]] Bspline<T> boundary(const Bspline<T>& b, long long axis, long long side) {
   detail::check_side(side);
-  const std::size_t d = detail::checked_axis(axis, b.dim());
+  const std::size_t d = bezier::detail::checked_direction(axis, b.dim(), "axis");
   return slice<T>(b, axis, detail::domain_end<T>(b.space().spaces()[d], side));
 }
 
@@ -352,7 +348,7 @@ template <StorageFloat T>
 template <StorageFloat T>
 [[nodiscard]] NdArray<T> boundary_point(const Bspline<T>& b, long long axis, long long side) {
   detail::check_side(side);
-  const std::size_t d = detail::checked_axis(axis, b.dim());
+  const std::size_t d = bezier::detail::checked_direction(axis, b.dim(), "axis");
   return slice_point<T>(b, axis, detail::domain_end<T>(b.space().spaces()[d], side));
 }
 

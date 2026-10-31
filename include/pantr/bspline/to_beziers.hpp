@@ -76,27 +76,41 @@ template <StorageFloat T>
   y_extents[mode] = n_el * order;
   NdArray<T> y(y_extents, for_overwrite);
   const bezier::detail::AxisSplit around = bezier::detail::split_around(x_extents, mode);
-  const std::size_t x_extent = x_extents[mode];
-  const std::size_t y_extent = y_extents[mode];
-  // One element is `order * order * outer * inner` multiply-adds; the elements write disjoint
-  // parts of `y`.
-  const double ops_per_element = 2.0 * static_cast<double>(order) * static_cast<double>(order) *
-                                 static_cast<double>(around.outer) *
-                                 static_cast<double>(around.inner);
+  // One item is the product of one element with one slab of the other modes before `mode`: the
+  // mode product of an element reads and writes `outer` such slabs, which are independent, so the
+  // items are the (element, slab) pairs and a direction with one or two elements and a large rest
+  // still has `outer` items per element to spread. Item `m` is slab `m / n_el` of element
+  // `m % n_el`, so consecutive items write adjacent memory. The items write disjoint parts of `y`
+  // and each entry is summed by the kernel in the same order for any grouping of items, so the
+  // result is bitwise the same for every chunking.
+  const std::size_t n_items = n_el * around.outer;
+  // One item is `order * order * inner` multiply-adds, at least 2 (`order`, `inner` >= 1: `inner`
+  // includes `cp_size`, which is at least one coordinate), so the estimate satisfies `WorkEstimate`
+  // without a floor. It depends on the problem only, and so do the chunks `parallel_for` cuts.
+  const double ops_per_item = 2.0 * static_cast<double>(order) * static_cast<double>(order) *
+                              static_cast<double>(around.inner);
+  const ModeShape slab{.ld = order,
+                       .n_out = order,
+                       .n_in = order,
+                       .x_extent = x_extents[mode],
+                       .y_extent = y_extents[mode],
+                       .outer = 1,
+                       .inner = around.inner,
+                       .transpose = true};  // `C_e^T`: the stored operator, transposed
   const T* ops_data = ops.data();
   const T* x_data = x.data();
   T* y_data = y.data();
-  parallel::parallel_for(n_el, parallel::WorkEstimate{(std::max)(ops_per_element, 1.0)},
-                         [&](std::size_t begin, std::size_t end) {
-                           for (std::size_t e = begin; e < end; ++e) {
-                             // `C_e^T`: the stored operator, transposed.
-                             mode_product_kernel<T>(
-                                 ops_data + e * order * order, order, order, order, true,
-                                 x_data + static_cast<std::size_t>(first[e]) * around.inner,
-                                 x_extent, y_data + e * order * around.inner, y_extent,
-                                 around.outer, around.inner);
-                           }
-                         });
+  parallel::parallel_for(
+      n_items, parallel::WorkEstimate{ops_per_item}, [&](std::size_t begin, std::size_t end) {
+        for (std::size_t m = begin; m < end; ++m) {
+          const std::size_t e = m % n_el;
+          const std::size_t o = m / n_el;
+          mode_product_kernel<T>(
+              ops_data + e * order * order,
+              x_data + (o * slab.x_extent + static_cast<std::size_t>(first[e])) * slab.inner,
+              y_data + (o * slab.y_extent + e * order) * slab.inner, slab);
+        }
+      });
   return y;
 }
 
@@ -143,16 +157,19 @@ template <StorageFloat T>
   if (!open.space().has_bezier_like_knots()) {
     throw value_error(detail::more_than_one_element);
   }
-  // `open` owns fresh control points that nothing else sees: the Bézier shares them.
-  return bezier::Bezier<T>(std::shared_ptr<const T[]>(open.rep(), open.rep()->data.get()), shape,
-                           b.rational());
+  // `open` owns fresh control points that nothing else sees: the Bézier shares them. Its shape is
+  // the open form's: a periodic `b` stores fewer control points than the open form holds.
+  const std::vector<std::size_t> open_shape(open.shape().begin(), open.shape().end());
+  return bezier::Bezier<T>(std::shared_ptr<const T[]>(open.rep(), open.rep()->data.get()),
+                           open_shape, b.rational());
 }
 
 /// Decompose a B-spline into the Bézier patches of its elements.
 ///
 /// Periodic directions are converted to open form first. Along each direction the Bézier
-/// extraction operators are applied to the control points (all elements at once, the elements in
-/// parallel), then the patches are cut out of the result.
+/// extraction operators are applied to the control points (all elements at once, in parallel over
+/// the pairs of an element and a slab of the other directions), then the patches are cut out of
+/// the result.
 ///
 /// Args:
 ///     b (const Bspline<T>&): The B-spline.

@@ -16,8 +16,10 @@
 #include <pantr/core/errors.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <functional>
+#include <numeric>
 #include <span>
 #include <string>
 #include <vector>
@@ -86,6 +88,17 @@ double mapped_difference(
 const auto identity_values = [](const std::vector<Rational>& v, const std::vector<Rational>&) {
   return v;
 };
+
+/// All the permutations of `0..dim - 1`, in lexicographic order.
+std::vector<std::vector<long long>> all_permutations(std::size_t dim) {
+  std::vector<long long> perm(dim);
+  std::iota(perm.begin(), perm.end(), 0LL);
+  std::vector<std::vector<long long>> out;
+  do {
+    out.push_back(perm);
+  } while (std::next_permutation(perm.begin(), perm.end()));
+  return out;
+}
 
 struct Config {
   const char* name;
@@ -183,15 +196,17 @@ TEST_CASE("reversed: refusals and their messages") {
 
 TEST_CASE_TEMPLATE("permuted: evaluates the original at the permuted parameters", T, double,
                    float) {
-  const std::vector<std::vector<long long>> perms3 = {{1, 2, 0}, {2, 0, 1}, {0, 2, 1}, {0, 1, 2}};
-  const std::vector<std::vector<long long>> perms2 = {{1, 0}, {0, 1}};
-  const std::vector<long long> one = {0};
   for (const Config& c : configs()) {
     CAPTURE(c.name);
     const bs::Bspline<T> b = make_spline<T>(c.dirs, 2, c.rational, 8U);
     const std::size_t dim = c.dirs.size();
-    const auto& perms =
-        dim == 1 ? std::vector<std::vector<long long>>{one} : (dim == 2 ? perms2 : perms3);
+    // Every permutation of the directions: 1, 2 and 6 of them for a curve, a surface, a volume.
+    const std::vector<std::vector<long long>> perms = all_permutations(dim);
+    std::size_t factorial = 1;
+    for (std::size_t k = 2; k <= dim; ++k) {
+      factorial *= k;
+    }
+    CHECK(perms.size() == factorial);
     for (const std::vector<long long>& perm : perms) {
       const bs::Bspline<T> r = bs::permuted<T>(b, perm);
       CHECK(r.rational() == b.rational());
@@ -277,6 +292,64 @@ TEST_CASE_TEMPLATE("transformed: applies x -> A x + b to the projected geometry"
       }
     }
   }
+}
+
+TEST_CASE("transformed: float32 data off the dyadic grid is rounded in float at every step") {
+  // The dyadic test above cannot tell rounding in `T` at every operation from one rounding of an
+  // exact (or double) accumulation: every product and sum there is exact. Here `A` and `b` are
+  // not dyadic (rounded to float, each product of a 24-bit entry and a 7-bit control point needs
+  // 31 bits), and the expected value is computed in float one operation at a time:
+  // `acc = x0 a_i0; acc = acc + x1 a_i1; y_i = acc + b_i` (`+ w b_i` for a rational spline, `w` the
+  // weight). Each statement below is one rounding (no contraction across statements). The library
+  // may contract the sum with its product (the build allows one multiply-add per expression), so
+  // the value of either grouping is accepted; the single rounding of a double accumulation is not,
+  // and the data are checked to tell it apart.
+  const std::vector<double> a = {0.1, -0.7, 0.3, 1.1};
+  const std::vector<double> t = {0.37, -0.9};
+  const float af[4] = {static_cast<float>(a[0]), static_cast<float>(a[1]), static_cast<float>(a[2]),
+                       static_cast<float>(a[3])};
+  const float tf[2] = {static_cast<float>(t[0]), static_cast<float>(t[1])};
+  const std::size_t shape[2] = {2, 2};
+  bool tells_double_apart = false;
+  for (const Config& c : configs()) {
+    CAPTURE(c.name);
+    const bs::Bspline<float> b = make_spline<float>(c.dirs, 2, c.rational, 6U);
+    const bs::Bspline<float> r = bs::transformed<float>(b, a, shape, t);
+    const auto cp = b.control_points();
+    const auto rp = r.control_points();
+    const std::size_t cols = b.cp_size();
+    REQUIRE(rp.size() == cp.size());
+    for (std::size_t row = 0; row < cp.size() / cols; ++row) {
+      const float x0 = cp[row * cols];
+      const float x1 = cp[row * cols + 1];
+      const float w = c.rational ? cp[row * cols + 2] : 1.0F;
+      for (std::size_t i = 0; i < 2; ++i) {
+        const float p0 = x0 * af[i * 2];
+        const float p1 = x1 * af[i * 2 + 1];
+        const float acc = p0 + p1;                                // two roundings, then a third
+        const float acc_fused = std::fma(x1, af[i * 2 + 1], p0);  // the second term contracted
+        const float offset = c.rational ? w * tf[i] : tf[i];
+        std::vector<float> accepted = {acc + offset, acc_fused + offset};
+        if (c.rational) {
+          accepted.push_back(std::fma(w, tf[i], acc));
+          accepted.push_back(std::fma(w, tf[i], acc_fused));
+        }
+        const float got = rp[row * cols + i];
+        CHECK(std::find(accepted.begin(), accepted.end(), got) != accepted.end());
+        // One rounding of the exact-enough double value: differs from every float grouping at
+        // some entry, or this test could not tell the two apart.
+        const double wide = static_cast<double>(x0) * static_cast<double>(af[i * 2]) +
+                            static_cast<double>(x1) * static_cast<double>(af[i * 2 + 1]) +
+                            (c.rational ? static_cast<double>(w) * static_cast<double>(tf[i])
+                                        : static_cast<double>(tf[i]));
+        const auto once = static_cast<float>(wide);
+        if (std::find(accepted.begin(), accepted.end(), once) == accepted.end()) {
+          tells_double_apart = true;
+        }
+      }
+    }
+  }
+  CHECK(tells_double_apart);
 }
 
 TEST_CASE_TEMPLATE("transformed: the identity map keeps the control points", T, double, float) {
