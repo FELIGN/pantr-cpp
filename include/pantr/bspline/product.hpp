@@ -535,7 +535,9 @@ template <StorageFloat T>
     shape_h[d] = off_h[d].back() + static_cast<std::size_t>(deg_h[d]) + 1;
     n_elem[d] = meshes[d].breakpoints.size() + 1;
   }
-  NdArray<T> ctrl_h(shape_h, for_overwrite);
+  // Zero-initialized: a breakpoint class above `deg_h + 1` (knots of one direction grouped at a
+  // larger tolerance of another) puts a gap between two elements that no element writes.
+  NdArray<T> ctrl_h(shape_h);
   std::vector<std::size_t> pf(dim + 1, cp);
   std::vector<std::size_t> pg(dim + 1, cp);
   std::vector<std::size_t> cnt_f(dim);
