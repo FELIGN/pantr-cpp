@@ -107,15 +107,20 @@ struct Rotation {
 /// every column reaches a nonzero pivot, and `L = 1 / ||R^-1||_F > tau ||A||_F = tau U` for the
 /// computed factor `R`, with `tau = max(sqrt(eps), 4 (m n eps + rcond))`. The argument, made
 /// here and not proved formally: `L <= s_min(R)` and `U >= s_max(A)`. The computed `R` is the
-/// exact factor of `A + E` with `||E||_F <= gamma U`, `gamma = m n eps` taken generously, so
+/// exact factor of `A + E` with `||E||_F <= gamma U`, `gamma` below `4.3 (m + n - 2) eps`
+/// (Higham, Accuracy and Stability of Numerical Algorithms, 2nd ed., Theorem 19.10 and
+/// eq. 19.25), so
 /// `s_min(A) >= s_min(R) - gamma U`. Each column of the computed inverse is backward stable, so
 /// `L` is off from `1 / ||R^-1||_F` by a relative `n eps kappa_F(R) < n eps / tau <= 1 / (4 m)`,
 /// at most a half. Then `s_min(A) >= U (tau / 2 - gamma) > rcond U >= rcond s_max(A)` with
 /// `rcond = lstsq_rcond(m, n)`, the cutoff below which `lstsq_min_norm` drops a singular value: the
 /// SVD would keep all of them, its minimum-norm solution is the unique least-squares solution
 /// the QR computes, and the two differ by rounding, not by rank. The steps bound exact singular
-/// values; the SVD thresholds computed ones, which the margin above the cutoff also covers. The
-/// floor `sqrt(eps)` is a heuristic margin over the constants the generous `gamma` stands for.
+/// values; the SVD thresholds computed ones, which the margin above the cutoff also covers. For
+/// `n >= 2`, `tau / 2 - gamma - rcond > 0` follows from the `4 (m n eps + rcond)` term; the floor
+/// `sqrt(eps)` carries a single column up to about `6.4e6` rows, beyond which the argument does not
+/// close (no product reaches such a system). The SVD's own error constant is not quantified by
+/// LAPACK; the margin is observed, not proved, to cover it.
 ///
 /// No answer is given for a non-finite `A` or `B` (the SVD path spreads a NaN or an infinity in
 /// its own way), for fewer rows than columns, or where the test fails. Everything is computed in
