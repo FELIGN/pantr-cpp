@@ -77,7 +77,6 @@
 #include <Eigen/SVD>
 
 #include <algorithm>
-#include <atomic>
 #include <bit>
 #include <cmath>
 #include <cstddef>
@@ -284,10 +283,15 @@ class MapEvaluator {
 
   /// Evaluate the Jacobian `dF / dxi` into `jac` (`rank x dim`, row-major).
   ///
-  /// Returns:
-  ///     bool: False when a direction's derivative recurrence met a zero divisor (a knot repeated
-  ///     more than `degree + 1` times in the point's support); `jac` is then incomplete.
-  [[nodiscard]] bool jacobian(const double* xi, double* jac) {
+  /// The first-derivative rows of the basis recurrence divide by the knot spans of the degree
+  /// `p - 1` functions non-zero on the point's span. Each of those contains that span, which is
+  /// never empty (the clamped span of an in-domain point: an empty in-domain span is skipped by
+  /// the search, and a space whose last knot repeats more than `degree + 1` times is refused), so
+  /// no divisor is zero and the recurrence's failure status cannot be returned here.
+  ///
+  /// Raises:
+  ///     state_error: The recurrence reported a zero divisor, which the argument above excludes.
+  void jacobian(const double* xi, double* jac) {
     const auto& spaces = b_->rep()->space.spaces();
     for (std::size_t d = 0; d < L_.dim; ++d) {
       const bool complete = spaces[d].template tabulate_basis_derivatives<double>(
@@ -295,7 +299,9 @@ class MapEvaluator {
           mdview<double, 3>(derivs_[d].data(), 1, 2, L_.order[d]),
           std::span<std::int64_t>(&first_[d], 1), false);
       if (!complete) {
-        return false;
+        throw state_error(
+            "locate: the basis derivative recurrence met a zero divisor on a "
+            "non-empty knot span, which should be impossible");
       }
     }
     const std::size_t dim = L_.dim;
@@ -322,7 +328,6 @@ class MapEvaluator {
         jac[c * dim + k] = v;
       }
     }
-    return true;
   }
 
  private:
@@ -358,7 +363,6 @@ class MapEvaluator {
 ///     lu (Eigen::PartialPivLU<Eigen::MatrixXd>): The Newton solve, partial pivoting as LAPACK's
 ///         `gesv` (what `numpy.linalg.solve` calls).
 ///     rhs, delta (Eigen::VectorXd): The residual and the Newton step.
-///     zero_divisor (bool): Set when a Jacobian met a zero divisor.
 struct Workspace {
   MapEvaluator ev;
   std::vector<double> lo;
@@ -374,7 +378,6 @@ struct Workspace {
   Eigen::PartialPivLU<Eigen::MatrixXd> lu;
   Eigen::VectorXd rhs;
   Eigen::VectorXd delta;
-  bool zero_divisor = false;
 
   Workspace(const Bspline<double>& b, std::span<const double> dom_lo,
             std::span<const double> dom_hi)
@@ -478,8 +481,7 @@ struct Workspace {
 ///         are not steps.
 ///
 /// Returns:
-///     bool: `||F(xi) - x|| <= th.accept` at exit. A Jacobian that met a zero divisor sets
-///     `ws.zero_divisor` and ends the solve.
+///     bool: `||F(xi) - x|| <= th.accept` at exit.
 ///
 /// Note:
 ///     Inputs are assumed to be correct (no validation performed).
@@ -501,10 +503,7 @@ struct Workspace {
   bool active = rn > th.stop;
   const double guard = static_cast<double>(dim) * jacobian_rank_rel_tol;
   for (std::int64_t it = 0; it < max_iter && active; ++it) {
-    if (!ws.ev.jacobian(xi, ws.jac_rows.data())) {
-      ws.zero_divisor = true;
-      return false;
-    }
+    ws.ev.jacobian(xi, ws.jac_rows.data());
     for (std::size_t c = 0; c < rank; ++c) {
       for (std::size_t k = 0; k < dim; ++k) {
         ws.jac(static_cast<Eigen::Index>(c), static_cast<Eigen::Index>(k)) =
@@ -513,6 +512,12 @@ struct Workspace {
       ws.rhs(static_cast<Eigen::Index>(c)) = r[c];
     }
     ws.svd.compute(ws.jac);
+    // A non-finite entry (an overflowed Jacobian, reachable with coordinates near 1e154 and an
+    // explicit tolerance) leaves the singular values unset: abandon the candidate, as a
+    // rank-deficient one is.
+    if (ws.svd.info() != Eigen::Success) {
+      break;
+    }
     const auto& sv = ws.svd.singularValues();
     const double smax = sv(0);
     const double smin = sv(sv.size() - 1);
@@ -850,13 +855,9 @@ struct BoxLengths {
 ///     cell_ids (NdArray<std::int64_t>): `(n,)`: the flat knot-span cell id (C order over the
 ///         intervals per direction) of each point, `-1` where it was not found.
 ///     ref_coords (NdArray<double>): `(n, dim)`: parametric coordinates, NaN where not found.
-///     complete (bool): False when a Jacobian met a zero divisor (a knot repeated more than
-///         `degree + 1` times in a point's support); the arrays are then incomplete. Python raises
-///         `ZeroDivisionError` there.
 struct [[nodiscard]] LocateResult {
   NdArray<std::int64_t> cell_ids;
   NdArray<double> ref_coords;
-  bool complete;
 };
 
 namespace detail {
@@ -1085,12 +1086,17 @@ class LocateContext {
 
 /// Get the work of locating one point, which sizes `locate`'s chunks.
 ///
-/// One item is one point. The cheapest point that is found costs a tree descent, one map
-/// evaluation at the first candidate's midpoint and one Newton step (a Jacobian, about `dim + 1`
-/// evaluations' worth of tabulation and contraction, plus one trial evaluation): about `dim + 3`
-/// value evaluations, each `value_ops_per_point`. Points off the image or on folded maps cost many
-/// times more, and the pool's chunks are claimed dynamically, so an underestimate costs only
-/// smaller chunks. An estimate of the algorithm's work, not a timing.
+/// One item is one point. A lower bound, the cheapest point that is found: a tree descent, one map
+/// evaluation at the first candidate's midpoint and one Newton step, which is a Jacobian (about
+/// `dim + 1` evaluations' worth of tabulation and contraction), its singular values and solve
+/// (a few Jacobi sweeps and an LU of a `dim x dim` matrix, counted as `10 dim^3`, an admitted
+/// order of magnitude) and one trial evaluation: about `dim + 3` value evaluations, each
+/// `value_ops_per_point`. Points off the image or on folded maps cost many times more (every
+/// candidate, both starts, the halvings), so this underestimates: chunks come out larger than
+/// `chunk_ops` intends and a batch runs serially up to a larger size than it would at its true
+/// cost. Both err toward less pool overhead on small batches, and the chunks are claimed
+/// dynamically, so the imbalance of large chunks is bounded by one chunk per thread. An estimate
+/// of the algorithm's work, not a timing.
 ///
 /// Args:
 ///     ctx (const LocateContext&): The context.
@@ -1103,7 +1109,9 @@ class LocateContext {
   const double descent = 2.0 * static_cast<double>(b.rank()) *
                          static_cast<double>(std::bit_width(static_cast<std::uint64_t>(
                              (std::max)(ctx.bvh().n_nodes(), std::int64_t{1}))));
-  return pantr::parallel::WorkEstimate{evals * detail::value_ops_per_point(b) + descent};
+  const double d = static_cast<double>(b.dim());
+  const double linalg = 10.0 * d * d * d;
+  return pantr::parallel::WorkEstimate{evals * detail::value_ops_per_point(b) + linalg + descent};
 }
 
 /// Invert the mapping at `n` physical points.
@@ -1162,12 +1170,11 @@ class LocateContext {
     }
     throw value_error("pad(r) entries must be finite; got " + list + "].");
   }
-  LocateResult res{NdArray<std::int64_t>({n}, for_overwrite), NdArray<double>({n, dim}), true};
+  LocateResult res{NdArray<std::int64_t>({n}, for_overwrite), NdArray<double>({n, dim})};
   std::int64_t* const ids = res.cell_ids.data();
   double* const ref = res.ref_coords.data();
   std::fill(ids, ids + n, std::int64_t{-1});
   std::fill(ref, ref + n * dim, std::numeric_limits<double>::quiet_NaN());
-  std::atomic<bool> zero_divisor{false};
   const double* const src = points.data();
   pantr::parallel::parallel_for(n, locate_work(ctx), [&](std::size_t begin, std::size_t end) {
     lk::Workspace ws(b, ctx.domain_lo(), ctx.domain_hi());
@@ -1190,13 +1197,9 @@ class LocateContext {
           xi[k] = 0.5 * (cell_lo[k] + cell_hi[k]);
         }
         bool found = lk::newton_refine(ws, x, xi.data(), th, max_iter);
-        if (!found && !ws.zero_divisor) {
+        if (!found) {
           lk::nearest_corner_start(ws, x, cell_lo.data(), cell_hi.data(), xi.data());
           found = lk::newton_refine(ws, x, xi.data(), th, max_iter);
-        }
-        if (ws.zero_divisor) {
-          zero_divisor.store(true, std::memory_order_relaxed);
-          return;
         }
         if (found) {
           std::copy(xi.begin(), xi.end(), ref + p * dim);
@@ -1206,7 +1209,6 @@ class LocateContext {
       }
     }
   });
-  res.complete = !zero_divisor.load(std::memory_order_relaxed);
   return res;
 }
 

@@ -2033,8 +2033,8 @@ class TestThreadCount:
         np.testing.assert_array_equal(ref_n, ref_1)  # NaN positions equal too
         n = params.shape[0]
         # This degree-1 patch folds, and a few queries on its image are lost to the C0 knot lines
-        # (see `armijo_decrease` in include/pantr/bspline/locate.hpp; the previous release lost
-        # the same 8 of these 4000), so the found ones are what is checked.
+        # (see `armijo_decrease` in include/pantr/bspline/locate.hpp; the previous release loses
+        # the same ones), so the found ones are what is checked.
         found = ids_1[:n] >= 0
         assert found.sum() >= 0.99 * n
         assert np.all(ids_1[n:] == -1)

@@ -31,8 +31,9 @@ _cpp: Any = ext.bspline
 _MAX_ITER_CAP: int = 2**63 - 1
 """The largest iteration budget the compiled loop counts to (an int64).
 
-A larger budget is the same request: no solve takes ``2**63`` steps, since every accepted step
-strictly reduces the residual and a solve that stops reducing it is abandoned.
+A larger budget is clamped to it. Every accepted step strictly reduces the residual (outside the
+subnormal range, see ``newton_refine`` in ``include/pantr/bspline/locate.hpp``) and a solve that
+stops reducing it is abandoned, so no solve on ordinary data comes near this many steps.
 """
 
 
@@ -85,7 +86,6 @@ def _locate_impl(
             ``max_iter < 1``, ``tol`` is not positive and finite, ``points`` has the wrong shape
             or a non-finite entry, or ``tol`` is ``None`` and the parametrization can carry no
             default threshold.
-        ZeroDivisionError: If a Jacobian's basis derivative recurrence divides by zero.
     """
     context = _locate_context(spline)
     if max_iter < 1:

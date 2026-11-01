@@ -37,13 +37,6 @@ using Points = nb::ndarray<const double, nb::ndim<2>, nb::c_contig, nb::device::
 using Ids = nb::ndarray<const std::int64_t, nb::ndim<1>, nb::c_contig, nb::device::cpu>;
 using Vec = nb::ndarray<const double, nb::ndim<1>, nb::c_contig, nb::device::cpu>;
 
-/// Raise the `ZeroDivisionError` Python's float division raised where a Jacobian's basis
-/// derivative recurrence met a zero divisor.
-[[noreturn]] void raise_zero_division() {
-  PyErr_SetString(PyExc_ZeroDivisionError, "division by zero");
-  throw nb::python_error();
-}
-
 /// A `(rows, cols)` NumPy array copied from a row-major vector.
 NumpyArray<double> matrix_to_numpy(const std::vector<double>& v, std::size_t rows,
                                    std::size_t cols) {
@@ -99,9 +92,6 @@ void register_bspline_locate(nb::module_& m) {
           return bs::locate(ctx, std::span<const double>(points.data(), points.size()), n, tol,
                             max_iter);
         }();
-        if (!r.complete) {
-          raise_zero_division();
-        }
         return std::make_pair(to_numpy(std::move(r.cell_ids)), to_numpy(std::move(r.ref_coords)));
       },
       nb::arg("ctx"), nb::arg("points"), nb::arg("tol").none(), nb::arg("max_iter"),
@@ -150,9 +140,6 @@ void register_bspline_locate_testing(nb::module_& m) {
           std::copy(starts.data() + i * dim, starts.data() + (i + 1) * dim, row);
           converged.data()[i] = lk::newton_refine(ws, targets.data() + i * ctx.spline().rank(), row,
                                                   {stop, accept}, max_iter);
-          if (ws.zero_divisor) {
-            raise_zero_division();
-          }
         }
         return std::make_pair(to_numpy(std::move(converged)), to_numpy(std::move(xi)));
       },

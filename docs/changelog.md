@@ -900,13 +900,15 @@
   number of threads. Compared with the previous release over dimensions 1 to 3, degrees 1 to 5,
   rational and `float32` B-splines, repeated knots, physical and parametric offsets, explicit
   `tol`, `max_iter=1` and points off the image: the same points are found, and the exceptions,
-  messages, dtypes and read-only flags are the same. The reference coordinates differ in the
-  last bits, by less than the threshold each is graded against, because the Jacobian's
-  singular values and solve, and the evaluations, are computed by other code. So a point within that distance of an interior knot line can be
-  reported in the other cell of that line; the tie rule applies to the coordinates returned.
-  When a B-spline has a non-finite control point and the points are invalid too, the error about
-  the control points is now the one raised (the previous release raised the one about the
-  points).
+  messages, dtypes and read-only flags are the same. The reference coordinates differ, by less
+  than the threshold each is graded against, because the Jacobian's singular values and solve,
+  and the evaluations, are computed by other code. So a point within that distance of an
+  interior knot line can be reported in the other cell of that line; the tie rule applies to the
+  coordinates returned. An explicit `tol` below what the coordinates can resolve (one unit in the
+  last place of the physical coordinates, or less) leaves whether a point is found to rounding,
+  in this release as in the previous one, so the two can differ there. When a B-spline has a
+  non-finite control point, the error about it is now raised before the errors about
+  `max_iter`, `tol` and `points` (the previous release checked those first).
 
 ### Fixed
 - **`Bspline.multiply` no longer returns values that depend on memory it never wrote.** The

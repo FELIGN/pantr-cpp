@@ -168,6 +168,10 @@ struct type_caster<pantr::bindings::Int64Numpy<T>> {
     }
     // Interned once and kept for the process, as the dtype is.
     static PyObject* const view_name = PyUnicode_InternFromString("view");
+    if (view_name == nullptr) {
+      exported.dec_ref();
+      return {};
+    }
     // `args[0]` is the receiver. Without PY_VECTORCALL_ARGUMENTS_OFFSET, since no slot precedes
     // `args` for the callee to borrow.
     PyObject* args[2] = {exported.ptr(), dtype};
@@ -181,8 +185,9 @@ struct type_caster<pantr::bindings::Int64Numpy<T>> {
   /// a release at exit could run after the interpreter it belongs to). Null, with the Python error
   /// set, when it cannot be created.
   static PyObject* int64_dtype() noexcept {
-    // Built under the GIL, which every caller holds; a failed attempt leaves it null with the
-    // error set, and the next call tries again.
+    // Built under the GIL, which every caller holds; the import may release it, so two threads
+    // can both build it and one reference is then leaked, which is harmless. A failed attempt
+    // leaves it null with the error set, and the next call tries again.
     static PyObject* dtype = nullptr;
     if (dtype == nullptr) {
       PyObject* np = PyImport_ImportModule("numpy");

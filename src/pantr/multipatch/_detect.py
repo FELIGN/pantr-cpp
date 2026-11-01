@@ -115,7 +115,8 @@ def _joint_tolerances(patch_a: Bspline, patch_b: Bspline, tol: float | None) -> 
     # diagonal there asks for agreement eight orders below the noise floor. The largest
     # coordinate magnitude is therefore taken alongside it and the larger wins -- the
     # same rule, for the same reason, as `knot_scale` in the B-spline layer and as the
-    # physical half of `_geometric_scale` in point inversion. That one carries a third
+    # physical half of `geometric_scale` in point inversion
+    # (`include/pantr/bspline/locate.hpp`). That one carries a third
     # length for what its parametrization resolves, which has no counterpart here: this
     # grades a distance between two physical corner coordinates.
     magnitude = float(np.abs(coords).max()) if coords.size else 0.0
