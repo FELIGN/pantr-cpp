@@ -53,7 +53,7 @@ per-cell tag footprint. Deciding *what* to tag is the consumer's job.
 from __future__ import annotations
 
 import abc
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple, Self
 
 import numpy as np
 
@@ -196,6 +196,14 @@ class Grid(abc.ABC):
             IndexError: If ``cid`` or ``lfid`` is out of range.
         """
 
+    if TYPE_CHECKING:
+        # Declared for the type checker only: each concrete grid defines it (the only classes
+        # that may derive from Grid), and an abstract method would change what ``Grid()``
+        # reports as missing.
+        @classmethod
+        def _from_handle(cls, h: Any) -> Self:  # noqa: ANN401
+            """Wrap a compiled grid of this kind without copying it (private)."""
+
     # ------------------------------------------------------------------
     # Cell accessors (defaults built on the contract)
     # ------------------------------------------------------------------
@@ -302,7 +310,8 @@ class Grid(abc.ABC):
 
         The sub-grid is the smallest grid of the same kind that contains every
         requested cell -- for a tensor-product grid, the multi-index bounding box
-        of ``cell_ids``. Its breakpoints are *pure slices* of this grid's (never
+        of ``cell_ids``; for a hierarchical grid, the bounding box in root-cell
+        coordinates. Its breakpoints are *pure slices* of this grid's (never
         re-clamped or re-based), so a B-spline or field built on the sub-grid
         agrees pointwise with the global one over the shared cells.
 
@@ -310,10 +319,6 @@ class Grid(abc.ABC):
         ``cell_ids`` is non-convex); :attr:`GridRestriction.in_subset` flags, per
         local cell, whether it was requested (``True``) or is bounding-box fill
         (``False``).
-
-        Restriction is an *optional* grid capability: this base implementation
-        raises :class:`NotImplementedError`. Grids with structured windowing (for
-        example :class:`pantr.grid.TensorProductGrid`) override it.
 
         Args:
             cell_ids (npt.ArrayLike): Flat cell identifiers to span; duplicates
@@ -324,14 +329,12 @@ class Grid(abc.ABC):
             map, and the ``in_subset`` mask.
 
         Raises:
-            NotImplementedError: If this grid kind does not support restriction.
-            ValueError: If ``cell_ids`` is empty (in overriding implementations).
-            IndexError: If any cell id is out of range (in overriding
-                implementations).
-            TypeError: If ``cell_ids`` is not integer-valued (in overriding
-                implementations).
+            ValueError: If ``cell_ids`` is empty.
+            IndexError: If any cell id is out of range.
+            TypeError: If ``cell_ids`` is not integer-valued.
         """
-        raise NotImplementedError(f"{type(self).__name__} does not support restrict().")
+        handle, local_to_global, in_subset = self._restrict_handle(cell_ids)
+        return GridRestriction(type(self)._from_handle(handle), local_to_global, in_subset)
 
     # ------------------------------------------------------------------
     # Facet accessors (axis-aligned box defaults)
@@ -679,34 +682,6 @@ class Grid(abc.ABC):
         local_to_global.flags.writeable = False
         in_subset.flags.writeable = False
         return handle, local_to_global, in_subset
-
-    def _check_cid(self, cid: int) -> None:
-        """Raise :class:`IndexError` if ``cid`` is out of range.
-
-        Args:
-            cid (int): Candidate cell identifier.
-
-        Raises:
-            IndexError: If ``cid`` is negative or ``>= num_cells``.
-        """
-        if not 0 <= int(cid) < self.num_cells:
-            raise IndexError(f"cell id {cid!r} is out of range [0, {self.num_cells}).")
-
-    def _check_lfid(self, cid: int, lfid: int) -> None:
-        """Raise :class:`IndexError` if ``lfid`` is not a valid facet of ``cid``.
-
-        Args:
-            cid (int): Cell identifier (validated first).
-            lfid (int): Candidate local facet identifier.
-
-        Raises:
-            IndexError: If ``cid`` is out of range or ``lfid`` is not in
-                ``[0, num_local_facets(cid))``.
-        """
-        self._check_cid(cid)
-        n_facets = self.num_local_facets(cid)
-        if not 0 <= int(lfid) < n_facets:
-            raise IndexError(f"local facet id {lfid!r} is out of range [0, {n_facets}).")
 
     def _normalize_points(self, points: npt.ArrayLike) -> npt.NDArray[np.float64]:
         """Coerce ``points`` to a C-contiguous ``(npts, ndim)`` ``float64`` array.

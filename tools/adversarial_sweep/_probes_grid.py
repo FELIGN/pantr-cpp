@@ -58,9 +58,9 @@ _UNIFORM_SPACING_ATOL = 1e-10
 absolute tolerance ``is_uniform`` compares spacing differences against. Needed here only to
 derive a perturbation guaranteed to sit well above it; not a probe tolerance itself."""
 
-# Deepest level probed for HierarchicalGrid refinement. `factor ** level` overflowing
-# int64 in `_hier_collect_cell_bounds_core` (`_hier_core.py:328-334`) is already logged
-# for level ~63+; capping here at 20 keeps this sweep from re-reporting that known issue.
+# Deepest level probed for HierarchicalGrid refinement. The grid refuses a level whose
+# per-axis cell count (`cells * factor ** level`) does not fit int64 with an OverflowError;
+# capping here at 20 keeps this sweep on levels the grid accepts.
 _MAX_PROBED_LEVEL = 20
 
 

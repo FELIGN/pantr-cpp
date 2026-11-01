@@ -360,8 +360,7 @@ class TensorProductGrid(Grid):
             IndexError: If any cell id is out of range ``[0, num_cells)``.
             TypeError: If ``cell_ids`` is not integer-valued.
         """
-        handle, local_to_global, in_subset = self._restrict_handle(cell_ids)
-        return GridRestriction(TensorProductGrid._from_handle(handle), local_to_global, in_subset)
+        return super().restrict(cell_ids)
 
     def __repr__(self) -> str:
         """Return a compact representation useful for debugging.
