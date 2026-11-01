@@ -118,6 +118,31 @@ class TestBlockHelpers:
         _mark_region_cells(mask, (0,), (3,), ((5,), (8,)))
         assert not mask.any()
 
+    @pytest.mark.parametrize(
+        ("mask", "error"),
+        [
+            (np.zeros((4,), dtype=np.int64), TypeError),  # converted to a bool copy
+            (np.zeros((4,), dtype=np.uint8), TypeError),
+            ([False] * 4, TypeError),  # not an array
+            (np.zeros((8,), dtype=np.bool_)[::2], ValueError),  # strided
+            (np.zeros((4,), dtype=np.bool_)[::-1], ValueError),
+        ],
+        ids=["int64", "uint8", "list", "strided", "negative-stride"],
+    )
+    def test_mark_region_cells_refuses_a_mask_it_would_copy(
+        self, mask: object, error: type[Exception]
+    ) -> None:
+        """A mask the helper cannot mark in place is refused, not marked in a hidden copy."""
+        with pytest.raises(error):
+            _mark_region_cells(mask, (0,), (4,), ((0,), (4,)))  # type: ignore[arg-type]
+
+    def test_mark_region_cells_refuses_a_read_only_mask(self) -> None:
+        mask = np.zeros((4,), dtype=np.bool_)
+        mask.flags.writeable = False
+        with pytest.raises(ValueError, match="writeable"):
+            _mark_region_cells(mask, (0,), (4,), ((0,), (4,)))
+        assert not mask.any()
+
     def test_name_marked_cells_offsets_by_the_origin(self) -> None:
         mask = np.zeros((4,), dtype=np.bool_)
         mask[[1, 3]] = True
