@@ -65,6 +65,8 @@
 #include "bspline_test_support.hpp"
 
 #include <Eigen/Core>
+#include <Eigen/LU>
+#include <Eigen/QR>
 
 #include <pantr/bspline/bspline.hpp>
 #include <pantr/bspline/fit.hpp>
@@ -2375,22 +2377,16 @@ TEST_CASE("l2_project: a callable returning the wrong number of values or compon
           space, [](const Lattice& l) { return NdArray<double>({l.num_points() - 1}); })),
       lattice_message, pantr::value_error);
   CHECK_THROWS_WITH_AS(
-      static_cast<void>(bs::l2_project<double>(space,
-                                               [](const Lattice& l) {
-                                                 return NdArray<double>({l.num_points() + 1, 1});
-                                               })),
+      static_cast<void>(bs::l2_project<double>(
+          space, [](const Lattice& l) { return NdArray<double>({l.num_points() + 1, 1}); })),
       lattice_message, pantr::value_error);
   CHECK_THROWS_WITH_AS(
-      static_cast<void>(bs::l2_project<double>(space,
-                                               [](const Lattice& l) {
-                                                 return NdArray<double>({l.num_points(), 0});
-                                               })),
+      static_cast<void>(bs::l2_project<double>(
+          space, [](const Lattice& l) { return NdArray<double>({l.num_points(), 0}); })),
       lattice_message, pantr::value_error);
   CHECK_THROWS_WITH_AS(
-      static_cast<void>(bs::l2_project<double>(space,
-                                               [](const Lattice& l) {
-                                                 return NdArray<double>({l.num_points(), 1, 1});
-                                               })),
+      static_cast<void>(bs::l2_project<double>(
+          space, [](const Lattice& l) { return NdArray<double>({l.num_points(), 1, 1}); })),
       lattice_message, pantr::value_error);
   // A trace that answers with another number of components than the lattice did.
   CHECK_THROWS_WITH_AS(static_cast<void>(bs::l2_project<double>(
@@ -2732,28 +2728,18 @@ TEST_CASE("QuasiInterpolation and quasi_interpolate: values of another extent ar
                            space, [](Points p) { return NdArray<double>({p.extent(0) - 1}); })),
                        message, pantr::value_error);
   CHECK_THROWS_WITH_AS(static_cast<void>(bs::quasi_interpolate<double>(
-                           space,
-                           [](Points p) {
-                             return NdArray<double>({p.extent(0) + 1, 2});
-                           })),
+                           space, [](Points p) { return NdArray<double>({p.extent(0) + 1, 2}); })),
                        message, pantr::value_error);
-  CHECK_THROWS_WITH_AS(
-      static_cast<void>(bs::quasi_interpolate<double>(space,
-                                                      [](Points p) {
-                                                        return NdArray<double>({p.extent(0), 1, 1});
-                                                      })),
-      message, pantr::value_error);
+  CHECK_THROWS_WITH_AS(static_cast<void>(bs::quasi_interpolate<double>(
+                           space, [](Points p) { return NdArray<double>({p.extent(0), 1, 1}); })),
+                       message, pantr::value_error);
   // No component at all is refused by the B-spline itself.
-  CHECK_THROWS_AS(
-      static_cast<void>(bs::quasi_interpolate<double>(space,
-                                                      [](Points p) {
-                                                        return NdArray<double>({p.extent(0), 0});
-                                                      })),
-      pantr::value_error);
+  CHECK_THROWS_AS(static_cast<void>(bs::quasi_interpolate<double>(
+                      space, [](Points p) { return NdArray<double>({p.extent(0), 0}); })),
+                  pantr::value_error);
   // A vector-valued function takes (M, rank): rank 3 here.
-  const bs::Bspline<double> vec = bs::quasi_interpolate<double>(space, [](Points p) {
-    return NdArray<double>({p.extent(0), 3});
-  });
+  const bs::Bspline<double> vec = bs::quasi_interpolate<double>(
+      space, [](Points p) { return NdArray<double>({p.extent(0), 3}); });
   CHECK(vec.rank() == 3);
 }
 
@@ -2892,22 +2878,16 @@ TEST_CASE("interpolate: a callable returning the wrong number of values is refus
           space, [](const Lattice& l) { return NdArray<double>({l.num_points() - 1}); })),
       message, pantr::value_error);
   CHECK_THROWS_WITH_AS(
-      static_cast<void>(bs::interpolate<double>(space,
-                                                [](const Lattice& l) {
-                                                  return NdArray<double>({l.num_points() + 1, 1});
-                                                })),
+      static_cast<void>(bs::interpolate<double>(
+          space, [](const Lattice& l) { return NdArray<double>({l.num_points() + 1, 1}); })),
       message, pantr::value_error);
   CHECK_THROWS_WITH_AS(
-      static_cast<void>(bs::interpolate<double>(space,
-                                                [](const Lattice& l) {
-                                                  return NdArray<double>({l.num_points(), 0});
-                                                })),
+      static_cast<void>(bs::interpolate<double>(
+          space, [](const Lattice& l) { return NdArray<double>({l.num_points(), 0}); })),
       message, pantr::value_error);
   CHECK_THROWS_WITH_AS(
-      static_cast<void>(bs::interpolate<double>(space,
-                                                [](const Lattice& l) {
-                                                  return NdArray<double>({l.num_points(), 1, 1});
-                                                })),
+      static_cast<void>(bs::interpolate<double>(
+          space, [](const Lattice& l) { return NdArray<double>({l.num_points(), 1, 1}); })),
       message, pantr::value_error);
   // The node arrays are checked before the callable is reached.
   int calls = 0;
@@ -3134,4 +3114,118 @@ TEST_CASE_TEMPLATE("L2Projection: the mass matrices of one type project values o
   }
   INFO("worst error " << worst << ", bound " << bound);
   CHECK(worst <= bound);
+}
+
+// The square path's banded LU (with its periodic border). Oracle: the backward error of LU with
+// partial pivoting (Higham, Accuracy and Stability of Numerical Algorithms, 2nd ed., section 9.3):
+// the normwise relative residual `||A x - b|| / (||A|| ||x|| + ||b||)` of a stable solve is a
+// modest multiple of the unit roundoff (the growth factor, small for these banded matrices, times
+// `n`); 1e3 u bounds it for order 120 with a wide margin. Plus agreement with Eigen's dense
+// PartialPivLU, relative to the solution's size and the matrix's condition number.
+namespace {
+
+la::RowMatrix<double> band_matrix(Eigen::Index n, Eigen::Index kl, Eigen::Index ku,
+                                  Eigen::Index wrap, unsigned seed) {
+  la::RowMatrix<double> a = la::RowMatrix<double>::Zero(n, n);
+  unsigned state = seed;
+  const auto next = [&state]() {
+    state = state * 1103515245U + 12345U;
+    // In (-0.5, 0.5), never zero, so that no entry of the band vanishes by chance.
+    return (static_cast<double>((state >> 8) % 1000U) + 0.5) / 1000.0 - 0.5;
+  };
+  for (Eigen::Index i = 0; i < n; ++i) {
+    for (Eigen::Index j = (std::max)(Eigen::Index{0}, i - kl); j <= (std::min)(n - 1, i + ku);
+         ++j) {
+      a(i, j) = next();
+    }
+    // With a band on both sides, a small diagonal makes partial pivoting swap rows whenever the
+    // band below holds more; a one-sided band with a small diagonal would be exponentially
+    // ill-conditioned (and swaps nothing useful), so it gets a dominant one.
+    a(i, i) = kl > 0 && ku > 0 ? 0.05 * next() : 1.0 + std::abs(next());
+  }
+  for (Eigen::Index i = n - wrap; i < n; ++i) {
+    for (Eigen::Index t = 0; t < wrap; ++t) {
+      a(i, t) = next();  // the periodic wrap: the last rows reach the first columns
+    }
+  }
+  return a;
+}
+
+double dense_difference(const la::RowMatrix<double>& a, const la::RowMatrix<double>& b,
+                        const NdArray<double>& x) {
+  // Relative to the reference's size, in units of its condition number times the unit roundoff.
+  const Eigen::PartialPivLU<Eigen::MatrixXd> lu(a);
+  const Eigen::MatrixXd ref = lu.solve(Eigen::MatrixXd(b));
+  const Eigen::Map<const la::RowMatrix<double>> got(x.data(), ref.rows(), ref.cols());
+  const double cond = lu.rcond() > 0.0 ? 1.0 / lu.rcond() : 1e300;
+  const double u = std::numeric_limits<double>::epsilon() / 2.0;
+  return (ref - Eigen::MatrixXd(got)).lpNorm<Eigen::Infinity>() /
+         (ref.lpNorm<Eigen::Infinity>() * cond * u);
+}
+
+double backward_error(const la::RowMatrix<double>& a, const la::RowMatrix<double>& b,
+                      const NdArray<double>& x) {
+  const Eigen::Map<const la::RowMatrix<double>> got(x.data(), a.cols(), b.cols());
+  const double u = std::numeric_limits<double>::epsilon() / 2.0;
+  const double num = (a * got - b).lpNorm<Eigen::Infinity>();
+  const double den =
+      a.lpNorm<Eigen::Infinity>() * got.lpNorm<Eigen::Infinity>() + b.lpNorm<Eigen::Infinity>();
+  return num / den / u;
+}
+
+}  // namespace
+
+TEST_CASE("solve_collocation: the banded LU matches the dense LU over its band shapes") {
+  constexpr Eigen::Index n = 120;  // wide enough that every shape below takes the band
+  for (Eigen::Index kl = 0; kl <= 3; ++kl) {
+    for (Eigen::Index ku = 0; ku <= 3; ++ku) {
+      for (Eigen::Index wrap : {Eigen::Index{0}, Eigen::Index{3}}) {
+        CAPTURE(kl);
+        CAPTURE(ku);
+        CAPTURE(wrap);
+        const la::RowMatrix<double> a =
+            band_matrix(n, kl, ku, wrap, static_cast<unsigned>(17 * kl + 5 * ku + wrap + 1));
+        la::RowMatrix<double> b(n, 2);
+        for (Eigen::Index i = 0; i < n; ++i) {
+          b(i, 0) = 1.0;
+          b(i, 1) = static_cast<double>(i % 7) - 3.0;
+        }
+        const bs::detail::Bandwidths bw =
+            bs::detail::bandwidths<double>(a, bs::detail::wrap_border<double>(a));
+        CHECK(bs::detail::band_pays(bw, n));
+        const std::optional<NdArray<double>> banded = bs::detail::banded_lu_solve<double>(a, b, bw);
+        REQUIRE(banded.has_value());
+        CHECK(backward_error(a, b, *banded) < 1e3);
+        // A bidiagonal band with a small diagonal is exponentially ill-conditioned; there the
+        // forward comparison means nothing and only the backward error is checked.
+        if (Eigen::PartialPivLU<Eigen::MatrixXd>(a).rcond() > 1e-10) {
+          CHECK(dense_difference(a, b, *banded) < 1e3);
+        }
+        const NdArray<double> via = bs::solve_collocation<double>(a, b, 1e-14);
+        CHECK(backward_error(a, b, via) < 1e3);
+      }
+    }
+  }
+}
+
+TEST_CASE("solve_collocation: a singular banded system and a NaN right-hand side") {
+  constexpr Eigen::Index n = 60;
+  la::RowMatrix<double> a = band_matrix(n, 1, 2, 0, 7U);
+  a.row(30) = a.row(29);  // two equal rows: elimination leaves an exactly zero pivot
+  la::RowMatrix<double> b = la::RowMatrix<double>::Ones(n, 1);
+  const bs::detail::Bandwidths bw = bs::detail::bandwidths<double>(a, 0);
+  CHECK_FALSE(bs::detail::banded_lu_solve<double>(a, b, bw).has_value());
+  // The truncated SVD answers: its solution is the dense pseudo-inverse's.
+  const NdArray<double> x = bs::solve_collocation<double>(a, b, 1e-12);
+  const Eigen::VectorXd ref =
+      Eigen::MatrixXd(a).completeOrthogonalDecomposition().solve(Eigen::VectorXd::Ones(n));
+  for (Eigen::Index i = 0; i < n; ++i) {
+    CHECK(std::abs(x.data()[i] - ref(i)) < 1e-8 * (1.0 + std::abs(ref(i))));
+  }
+  // A NaN sample spreads over the solution as the dense factorisation spreads it.
+  const la::RowMatrix<double> good = band_matrix(n, 1, 1, 0, 9U);
+  la::RowMatrix<double> nan_rhs = la::RowMatrix<double>::Ones(n, 1);
+  nan_rhs(5, 0) = std::numeric_limits<double>::quiet_NaN();
+  const NdArray<double> spread = bs::solve_collocation<double>(good, nan_rhs, 1e-14);
+  CHECK(std::isnan(spread.data()[n - 1]));
 }

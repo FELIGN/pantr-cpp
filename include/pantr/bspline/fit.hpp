@@ -13,8 +13,9 @@
 /// values `s <= tol * s_max`. The decompositions run in `double` and their results are rounded to
 /// the computation type, as NumPy's did. A collocation matrix is banded (each row holds the
 /// `degree + 1` functions supported at its node), so a square system is LU-factored within its
-/// band (LAPACK's `gbtrf` algorithm, whose pivots are the dense algorithm's) where the band is
-/// narrow, in `O(n w^2)`, and a rectangular system is first offered to
+/// band (LAPACK's `gbtrf` algorithm, whose pivots are the dense algorithm's; a periodic wrap is
+/// held as dense trailing columns) where the band is narrow, in `O(n w (w + c))`, and a
+/// rectangular system is first offered to
 /// `linalg::try_lstsq_banded`, which answers only where its certificate shows full column rank
 /// well clear of the cutoff the dense path would apply; there the dense path has the same unique
 /// solution in exact arithmetic, and the banded QR computes it in `O(m w (w + c))` instead of
@@ -200,79 +201,119 @@ template <StorageFloat C>
   return x;
 }
 
-/// The lower and upper bandwidths of a square matrix in its row order: `kl = max(i - first_i)`
-/// and `ku = max(last_i - i)` over its rows' nonzeros.
+/// The band of a square matrix whose first `border` columns are moved to the end (the periodic
+/// wrap, see `wrap_border`): over the other columns, renumbered from 0, `kl = max(i - first_i)`
+/// and `ku = max(last_i - i)` over the rows' nonzeros.
 ///
 /// Attributes:
 ///     kl (Eigen::Index): Lower bandwidth.
 ///     ku (Eigen::Index): Upper bandwidth.
+///     border (Eigen::Index): The columns held dense at the end.
 struct Bandwidths {
   Eigen::Index kl = 0;
   Eigen::Index ku = 0;
+  Eigen::Index border = 0;
 };
 
+/// Measure the band of `a` with `border` leading columns moved to the end.
+///
+/// Args:
+///     a (const linalg::RowMatrix<C>&): Square.
+///     border (Eigen::Index): Leading columns held dense, `< a.cols()`.
+///
+/// Returns:
+///     Bandwidths: The band of the other columns.
 template <StorageFloat C>
-[[nodiscard]] Bandwidths bandwidths(const linalg::RowMatrix<C>& a) {
+[[nodiscard]] Bandwidths bandwidths(const linalg::RowMatrix<C>& a, Eigen::Index border) {
   Bandwidths bw;
+  bw.border = border;
   const Eigen::Index n = a.cols();
   for (Eigen::Index i = 0; i < a.rows(); ++i) {
-    Eigen::Index first = 0;
+    Eigen::Index first = border;
     while (first < n && a(i, first) == C(0)) {
       ++first;
     }
     if (first == n) {
-      continue;  // a zero row: no constraint on the band
+      continue;  // nonzeros in the border only, or none: no constraint on the band
     }
     Eigen::Index last = n - 1;
     while (a(i, last) == C(0)) {
       --last;
     }
-    bw.kl = (std::max)(bw.kl, i - first);
-    bw.ku = (std::max)(bw.ku, last - i);
+    bw.kl = (std::max)(bw.kl, i - (first - border));
+    bw.ku = (std::max)(bw.ku, (last - border) - i);
   }
   return bw;
 }
 
 /// Whether the banded LU is cheaper than the dense one: the band, with the fill-in partial
-/// pivoting adds (`kl` more columns above the diagonal), covers well under the matrix. The factor
-/// 4 is an admitted heuristic: below it the dense factorisation's blocked kernels win.
-[[nodiscard]] inline bool band_pays(Bandwidths bw, Eigen::Index n) {
-  return 4 * (2 * bw.kl + bw.ku + 1) < n;
-}
-
-/// LU with partial pivoting of a banded square matrix (LAPACK `gbtrf`/`gbtrs`): the row chosen at
-/// step `k` is the first one of largest magnitude in column `k` among rows `k..k+kl`, which is the
-/// dense algorithm's choice, since the rows below hold zeros there. Computed in `double`.
+/// pivoting adds (`kl` more columns above the diagonal), and the border cover well under the
+/// matrix's width.
+///
+/// Args:
+///     bw (Bandwidths): The band.
+///     n (Eigen::Index): The matrix's order.
 ///
 /// Returns:
-///     std::optional<NdArray<C>>: `(n, cols)`, or no value where a pivot is exactly zero or NaN
-///     (the condition under which `gesv` reports a singular matrix).
+///     bool: Whether `4 (2 kl + ku + 1 + border) < n`. The factor 4 is an admitted heuristic (not
+///     measured): it keeps the banded loops to a quarter of a dense row, where the dense
+///     factorisation's blocked kernels have no row length left to amortise.
+[[nodiscard]] inline bool band_pays(Bandwidths bw, Eigen::Index n) {
+  return 4 * (2 * bw.kl + bw.ku + 1 + bw.border) < n;
+}
+
+/// LU with partial pivoting of a banded square matrix whose first `bw.border` columns are moved to
+/// the end and held dense (LAPACK's `gbtrf` algorithm on the band, then a dense trailing block):
+/// the row chosen at step `k` is the first one of largest magnitude in column `k` among the rows
+/// that can hold it, which is the dense algorithm's choice on the permuted matrix, since the other
+/// rows hold zeros there. Computed in `double`; a non-finite entry of `a` sends the system to the
+/// dense path, as the factorisation would spread it there differently.
+///
+/// Args:
+///     a (const linalg::RowMatrix<C>&): Square, `(n, n)`.
+///     b (const linalg::RowMatrix<C>&): `(n, cols)`.
+///     bw (Bandwidths): The band of `a` (see `bandwidths`).
+///
+/// Returns:
+///     std::optional<NdArray<C>>: `(n, cols)`, or no value where `a` is not finite or a pivot is
+///     exactly zero or NaN (the condition under which `gesv` reports a singular matrix).
 ///
 /// Note:
-///     `a` is assumed square with the bandwidths `bw` (no validation performed).
+///     Inputs are assumed to be correct (no validation performed): `a` square with the band `bw`.
 template <StorageFloat C>
 [[nodiscard]] std::optional<NdArray<C>> banded_lu_solve(const linalg::RowMatrix<C>& a,
                                                         const linalg::RowMatrix<C>& b,
                                                         Bandwidths bw) {
+  if (!a.allFinite()) {
+    return std::nullopt;
+  }
   const Eigen::Index n = a.cols();
+  const Eigen::Index nb = bw.border;
+  const Eigen::Index n0 = n - nb;  // banded columns, renumbered `j - nb`
   const Eigen::Index kl = bw.kl;
-  const Eigen::Index width = 2 * kl + bw.ku + 1;  // columns i - kl .. i + ku + kl of row i
+  const Eigen::Index reach = bw.ku + kl;  // U's upper bandwidth after pivoting
+  const Eigen::Index width = kl + reach + 1;
   Eigen::MatrixXd band = Eigen::MatrixXd::Zero(n, width);
+  Eigen::MatrixXd dense = Eigen::MatrixXd::Zero(n, nb);
   const auto at = [&band, kl](Eigen::Index i, Eigen::Index j) -> double& {
     return band(i, j - i + kl);
   };
   for (Eigen::Index i = 0; i < n; ++i) {
     const Eigen::Index lo = (std::max)(Eigen::Index{0}, i - kl);
-    const Eigen::Index hi = (std::min)(n - 1, i + bw.ku);
+    const Eigen::Index hi = (std::min)(n0 - 1, i + bw.ku);
     for (Eigen::Index j = lo; j <= hi; ++j) {
-      at(i, j) = static_cast<double>(a(i, j));
+      at(i, j) = static_cast<double>(a(i, j + nb));
+    }
+    for (Eigen::Index t = 0; t < nb; ++t) {
+      dense(i, t) = static_cast<double>(a(i, t));
     }
   }
   Eigen::MatrixXd x = b.template cast<double>();
   const Eigen::Index cols = x.cols();
-  for (Eigen::Index k = 0; k < n; ++k) {
+  // The banded columns.
+  for (Eigen::Index k = 0; k < n0; ++k) {
     const Eigen::Index last_row = (std::min)(n - 1, k + kl);
-    const Eigen::Index last_col = (std::min)(n - 1, k + bw.ku + kl);
+    const Eigen::Index last_col = (std::min)(n0 - 1, k + reach);
     Eigen::Index piv = k;
     double best = std::abs(at(k, k));
     for (Eigen::Index r = k + 1; r <= last_row; ++r) {
@@ -286,6 +327,7 @@ template <StorageFloat C>
       for (Eigen::Index j = k; j <= last_col; ++j) {
         std::swap(at(k, j), at(piv, j));
       }
+      dense.row(k).swap(dense.row(piv));
       x.row(k).swap(x.row(piv));
     }
     const double pivot = at(k, k);
@@ -297,23 +339,73 @@ template <StorageFloat C>
       for (Eigen::Index j = k + 1; j <= last_col; ++j) {
         at(r, j) -= l * at(k, j);
       }
+      for (Eigen::Index t = 0; t < nb; ++t) {
+        dense(r, t) -= l * dense(k, t);
+      }
       for (Eigen::Index c = 0; c < cols; ++c) {
         x(r, c) -= l * x(k, c);
       }
     }
   }
-  for (Eigen::Index i = n; i-- > 0;) {
-    const Eigen::Index last_col = (std::min)(n - 1, i + bw.ku + kl);
+  // The dense trailing block: rows `n0..n-1` of the border columns.
+  for (Eigen::Index t = 0; t < nb; ++t) {
+    const Eigen::Index k = n0 + t;
+    Eigen::Index piv = k;
+    double best = std::abs(dense(k, t));
+    for (Eigen::Index r = k + 1; r < n; ++r) {
+      const double v = std::abs(dense(r, t));
+      if (v > best) {
+        best = v;
+        piv = r;
+      }
+    }
+    if (piv != k) {
+      dense.row(k).swap(dense.row(piv));
+      x.row(k).swap(x.row(piv));
+    }
+    const double pivot = dense(k, t);
+    if (pivot == 0.0 || std::isnan(pivot)) {
+      return std::nullopt;
+    }
+    for (Eigen::Index r = k + 1; r < n; ++r) {
+      const double l = dense(r, t) / pivot;
+      for (Eigen::Index u = t + 1; u < nb; ++u) {
+        dense(r, u) -= l * dense(k, u);
+      }
+      for (Eigen::Index c = 0; c < cols; ++c) {
+        x(r, c) -= l * x(k, c);
+      }
+    }
+  }
+  // Back-substitution, the border unknowns first (they are the last rows of the permuted system).
+  for (Eigen::Index t = nb; t-- > 0;) {
+    const Eigen::Index i = n0 + t;
+    for (Eigen::Index c = 0; c < cols; ++c) {
+      double s = x(i, c);
+      for (Eigen::Index u = t + 1; u < nb; ++u) {
+        s -= dense(i, u) * x(n0 + u, c);
+      }
+      x(i, c) = s / dense(i, t);
+    }
+  }
+  for (Eigen::Index i = n0; i-- > 0;) {
+    const Eigen::Index last_col = (std::min)(n0 - 1, i + reach);
     for (Eigen::Index c = 0; c < cols; ++c) {
       double s = x(i, c);
       for (Eigen::Index j = i + 1; j <= last_col; ++j) {
         s -= at(i, j) * x(j, c);
       }
+      for (Eigen::Index u = 0; u < nb; ++u) {
+        s -= dense(i, u) * x(n0 + u, c);
+      }
       x(i, c) = s / at(i, i);
     }
   }
+  // Undo the column permutation: unknown `j >= nb` is row `j - nb`, unknown `j < nb` row `n0 + j`.
   NdArray<C> out({static_cast<std::size_t>(n), static_cast<std::size_t>(cols)}, for_overwrite);
-  Eigen::Map<linalg::RowMatrix<C>>(out.data(), n, cols) = x.template cast<C>();
+  Eigen::Map<linalg::RowMatrix<C>> o(out.data(), n, cols);
+  o.topRows(nb) = x.bottomRows(nb).template cast<C>();
+  o.bottomRows(n0) = x.topRows(n0).template cast<C>();
   return out;
 }
 
@@ -384,8 +476,10 @@ template <StorageFloat C>
   if (m == n && n > 0) {
     // numpy.linalg.solve: LU with partial pivoting in double (gesv), the solution rounded to the
     // result type; an exactly zero or NaN pivot sends the system to the truncated SVD.
-    const detail::Bandwidths bw = detail::bandwidths<C>(a);
-    if (detail::band_pays(bw, n)) {
+    // A non-finite right-hand side takes the dense factorisation, which spreads it over the
+    // solution as LAPACK's does (through `0 * NaN`); the band would confine it to the band.
+    const detail::Bandwidths bw = detail::bandwidths<C>(a, detail::wrap_border<C>(a));
+    if (detail::band_pays(bw, n) && b.allFinite()) {
       if (std::optional<NdArray<C>> x = detail::banded_lu_solve<C>(a, b, bw)) {
         return std::move(*x);
       }
