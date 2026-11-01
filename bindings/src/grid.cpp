@@ -99,25 +99,16 @@ NumpyArray<bool> bytes_to_numpy_bool(const std::vector<std::uint8_t>& v) {
   return to_numpy_bool(std::move(a));
 }
 
-/// The data pointer to give NumPy for a view of `s`: the span's own, or for an empty vector's null
-/// data a valid address, since a null pointer makes NumPy allocate a fresh writable array where
-/// the view is read-only.
-template <class T>
-const T* view_data(std::span<const T> s) {
-  static const T unused{};
-  return s.data() != nullptr ? s.data() : &unused;
-}
-
 template <class T, class R>
 NumpyView<T> view_1d(std::span<const T> s, std::shared_ptr<const R> keep) {
   const std::size_t shape[1] = {s.size()};
-  return view_of<T>(view_data(s), shape, std::move(keep));
+  return view_of<T>(s.data(), shape, std::move(keep));
 }
 
 template <class T, class R>
 NumpyView<T> view_2d(std::span<const T> s, std::size_t cols, std::shared_ptr<const R> keep) {
   const std::size_t shape[2] = {cols == 0 ? 0 : s.size() / cols, cols};
-  return view_of<T>(view_data(s), shape, std::move(keep));
+  return view_of<T>(s.data(), shape, std::move(keep));
 }
 
 /// The corners of a cell as two fresh NumPy arrays.

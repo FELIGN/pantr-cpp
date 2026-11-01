@@ -8,6 +8,12 @@ from numpy.typing import NDArray
 
 import pantr._pantr.bspline
 
+def empty_views() -> tuple[
+    Annotated[NDArray[numpy.float64], dict(writable=False)],
+    Annotated[NDArray[numpy.int64], dict(writable=False)],
+]:
+    """Return two empty read-only views over null data (float64 and int64), as `view_of` builds them."""
+
 def count_threads_used(chunks: int, hold_us: int) -> int:
     """Count the distinct threads that run a parallel loop of `chunks` chunks holding `hold_us` microseconds each."""
 

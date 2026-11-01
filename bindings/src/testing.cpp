@@ -20,6 +20,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -113,6 +114,17 @@ NumpyArray<T> gram_projection(int new_family, int old_family, int degree, long l
 }  // namespace
 
 void register_testing(nb::module_& m) {
+  m.def(
+      "empty_views",
+      [] {
+        // Null data, as an empty std::vector may have: the views must still be read-only.
+        const auto keep = std::make_shared<const int>(0);
+        const std::size_t shape[1] = {0};
+        return std::make_pair(view_of<double>(nullptr, shape, keep),
+                              view_of<std::int64_t>(nullptr, shape, keep));
+      },
+      "Return two empty read-only views over null data (float64 and int64), as `view_of` "
+      "builds them.");
   m.def("count_threads_used", &count_threads_used, nb::arg("chunks"), nb::arg("hold_us"),
         nb::call_guard<nb::gil_scoped_release>(),
         "Count the distinct threads that run a parallel loop of `chunks` chunks holding "

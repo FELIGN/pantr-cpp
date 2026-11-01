@@ -5,6 +5,7 @@ module's ``_testing`` submodule and re-exported here; a test imports them from `
 and from no other private path (design/port_design.md §3.8). Nothing in the library imports this
 module.
 
+- :func:`empty_views`: the binding's read-only view of empty, null-data storage.
 - The Bernstein recurrences at one point, the degree up to which the unmirrored one runs, and
   the Bernstein derivative tabulation (no public function returns derivatives).
 - The generic Gram projection behind the change-of-basis builders.
@@ -86,6 +87,9 @@ from .change_basis import (
 )
 
 _t = ext._testing
+
+empty_views = _t.empty_views
+"""Two empty read-only views over null data (float64, int64), as the binding helper builds them."""
 
 BERNSTEIN_MAX_UNMIRRORED_DEGREE_FLOAT64: Final[int] = _t.bernstein_max_unmirrored_degree_double
 """Largest float64 degree tabulated by the plain forward Bernstein recurrence."""
@@ -944,6 +948,7 @@ __all__ = [
     "degree_elevate_1d",
     "degree_reduce_1d",
     "elevation_matrix",
+    "empty_views",
     "evaluate_blossom_1d",
     "evaluate_blossom_1d_f32",
     "find_knot_index_and_multiplicity",

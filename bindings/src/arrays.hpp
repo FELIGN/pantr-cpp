@@ -11,11 +11,13 @@
 #include <nanobind/ndarray.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <memory>
 #include <optional>
 #include <span>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -23,13 +25,32 @@ namespace pantr::bindings {
 
 namespace nb = nanobind;
 
+/// A NumPy array of 64-bit integers, retyped as `numpy.int64` on its way to Python.
+///
+/// nanobind hands an array to NumPy through the buffer protocol, whose format for a 64-bit integer
+/// is `'q'` (`long long`); NumPy reads that as `numpy.longlong`, which on Linux is a type distinct
+/// from `numpy.int64` (`numpy.long`): the dtypes compare equal, but `dtype.type is numpy.int64`,
+/// `isinstance(a[0], numpy.int64)` and `numpy.issubdtype(a.dtype, numpy.int64)` are false. This
+/// type's caster (below) exports the array as nanobind does and returns `a.view(numpy.int64)`, a
+/// view of the same memory with the same writability. Every int64 `NumpyArray` and `NumpyView` is
+/// this type, so every binding gets the retyping without a call site of its own.
+template <class T>
+struct Int64Numpy : nb::ndarray<nb::numpy, T> {
+  using nb::ndarray<nb::numpy, T>::ndarray;
+};
+
+/// Whether `T` (const or not) is a 64-bit signed integer.
+template <class T>
+inline constexpr bool is_int64_v = std::is_same_v<std::remove_const_t<T>, std::int64_t>;
+
 /// A NumPy array of `T` with any rank (a fresh, writable, owned result).
 template <class T>
-using NumpyArray = nb::ndarray<nb::numpy, T>;
+using NumpyArray = std::conditional_t<is_int64_v<T>, Int64Numpy<T>, nb::ndarray<nb::numpy, T>>;
 
 /// A read-only NumPy array of `T` with any rank (a view of an immutable C++ value).
 template <class T>
-using NumpyView = nb::ndarray<nb::numpy, const T>;
+using NumpyView =
+    std::conditional_t<is_int64_v<T>, Int64Numpy<const T>, nb::ndarray<nb::numpy, const T>>;
 
 /// Hand an `NdArray` to NumPy without copying: the array's buffer moves into a capsule that the
 /// NumPy array owns.
@@ -60,6 +81,12 @@ NumpyArray<T> to_numpy(NdArray<T>&& a) {
 template <class T, class R>
 NumpyView<T> view_of(const T* data, std::span<const std::size_t> shape,
                      std::shared_ptr<const R> keep) {
+  // An empty vector's data may be null, and NumPy answers a null buffer with a fresh writable
+  // array where the view must be read-only; any valid address will do for zero elements.
+  static const T unused{};
+  if (data == nullptr) {
+    data = &unused;
+  }
   auto* holder = new std::shared_ptr<const R>(std::move(keep));
   nb::capsule owner(holder,
                     [](void* p) noexcept { delete static_cast<std::shared_ptr<const R>*>(p); });
@@ -114,3 +141,61 @@ class ReleaseIfParallel {
 };
 
 }  // namespace pantr::bindings
+
+namespace nanobind::detail {
+
+/// Export an `Int64Numpy` as nanobind exports its base, then retype it as `numpy.int64` (see
+/// `Int64Numpy`). Return-only: no binding takes one as an argument.
+template <class T>
+struct type_caster<pantr::bindings::Int64Numpy<T>> {
+  using Base = type_caster<ndarray<numpy, T>>;
+  NB_TYPE_CASTER(pantr::bindings::Int64Numpy<T>, Base::Name)
+
+  bool from_python(handle /*src*/, uint32_t /*flags*/, cleanup_list* /*cleanup*/) noexcept {
+    return false;
+  }
+
+  static handle from_cpp(const pantr::bindings::Int64Numpy<T>& value, rv_policy policy,
+                         cleanup_list* cleanup) noexcept {
+    handle exported = Base::from_cpp(value, policy, cleanup);
+    if (!exported.is_valid()) {
+      return exported;
+    }
+    PyObject* dtype = int64_dtype();
+    if (dtype == nullptr) {
+      exported.dec_ref();
+      return {};
+    }
+    // Interned once and kept for the process, as the dtype is.
+    static PyObject* const view_name = PyUnicode_InternFromString("view");
+    // `args[0]` is the receiver. Without PY_VECTORCALL_ARGUMENTS_OFFSET, since no slot precedes
+    // `args` for the callee to borrow.
+    PyObject* args[2] = {exported.ptr(), dtype};
+    PyObject* retyped = PyObject_VectorcallMethod(view_name, args, 2, nullptr);
+    exported.dec_ref();
+    return retyped;
+  }
+
+ private:
+  /// `numpy.dtype(numpy.int64)`, created on first use and kept for the process (never released:
+  /// a release at exit could run after the interpreter it belongs to). Null, with the Python error
+  /// set, when it cannot be created.
+  static PyObject* int64_dtype() noexcept {
+    // Built under the GIL, which every caller holds; a failed attempt leaves it null with the
+    // error set, and the next call tries again.
+    static PyObject* dtype = nullptr;
+    if (dtype == nullptr) {
+      PyObject* np = PyImport_ImportModule("numpy");
+      if (np == nullptr) {
+        return nullptr;
+      }
+      PyObject* type = PyObject_GetAttrString(np, "int64");
+      dtype = type == nullptr ? nullptr : PyObject_CallMethod(np, "dtype", "O", type);
+      Py_XDECREF(type);
+      Py_DECREF(np);
+    }
+    return dtype;
+  }
+};
+
+}  // namespace nanobind::detail
