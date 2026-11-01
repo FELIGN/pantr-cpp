@@ -2863,7 +2863,7 @@ TEST_CASE("interpolate: nodes, derivative constraints and tolerance reach the so
   const std::vector<std::optional<bs::BoundaryDerivatives>> derivs = {
       bs::BoundaryDerivatives{1, 1}};
   const bs::Bspline<double> plain = bs::interpolate<double>(space, sampler);
-  const bs::Bspline<double> pinned = bs::interpolate<double>(space, sampler, std::nullopt, derivs);
+  const bs::Bspline<double> pinned = bs::interpolate<double>(space, sampler, {}, derivs);
   CHECK(worst_difference<double>(pinned.control_points(), plain.control_points()) > 1e-3);
   const std::vector<std::vector<double>> greville = greville_of<double>(space);
   const std::vector<std::span<const double>> gspans = {std::span<const double>(greville[0])};
