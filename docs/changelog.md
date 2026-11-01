@@ -113,8 +113,10 @@
 - **A `BVH` whose child pointers form a cycle** raises the same `ValueError`; the previous release
   raised a `ValueError` saying the tree exceeded the traversal's stack depth.
 - **Refining a `HierarchicalGrid` to a level with more than 2**63 - 1 cells along one axis** raises
-  `OverflowError` and leaves the grid unchanged. The previous release refined the grid, and its
-  `collect_cell_bounds` then returned NaN or inverted bounds for the cells of that level.
+  `OverflowError` and leaves the grid unchanged. The previous release refined the grid; its
+  `collect_cell_bounds` then returned wrong bounds (NaN, inverted, or finite but wrong) for a level
+  whose `factor ** level` exceeded 2**63 - 1, and right ones where only the product with the root
+  cell count exceeded it.
 - **`HierarchicalGrid.level_cells_per_axis` for a level with more than 2**63 - 1 cells along one
   axis** raises `OverflowError`; the previous release returned the count as a Python integer.
 - **A `TensorProductGrid` with 2**63 cells or more** raises `OverflowError`, from its constructor,
@@ -852,7 +854,10 @@
 - **Pickles of the grid classes written by this release do not load in the previous release**
   (`TensorProductGrid`, `HierarchicalGrid`, `BVH`, `CellTags` and `FacetTags` raise
   `AttributeError` there).
-  Pickles written by the previous release still load.
+  Pickles written by the previous release still load, except pickles of grids that the entries
+  above now refuse (2**63 cells or more, or a level past 2**63 - 1 cells along an axis), which
+  raise `OverflowError`. Pickle protocols 0 and 1 now work for the grid classes (they raised
+  `TypeError`), and arrays unpickled with protocols 2 to 4 are read-only (they were writable).
 - **`Grid`, `TensorProductGrid` and `HierarchicalGrid` can no longer be subclassed**: defining a
   subclass raises `TypeError` when the class is created. The grids are C++ values with no
   run-time polymorphism, so a method a subclass overrode would be ignored by the operations that
@@ -871,9 +876,28 @@
   `TensorProductGrid` accepts any iterable of breakpoint arrays, a generator included (a generator
   raised `TypeError`). In `HierarchicalGrid.refine` and `coarsen`, an index that `int()` cannot
   convert is reported before an out-of-range level. In `CellTags.set` and `FacetTags.set`, an error
-  in `values` is reported before an error in the ids; in the `BVH` constructor, a wrong dtype of
+  in `values` is reported before an out-of-range or duplicate id (an id or key array of the wrong
+  dtype or shape is still reported first); in the `BVH` constructor, a wrong dtype of
   an index array before a wrong shape of `node_lo`; in `cell_quadrature`, a dtype or shape error in
-  `cells` before a dimension mismatch with the rule.
+  `cells` before a dimension mismatch with the rule. Some integers past 64 bits that the previous
+  release accepted are refused with `TypeError` or `OverflowError` (`CellTags(2**70)`,
+  `FacetTags(2**70, 4)`, `Partition([0], 2**70)`, `HierarchicalGrid(root, 2**70)`,
+  `HierarchicalGrid.cell_id(2**64, ...)`, which returned `None`), and some that made the previous
+  release run without bound (`level_cells_per_axis(2**63)`, `partition_grid(grid, 2**64)`) now
+  raise at once. `Partition.owned_cells` accepts any rank `int()` converts (`-0.5`, `2.5`, `"1"`)
+  and refuses a one-element array.
+- **The read-only arrays of the grids** (`breakpoints`, `bounds`, the tag arrays, the `BVH` node
+  arrays, `cell_owner`) refuse `setflags(write=True)` with `ValueError`; the previous release let
+  a caller make them writable again. `copy.copy` of a `BVH` or a `Partition` no longer shares its
+  arrays.
+- **`HierarchicalGrid.locate` of a point in a zero-width cell** (a root cell one unit in the last
+  place wide, refined) returns the cell's id, as `locate_many` does; the previous release raised
+  `ValueError` or `OverflowError` with a `RuntimeWarning`. A `TensorProductGrid` whose width
+  overflows (`[[-1.7e308, 1.7e308]]`) no longer warns "overflow encountered in subtract".
+- **`Bspline.locate`** runs over the C++ grids and bounding-volume hierarchy. Its cell ids can
+  differ from the previous release's for points within a few units in the last place of an
+  interior knot line, where the reference coordinates differ in the last bits (see the B-spline
+  evaluation entry); the tie rule for points on knot lines applies there.
 
 ### Fixed
 - **`Bspline.multiply` no longer returns values that depend on memory it never wrote.** The
