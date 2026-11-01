@@ -103,6 +103,22 @@
   number of directions, the result was right or corrupted.
 - **`SpanwiseElementExtraction` of a `BsplineSpace` with no direction** raises `IndexError`; the
   previous release built one.
+- **A `BVH` built from node arrays that do not form a tree** raises `ValueError` ("the node
+  arrays do not encode a tree"): every node must be reachable from the root exactly once, which the
+  compiled traversal relies on. The previous release accepted node arrays whose internal nodes
+  share a child, and a query then returned a cell once per path to it (8 ids from a 4-cell
+  hierarchy whose nodes each point both children at the next node).
+- **A `BVH` whose node arrays leave a node unreachable from the root** raises the same
+  `ValueError`; the previous release accepted it.
+- **A `BVH` whose child pointers form a cycle** raises the same `ValueError`; the previous release
+  raised a `ValueError` saying the tree exceeded the traversal's stack depth.
+- **Refining a `HierarchicalGrid` to a level with more than 2**63 - 1 cells along one axis** raises
+  `OverflowError` and leaves the grid unchanged. The previous release refined the grid, and its
+  `collect_cell_bounds` then returned NaN for the cells of that level.
+- **`HierarchicalGrid.level_cells_per_axis` for a level with more than 2**63 - 1 cells along one
+  axis** raises `OverflowError`; the previous release returned the count as a Python integer.
+- **A `TensorProductGrid` (or `uniform_grid`) with 2**63 cells or more** raises `OverflowError`;
+  the previous release built it.
 
 ### Changed
 - **pantr needs Python 3.12 or later.** pantr is becoming a C++ library with a compiled
@@ -819,6 +835,34 @@
   relative to the coordinate, that the `degree + 1` points placed in it collide in floating
   point. Some such spaces that the previous release refused now return a spline, and some are
   still refused.
+- **The grids run in pantr's C++ library.** `TensorProductGrid`, `HierarchicalGrid`, `BVH`,
+  `CellTags`, `FacetTags`, `Partition`, `cell_quadrature`, `overlay` and `partition_grid` are thin
+  wrappers over it; names, signatures and defaults are unchanged. In a sweep of 306 calls against
+  the previous release, one process each (construction, queries, location, refinement and
+  coarsening, tags, hierarchies, partitions, quadrature, overlays, pickling and copying), every
+  returned cell id, owner and tag array was equal, and every returned coordinate array had the
+  same bytes, except in the cases the entries below describe.
+- **`Grid`, `TensorProductGrid` and `HierarchicalGrid` can no longer be subclassed**: defining a
+  subclass raises `TypeError` when the class is created. The grids are C++ values with no
+  run-time polymorphism, so a method a subclass overrode would be ignored by the operations that
+  take a grid (`partition_grid`, `cell_quadrature`, `query_aabb`). `isinstance(x, Grid)` still
+  holds for both grids.
+- **`BVH` and `Partition` copy the arrays they are given.** The previous release made the caller's
+  arrays read-only in place when they were already contiguous and of the stored dtype, and
+  `Partition(owner, n).cell_owner` was then `owner` itself. The caller's arrays now stay writable,
+  and the stored arrays are read-only copies.
+- **Inputs outside the annotated types, integers past 64 bits, and calls with two invalid
+  arguments in `pantr.grid`** can raise another exception or message than before, since the
+  binding converts ids and levels to 64-bit integers before the C++ checks run. A cell id past the
+  64-bit range is a `TypeError` from the binding (it was an `IndexError`). `Partition.owned_cells`
+  converts its rank with `int()`, so `owned_cells(1.5)` returns rank 1's cells (it returned an
+  empty array). `name in tags` is `False` for an unhashable `name` (it raised `TypeError`).
+  `TensorProductGrid` accepts any iterable of breakpoint arrays, a generator included (a generator
+  raised `TypeError`). In `HierarchicalGrid.refine` and `coarsen`, an index that `int()` cannot
+  convert is reported before an out-of-range level. In `CellTags.set` and `FacetTags.set`, an error
+  in `values` is reported before an error in the ids; in the `BVH` constructor, a wrong dtype of
+  an index array before a wrong shape of `node_lo`; in `cell_quadrature`, an error in `cells`
+  before a dimension mismatch with the rule.
 
 ### Fixed
 - **`Bspline.multiply` no longer returns values that depend on memory it never wrote.** The
@@ -874,6 +918,9 @@
   of multiplying the two values, which flushed to zero for tiny coefficients, and the
   test for a vanishing coefficient no longer carries an absolute floor, so rescaling a
   polynomial no longer changes its roots.
+- **A `BVH` built with a negative `n_cells` and no nodes** returns an empty array from
+  `query_aabb`. The previous release read past its empty node arrays and returned a cell id taken
+  from that memory.
 
 ## 0.7.0 (2026-08-19)
 
