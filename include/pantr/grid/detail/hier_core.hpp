@@ -258,7 +258,12 @@ struct HierarchicalGridRep {
 /// Evaluates `lo = root_lo + sub * size`, `hi = lo + size` with `size = (root_hi - root_lo) /
 /// m_pow`, each product in a statement of its own. A statement boundary stops contraction under
 /// the project's `-ffp-contract=on` (it would not under `-ffp-contract=fast`), so the product is
-/// rounded before the sum, as in the Python kernels, which do not contract.
+/// rounded before the sum, as in the Python kernels, which do not contract. MSVC's `/fp:contract`
+/// is not bounded by statements: with the function inlined, MSVC builds gave the scalar query and
+/// `collect_bounds_range` bounds one unit apart in the last place, and the batch result changed
+/// with the thread count (a contraction that depends on the inlining context is the inferred
+/// cause). Under MSVC the function is kept out of line, so every caller runs one compiled body
+/// and gets the same bits, which may differ from the other compilers' by that rounding.
 ///
 /// Note:
 ///     No validation is performed: `bp` holds the axis's root breakpoints and `ik / m_pow` indexes
@@ -270,8 +275,12 @@ struct HierarchicalGridRep {
 ///     m_pow (std::int64_t): `factor ** level` along the axis.
 ///     lo (double&): Receives the lower bound.
 ///     hi (double&): Receives the upper bound.
-inline void axis_bounds(const std::vector<double>& bp, std::int64_t ik, std::int64_t m_pow,
-                        double& lo, double& hi) noexcept {
+#if defined(_MSC_VER) && !defined(__clang__)
+__declspec(noinline)
+#endif
+inline void
+axis_bounds(const std::vector<double>& bp, std::int64_t ik, std::int64_t m_pow, double& lo,
+            double& hi) noexcept {
   const std::int64_t root_ik = ik / m_pow;
   const std::int64_t sub_ik = ik % m_pow;
   const double root_lo = bp[static_cast<std::size_t>(root_ik)];
