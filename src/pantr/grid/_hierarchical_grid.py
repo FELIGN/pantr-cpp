@@ -34,7 +34,8 @@ Main exports:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Self
+import copy
+from typing import TYPE_CHECKING, Any, Self, cast
 
 import numpy as np
 
@@ -184,6 +185,23 @@ class HierarchicalGrid(Grid):
         Grid.__init__(grid)
         grid._init_from_handle(self._h, self._root, self._factor)
         return grid
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> Self:
+        """Deep-copy the grid, including its root wrapper.
+
+        The compiled value is immutable and is shared, as in :meth:`__copy__`; the root is
+        copied through ``memo`` because its tag registries are mutable, so a copy never
+        shows a tag set on the original's root.
+
+        Args:
+            memo (dict[int, Any]): The copy memo.
+
+        Returns:
+            Self: The copy.
+        """
+        new = cast("Self", self.__copy__())
+        new._root = copy.deepcopy(self._root, memo)
+        return new
 
     def _state(self) -> tuple[Any, ...]:
         """Return the constructor state: the root, the factor, the blocks and the version.

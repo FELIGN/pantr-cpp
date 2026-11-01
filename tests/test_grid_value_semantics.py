@@ -414,13 +414,34 @@ def test_root_is_the_object_that_was_passed_in() -> None:
     g.refine(0, [0, 0], [2, 2])
     assert g.root is root
     assert copy.copy(g).root is root
-    assert copy.deepcopy(g).root is root
+    # A deep copy has a root of its own: the root's tag registries are mutable.
+    deep_root = copy.deepcopy(g).root
+    assert deep_root is not root
+    assert deep_root.cells_per_axis == root.cells_per_axis
     sub = g.restrict([0]).grid
     assert isinstance(sub, HierarchicalGrid)
     assert isinstance(sub.root, TensorProductGrid)
     assert sub.root is sub.root
     assert sub.root is not root
     assert sub.factor == g.factor
+
+
+def test_a_deep_copy_does_not_share_the_root_tag_registry() -> None:
+    """Tags set on a deep copy's root do not show on the original's, and the reverse.
+
+    A plain copy shares the root wrapper (the previous release's shallow copy did).
+    """
+    root = uniform_grid([[0.0, 1.0], [0.0, 1.0]], 4)
+    g = hierarchical_grid(root, 2)
+    g.root.cell_tags.set("zone", [1], 5)
+    deep = copy.deepcopy(g)
+    assert deep.root.cell_tags.names == ("zone",)
+    deep.root.cell_tags.set("only_deep", [2], 6)
+    deep.root.cell_tags.remove("zone")
+    assert g.root.cell_tags.names == ("zone",)
+    g.root.cell_tags.set("only_orig", [3], 7)
+    assert deep.root.cell_tags.names == ("only_deep",)
+    assert copy.copy(g).root is g.root
 
 
 @pytest.mark.parametrize("how", ["pickle", "pickle2", "deepcopy", "copy"])
