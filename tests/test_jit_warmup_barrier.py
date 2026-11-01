@@ -1,11 +1,13 @@
 """No Layer 2 entry point needs the JIT-warmup barrier any more: threads may call first.
 
-``pantr/__init__.py`` compiles (and runs) Numba kernels on a background thread at import,
-and Numba's default workqueue threading layer is not safe against a concurrent
+``pantr/__init__.py`` used to compile (and run) Numba kernels on a background thread at
+import, and Numba's default workqueue threading layer is not safe against a concurrent
 ``parallel=True`` call from another thread: the process *aborts* rather than raising, which
-takes the whole session with it.  ``CLAUDE.md`` states the rule that follows -- a Layer 2
+takes the whole session with it.  ``CLAUDE.md`` states the rule that followed -- a Layer 2
 entry point over such kernels calls :func:`pantr._numba_compat.wait_for_jit_warmup` first --
-and FELIGN/pantr#418 records the gap this module closed.
+and FELIGN/pantr#418 records the gap this module closed.  Every kernel that warmup compiled
+is now ported to C++, so ``__init__`` compiles nothing and only sets the completion event the
+barrier waits on.
 
 The grids' point location and cell-bound collection and the inversion ``Bspline.locate`` now
 run in C++, whose pool is safe against concurrent callers, so none of them carries the barrier

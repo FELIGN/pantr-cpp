@@ -1572,8 +1572,8 @@ def _irregular_grid(ndim: int, factor: int | tuple[int, ...]) -> HierarchicalGri
     return g
 
 
-class TestHierKernelEquivalence:
-    """Kernel-backed batch methods agree exactly with the scalar reference paths."""
+class TestHierBatchMethodsMatchScalar:
+    """The batch methods agree exactly with the scalar reference paths."""
 
     @pytest.mark.parametrize(("ndim", "factor"), [(1, 2), (2, 2), (2, (2, 3)), (3, 2)])
     def test_collect_cell_bounds_matches_scalar(

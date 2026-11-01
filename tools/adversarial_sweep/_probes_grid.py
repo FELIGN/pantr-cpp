@@ -1,13 +1,13 @@
 """Probes for :mod:`pantr.grid`.
 
 ``pantr.grid`` is Tier-1 surface for the C++ port: :class:`~pantr.grid.TensorProductGrid`
-and :class:`~pantr.grid.HierarchicalGrid` back ``locate_many`` with Numba kernels (per-axis
+and :class:`~pantr.grid.HierarchicalGrid` back ``locate_many`` with compiled code (per-axis
 search and top-down hierarchy descent), and :class:`~pantr.grid.BVH` backs ``query_aabb``
-with an iterative stack-based traversal -- both run under ``nopython=True`` with no bounds
-checking, so an off-by-one span or a stack overrun corrupts memory silently rather than
-raising. The pure-Python arithmetic (cell indexing, facet/neighbour resolution, block
-bookkeeping) is lower Numba risk but still worth hostile inputs: it feeds the kernels their
-descriptor arrays, and a bug there produces the same silently-wrong cell ids.
+with an iterative traversal over a fixed-depth stack -- unchecked indexing, so an off-by-one
+span or a stack overrun corrupts memory silently rather than raising. The Python wrappers
+(argument conversion, tag registries, caching) hold less risk but still deserve hostile
+inputs: they hand the compiled code its arrays, and a bug there produces the same
+silently-wrong cell ids.
 
 Every invariant here is checked against an *independent* oracle -- brute-force overlap
 tests via :class:`pantr.geometry.AABB`, geometric adjacency from ``cell_bounds``, or a
@@ -54,7 +54,7 @@ _EPS64 = float(np.finfo(np.float64).eps)
 """``float64`` machine epsilon; every derived tolerance below is a multiple of this."""
 
 _UNIFORM_SPACING_ATOL = 1e-10
-"""Mirrors ``TensorProductGrid._UNIFORM_SPACING_ATOL`` (`_tensor_product_grid.py:53`), the
+"""Mirrors ``detail::uniform_spacing_atol`` in ``tensor_product_grid.hpp``, the
 absolute tolerance ``is_uniform`` compares spacing differences against. Needed here only to
 derive a perturbation guaranteed to sit well above it; not a probe tolerance itself."""
 
@@ -141,11 +141,11 @@ def _collect_vs_percell_predicate(
     """Build a predicate comparing ``collect_cell_bounds()`` to per-cell ``cell_bounds``.
 
     ``HierarchicalGrid.collect_cell_bounds`` documents *exact* agreement with
-    per-cell ``cell_bounds`` (`_hierarchical_grid.py:1420-1421`), so callers pass
+    per-cell ``cell_bounds`` (see ``HierarchicalGrid.collect_cell_bounds``), so callers pass
     ``exact=True`` and get a bitwise (``np.array_equal``) check.
-    ``TensorProductGrid.collect_cell_bounds`` makes no such claim -- its result is a
-    vectorized re-derivation from the same breakpoint arrays -- so callers pass a
-    derived ``tol`` instead.
+    ``TensorProductGrid.collect_cell_bounds`` makes no such claim -- its result is
+    re-derived from the same breakpoint arrays -- so callers pass a derived ``tol``
+    instead.
 
     Args:
         grid (TensorProductGrid | HierarchicalGrid): The grid whose per-cell
@@ -431,7 +431,7 @@ def _tp_construction_cases(profile: Profile) -> Iterator[Case]:
 
     # Malformed constructions: each is a documented rejection ("ValueError: If
     # breakpoints is empty, any axis has fewer than two entries, or any axis is
-    # non-finite or not strictly increasing.", `_tensor_product_grid.py:86-89`).
+    # non-finite or not strictly increasing.", `TensorProductGrid.__init__`).
     # tp_flat_axis ([0, 0, 1]) is caught by the same strictly-increasing clause,
     # not a separate one.
     yield Case(
@@ -1092,7 +1092,7 @@ def _hier_bounds_cases(profile: Profile) -> Iterator[Case]:
             params = {"ndim": ndim, "target_level": target_level}
 
             # `collect_cell_bounds` docstring claims exact agreement with `cell_bounds`
-            # (`_hierarchical_grid.py:1420-1421`): bitwise check. All three cases below
+            # (`HierarchicalGrid.collect_cell_bounds`): bitwise check. All three cases below
             # run on a validly refined grid and none of the three methods documents a
             # `Raises:` section.
             yield Case(
@@ -1123,9 +1123,9 @@ def _hier_bounds_cases(profile: Profile) -> Iterator[Case]:
                 must_succeed=True,
             )
 
-            # `export_cells` docstring (`_hierarchical_grid.py:1502-1516`) claims only
-            # `8 * eps * |coordinate|` agreement, and says bitwise agreement is
-            # unattainable in general -- do not tighten this to exact equality.
+            # The `HierarchicalGrid.export_cells` docstring (its Note) claims only a bound in
+            # multiples of `eps * |coordinate|`, and says bitwise agreement is unattainable
+            # in general -- do not tighten this to exact equality.
             yield Case(
                 GROUP,
                 f"hier_export_cells_bound_{tag}",
@@ -1473,7 +1473,7 @@ def _bvh_from_grid_cases(profile: Profile) -> Iterator[Case]:
     boxes = {
         "whole_domain": AABB(domain_lo, domain_hi),
         "single_cell": AABB(cell_lo[0], cell_hi[0]),
-        # AABB rejects NaN bounds at construction (`geometry.py:147-151`), so a
+        # AABB rejects NaN bounds at construction (`AABB.__init__`), so a
         # literal NaN query box cannot be built; an unbounded (inf) box is the
         # closest hostile substitute and exercises the same inf-arithmetic path
         # in the BVH's overlap test.
@@ -1631,11 +1631,9 @@ def _bvh_degenerate_cases(profile: Profile) -> Iterator[Case]:
         # hi < lo, ..."
         must_reject=True,
     )
-    # Still `must_reject`, though the code rejects non-finite corners at
-    # `_bvh.py:322-326` while `from_cell_bounds`'s `Raises:` section does not
-    # list non-finiteness. A NaN corner is not a box, so refusing it is right
-    # and returning would be the finding -- what is missing is the `Raises:`
-    # entry, a documentation gap rather than a reason to withhold the flag.
+    # `must_reject`: `BVH.from_cell_bounds` rejects non-finite corners (its `Raises:`
+    # section lists it). A NaN corner is not a box, so refusing it is right and
+    # returning would be the finding.
     yield Case(
         GROUP,
         "bvh_from_cell_bounds_nonfinite",
@@ -2197,7 +2195,7 @@ def _quadrature_weight_sum_predicate(
 
     Only valid for a rule whose reference weights sum to 1
     (``gauss_legendre_quadrature`` does); the docstring's claim
-    (`_cell_quadrature.py:8-10`) is conditioned on exactly that.
+    (the `cell_quadrature` module docstring) is conditioned on exactly that.
 
     Args:
         cell_lo (npt.NDArray[np.float64]): Selected cells' lower corners.

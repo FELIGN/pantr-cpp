@@ -281,13 +281,13 @@ def _chain_bvh_arrays(
 
 
 def test_ctor_unbalanced_chain_raises_at_construction() -> None:
-    """A hand-built 148-leaf linear-chain tree exceeds the kernel stack depth.
+    """A hand-built 148-leaf linear-chain tree exceeds the traversal stack depth.
 
     148 leaves force a chain of depth 148, past the traversal's fixed stack
     depth (128, the library's ``bvh_stack_depth``). Unlike
     ``from_cell_bounds``, the raw constructor accepts arbitrary node arrays, so
     this depth cannot be inferred from ``n_cells`` alone; ``BVH.__init__`` must
-    reject it before any query touches the fixed-size kernel stack.
+    reject it before any query touches the fixed-size traversal stack.
     """
     node_lo, node_hi, node_left, node_right, node_cell = _chain_bvh_arrays(148)
     with pytest.raises(ValueError, match="stack depth"):
@@ -299,11 +299,11 @@ def test_ctor_unbalanced_chain_at_the_limit_constructs_and_queries() -> None:
 
     A depth-``d`` DFS occupies at most ``d`` stack slots: the root takes one, then
     each of the ``d - 1`` internal expansions along the deepest path pops one entry
-    and pushes two, a net ``+1``. So ``d == _BVH_STACK_DEPTH == 128`` fits exactly
+    and pushes two, a net ``+1``. So ``d == bvh_stack_depth == 128`` fits exactly
     while ``d == 129`` does not, which is what makes the guard's strict ``>`` the
-    right comparison. Confirmed against the kernel under ``NUMBA_BOUNDSCHECK=1``
-    with the guard lifted: a depth-128 chain queries correctly, and a depth-129
-    chain raises ``IndexError`` from inside the compiled traversal.
+    right comparison. The traversal's stack is a fixed array of ``bvh_stack_depth``
+    entries; that a depth-129 chain would overrun it is derived here, not run (the
+    guard keeps it from being built).
 
     So this is the exact boundary, and it also shows the guard cannot pass merely
     by rejecting everything.
@@ -318,7 +318,7 @@ def test_ctor_unbalanced_chain_one_past_the_limit_raises() -> None:
     """A 129-leaf chain is the smallest chain that overflows, and must be rejected.
 
     Pins the other side of the boundary above: without the guard this constructs
-    cleanly and then writes one slot past the kernel's 128-entry stack on the very
+    cleanly and then writes one slot past the traversal's 128-entry stack on the very
     first query.
     """
     node_lo, node_hi, node_left, node_right, node_cell = _chain_bvh_arrays(129)
@@ -402,7 +402,7 @@ def test_ctor_accepts_a_well_formed_hand_built_tree() -> None:
 def test_ctor_rejects_internal_node_with_a_missing_child() -> None:
     """An "internal" node whose child is -1 must be rejected at construction.
 
-    The traversal kernels decide leaf-vs-internal from ``node_cell`` alone and then
+    The traversal decides leaf-vs-internal from ``node_cell`` alone and then
     push both children without checking either against -1, so a -1 child index wraps
     to the last row of the node array. Before this check the tree constructed
     cleanly and the query silently returned the wrong cells: this arrangement gave
@@ -434,7 +434,7 @@ def test_ctor_rejects_out_of_range_child_index() -> None:
     """A child index outside ``[0, n_nodes)`` must be rejected, negatives included.
 
     A negative other than -1 passes the leaf-consistency check (the node still does
-    not look like a leaf) but still wraps when the kernel indexes with it.
+    not look like a leaf) but still wraps when the traversal indexes with it.
     """
     node_lo, node_hi, node_left, node_right, node_cell = _three_leaf_arrays()
     internal = int(np.where(node_cell < 0)[0][0])
@@ -480,7 +480,7 @@ def test_stack_overflow_guard() -> None:
     refused at depth 129 without being walked in full. A tree built by ``from_cell_bounds``
     can never reach the limit (its median split keeps the depth at ``ceil(log2 n) + 1``), so
     the guard is reachable only through the raw constructor: this replaces the retired test
-    that lowered the limit of the Numba kernel.
+    that lowered the limit of the Numba traversal.
     """
     node_lo, node_hi, node_left, node_right, node_cell = _chain_bvh_arrays(1000)
     with pytest.raises(ValueError, match="stack depth") as info:
@@ -515,7 +515,7 @@ def test_median_split_depth_is_logarithmic(n_cells: int) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Numba build kernel (PR 3 of #197)
+# Build (originally the Numba build kernel, PR 3 of #197; now in C++)
 # ---------------------------------------------------------------------------
 
 

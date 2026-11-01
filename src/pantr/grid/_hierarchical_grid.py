@@ -448,10 +448,10 @@ class HierarchicalGrid(Grid):
         A level-``l`` cell's facet ``(axis, side)`` is on the outer boundary iff its
         level-``l`` index along ``axis`` is ``0`` (side 0) or
         ``level_cells_per_axis(l)[axis] - 1`` (side 1), which is exactly the
-        out-of-range test in ``_facet_neighbor_position``. Since a block is a
-        rectangle of contiguous indices, that condition is decided **once per block
-        face** rather than per cell, and the whole face is emitted vectorized. Cost is
-        ``O(total boundary facets + num_blocks * 2 * ndim)``.
+        out-of-range test that makes :meth:`neighbor_across_facet` return ``None``.
+        Since a block is a rectangle of contiguous indices, that condition is decided
+        **once per block face** rather than per cell, and the whole face is emitted
+        vectorized. Cost is ``O(total boundary facets + num_blocks * 2 * ndim)``.
 
         Returns:
             npt.NDArray[np.int64]: Read-only array of shape ``(n, 2)`` whose rows are
@@ -858,7 +858,7 @@ class HierarchicalGrid(Grid):
         Deduplication is **exact and tolerance-free**: corners are identified on the
         finest-level integer lattice, where a level-``l`` cell at ``midx`` contributes
         ``(midx[k] + bit[k]) * factor[k] ** (max_level - l)``. Equal corners are equal
-        integers, and ``_lattice_to_coords`` then maps each distinct integer node
+        integers, and each distinct integer node is then mapped to a coordinate
         through one formula, so coincident corners come out bitwise identical.
 
         Corner order within a row is the tensor-product (basix/dolfinx) convention:

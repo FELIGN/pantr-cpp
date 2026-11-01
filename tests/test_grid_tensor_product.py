@@ -334,7 +334,7 @@ def test_flat_cell_index_out_of_range_raises() -> None:
 
 
 def test_locate_many_interior_breakpoint_tie() -> None:
-    """locate_many Numba kernel agrees with scalar locate at every interior breakpoint."""
+    """locate_many agrees with scalar locate at every interior breakpoint."""
     g = TensorProductGrid([[0.0, 1.0, 3.0, 6.0], [0.0, 2.0, 5.0]])
     # Interior breakpoints are at x=1.0, x=3.0 (axis 0) and y=2.0 (axis 1).
     breakpoints_2d = [[1.0, 0.5], [1.0, 2.0], [3.0, 0.5], [3.0, 2.0]]
