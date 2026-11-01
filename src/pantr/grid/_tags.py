@@ -211,7 +211,7 @@ class CellTags:
         Raises:
             KeyError: If no tag named ``name`` exists.
         """
-        return _tag_entry(self._h, self._cache, name)
+        return _tag_entry(self, name)
 
     def __contains__(self, name: object) -> bool:
         """Return whether a tag named ``name`` exists.
@@ -445,7 +445,7 @@ class FacetTags:
         Raises:
             KeyError: If no tag named ``name`` exists.
         """
-        return _tag_entry(self._h, self._cache, name)
+        return _tag_entry(self, name)
 
     def __contains__(self, name: object) -> bool:
         """Return whether a tag named ``name`` exists.
@@ -560,8 +560,7 @@ class FacetTags:
 
 
 def _tag_entry(
-    h: Any,  # noqa: ANN401
-    cache: dict[str, tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]],
+    tags: CellTags | FacetTags,
     name: object,
 ) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]:
     """Return the ``(ids, values)`` tuple of tag ``name``, the same object on every read.
@@ -569,10 +568,11 @@ def _tag_entry(
     The compiled value is immutable, so a tuple of read-only views of it stays valid; it is
     built on the first read and kept until ``set`` or ``remove`` of that name drops it.
 
+    A read racing a ``set`` of the same name in another thread stores its tuple only if the
+    registry it read is still the current one, so a stale tuple is never cached.
+
     Args:
-        h (Any): The compiled registry.
-        cache (dict[str, tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]]): The wrapper's
-            tuples by name.
+        tags (CellTags | FacetTags): The registry wrapper.
         name (object): The requested tag name.
 
     Returns:
@@ -582,13 +582,16 @@ def _tag_entry(
         KeyError: If no tag named ``name`` exists.
     """
     if isinstance(name, str):
-        entry = cache.get(name)
+        h = tags._h
+        entry = tags._cache.get(name)
         if entry is not None:
             return entry
         if h.contains(name):
             ids, values = h.get(name)
-            cache[name] = (ids, values)
-            return cache[name]
+            entry = (ids, values)
+            if tags._h is h:
+                tags._cache[name] = entry
+            return entry
     raise KeyError(name)
 
 

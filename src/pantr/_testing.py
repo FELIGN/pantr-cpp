@@ -820,14 +820,17 @@ def _mark_region_cells(
 
     Raises:
         TypeError: If ``mask`` is not a ``bool`` array.
-        ValueError: If ``mask`` is not C-contiguous or not writeable. The compiled helper
-            would otherwise convert such a mask to a copy and write into the copy, leaving the
-            caller's mask unchanged.
+        ValueError: If ``mask`` is not shaped ``hi - lo`` (the compiled helper would write
+            past it), or is not C-contiguous or not writeable (it would mark a converted copy
+            and leave the caller's mask unchanged).
     """
     if not isinstance(mask, np.ndarray) or mask.dtype != np.bool_:
         raise TypeError(f"mask must be a bool numpy array; got {type(mask).__name__!r}.")
     if not (mask.flags.c_contiguous and mask.flags.writeable):
         raise ValueError("mask must be C-contiguous and writeable: it is marked in place.")
+    shape = tuple(int(b) - int(a) for a, b in zip(lo, hi, strict=True))
+    if mask.shape != shape:
+        raise ValueError(f"mask must have the region's shape {shape}; got {mask.shape}.")
     _t.mark_region_cells(mask, list(lo), list(hi), (list(block[0]), list(block[1])))
 
 

@@ -50,6 +50,7 @@ def overlay(grid_a: TensorProductGrid, grid_b: TensorProductGrid) -> TensorProdu
         ValueError: If the grids have different
             :attr:`~TensorProductGrid.ndim`, or if their domains do not overlap
             on some axis (the per-axis intersection is empty or degenerate).
+        OverflowError: If the merged grid would have 2**63 cells or more.
 
     Example:
         >>> import numpy.testing as npt

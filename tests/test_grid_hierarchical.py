@@ -143,6 +143,16 @@ class TestBlockHelpers:
             _mark_region_cells(mask, (0,), (4,), ((0,), (4,)))
         assert not mask.any()
 
+    @pytest.mark.parametrize("shape", [(2,), (4, 1), (5,)], ids=["short", "2-D", "long"])
+    def test_mark_region_cells_refuses_a_mask_not_shaped_like_the_region(
+        self, shape: tuple[int, ...]
+    ) -> None:
+        """A mask whose shape is not ``hi - lo`` is refused before anything is written."""
+        mask = np.zeros(shape, dtype=np.bool_)
+        with pytest.raises(ValueError, match="region's shape"):
+            _mark_region_cells(mask, (0,), (4,), ((0,), (4,)))
+        assert not mask.any()
+
     def test_name_marked_cells_offsets_by_the_origin(self) -> None:
         mask = np.zeros((4,), dtype=np.bool_)
         mask[[1, 3]] = True

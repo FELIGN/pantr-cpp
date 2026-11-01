@@ -586,7 +586,8 @@ def test_concurrent_first_queries_agree_with_a_serial_one(kind: str) -> None:
 
     The first query builds the tree with the GIL released, and a thread that finds the build under
     way waits for it; the result of every thread must equal the one a single thread gets from an
-    identical grid.
+    identical grid. A smoke test: the build is short, so the threads need not overlap it, and the
+    absence of a deadlock rests on the argument at the binding's ``ensure_bvh``, not on this test.
     """
 
     def make() -> Grid:

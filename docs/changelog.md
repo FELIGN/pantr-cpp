@@ -114,11 +114,11 @@
   raised a `ValueError` saying the tree exceeded the traversal's stack depth.
 - **Refining a `HierarchicalGrid` to a level with more than 2**63 - 1 cells along one axis** raises
   `OverflowError` and leaves the grid unchanged. The previous release refined the grid, and its
-  `collect_cell_bounds` then returned NaN for the cells of that level.
+  `collect_cell_bounds` then returned NaN or inverted bounds for the cells of that level.
 - **`HierarchicalGrid.level_cells_per_axis` for a level with more than 2**63 - 1 cells along one
   axis** raises `OverflowError`; the previous release returned the count as a Python integer.
-- **A `TensorProductGrid` (or `uniform_grid`) with 2**63 cells or more** raises `OverflowError`;
-  the previous release built it.
+- **A `TensorProductGrid` with 2**63 cells or more** raises `OverflowError`, from its constructor,
+  `uniform_grid`, `tensor_product_grid` and `overlay` alike; the previous release built it.
 
 ### Changed
 - **pantr needs Python 3.12 or later.** pantr is becoming a C++ library with a compiled
@@ -837,11 +837,20 @@
   still refused.
 - **The grids run in pantr's C++ library.** `TensorProductGrid`, `HierarchicalGrid`, `BVH`,
   `CellTags`, `FacetTags`, `Partition`, `cell_quadrature`, `overlay` and `partition_grid` are thin
-  wrappers over it; names, signatures and defaults are unchanged. In a sweep of 306 calls against
-  the previous release, one process each (construction, queries, location, refinement and
+  wrappers over it; names, signatures and defaults are unchanged. In a sweep of calls against the
+  previous release, one process each (construction, queries, location, refinement and
   coarsening, tags, hierarchies, partitions, quadrature, overlays, pickling and copying), every
   returned cell id, owner and tag array was equal, and every returned coordinate array had the
   same bytes, except in the cases the entries below describe.
+- **`copy.copy` of a grid, a `CellTags` or a `FacetTags` gives an independent tag registry.** In
+  the previous release `copy.copy(grid).cell_tags is grid.cell_tags` held, and a tag set on a
+  shallow copy of a registry appeared on the original; now it does not.
+- **`copy.deepcopy` of a grid, a tag registry, a `BVH` or a `Partition` returns read-only arrays**
+  (`breakpoints`, `bounds`, the tag ids and values, the node arrays, `cell_owner`), as the
+  originals are; the previous release's deep copies had writable arrays.
+- **Pickles of the grid classes written by this release do not load in the previous release**
+  (`TensorProductGrid`, `HierarchicalGrid`, `BVH` and `CellTags` raise `AttributeError` there).
+  Pickles written by the previous release still load.
 - **`Grid`, `TensorProductGrid` and `HierarchicalGrid` can no longer be subclassed**: defining a
   subclass raises `TypeError` when the class is created. The grids are C++ values with no
   run-time polymorphism, so a method a subclass overrode would be ignored by the operations that
@@ -861,8 +870,8 @@
   raised `TypeError`). In `HierarchicalGrid.refine` and `coarsen`, an index that `int()` cannot
   convert is reported before an out-of-range level. In `CellTags.set` and `FacetTags.set`, an error
   in `values` is reported before an error in the ids; in the `BVH` constructor, a wrong dtype of
-  an index array before a wrong shape of `node_lo`; in `cell_quadrature`, an error in `cells`
-  before a dimension mismatch with the rule.
+  an index array before a wrong shape of `node_lo`; in `cell_quadrature`, a dtype or shape error in
+  `cells` before a dimension mismatch with the rule.
 
 ### Fixed
 - **`Bspline.multiply` no longer returns values that depend on memory it never wrote.** The
