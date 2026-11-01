@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import threading
+
 import numpy as np
 import numpy.typing as npt
 import pytest
 
 from pantr.geometry import AABB
-from pantr.grid import BVH
+from pantr.grid import BVH, Grid, hierarchical_grid, uniform_grid
 
 
 def _grid_cells(nx: int, ny: int) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
@@ -576,3 +578,47 @@ def test_build_identical_cells_stable() -> None:
     assert cells == list(range(n))
     result = sorted(bvh.query_aabb(AABB([0.5, 0.5], [0.6, 0.6])).tolist())
     assert result == list(range(n))
+
+
+@pytest.mark.parametrize("kind", ["tensor-product", "hierarchical"])
+def test_concurrent_first_queries_agree_with_a_serial_one(kind: str) -> None:
+    """Threads that reach a grid's lazy BVH together all get the serial answer, without a hang.
+
+    The first query builds the tree with the GIL released, and a thread that finds the build under
+    way waits for it; the result of every thread must equal the one a single thread gets from an
+    identical grid.
+    """
+
+    def make() -> Grid:
+        root = uniform_grid([[0.0, 1.0], [0.0, 1.0]], [40, 40])
+        if kind == "tensor-product":
+            return root
+        g = hierarchical_grid(root, 2)
+        g.refine(0, [5, 5], [30, 30])
+        return g
+
+    query = AABB([0.2, 0.3], [0.45, 0.6])
+    expected = sorted(make().query_aabb(query).tolist())
+    assert expected  # the box meets cells
+
+    shared = make()
+    n_threads = 8
+    start = threading.Barrier(n_threads)
+    results: list[list[int]] = []
+    errors: list[BaseException] = []
+
+    def work() -> None:
+        try:
+            start.wait()
+            results.append(sorted(shared.query_aabb(query).tolist()))
+        except BaseException as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=work) for _ in range(n_threads)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=60.0)
+    assert not any(t.is_alive() for t in threads), "a query thread did not finish"
+    assert not errors
+    assert results == [expected] * n_threads

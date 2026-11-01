@@ -126,6 +126,22 @@ std::pair<NumpyArray<double>, NumpyArray<double>> corners_to_numpy(
   return {copy_to_numpy(c.first), copy_to_numpy(c.second)};
 }
 
+/// Build `g`'s lazy BVH, with the GIL released, unless a call has built it already.
+///
+/// The build reads the grid and writes only C++ state, so it needs no GIL. A thread that finds the
+/// build under way waits on the block's mutex; it cannot deadlock against the builder, which takes
+/// the GIL back only after `cell_bvh` has returned and released that mutex. The release costs one
+/// lock round trip, paid only by a call that finds the tree unbuilt (once per grid, or a few
+/// times when threads race to the first query), and spares the other Python threads a stall for
+/// the length of the build.
+template <class G>
+void ensure_bvh(const G& g) {
+  if (!g.bvh_built()) {
+    const nb::gil_scoped_release release;
+    static_cast<void>(g.cell_bvh());
+  }
+}
+
 /// The members both grids bind alike: the primitives and the defaults of `GridBase`.
 template <class G>
 void def_common(nb::class_<G>& cls) {
@@ -212,14 +228,21 @@ void def_common(nb::class_<G>& cls) {
           "reference_map", [](const G& g, std::int64_t cid) { return g.reference_map(cid); },
           nb::arg("cid"), "The affine map from the unit cube onto a cell.")
       .def(
-          "cell_bvh", [](const G& g) { return BVH(g.cell_bvh()); },
+          "cell_bvh",
+          [](const G& g) {
+            ensure_bvh(g);
+            return BVH(g.cell_bvh());
+          },
           "The BVH over the cell boxes, built on first use.")
       .def(
           "bvh_built", [](const G& g) { return g.bvh_built(); },
           "Whether the BVH has been built yet.")
       .def(
           "query_aabb",
-          [](const G& g, const geometry::AABB& aabb) { return copy_to_numpy(g.query_aabb(aabb)); },
+          [](const G& g, const geometry::AABB& aabb) {
+            ensure_bvh(g);
+            return copy_to_numpy(g.query_aabb(aabb));
+          },
           nb::arg("aabb"), "The ids of the cells whose boxes overlap a box.");
 }
 
@@ -523,9 +546,20 @@ void def_generic(nb::module_& m) {
         if (cells) {
           selected = span_of(*cells);
         }
-        auto [points, weights] =
-            grid::cell_quadrature(g, span_of(rule_points), rule_points.shape(0),
-                                  rule_points.shape(1), span_of(rule_weights), selected);
+        auto [points, weights] = [&] {
+          // Without a selection a hierarchical grid collects every cell's corners in parallel;
+          // a selection is read cell by cell, serially, and a tensor-product grid collects
+          // serially.
+          std::optional<ReleaseIfParallel> release;
+          if constexpr (std::is_same_v<G, HierarchicalGrid>) {
+            if (!selected.has_value()) {
+              release.emplace(static_cast<std::size_t>(g.num_cells()),
+                              g.collect_work().ops_per_item);
+            }
+          }
+          return grid::cell_quadrature(g, span_of(rule_points), rule_points.shape(0),
+                                       rule_points.shape(1), span_of(rule_weights), selected);
+        }();
         return std::pair(to_numpy(std::move(points)), to_numpy(std::move(weights)));
       },
       nb::arg("grid"), nb::arg("rule_points"), nb::arg("rule_weights"), nb::arg("cells").none(),
@@ -543,6 +577,12 @@ void def_generic(nb::module_& m) {
           // Booleans are bytes holding 0 or 1.
           a = std::span<const std::uint8_t>(reinterpret_cast<const std::uint8_t*>(active->data()),
                                             active->size());
+        }
+        // A hierarchical grid has no block backend, so its partition always collects the cell
+        // corners in parallel; a tensor-product grid collects serially.
+        std::optional<ReleaseIfParallel> release;
+        if constexpr (std::is_same_v<G, HierarchicalGrid>) {
+          release.emplace(static_cast<std::size_t>(g.num_cells()), g.collect_work().ops_per_item);
         }
         return grid::partition_grid(g, n_parts, backend, w, a);
       },
