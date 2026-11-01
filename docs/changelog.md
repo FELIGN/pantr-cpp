@@ -516,8 +516,8 @@
   `elevate_degree`, `reduce_degree`, the non-rational `derivative`, `slice`, `boundary`,
   `reverse`, `permute_directions`, `transform`, `to_bezier` and `to_beziers`, together with
   `BsplineSpace1D.insert_knots`, `subdivide` and its three `tabulate_*_extraction_operators`.
-  (`locate` keeps its previous implementation for now; `multiply`, `find_roots` and the rational
-  `derivative`, which uses `multiply`, run in C++ as well, see below.)
+  (`multiply`, `find_roots`, `locate` and the rational `derivative`, which uses `multiply`, run in
+  C++ as well, see below.)
 - **A `Bspline` is immutable**, as a `Bezier` is: the constructor copies the control points
   (into a C-contiguous array whatever the input layout), so a later write to the array it was
   given no longer changes the B-spline; `control_points` is a read-only view that cannot be made
@@ -894,10 +894,19 @@
   place wide, refined) returns the cell's id, as `locate_many` does; the previous release raised
   `ValueError` or `OverflowError` with a `RuntimeWarning`. A `TensorProductGrid` whose width
   overflows (`[[-1.7e308, 1.7e308]]`) no longer warns "overflow encountered in subtract".
-- **`Bspline.locate`** runs over the C++ grids and bounding-volume hierarchy. Its cell ids can
-  differ from the previous release's for points within a few units in the last place of an
-  interior knot line, where the reference coordinates differ in the last bits (see the B-spline
-  evaluation entry); the tie rule for points on knot lines applies there.
+- **`Bspline.locate` runs in C++**, candidate search and Newton solve alike, with the previous
+  release's thresholds, line search and iteration budgets. A batch is solved one point at a time
+  over the thread pool, so it uses `pantr.set_num_threads` and no point's answer depends on the
+  number of threads. Compared with the previous release over dimensions 1 to 3, degrees 1 to 5,
+  rational and `float32` B-splines, repeated knots, physical and parametric offsets, explicit
+  `tol`, `max_iter=1` and points off the image: the same points are found, and the exceptions,
+  messages, dtypes and read-only flags are the same. The reference coordinates differ in the
+  last bits, by less than the threshold each is graded against, because the Jacobian's
+  singular values and solve, and the evaluations, are computed by other code. So a point within that distance of an interior knot line can be
+  reported in the other cell of that line; the tie rule applies to the coordinates returned.
+  When a B-spline has a non-finite control point and the points are invalid too, the error about
+  the control points is now the one raised (the previous release raised the one about the
+  points).
 
 ### Fixed
 - **`Bspline.multiply` no longer returns values that depend on memory it never wrote.** The
