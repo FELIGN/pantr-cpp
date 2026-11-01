@@ -160,6 +160,24 @@ TEST_CASE("grid: cell index: errors carry the Python messages") {
                        "axis 0 index -1 out of range [0, 3).", pantr::index_error);
 }
 
+TEST_CASE("grid: cell index: a negative cell count is refused before checked_mul sees it") {
+  // checked_mul assumes non-negative operands, so each entry point states the precondition.
+  const I64 negative_first[2] = {-3, 4};
+  const I64 negative_last[2] = {3, -4};
+  const std::vector<I64> multi = {0, 0};
+  CHECK_THROWS_WITH_AS(static_cast<void>(c_order_strides(negative_first)),
+                       "cells_per_axis entries must be >= 0; got -3.", pantr::value_error);
+  CHECK_THROWS_WITH_AS(static_cast<void>(flat_to_multi(0, negative_last)),
+                       "cells_per_axis entries must be >= 0; got -4.", pantr::value_error);
+  CHECK_THROWS_WITH_AS(static_cast<void>(multi_to_flat(multi, negative_first)),
+                       "cells_per_axis entries must be >= 0; got -3.", pantr::value_error);
+  // Zero is a legal count: an empty axis has no valid multi-index, and the check does not mask it.
+  const I64 empty_axis[2] = {3, 0};
+  CHECK(c_order_strides(empty_axis) == std::vector<I64>{0, 1});
+  CHECK_THROWS_AS(static_cast<void>(flat_to_multi(0, empty_axis)), pantr::index_error);
+  CHECK_THROWS_AS(static_cast<void>(multi_to_flat(multi, empty_axis)), pantr::index_error);
+}
+
 TEST_CASE("grid: checked_mul: exact at the int64 boundary, refusing the first product past it") {
   using pantr::grid::detail::checked_mul;
   constexpr I64 hi = std::numeric_limits<I64>::max();

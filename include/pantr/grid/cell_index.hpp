@@ -19,6 +19,25 @@
 
 namespace pantr::grid {
 
+namespace detail {
+
+/// Refuse a negative per-axis cell count: `checked_mul` assumes non-negative operands.
+///
+/// Args:
+///     cells_per_axis (std::span<const std::int64_t>): Per-axis cell counts.
+///
+/// Raises:
+///     value_error: An entry is negative.
+inline void check_counts_non_negative(std::span<const std::int64_t> cells_per_axis) {
+  for (const std::int64_t n : cells_per_axis) {
+    if (n < 0) {
+      throw value_error("cells_per_axis entries must be >= 0; got " + std::to_string(n) + ".");
+    }
+  }
+}
+
+}  // namespace detail
+
 /// Get the row-major (C-order) flat strides for `cells_per_axis`.
 ///
 /// The flat id of the multi-index `(i_0, ..., i_{d-1})` is `sum_k i_k * strides[k]` with
@@ -31,9 +50,11 @@ namespace pantr::grid {
 ///     std::vector<std::int64_t>: One stride per axis.
 ///
 /// Raises:
+///     value_error: A count is negative.
 ///     std::overflow_error: A stride does not fit in `int64`.
 [[nodiscard]] inline std::vector<std::int64_t> c_order_strides(
     std::span<const std::int64_t> cells_per_axis) {
+  detail::check_counts_non_negative(cells_per_axis);
   const std::size_t d = cells_per_axis.size();
   std::vector<std::int64_t> strides(d);
   std::int64_t stride = 1;
@@ -57,10 +78,12 @@ namespace pantr::grid {
 ///     std::vector<std::int64_t>: One index per axis.
 ///
 /// Raises:
+///     value_error: A count is negative.
 ///     index_error: `flat` is out of range.
 ///     std::overflow_error: The cell count does not fit in `int64`.
 [[nodiscard]] inline std::vector<std::int64_t> flat_to_multi(
     std::int64_t flat, std::span<const std::int64_t> cells_per_axis) {
+  detail::check_counts_non_negative(cells_per_axis);
   const std::int64_t total = detail::checked_product(cells_per_axis);
   if (!(0 <= flat && flat < total)) {
     throw index_error("flat cell id " + std::to_string(flat) + " is out of range [0, " +
@@ -86,11 +109,12 @@ namespace pantr::grid {
 ///     std::int64_t: The flat cell id.
 ///
 /// Raises:
-///     value_error: `multi` and `cells_per_axis` differ in length.
+///     value_error: `multi` and `cells_per_axis` differ in length, or a count is negative.
 ///     index_error: A per-axis index is out of range.
 ///     std::overflow_error: The cell count does not fit in `int64`.
 [[nodiscard]] inline std::int64_t multi_to_flat(std::span<const std::int64_t> multi,
                                                 std::span<const std::int64_t> cells_per_axis) {
+  detail::check_counts_non_negative(cells_per_axis);
   if (multi.size() != cells_per_axis.size()) {
     throw value_error("multi-index has length " + std::to_string(multi.size()) + "; expected " +
                       std::to_string(cells_per_axis.size()) + ".");
