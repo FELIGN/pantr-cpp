@@ -48,7 +48,11 @@ namespace pantr::grid::detail {
       x = hi;
     }
     partials.resize(i);
-    partials.push_back(x);
+    // As CPython does, a zero adds nothing and is not kept, so a sum of zeros (of either sign) is
+    // `+0.0`, as `math.fsum` returns it.
+    if (x != 0.0) {
+      partials.push_back(x);
+    }
   }
   double hi = 0.0;
   std::size_t n = partials.size();

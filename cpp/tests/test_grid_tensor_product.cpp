@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <limits>
 #include <optional>
+#include <stdexcept>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -134,6 +135,18 @@ TEST_CASE("grid: TensorProductGrid: construction refuses malformed breakpoints")
                        pantr::value_error);
 }
 
+TEST_CASE("grid: TensorProductGrid: a cell count beyond int64 is refused with overflow_error") {
+  // Five axes of 8192 = 2^13 cells give 2^65 cells; every axis is valid on its own, and the
+  // largest stride, 2^52, still fits, so only the total overflows.
+  std::vector<double> axis(8193);
+  for (std::size_t i = 0; i < axis.size(); ++i) {
+    axis[i] = static_cast<double>(i);
+  }
+  CHECK_THROWS_AS(static_cast<void>(tpg(Bp(5, axis))), std::overflow_error);
+  // Four such axes (2^52 cells) are fine.
+  CHECK(tpg(Bp(4, axis)).num_cells() == I64{1} << 52);
+}
+
 TEST_CASE("grid: TensorProductGrid: metadata of a three-dimensional grid") {
   const TensorProductGrid g(dyadic3());
   CHECK(g.ndim() == 3);
@@ -146,7 +159,8 @@ TEST_CASE("grid: TensorProductGrid: metadata of a three-dimensional grid") {
   CHECK(g.breakpoints(2).size() == 4);
   CHECK(g.breakpoints().size() == 3);
   CHECK_FALSE(g.is_uniform());
-  CHECK_THROWS_AS(static_cast<void>(g.breakpoints(3)), std::out_of_range);
+  CHECK_THROWS_WITH_AS(static_cast<void>(g.breakpoints(3)), "axis 3 is out of range [0, 3).",
+                       pantr::index_error);
 }
 
 TEST_CASE(
@@ -481,7 +495,7 @@ TEST_CASE(
                        pantr::value_error);
 }
 
-TEST_CASE("grid: GridBase::cell_bvh: threads racing on the first call build it once") {
+TEST_CASE("grid: GridBase::cell_bvh: threads racing on the first call all see the same BVH") {
   const TensorProductGrid g = tpg({{0.0, 1.0, 2.0, 3.0, 4.0}, {0.0, 1.0, 2.0, 3.0, 4.0}});
   CHECK_FALSE(g.bvh_built());
   constexpr int n_threads = 8;

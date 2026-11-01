@@ -120,6 +120,32 @@ TEST_CASE("grid: overlay: breakpoints closer than the relative tolerance are mer
   CHECK(axis(overlay(shifted_a, shifted_far), 0).size() == 3);
 }
 
+TEST_CASE(
+    "grid: overlay: a run of breakpoints is folded by consecutive gaps, not by distance to the "
+    "first") {
+  // atol = 64 eps = 128 u with u = 2^-53, the spacing of doubles in [0.5, 1). The breakpoints
+  // 0.5, 0.5 + 89 u and 0.5 + 179 u have consecutive gaps 89 u and 90 u, each below atol, so they
+  // are one run; the last lies 179 u above the first, which a comparison with the first of the
+  // run (instead of the previous candidate) would keep. Recorded from the Python implementation.
+  constexpr double u = 0x1p-53;
+  const TensorProductGrid a = tpg({{0.0, 0.5, 1.0}});
+  const TensorProductGrid b = tpg({{0.0, 0.5 + 89 * u, 0.5 + 179 * u, 1.0}});
+  CHECK(axis(overlay(a, b), 0) == std::vector<double>{0.0, 0.5, 1.0});
+  CHECK(axis(overlay(b, a), 0) == std::vector<double>{0.0, 0.5, 1.0});
+}
+
+TEST_CASE(
+    "grid: overlay: the window ends exclude a breakpoint closer than atol and keep one beyond") {
+  // atol = 64 eps on [0, 1]. 0.9 atol is inside the exclusion zone of the lower end and is
+  // dropped; 1.8 atol is outside it and kept, and it is the only candidate between the ends.
+  // Recorded from the Python implementation.
+  const double atol = 64 * std::numeric_limits<double>::epsilon();
+  const TensorProductGrid a = tpg({{0.0, 1.0}});
+  const TensorProductGrid b = tpg({{0.0, 0.9 * atol, 1.8 * atol, 1.0}});
+  CHECK(axis(overlay(a, b), 0) == std::vector<double>{0.0, 1.8 * atol, 1.0});
+  CHECK(axis(overlay(b, a), 0) == std::vector<double>{0.0, 1.8 * atol, 1.0});
+}
+
 TEST_CASE("grid: overlay: every overlay cell lies in one cell of each input, which it refines") {
   const TensorProductGrid a = tpg({{0.0, 0.7, 1.9, 3.0}, {0.0, 1.0, 1.25, 2.0}});
   const TensorProductGrid b = tpg({{0.5, 1.1, 2.4, 2.9, 5.0}, {-1.0, 0.4, 1.75}});
@@ -202,8 +228,8 @@ TEST_CASE("grid: cell_quadrature: exact mapping on a dyadic grid") {
 }
 
 TEST_CASE(
-    "grid: cell_quadrature: the weights of a cell sum to its volume and a cubic is integrated "
-    "exactly") {
+    "grid: cell_quadrature: the weights of a cell sum to its volume and a degree 1 per variable "
+    "monomial is integrated exactly") {
   for (const std::size_t nd : {std::size_t{1}, std::size_t{2}, std::size_t{3}}) {
     Bp bp;
     const std::vector<double> ends = {0.0, 0.3, 1.1, 1.2, 2.5};

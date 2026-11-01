@@ -180,8 +180,15 @@ class TensorProductGrid : public GridBase<TensorProductGrid> {
   ///
   /// Returns:
   ///     std::span<const double>: The axis's breakpoints.
+  ///
+  /// Raises:
+  ///     index_error: `axis >= ndim()`.
   [[nodiscard]] std::span<const double> breakpoints(std::size_t axis) const {
-    return rep_->breakpoints.at(axis);
+    if (axis >= rep_->breakpoints.size()) {
+      throw index_error("axis " + std::to_string(axis) + " is out of range [0, " +
+                        std::to_string(rep_->breakpoints.size()) + ").");
+    }
+    return rep_->breakpoints[axis];
   }
 
   /// Get the per-axis `[lo, hi]` extremes.

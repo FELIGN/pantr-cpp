@@ -144,6 +144,16 @@ TEST_CASE("grid: fsum: exactly rounded sums, equal bit for bit to math.fsum") {
   CHECK(fsum(std::vector<double>{-0.5}) == -0.5);
 }
 
+TEST_CASE("grid: fsum: a sum of zeros is +0.0, as math.fsum returns it") {
+  // CPython drops a zero instead of keeping it as a partial, so no sign of zero survives.
+  // math.fsum([-0.0]), math.fsum([-0.0, -0.0]) and math.fsum([1.0, -1.0]) are all +0.0.
+  CHECK_FALSE(std::signbit(fsum(std::vector<double>{-0.0})));
+  CHECK_FALSE(std::signbit(fsum(std::vector<double>{-0.0, -0.0})));
+  CHECK_FALSE(std::signbit(fsum(std::vector<double>{0.0, -0.0})));
+  CHECK_FALSE(std::signbit(fsum(std::vector<double>{1.0, -1.0})));
+  CHECK(fsum(std::vector<double>{-0.0}) == 0.0);
+}
+
 TEST_CASE("grid: fsum: the result does not depend on the order of the terms") {
   std::vector<double> terms;
   for (int i = 0; i < 200; ++i) {
@@ -245,6 +255,20 @@ TEST_CASE("grid: factor_blocks: an infeasible part count names the grid") {
                        pantr::value_error);
 }
 
+TEST_CASE("grid: factor_blocks and extent_imbalance: arguments of the wrong shape are refused") {
+  using pantr::grid::detail::extent_imbalance;
+  // Python reads axis 0 of an empty tuple: IndexError.
+  CHECK_THROWS_WITH_AS(static_cast<void>(factor_blocks(std::span<const I64>{}, 1)),
+                       "tuple index out of range", pantr::index_error);
+  // Python's strict zip: ValueError naming the shorter side.
+  const std::vector<I64> two = {4, 4};
+  const std::vector<I64> one = {2};
+  CHECK_THROWS_WITH_AS(static_cast<void>(extent_imbalance(two, one)),
+                       "zip() argument 2 is shorter than argument 1", pantr::value_error);
+  CHECK_THROWS_WITH_AS(static_cast<void>(extent_imbalance(one, two)),
+                       "zip() argument 2 is longer than argument 1", pantr::value_error);
+}
+
 TEST_CASE("grid: partition_grid block: the balanced contiguous Cartesian split") {
   struct Case {
     std::vector<I64> cells;
@@ -309,6 +333,58 @@ TEST_CASE("grid: partition_grid rcb: recorded owner arrays, uniform and weighted
   // All-zero weights: the cumulative weight is 0 everywhere, the split point clamps.
   const std::vector<double> zero(16, 0.0);
   CHECK(rcb(3, zero) == std::vector<I32>{0, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2});
+}
+
+TEST_CASE("grid: partition_grid rcb: uniform grids with many ties pin the stable sort") {
+  // On a uniform grid every centroid coordinate is shared by a whole row or column of cells, so
+  // the order of equal keys decides which cells land on which side of each cut. These owner
+  // arrays were recorded from the Python implementation (a stable sort); an unstable sort breaks
+  // the ties differently and gives other arrays.
+  struct Case {
+    std::vector<I64> cells;
+    I64 n_parts;
+    std::vector<I32> owner;
+  };
+  const std::vector<Case> cases = {
+      {{12, 12}, 5, {0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1,
+                     0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1,
+                     0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 3, 3, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3,
+                     2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3,
+                     2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 2, 2, 2, 2, 4, 4, 4, 4, 4, 4, 4, 4,
+                     2, 2, 2, 2, 4, 4, 4, 4, 4, 4, 4, 4, 2, 2, 2, 2, 4, 4, 4, 4, 4, 4, 4, 4}},
+      {{20, 20},
+       7,
+       {0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1,
+        1, 1, 2, 2, 2, 2, 2, 2, 2, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 0, 0,
+        0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1,
+        2, 2, 2, 2, 2, 2, 2, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 0, 0, 0, 0,
+        0, 0, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 2, 2, 2,
+        2, 2, 2, 2, 2, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 5, 5, 5, 5, 5, 5, 5, 5, 3, 3, 3, 3, 3, 3,
+        3, 3, 3, 3, 3, 5, 5, 5, 5, 5, 5, 5, 5, 5, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 5, 5, 5, 5, 5, 5,
+        5, 5, 5, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 5, 5, 5, 5, 5, 5, 5, 5, 5, 3, 3, 3, 3, 3, 3, 3, 3,
+        3, 3, 3, 5, 5, 5, 5, 5, 5, 5, 5, 5, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+        5, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 5, 5, 5, 6, 6, 6, 6, 6, 6, 6, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+        6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 4,
+        4, 4, 4, 4, 4, 4, 4, 4, 4, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 6, 6,
+        6, 6, 6, 6, 6, 6, 6, 6, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6}},
+      {{6, 6, 6},
+       5,
+       {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+        1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3,
+        4, 4, 4, 3, 3, 3, 4, 4, 4, 3, 3, 3, 4, 4, 4, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+        4, 4, 3, 3, 3, 4, 4, 4, 3, 3, 3, 4, 4, 4, 3, 3, 3, 4, 4, 4, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+        2, 3, 3, 3, 3, 4, 4, 3, 3, 3, 4, 4, 4, 3, 3, 3, 4, 4, 4, 3, 3, 3, 4, 4, 4, 2, 2, 2, 2, 2, 2,
+        2, 2, 2, 2, 2, 2, 3, 3, 3, 4, 4, 4, 3, 3, 3, 4, 4, 4, 3, 3, 3, 4, 4, 4, 3, 3, 3, 4, 4, 4}},
+      {{9, 9}, 6, {0, 0, 0, 1, 1, 1, 2, 2, 2, 0, 0, 0, 1, 1, 1, 2, 2, 2, 0, 0, 0,
+                   1, 1, 1, 2, 2, 2, 0, 0, 0, 1, 1, 2, 2, 2, 2, 0, 0, 1, 1, 1, 4,
+                   4, 5, 5, 3, 3, 3, 3, 4, 4, 4, 5, 5, 3, 3, 3, 3, 4, 4, 5, 5, 5,
+                   3, 3, 3, 4, 4, 4, 5, 5, 5, 3, 3, 3, 4, 4, 4, 5, 5, 5}},
+  };
+  for (const Case& c : cases) {
+    const TensorProductGrid g = unit_grid(c.cells);
+    CHECK(owners(partition_grid(g, c.n_parts, PartitionBackend::rcb)) == c.owner);
+  }
 }
 
 TEST_CASE("grid: partition_grid rcb: degenerate weights are clamped so that no rank is empty") {

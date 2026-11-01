@@ -219,8 +219,16 @@ namespace detail {
 ///
 /// Returns:
 ///     double: The variance of `log(cells_per_axis[d] / blocks[d])` over the axes.
+///
+/// Raises:
+///     value_error: The two spans differ in length (Python's strict `zip`).
 [[nodiscard]] inline double extent_imbalance(std::span<const std::int64_t> cells_per_axis,
                                              std::span<const std::int64_t> blocks) {
+  if (blocks.size() != cells_per_axis.size()) {
+    throw value_error(blocks.size() < cells_per_axis.size()
+                          ? "zip() argument 2 is shorter than argument 1"
+                          : "zip() argument 2 is longer than argument 1");
+  }
   std::vector<double> logs(cells_per_axis.size());
   for (std::size_t d = 0; d < logs.size(); ++d) {
     logs[d] = std::log(static_cast<double>(cells_per_axis[d]) / static_cast<double>(blocks[d]));
@@ -253,8 +261,12 @@ namespace detail {
 /// Raises:
 ///     value_error: No such factorization exists: `n_parts` is too large or factors too coarsely
 ///         for this grid, so some rank would get no cells.
+///     index_error: `cells_per_axis` is empty (Python's `IndexError`, from reading axis 0).
 [[nodiscard]] inline std::vector<std::int64_t> factor_blocks(
     std::span<const std::int64_t> cells_per_axis, std::int64_t n_parts) {
+  if (cells_per_axis.empty()) {
+    throw index_error("tuple index out of range");
+  }
   const std::size_t ndim = cells_per_axis.size();
   std::optional<std::vector<std::int64_t>> best;
   double best_score = std::numeric_limits<double>::infinity();
@@ -299,6 +311,10 @@ namespace detail {
 /// cells_d` (integer division) and flattens the block multi-index (C-order, as cell ids are) to
 /// the owner rank.
 ///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed): `n_parts >= 1` is not checked.
+///     For general use, call `partition_grid`.
+///
 /// Args:
 ///     grid (const TensorProductGrid&): The grid to partition.
 ///     n_parts (std::int64_t): Number of parts, at least 1.
@@ -342,6 +358,11 @@ namespace detail {
 /// weight, cutting the axis of largest centroid spread (the first on a tie) at the weighted split
 /// point, clamped so that each side keeps at least as many cells as parts (no rank is left
 /// empty); the cells are ordered along the axis by a stable sort.
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed): the lengths of `weights` and
+///     `active` (`num_cells()` each), the weights' finiteness and sign, and `n_parts >= 1` are
+///     checked by the public `partition_grid`, not here. For general use, call `partition_grid`.
 ///
 /// Args:
 ///     grid (const G&): The grid to partition.

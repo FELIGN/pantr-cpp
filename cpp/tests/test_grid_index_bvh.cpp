@@ -7,6 +7,7 @@
 #include <pantr/geometry/aabb.hpp>
 #include <pantr/grid/bvh.hpp>
 #include <pantr/grid/cell_index.hpp>
+#include <pantr/grid/detail/checked.hpp>
 
 #include <algorithm>
 #include <cstddef>
@@ -157,6 +158,30 @@ TEST_CASE("grid: cell index: errors carry the Python messages") {
   const std::vector<I64> negative = {-1, 0, 0};
   CHECK_THROWS_WITH_AS(static_cast<void>(multi_to_flat(negative, cells)),
                        "axis 0 index -1 out of range [0, 3).", pantr::index_error);
+}
+
+TEST_CASE("grid: checked_mul: exact at the int64 boundary, refusing the first product past it") {
+  using pantr::grid::detail::checked_mul;
+  constexpr I64 hi = std::numeric_limits<I64>::max();
+  // hi = 7 * 1317624576693539401, so the factorization sits exactly on the boundary.
+  constexpr I64 seventh = 1317624576693539401;
+  CHECK(checked_mul(7, seventh) == hi);
+  CHECK(checked_mul(seventh, 7) == hi);
+  CHECK_THROWS_AS(static_cast<void>(checked_mul(8, seventh)), std::overflow_error);
+  CHECK_THROWS_AS(static_cast<void>(checked_mul(seventh, 8)), std::overflow_error);
+  // Equal factors: 3037000499^2 is the largest square below 2^63.
+  CHECK(checked_mul(3037000499, 3037000499) == 9223372030926249001);
+  CHECK_THROWS_AS(static_cast<void>(checked_mul(3037000500, 3037000500)), std::overflow_error);
+  // Powers of two: 2^31 * 2^31 = 2^62 fits, 2^32 * 2^31 = 2^63 does not.
+  CHECK(checked_mul(I64{1} << 31, I64{1} << 31) == I64{1} << 62);
+  CHECK_THROWS_AS(static_cast<void>(checked_mul(I64{1} << 32, I64{1} << 31)), std::overflow_error);
+  CHECK_THROWS_AS(static_cast<void>(checked_mul(hi, 2)), std::overflow_error);
+  // The identity and the zero, which need no division.
+  CHECK(checked_mul(hi, 1) == hi);
+  CHECK(checked_mul(1, hi) == hi);
+  CHECK(checked_mul(0, hi) == 0);
+  CHECK(checked_mul(hi, 0) == 0);
+  CHECK(checked_mul(0, 0) == 0);
 }
 
 TEST_CASE("grid: cell index: a stride or a cell count beyond int64 is refused") {
@@ -333,6 +358,21 @@ TEST_CASE("grid: BVH: no cells give the empty tree, one cell a single leaf") {
   CHECK(t.query_aabb(AABB::unbounded(2)) == std::vector<I64>{0});
 }
 
+TEST_CASE("grid: BVH: a raw tree with no node queries to empty whatever n_cells says") {
+  // The constructor accepts n_cells <= 0 with empty arrays (as the Python one does); the query
+  // must test the node count, since reading node 0 of an empty array is out of bounds.
+  const std::vector<double> none;
+  const std::vector<I64> no_ids;
+  const std::vector<std::size_t> shape0 = {0, 2};
+  for (const I64 n_cells : {I64{0}, I64{-1}, I64{-5}}) {
+    const BVH t(none, none, shape0, shape0, no_ids, no_ids, no_ids, n_cells);
+    CHECK(t.n_nodes() == 0);
+    const std::vector<double> q = {0.0, 0.0};
+    CHECK(t.query_aabb(q, q).empty());
+    CHECK(t.query_aabb(AABB::unbounded(2)).empty());
+  }
+}
+
 TEST_CASE("grid: BVH: a copy shares the arrays") {
   const Boxes b = random_boxes(10, 2, 1);
   const BVH t = build(b);
@@ -349,6 +389,37 @@ TEST_CASE("grid: BVH: the query refuses a box of another dimension") {
                        pantr::value_error);
   const std::vector<double> one = {0.0};
   CHECK_THROWS_AS(static_cast<void>(t.query_aabb(one, one)), pantr::value_error);
+}
+
+TEST_CASE("grid: BVH: the corner query refuses a NaN corner, as the box does") {
+  const BVH t = build(random_boxes(10, 2, 1));
+  constexpr double nan = std::numeric_limits<double>::quiet_NaN();
+  const std::vector<double> ok = {0.0, 0.0};
+  const std::vector<double> with_nan = {0.0, nan};
+  const char* const msg = "BVH.query_aabb: query corners must not contain NaN.";
+  CHECK_THROWS_WITH_AS(static_cast<void>(t.query_aabb(with_nan, ok)), msg, pantr::value_error);
+  CHECK_THROWS_WITH_AS(static_cast<void>(t.query_aabb(ok, with_nan)), msg, pantr::value_error);
+  // The empty tree refuses it too: the policy does not depend on what the tree holds.
+  const std::vector<double> none;
+  const std::vector<std::size_t> shape0 = {0, 2};
+  const BVH empty = BVH::from_cell_bounds(none, none, shape0, shape0);
+  CHECK_THROWS_WITH_AS(static_cast<void>(empty.query_aabb(with_nan, ok)), msg, pantr::value_error);
+  // The box route refuses it earlier, in the AABB constructor.
+  CHECK_THROWS_AS(static_cast<void>(AABB(with_nan, ok)), pantr::value_error);
+}
+
+TEST_CASE("grid: BVH: a shape whose product overflows size_t is refused with capacity_error") {
+  const std::size_t huge = std::size_t{1} << 40;
+  const std::vector<std::size_t> shape = {huge, huge};
+  const std::vector<double> none;
+  const std::vector<I64> no_ids;
+  CHECK_THROWS_WITH_AS(static_cast<void>(BVH::from_cell_bounds(none, none, shape, shape)),
+                       "a product of extents (1099511627776, 1099511627776) has more entries than "
+                       "fit in memory",
+                       pantr::capacity_error);
+  CHECK_THROWS_AS(
+      static_cast<void>(BVH(none, none, shape, shape, no_ids, no_ids, no_ids, std::int64_t{1})),
+      pantr::capacity_error);
 }
 
 TEST_CASE("grid: BVH::from_cell_bounds: validation messages") {
@@ -486,13 +557,43 @@ TEST_CASE("grid: BVH constructor: a tree of depth 128 fits the traversal stack, 
       pantr::value_error);
 }
 
-TEST_CASE("grid: BVH constructor: a node that is its own child is caught by the depth walk") {
+TEST_CASE("grid: BVH constructor: a node that is its own child is not a tree") {
   // One internal node whose children are itself: structurally in range, but not a tree.
   const std::vector<double> lo = {0.0};
   const std::vector<double> hi = {1.0};
   const std::vector<std::size_t> shape = {1, 1};
   const std::vector<I64> self = {0};
   const std::vector<I64> internal = {-1};
-  CHECK_THROWS_AS(static_cast<void>(BVH(lo, hi, shape, shape, self, self, internal, 1)),
-                  pantr::value_error);
+  CHECK_THROWS_WITH_AS(
+      static_cast<void>(BVH(lo, hi, shape, shape, self, self, internal, 1)),
+      "BVH: the node arrays do not encode a tree: a node is reachable from the root more than "
+      "once.",
+      pantr::value_error);
+}
+
+TEST_CASE("grid: BVH constructor: internal nodes sharing children are refused without a blow-up") {
+  // 31 cells, 61 nodes: nodes 0..29 are internal with both children the next node, nodes 30..60
+  // are leaves. Every index is in range and the depth is only 31, but there are 2^30 root-to-leaf
+  // paths, so a walk that enumerates paths never returns; a walk that counts nodes refuses at the
+  // 62nd pop.
+  constexpr I64 n_cells = 31;
+  constexpr std::size_t n_nodes = 61;
+  std::vector<I64> left(n_nodes, -1);
+  std::vector<I64> right(n_nodes, -1);
+  std::vector<I64> cell(n_nodes, -1);
+  for (std::size_t i = 0; i < 30; ++i) {
+    left[i] = static_cast<I64>(i) + 1;
+    right[i] = static_cast<I64>(i) + 1;
+  }
+  for (std::size_t i = 30; i < n_nodes; ++i) {
+    cell[i] = static_cast<I64>(i) - 30;
+  }
+  const std::vector<double> lo(n_nodes, 0.0);
+  const std::vector<double> hi(n_nodes, 1.0);
+  const std::vector<std::size_t> shape = {n_nodes, 1};
+  CHECK_THROWS_WITH_AS(
+      static_cast<void>(BVH(lo, hi, shape, shape, left, right, cell, n_cells)),
+      "BVH: the node arrays do not encode a tree: a node is reachable from the root more than "
+      "once.",
+      pantr::value_error);
 }

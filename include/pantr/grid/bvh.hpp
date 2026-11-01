@@ -20,6 +20,7 @@
 #include "pantr/config.hpp"
 #include "pantr/core/errors.hpp"
 #include "pantr/core/format.hpp"
+#include "pantr/core/ndarray.hpp"
 #include "pantr/geometry/aabb.hpp"
 
 #include <algorithm>
@@ -127,8 +128,11 @@ inline void check_tree_structure(const BVHRep& rep) {
 
 /// Measure a node array's maximum root-to-leaf depth, capped at `limit`.
 ///
-/// The walk stops as soon as it finds a path deeper than `limit`, which is all the caller needs
-/// and which also makes it terminate on node arrays that are not a tree with a cycle.
+/// The walk stops as soon as it finds a path deeper than `limit`, which is all the caller needs.
+/// That alone does not bound it: node arrays in which internal nodes share children (a DAG) have
+/// exponentially many root-to-leaf paths, none of them deep. A tree reaches each node exactly
+/// once, so the walk counts its pops and refuses as soon as they exceed `n_nodes`; that count is
+/// also what ends it on a cycle.
 ///
 /// Args:
 ///     rep (const BVHRep&): A structure-checked tree.
@@ -137,6 +141,10 @@ inline void check_tree_structure(const BVHRep& rep) {
 /// Returns:
 ///     std::int64_t: The number of nodes on the longest root-to-leaf path (the root counts as
 ///     depth 1); 0 for no nodes. A value greater than `limit` means only "deeper than `limit`".
+///
+/// Raises:
+///     value_error: A node is reachable from the root more than once, so the arrays are not a
+///         tree.
 [[nodiscard]] inline std::int64_t max_tree_depth(const BVHRep& rep, std::int64_t limit) {
   if (rep.n_nodes == 0) {
     return 0;
@@ -144,9 +152,15 @@ inline void check_tree_structure(const BVHRep& rep) {
   std::vector<std::pair<std::int64_t, std::int64_t>> stack;
   stack.emplace_back(0, 1);
   std::int64_t max_depth = 0;
+  std::int64_t pops = 0;
   while (!stack.empty()) {
     const auto [node, depth] = stack.back();
     stack.pop_back();
+    if (++pops > rep.n_nodes) {
+      throw value_error(
+          "BVH: the node arrays do not encode a tree: a node is reachable from the root more "
+          "than once.");
+    }
     max_depth = (std::max)(max_depth, depth);
     if (max_depth > limit) {
       return max_depth;
@@ -357,8 +371,10 @@ class BVH {
   /// Raises:
   ///     value_error: Shapes are inconsistent, `ndim < 1`, `n_nodes != 2 * n_cells - 1` (0 when
   ///         `n_cells <= 0`), `node_cell` and the child pointers disagree about which nodes are
-  ///         leaves, an internal node's children or a leaf's cell id are out of range, or the
-  ///         tree is deeper than the traversal stack allows.
+  ///         leaves, an internal node's children or a leaf's cell id are out of range, the
+  ///         arrays are not a tree (a node reachable twice), or the tree is deeper than the
+  ///         traversal stack allows.
+  ///     capacity_error: A shape's product overflows `std::size_t`.
   BVH(std::span<const double> node_lo, std::span<const double> node_hi,
       std::span<const std::size_t> lo_shape, std::span<const std::size_t> hi_shape,
       std::span<const std::int64_t> node_left, std::span<const std::int64_t> node_right,
@@ -385,6 +401,7 @@ class BVH {
   /// Raises:
   ///     value_error: Shapes are inconsistent, `ndim < 1`, a corner is not finite, or a cell has
   ///         `hi < lo` on some axis.
+  ///     capacity_error: A shape's product overflows `std::size_t`.
   [[nodiscard]] static BVH from_cell_bounds(std::span<const double> lo, std::span<const double> hi,
                                             std::span<const std::size_t> lo_shape,
                                             std::span<const std::size_t> hi_shape) {
@@ -428,7 +445,8 @@ class BVH {
   /// Get the ids of every leaf cell whose box is not separated from the query box.
   ///
   /// A separating-axis test, not `AABB::overlaps` (see the file comment for how they differ on an
-  /// empty query box).
+  /// empty query box). A NaN corner is refused, as `geometry::AABB` refuses it: every comparison
+  /// against NaN is false, so the test would report every cell.
   ///
   /// Args:
   ///     qlo (std::span<const double>): Query lower corner, `ndim()` entries.
@@ -439,7 +457,7 @@ class BVH {
   ///     callers that need a particular order should sort the result.
   ///
   /// Raises:
-  ///     value_error: A corner does not have `ndim()` entries.
+  ///     value_error: A corner does not have `ndim()` entries or contains NaN.
   [[nodiscard]] std::vector<std::int64_t> query_aabb(std::span<const double> qlo,
                                                      std::span<const double> qhi) const {
     if (qlo.size() != ndim() || qhi.size() != ndim()) {
@@ -447,7 +465,14 @@ class BVH {
                         "; got " + std::to_string(qlo.size()) + " and " +
                         std::to_string(qhi.size()) + ".");
     }
-    if (rep_->n_cells == 0) {
+    const auto is_nan = [](double x) { return std::isnan(x); };
+    if (std::any_of(qlo.begin(), qlo.end(), is_nan) ||
+        std::any_of(qhi.begin(), qhi.end(), is_nan)) {
+      throw value_error("BVH.query_aabb: query corners must not contain NaN.");
+    }
+    // A raw tree may carry `n_cells < 0` with no node (as the Python constructor accepts), so the
+    // node count, not the cell count, says whether there is anything to walk.
+    if (rep_->n_nodes == 0) {
       return {};
     }
     return detail::bvh_query_emit_core(*rep_, qlo.data(), qhi.data());
@@ -533,10 +558,7 @@ class BVH {
 
   static void require_holds(std::size_t held, std::span<const std::size_t> shape,
                             const char* name) {
-    std::size_t need = 1;
-    for (const std::size_t e : shape) {
-      need *= e;
-    }
+    const std::size_t need = pantr::checked_product(shape);
     if (held != need) {
       throw value_error(std::string(name) + " holds " + std::to_string(held) +
                         " values, but its shape " + py_repr(shape) + " needs " +
