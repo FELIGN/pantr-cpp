@@ -758,35 +758,51 @@
   the knot-class and root-finder ones were left); it now compiles nothing
   and only sets the event that the remaining warmup barriers wait on.
 - **B-spline fitting (`interpolate_bspline`, `fit_bspline`, `l2_project_bspline`,
-  `quasi_interpolate_bspline`) runs in pantr's C++ library**, with the names, signatures,
-  defaults and dtype rules it had: which dtype a solve runs in, which values are refused and
-  with which exception, the error raised before the user's function is called, and how often
-  and on which lattices that function is called (once per boundary trace and output component
-  in `l2_project_bspline`, as before). Each solve keeps the previous rule (LU with partial
-  pivoting for a square system, the truncated SVD with `tol` for a rectangular one or where LU
-  meets an exactly zero pivot), but a square system with a narrow band is now factored within its
-  band, and a rectangular one is first offered to a banded QR that answers only where it
-  certifies full rank well clear of that rule's cutoff; the mass matrices and loads of the L2
-  projection are accumulated over the quadrature points rather than by dense products. A fit
-  still stores its matrices dense, so its cost per direction grows with the square of the number
-  of basis functions rather than the cube. Results move within the rounding of the system's
-  conditioning, measured against the previous release over sampled cases (scalar and vector, 1D
-  and 2D, open and periodic, `float32` and `float64`, square, over- and underdetermined, with and
+  `quasi_interpolate_bspline`) runs in pantr's C++ library**, with the names, signatures, defaults
+  and dtype rules it had: which dtype a solve runs in, which values are refused and with which
+  exception (except as listed below), the error raised before the user's function is called, and how
+  often that function is called (once per boundary trace and output component in
+  `l2_project_bspline`, as before) and on lattices of the same shape, order and count, whose
+  quadrature nodes agree with the previous release's to a few ulps. Each solve keeps the previous
+  rule (LU with partial pivoting for a square system, the truncated SVD with `tol` for a rectangular
+  one or where LU meets an exactly zero pivot), but a square system with a narrow band is now
+  factored within its band, and a rectangular one is first offered to a banded QR that answers only
+  where it certifies full rank well clear of that rule's cutoff; the mass matrices and loads of the
+  L2 projection are accumulated over the quadrature points rather than by dense products. A fit
+  still stores its matrices dense, so its cost per direction grows with the square of the number of
+  basis functions rather than the cube. Results move within the rounding of the system's
+  conditioning, measured against the previous release over sampled cases (scalar and vector, 1D and
+  2D, open and periodic, `float32` and `float64`, square, over- and underdetermined, with and
   without boundary constraints), with two exceptions. Where `float32` nodes (scattered, or a
-  `float32` `PointsLattice`) are fitted into a `float64` space through the SVD, the previous
-  release rounded the SVD factors to `float32`; the result now keeps `float64` accuracy and moves
-  by up to the `float32` rounding of that solve. And where the system is singular (for example
+  `float32` `PointsLattice`) are fitted into a `float64` space through the SVD, the previous release
+  rounded the SVD factors to `float32`; the result now keeps `float64` accuracy and moves by up to
+  the `float32` rounding of that solve. And where the system is singular (for example
   `l2_project_bspline` with fewer quadrature points than `degree + 1`), whether LU or the SVD
-  answers depends on the last bits of the matrix, as it already did between BLAS libraries, so
-  such a result is not reproducible across releases. The `RuntimeWarning` "divide by zero
-  encountered in divide" that the SVD path emitted for an exactly zero singular value is gone:
-  with `tol >= 0` the value was dropped either way, and with a negative `tol` its reciprocal is
-  still infinite, now without that warning or the "invalid value encountered in matmul" one
-  that followed it.
-- **A non-numeric `tol` in the B-spline fits raises `ValueError`** (Python's float conversion)
-  on every system. The previous release raised `TypeError` from the SVD path and ignored `tol`
-  on a system that LU solved, so a string `tol` passed silently there.
-- **Two error messages of the B-spline fits changed wording, not type:** a node outside the
+  answers depends on the last bits of the matrix, so such a result is not reproducible across
+  releases. The `RuntimeWarning` "divide by zero encountered in
+  divide" that the SVD path emitted for an exactly zero singular value is gone: with `tol >= 0` the
+  value was dropped either way, and with a negative `tol` its reciprocal is still infinite, now
+  without that warning or the "invalid value encountered in matmul" one that followed it.
+- **A `tol` that Python's `float()` rejects raises what `float()` raises in the B-spline fits,
+  on every system**: `ValueError` for a non-numeric string, `TypeError` for any other type (a
+  list, a tuple, an object, a complex number, an array with `ndim > 0`). The previous release
+  raised `TypeError` from the SVD path for a string, list, tuple or object, accepted a complex or
+  one-element-array `tol` there, and ignored `tol` on a system that LU solved. A numeric string,
+  bytes or `Decimal` `tol`, which the SVD path refused, is now accepted.
+- **`fit_bspline` refuses or accepts some unusual dtypes differently.** `longdouble` values on a
+  `float64` space whose first direction is rectangular and a later one square raise `ValueError`
+  ("The control points must have the same dtype as the B-spline space ..."), where they raised
+  `TypeError` ("array type float128 is unsupported in linalg"). A `PointsLattice` of `float16`
+  or `longdouble` coordinates is fitted (the lattice stores them as `float64`), where it raised
+  that `TypeError`. Scattered nodes of object dtype raise `ValueError` ("not inexact") where they
+  raised NumPy's casting `TypeError`, and complex scattered nodes raise `TypeError` where they
+  raised `ValueError` with a `ComplexWarning`. An `n_quad` entry of the wrong type is still a
+  `TypeError`, with the binding's "incompatible function arguments" message.
+- **The "invalid value encountered in matmul" or "in dot" `RuntimeWarning`** for an infinite
+  value given to `interpolate_bspline`, `fit_bspline` or `quasi_interpolate_bspline` is gone; the
+  result is the previous release's.
+- **Error messages of the B-spline fits that changed wording, not type** (besides the ones
+  above): a node outside the
   domain names the domain as `(0.0, 1.0)` rather than `(np.float64(0.0), np.float64(1.0))`, as
   the B-spline evaluation messages already do, and a tensor fit with no node in a later
   direction reports the first direction's extent in its reshape message.
@@ -799,8 +815,10 @@
   of NumPy's `matmul` or `solve` message; the exception type is unchanged.
 - **The `ValueError` for a singular local block in `quasi_interpolate_bspline`** no longer
   carries the two notes (the knot hint and the points) that it carried as exception notes; its
-  message is unchanged. The block is singular only for a knot interval of zero length, which a
-  space's unique knots do not have.
+  message is unchanged. The block is singular (to rounding) only when a knot interval is so short,
+  relative to the coordinate, that the `degree + 1` points placed in it collide in floating
+  point. Some such spaces that the previous release refused now return a spline, and some are
+  still refused.
 
 ### Fixed
 - **`Bspline.multiply` no longer returns values that depend on memory it never wrote.** The
