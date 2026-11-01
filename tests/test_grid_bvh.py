@@ -341,6 +341,35 @@ def test_ctor_rejects_a_cyclic_node_graph_without_hanging() -> None:
         BVH(node_lo, node_hi, node_left, node_right, node_cell, n_cells=4)
 
 
+def test_ctor_rejects_a_child_shared_by_two_parents() -> None:
+    """Two parents naming the same child is not a tree, even though every index is in range.
+
+    The 3-leaf tree is node 0 -> (1, 2), node 2 -> (3, 4); pointing node 2's right child at
+    node 1 makes node 1 reachable twice and leaves node 4 unreachable.
+    """
+    node_lo, node_hi, node_left, node_right, node_cell = _three_leaf_arrays()
+    assert (int(node_left[2]), int(node_right[2])) == (3, 4)
+    node_right[2] = 1
+
+    with pytest.raises(ValueError, match="do not encode a tree"):
+        BVH(node_lo, node_hi, node_left, node_right, node_cell, n_cells=3)
+
+
+def test_ctor_rejects_an_orphan_subtree() -> None:
+    """A node no path from the root reaches is not a tree, though nothing is shared.
+
+    Turning node 2 into a leaf (cell 0, no children) leaves nodes 3 and 4 unreachable. Every
+    node is still consistently a leaf or an internal node and every index is in range, so only
+    the reachability check refuses it.
+    """
+    node_lo, node_hi, node_left, node_right, node_cell = _three_leaf_arrays()
+    node_left[2] = node_right[2] = -1
+    node_cell[2] = 0
+
+    with pytest.raises(ValueError, match="do not encode a tree"):
+        BVH(node_lo, node_hi, node_left, node_right, node_cell, n_cells=3)
+
+
 def _three_leaf_arrays() -> tuple[
     npt.NDArray[np.float64],
     npt.NDArray[np.float64],

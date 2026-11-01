@@ -83,6 +83,8 @@ class TensorProductGrid(Grid):
             ValueError: If ``breakpoints`` is empty, any axis has fewer than two
                 entries, or any axis is non-finite or not strictly increasing.
             TypeError: If a breakpoint array cannot be cast to ``float64``.
+            OverflowError: If the cell count, the product of the per-axis counts, is
+                ``2**63`` or more.
         """
         super().__init__()
         axes = [
@@ -404,6 +406,8 @@ def uniform_grid(
         ValueError: If ``bounds`` does not have shape ``(ndim, 2)``, any axis has
             ``lo >= hi``, ``cells`` has the wrong length, or any count is ``< 1``.
         TypeError: If ``bounds`` cannot be cast to ``float64``.
+        OverflowError: If the cell count, the product of the per-axis counts, is ``2**63``
+            or more.
     """
     arr = _as_float64(bounds, name="bounds")
     if arr.ndim != 2 or arr.shape[-1] != 2:  # noqa: PLR2004
@@ -446,6 +450,7 @@ def tensor_product_grid(space: BsplineSpace) -> TensorProductGrid:
 
     Raises:
         ValueError: If any direction of ``space`` is periodic.
+        OverflowError: If the number of knot spans of ``space`` is ``2**63`` or more.
     """
     breakpoints: list[npt.NDArray[np.float64]] = []
     for d, sub in enumerate(space.spaces):

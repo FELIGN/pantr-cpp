@@ -570,15 +570,17 @@ class HierarchicalGrid(Grid):
     def level_cells_per_axis(self, level: int) -> tuple[int, ...]:
         """Return the per-axis cell count of the level-``level`` grid.
 
-        This is a pure formula — ``level`` need not be an existing hierarchy level.
+        This is a formula — ``level`` need not be an existing hierarchy level.
         Values above ``max_level`` return the count for the hypothetical finer grid
-        that would result from additional uniform subdivision.  This differs from
+        that would result from additional uniform subdivision, as long as the count
+        of every axis fits in a signed 64-bit integer.  This differs from
         :meth:`active_blocks`, :meth:`active_leaf_mask`, and :meth:`subdomain_mask`,
         which all require ``level <= max_level``.
 
         Args:
             level (int): Hierarchy level.  Must be ``>= 0``; values above
-                ``max_level`` are accepted and return the geometrically valid count.
+                ``max_level`` are accepted and return the geometrically valid count,
+                unless it exceeds ``2**63 - 1`` along some axis.
 
         Returns:
             tuple[int, ...]: ``root.cells_per_axis[k] * factor[k] ** level`` for
@@ -586,6 +588,8 @@ class HierarchicalGrid(Grid):
 
         Raises:
             ValueError: If ``level < 0``.
+            OverflowError: If ``root.cells_per_axis[k] * factor[k] ** level`` exceeds
+                ``2**63 - 1`` for some axis ``k``.
         """
         return tuple(int(n) for n in self._h.level_cells_per_axis(int(level)))
 
@@ -697,6 +701,9 @@ class HierarchicalGrid(Grid):
             ValueError: If ``level`` is out of range, ``lo``/``hi`` have the
                 wrong length, any ``lo[k] >= hi[k]``, or ``[lo, hi)`` falls
                 entirely outside the level-``level`` domain.
+            OverflowError: If ``level`` is ``max_level`` and the new level
+                ``level + 1`` would have more than ``2**63 - 1`` cells along some
+                axis.  The grid is unchanged.
 
         References:
             Refinement and coarsening algorithms for adaptive hierarchical-spline
@@ -717,6 +724,8 @@ class HierarchicalGrid(Grid):
 
         Raises:
             IndexError: If any id in ``cell_ids`` is out of range.
+            OverflowError: As :meth:`refine`: a refined level would have more than
+                ``2**63 - 1`` cells along some axis.  The grid is unchanged.
         """
         if not cell_ids:
             return
