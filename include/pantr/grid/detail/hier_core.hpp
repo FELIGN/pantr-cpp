@@ -100,7 +100,7 @@ struct HierarchicalGridRep {
 ///     root (TensorProductGrid): The level-0 grid.
 ///     factor (std::vector<std::int64_t>): Per-axis subdivision factor.
 ///     blocks (std::vector<std::vector<Block>>): The active blocks of every level (at least one).
-///     version (std::int64_t): The version to record.
+///     grid_version (std::int64_t): The version to record.
 ///
 /// Returns:
 ///     std::shared_ptr<const HierarchicalGridRep>: The representation.
@@ -109,11 +109,11 @@ struct HierarchicalGridRep {
 ///     std::overflow_error: The number of cells does not fit in `int64`.
 [[nodiscard]] inline std::shared_ptr<const HierarchicalGridRep> make_hier_rep(
     TensorProductGrid root, std::vector<std::int64_t> factor,
-    std::vector<std::vector<Block>> blocks, std::int64_t version) {
+    std::vector<std::vector<Block>> blocks, std::int64_t grid_version) {
   const std::size_t nd = root.ndim();
   auto rep = std::make_shared<HierarchicalGridRep>(std::move(root));
   rep->factor = std::move(factor);
-  rep->version = version;
+  rep->version = grid_version;
   const std::size_t n_levels = blocks.size();
   std::size_t n_blocks = 0;
   for (const std::vector<Block>& level_blocks : blocks) {

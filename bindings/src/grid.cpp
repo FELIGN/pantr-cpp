@@ -311,8 +311,8 @@ void register_hierarchical_grid(nb::module_& m) {
   cls.def_static(
       "from_blocks",
       [](const TensorProductGrid& root, const std::vector<std::int64_t>& factor,
-         std::vector<std::vector<Block>> blocks, std::int64_t version) {
-        return HierarchicalGrid::from_blocks(root, factor, std::move(blocks), version);
+         std::vector<std::vector<Block>> blocks, std::int64_t grid_version) {
+        return HierarchicalGrid::from_blocks(root, factor, std::move(blocks), grid_version);
       },
       nb::arg("root"), nb::arg("factor"), nb::arg("blocks"), nb::arg("version"),
       "A grid from per-level block lists (pickling and windowing).");

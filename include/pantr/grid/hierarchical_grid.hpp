@@ -85,23 +85,22 @@ class HierarchicalGrid : public GridBase<HierarchicalGrid> {
   ///     factor (std::vector<std::int64_t>): Per-axis subdivision factor.
   ///     blocks (std::vector<std::vector<detail::Block>>): `blocks[l]` lists the active
   ///         rectangles of level `l` in level-`l` coordinates; at least one level.
-  ///     version (std::int64_t): The version the value reports, at least 1.
+  ///     grid_version (std::int64_t): The version the value reports, at least 1.
   ///
   /// Returns:
   ///     HierarchicalGrid: The grid.
   ///
   /// Raises:
-  ///     value_error: `factor` is invalid, `version < 1`, there is no level, or a block is not a
-  ///     non-empty
-  ///         rectangle of `ndim` bounds inside its level's index range.
+  ///     value_error: `factor` is invalid, `grid_version < 1`, there is no level, or a block is
+  ///         not a non-empty rectangle of `ndim` bounds inside its level's index range.
   ///     std::overflow_error: A level's cell count along an axis, or the total, exceeds `int64`.
   [[nodiscard]] static HierarchicalGrid from_blocks(TensorProductGrid root,
                                                     std::vector<std::int64_t> factor,
                                                     std::vector<std::vector<detail::Block>> blocks,
-                                                    std::int64_t version) {
+                                                    std::int64_t grid_version) {
     check_factor(root.ndim(), factor);
-    if (version < 1) {
-      throw value_error("version must be >= 1; got " + std::to_string(version) + ".");
+    if (grid_version < 1) {
+      throw value_error("version must be >= 1; got " + std::to_string(grid_version) + ".");
     }
     if (blocks.empty()) {
       throw value_error("from_blocks: blocks must hold at least one level.");
@@ -137,7 +136,7 @@ class HierarchicalGrid : public GridBase<HierarchicalGrid> {
       blocks.pop_back();
     }
     return HierarchicalGrid(
-        detail::make_hier_rep(std::move(root), std::move(factor), std::move(blocks), version));
+        detail::make_hier_rep(std::move(root), std::move(factor), std::move(blocks), grid_version));
   }
 
   /// Get the spatial dimension.
