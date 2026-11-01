@@ -22,6 +22,7 @@ import copy
 import pickle
 from typing import Any
 
+import numba as nb
 import numpy as np
 import numpy.typing as npt
 import pytest
@@ -63,15 +64,26 @@ def _numpy_locate(g: TensorProductGrid, points: npt.NDArray[np.float64]) -> npt.
     return out
 
 
+def _many_threads() -> int:
+    """Pick a thread count above one for the parallel run.
+
+    Returns:
+        int: Eight, capped at the most threads `pantr.num_threads` accepts (a CI runner may
+        allow four) and at the C++ pool's capacity.
+    """
+    numba_cap: int = nb.config.NUMBA_NUM_THREADS
+    return min(8, numba_cap, ext.max_threads())
+
+
 def test_locate_many_is_independent_of_the_thread_count() -> None:
-    """One thread and eight threads give the same ids, bit for bit, and the right ones.
+    """One thread and several threads give the same ids, bit for bit, and the right ones.
 
     The batch is far above the size at which the search runs in parallel (about 10^4 points
-    for two axes), so the eight-thread run really splits it; the expected ids come from a
+    for two axes), so the several-thread run really splits it; the expected ids come from a
     numpy ``searchsorted`` oracle, so equality of the two runs is not the only thing checked.
     """
-    if ext.max_threads() < 2:
-        pytest.skip("the C++ pool has a single thread, so there is no parallel run to compare")
+    if _many_threads() < 2:
+        pytest.skip("a single thread is available, so there is no parallel run to compare")
     rng = np.random.default_rng(11)
     g = TensorProductGrid(
         [np.sort(rng.uniform(0.0, 10.0, 129)) + np.arange(129) * 1e-3, np.linspace(-2.0, 3.0, 97)]
@@ -82,7 +94,7 @@ def test_locate_many_is_independent_of_the_thread_count() -> None:
     pts[2::983] = g.breakpoints[0][3], g.breakpoints[1][5]  # exactly on interior breakpoints
     with pantr.num_threads(1):
         serial = g.locate_many(pts)
-    with pantr.num_threads(8):
+    with pantr.num_threads(_many_threads()):
         parallel = g.locate_many(pts)
     np.testing.assert_array_equal(parallel, serial)
     expected = _numpy_locate(g, pts)
@@ -518,15 +530,15 @@ def _two_level_grid_for_threads() -> HierarchicalGrid:
 
 
 def test_hierarchical_locate_many_is_independent_of_the_thread_count() -> None:
-    """One thread and eight threads give the same ids, bit for bit, and plausible ones.
+    """One thread and several threads give the same ids, bit for bit, and plausible ones.
 
     The batch is far above the size at which the search runs in parallel. The ids are integers,
     so equality is the criterion. The independent check is brute force: the located cell must
     contain its point (inclusively, as a point on a shared face may go to either cell), and a
     point no cell contains must give ``-1``.
     """
-    if ext.max_threads() < 2:
-        pytest.skip("the C++ pool has a single thread, so there is no parallel run to compare")
+    if _many_threads() < 2:
+        pytest.skip("a single thread is available, so there is no parallel run to compare")
     g = _two_level_grid_for_threads()
     rng = np.random.default_rng(12)
     lo, hi = g.root.bounds[:, 0], g.root.bounds[:, 1]
@@ -536,7 +548,7 @@ def test_hierarchical_locate_many_is_independent_of_the_thread_count() -> None:
     pts[2::983] = g.root.breakpoints[0][11], g.root.breakpoints[1][12]  # on root breakpoints
     with pantr.num_threads(1):
         serial = g.locate_many(pts)
-    with pantr.num_threads(8):
+    with pantr.num_threads(_many_threads()):
         parallel = g.locate_many(pts)
     np.testing.assert_array_equal(parallel, serial)
     assert (serial == -1).any()
@@ -555,19 +567,19 @@ def test_hierarchical_locate_many_is_independent_of_the_thread_count() -> None:
 
 
 def test_hierarchical_collect_cell_bounds_is_independent_of_the_thread_count() -> None:
-    """One thread and eight threads give the same corners, exactly.
+    """One thread and several threads give the same corners, exactly.
 
     Every cell's corners come from its own block and multi-index by a fixed expression; no
     value is combined across cells, so splitting the cells among threads cannot change a bit and
     the criterion is equality, not a tolerance. The corners also equal ``cell_bounds`` cell by
     cell, which is computed by a different route (one cell at a time).
     """
-    if ext.max_threads() < 2:
-        pytest.skip("the C++ pool has a single thread, so there is no parallel run to compare")
+    if _many_threads() < 2:
+        pytest.skip("a single thread is available, so there is no parallel run to compare")
     g = _two_level_grid_for_threads()
     with pantr.num_threads(1):
         lo1, hi1 = g.collect_cell_bounds()
-    with pantr.num_threads(8):
+    with pantr.num_threads(_many_threads()):
         lo8, hi8 = g.collect_cell_bounds()
     assert lo1.shape == (g.num_cells, 2)
     np.testing.assert_array_equal(lo8, lo1)
