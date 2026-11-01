@@ -53,6 +53,11 @@ set(_pantr_test_sources
 add_executable(pantr_tests ${_pantr_test_sources})
 target_link_libraries(pantr_tests PRIVATE pantr::pantr pantr_native_arch pantr_doctest
                                           pantr_cxx_warnings)
+# A templated test file instantiated for several dtypes outgrows COFF's default section count
+# (MSVC C1128 on test_bspline_fit.cpp).
+if(MSVC)
+  target_compile_options(pantr_tests PRIVATE /bigobj)
+endif()
 doctest_discover_tests(pantr_tests)
 
 # The scalar SIMD fallback, as the forced-scalar build sees it.
