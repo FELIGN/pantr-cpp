@@ -61,6 +61,7 @@
 #include "pantr/grid/cell_index.hpp"
 #include "pantr/grid/cell_quadrature.hpp"
 #include "pantr/grid/grid_base.hpp"
+#include "pantr/grid/hierarchical_grid.hpp"
 #include "pantr/grid/overlay.hpp"
 #include "pantr/grid/partition.hpp"
 #include "pantr/grid/tags.hpp"
