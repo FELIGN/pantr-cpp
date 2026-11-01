@@ -34,7 +34,6 @@
 
 #include <algorithm>
 #include <array>
-#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -230,6 +229,26 @@ class HierarchicalGrid : public GridBase<HierarchicalGrid> {
     return cid;
   }
 
+  /// Get the work of locating one point, which sizes `locate_many`'s chunks.
+  ///
+  /// One item is one point. The root search is a binary search per axis over `cells + 1`
+  /// breakpoints (the root grid's `locate_work`); then, at worst, every level costs a scan of its
+  /// blocks (`ndim()` comparisons each) and about `4 * ndim()` operations to pick the child. An
+  /// estimate of the algorithm's work, not a timing; the Python binding also uses it to decide
+  /// whether to release the GIL.
+  ///
+  /// Returns:
+  ///     pantr::parallel::WorkEstimate: Operations to locate one point.
+  [[nodiscard]] pantr::parallel::WorkEstimate locate_work() const {
+    const auto nd = static_cast<double>(ndim());
+    double ops = rep_->root.locate_work().ops_per_item;
+    for (std::size_t level = 0; level < rep_->blocks.size(); ++level) {
+      ops += static_cast<double>(rep_->level_start[level + 1] - rep_->level_start[level]) * nd +
+             4.0 * nd;
+    }
+    return pantr::parallel::WorkEstimate{ops};
+  }
+
   /// Locate a batch of points, in parallel over the points.
   ///
   /// Args:
@@ -252,24 +271,10 @@ class HierarchicalGrid : public GridBase<HierarchicalGrid> {
                         std::to_string(nd) + ") needs " + std::to_string(npts * nd) + ".");
     }
     NdArray<std::int64_t> out({npts}, for_overwrite);
-    // One item is one point. The root search is a binary search per axis over cells + 1
-    // breakpoints, ceil(log2(cells + 2)) comparisons plus about four operations for the range
-    // check and index arithmetic; then, at worst, every level costs a scan of its blocks (`nd`
-    // comparisons each) and about `4 * nd` operations to pick the child. An estimate of the
-    // algorithm's work, not a timing.
-    double ops = 0.0;
-    for (const std::int64_t cells : rep_->root.cells_per_axis()) {
-      ops += static_cast<double>(std::bit_width(static_cast<std::uint64_t>(cells + 1)) + 4);
-    }
-    for (std::size_t level = 0; level < rep_->blocks.size(); ++level) {
-      ops += static_cast<double>(rep_->level_start[level + 1] - rep_->level_start[level]) *
-                 static_cast<double>(nd) +
-             4.0 * static_cast<double>(nd);
-    }
     const detail::HierarchicalGridRep& rep = *rep_;
     std::int64_t* const dst = out.data();
     const double* const src = points.data();
-    pantr::parallel::parallel_for(npts, pantr::parallel::WorkEstimate{ops},
+    pantr::parallel::parallel_for(npts, locate_work(),
                                   [&rep, dst, src, nd](std::size_t begin, std::size_t end) {
                                     detail::LocateScratch scratch(nd);
                                     for (std::size_t p = begin; p < end; ++p) {
@@ -872,6 +877,21 @@ class HierarchicalGrid : public GridBase<HierarchicalGrid> {
     return current;
   }
 
+  /// Get the work of `collect_cell_bounds` per cell, which sizes its chunks.
+  ///
+  /// One item is one cell. Per axis the bounds cost an integer division and remainder, two
+  /// breakpoint loads, a subtraction, a division, a multiplication and two additions, about six
+  /// operations per axis, as the cost of a block is `cells * 6 * ndim`; a chunk starts with two
+  /// binary searches, which a chunk of this size amortizes. The loop runs over cells rather than
+  /// blocks so that one large block still splits. An estimate of the algorithm's work, not a
+  /// timing; the Python binding also uses it to decide whether to release the GIL.
+  ///
+  /// Returns:
+  ///     pantr::parallel::WorkEstimate: Operations to evaluate the bounds of one cell.
+  [[nodiscard]] pantr::parallel::WorkEstimate collect_work() const {
+    return pantr::parallel::WorkEstimate{6.0 * static_cast<double>(ndim())};
+  }
+
   /// Materialize per-cell `(lo, hi)` in flat-id order, in parallel over the cells.
   ///
   /// Each cell's bounds are the same expression `cell_bounds` evaluates, so the arrays equal the
@@ -885,17 +905,11 @@ class HierarchicalGrid : public GridBase<HierarchicalGrid> {
     const auto n = static_cast<std::size_t>(rep_->num_cells);
     NdArray<double> cell_lo({n, nd}, for_overwrite);
     NdArray<double> cell_hi({n, nd}, for_overwrite);
-    // One item is one cell. Per axis the bounds cost an integer division and remainder, two
-    // breakpoint loads, a subtraction, a division, a multiplication and two additions, about six
-    // operations per axis, as the cost of a block is `cells * 6 * ndim`; a chunk starts with two
-    // binary searches, which a chunk of this size amortizes. The loop runs over cells rather than
-    // blocks so that one large block still splits. An estimate of the algorithm's work, not a
-    // timing. Each cell writes `2 * ndim` doubles.
-    const double ops = 6.0 * static_cast<double>(nd);
+    // Each cell writes `2 * ndim` doubles.
     const detail::HierarchicalGridRep& rep = *rep_;
     double* const dst_lo = cell_lo.data();
     double* const dst_hi = cell_hi.data();
-    pantr::parallel::parallel_for(n, pantr::parallel::WorkEstimate{ops}, 2 * nd * sizeof(double),
+    pantr::parallel::parallel_for(n, collect_work(), 2 * nd * sizeof(double),
                                   [&rep, dst_lo, dst_hi](std::size_t begin, std::size_t end) {
                                     detail::collect_bounds_range(
                                         rep, static_cast<std::int64_t>(begin),

@@ -285,6 +285,23 @@ class TensorProductGrid : public GridBase<TensorProductGrid> {
     return cid;
   }
 
+  /// Get the work of locating one point, which sizes `locate_many`'s chunks.
+  ///
+  /// One item is one point. Per axis a binary search over `cells + 1` breakpoints costs
+  /// `ceil(log2(cells + 2))` comparisons, plus about four operations for the range check and the
+  /// index arithmetic. An estimate of the algorithm's work, not a timing; the Python binding also
+  /// uses it to decide whether to release the GIL.
+  ///
+  /// Returns:
+  ///     pantr::parallel::WorkEstimate: Operations to locate one point.
+  [[nodiscard]] pantr::parallel::WorkEstimate locate_work() const {
+    double ops = 0.0;
+    for (const std::int64_t cells : rep_->cells_per_axis) {
+      ops += static_cast<double>(std::bit_width(static_cast<std::uint64_t>(cells + 1)) + 4);
+    }
+    return pantr::parallel::WorkEstimate{ops};
+  }
+
   /// Locate a batch of points, in parallel over the points.
   ///
   /// Args:
@@ -307,17 +324,10 @@ class TensorProductGrid : public GridBase<TensorProductGrid> {
                         std::to_string(nd) + ") needs " + std::to_string(npts * nd) + ".");
     }
     NdArray<std::int64_t> out({npts}, for_overwrite);
-    // One item is one point; per axis a binary search over cells + 1 breakpoints costs
-    // ceil(log2(cells + 2)) comparisons, plus about four operations for the range check and the
-    // index arithmetic. An estimate of the algorithm's work, not a timing.
-    double ops = 0.0;
-    for (const std::int64_t cells : rep_->cells_per_axis) {
-      ops += static_cast<double>(std::bit_width(static_cast<std::uint64_t>(cells + 1)) + 4);
-    }
     const detail::TensorProductGridRep& rep = *rep_;
     std::int64_t* const dst = out.data();
     const double* const src = points.data();
-    pantr::parallel::parallel_for(npts, pantr::parallel::WorkEstimate{ops},
+    pantr::parallel::parallel_for(npts, locate_work(),
                                   [&rep, dst, src, nd](std::size_t begin, std::size_t end) {
                                     for (std::size_t p = begin; p < end; ++p) {
                                       dst[p] = detail::tpg_locate_core(rep, src + p * nd);

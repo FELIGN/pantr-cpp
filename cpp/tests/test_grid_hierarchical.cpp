@@ -351,6 +351,24 @@ void check_boundary_facets(const HierarchicalGrid& g) {
 
 }  // namespace
 
+TEST_CASE("grid: HierarchicalGrid: locate_work and collect_work follow the documented model") {
+  // collect_work: about six operations per axis.
+  CHECK(hg(uniform_bp(4, 2), {2, 2}).collect_work().ops_per_item == doctest::Approx(12.0));
+  CHECK(hg(uniform_bp(4, 3), {2, 2, 2}).collect_work().ops_per_item == doctest::Approx(18.0));
+  // locate_work: the root's search (its locate_work), plus per level a scan of that level's blocks
+  // (`ndim` comparisons each) and 4 * ndim to pick the child. Oracle: the public block lists.
+  const HierarchicalGrid g0 = hg(uniform_bp(4, 2), {2, 2});
+  CHECK(g0.locate_work().ops_per_item ==
+        doctest::Approx(g0.root().locate_work().ops_per_item + 1.0 * 2.0 + 4.0 * 2.0));
+  const HierarchicalGrid g = g0.refined(0, Ivec{1, 1}, Ivec{3, 3});
+  double expected = g.root().locate_work().ops_per_item;
+  for (const auto& level : g.blocks()) {
+    expected += static_cast<double>(level.size()) * 2.0 + 4.0 * 2.0;
+  }
+  CHECK(g.locate_work().ops_per_item == doctest::Approx(expected));
+  CHECK(g.locate_work().ops_per_item > g0.locate_work().ops_per_item);
+}
+
 TEST_CASE("grid: hierarchical block helpers: size, membership and intersection") {
   CHECK(gd::block_size({2}, {5}) == 3);
   CHECK(gd::block_size({0, 0}, {3, 4}) == 12);

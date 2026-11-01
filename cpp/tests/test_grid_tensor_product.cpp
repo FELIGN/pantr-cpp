@@ -147,6 +147,16 @@ TEST_CASE("grid: TensorProductGrid: a cell count beyond int64 is refused with ov
   CHECK(tpg(Bp(4, axis)).num_cells() == I64{1} << 52);
 }
 
+TEST_CASE("grid: TensorProductGrid: locate_work is one binary search per axis plus four") {
+  // Oracle: ceil(log2(cells + 2)) comparisons per axis, written as a table (cells 1 -> 2, 2 -> 2,
+  // 3 -> 3, 5 -> 3, 6 -> 3, 7 -> 4), plus about four operations per axis.
+  CHECK(tpg(Bp{{0.0, 1.0}}).locate_work().ops_per_item == doctest::Approx(2.0 + 4.0));
+  CHECK(tpg(Bp{{0.0, 1.0, 2.0, 3.0}, {0.0, 1.0, 2.0, 3.0, 4.0, 5.0}}).locate_work().ops_per_item ==
+        doctest::Approx((3.0 + 4.0) + (3.0 + 4.0)));
+  CHECK(tpg(Bp{{0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0}}).locate_work().ops_per_item ==
+        doctest::Approx(4.0 + 4.0));
+}
+
 TEST_CASE("grid: TensorProductGrid: metadata of a three-dimensional grid") {
   const TensorProductGrid g(dyadic3());
   CHECK(g.ndim() == 3);

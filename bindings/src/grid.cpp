@@ -26,7 +26,6 @@
 #include <nanobind/stl/vector.h>
 
 #include <algorithm>
-#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -127,31 +126,6 @@ std::pair<NumpyArray<double>, NumpyArray<double>> corners_to_numpy(
   return {copy_to_numpy(c.first), copy_to_numpy(c.second)};
 }
 
-/// An estimate of the work of locating one point in `g`, for the GIL decision only (the grids
-/// compute the estimate that sizes their own chunks): per axis a binary search over `cells + 1`
-/// breakpoints, `ceil(log2(cells + 2))` comparisons plus about four operations, and for a
-/// hierarchical grid a scan of every level's blocks.
-double locate_ops(const TensorProductGrid& g) {
-  double ops = 0.0;
-  for (const std::int64_t cells : g.cells_per_axis()) {
-    ops += static_cast<double>(std::bit_width(static_cast<std::uint64_t>(cells + 1)) + 4);
-  }
-  return ops;
-}
-
-double locate_ops(const HierarchicalGrid& g) {
-  const auto nd = static_cast<double>(g.ndim());
-  double ops = locate_ops(g.root());
-  for (const auto& level : g.blocks()) {
-    ops += static_cast<double>(level.size()) * nd + 4.0 * nd;
-  }
-  return ops;
-}
-
-/// An estimate of the work per cell of a hierarchical grid's `collect_cell_bounds`, for the GIL
-/// decision: about six operations per axis.
-double collect_ops(const HierarchicalGrid& g) { return 6.0 * static_cast<double>(g.ndim()); }
-
 /// The members both grids bind alike: the primitives and the defaults of `GridBase`.
 template <class G>
 void def_common(nb::class_<G>& cls) {
@@ -169,7 +143,7 @@ void def_common(nb::class_<G>& cls) {
           [](const G& g, const F64Mat& points) {
             const std::size_t n = points.shape(0);
             NdArray<std::int64_t> out = [&] {
-              const ReleaseIfParallel release(n, locate_ops(g));
+              const ReleaseIfParallel release(n, g.locate_work().ops_per_item);
               return g.locate_many(span_of(points), n);
             }();
             return to_numpy(std::move(out));  // with the GIL: it builds a Python object
@@ -184,7 +158,8 @@ void def_common(nb::class_<G>& cls) {
               // Only the hierarchical grid collects in parallel; the tensor-product one is serial.
               std::optional<ReleaseIfParallel> release;
               if constexpr (std::is_same_v<G, HierarchicalGrid>) {
-                release.emplace(static_cast<std::size_t>(g.num_cells()), collect_ops(g));
+                release.emplace(static_cast<std::size_t>(g.num_cells()),
+                                g.collect_work().ops_per_item);
               }
               return g.collect_cell_bounds();
             }();
