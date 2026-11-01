@@ -1421,6 +1421,24 @@ TEST_CASE("grid: hierarchical overflow: a cell count past int64 is refused") {
   CHECK(h.num_cells() == f);
 }
 
+TEST_CASE("grid: hierarchical locate: a factor of INT64_MAX keeps the child index in range") {
+  // One root cell, factor 2^63 - 1: the children number 2^63 - 1, the most int64 holds. The child
+  // size is 2^-63 after rounding, so a point at the far end gives a ratio of 2^63, which no int64
+  // holds: the descent must clamp before converting, and pick the last child.
+  const I64 f = std::numeric_limits<I64>::max();
+  const HierarchicalGrid g = hg({{0.0, 1.0}}, {f}).refined(0, Ivec{0}, Ivec{1});
+  REQUIRE(g.num_cells() == f);
+  const auto locate = [&](double x) { return g.locate(std::vector<double>{x}); };
+  CHECK(locate(1.0) == std::optional<I64>(f - 1));
+  CHECK(locate(0.0) == std::optional<I64>(0));
+  // 0.5 / 2^-63 = 2^62 exactly: the child with that index, whose lower face is 0.5.
+  CHECK(locate(0.5) == std::optional<I64>(I64{1} << 62));
+  CHECK(g.cell_bounds(I64{1} << 62).first == std::vector<double>{0.5});
+  const std::vector<double> xs = {1.0, 0.0, 0.5};
+  const auto many = g.locate_many(xs, 3);
+  CHECK(Ivec(many.data(), many.data() + 3) == Ivec{f - 1, 0, I64{1} << 62});
+}
+
 TEST_CASE("grid: hierarchical factor 1: levels deepen without subdividing") {
   // Factor 1 on the only axis: the child of a cell is the same interval one level down, so a
   // hundred levels cost nothing, and level_cells_per_axis does not loop over the exponent. Cell
