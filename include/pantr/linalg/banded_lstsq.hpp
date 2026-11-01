@@ -118,12 +118,15 @@ struct Rotation {
 /// SVD would keep all of them, its minimum-norm solution is the unique least-squares solution
 /// the QR computes, and the two differ by rounding, not by rank. The steps bound exact singular
 /// values; the SVD thresholds computed ones, which the margin above the cutoff also covers.
-/// `tau / 2 - gamma - rcond > 0` follows from the `4 (m n eps + rcond)` term where that term is
-/// the larger one and `rcond` is not far below the default; otherwise, a small `rcond` or a single
-/// column included, it rests on the floor `sqrt(eps)`, which closes it while `4.3 (m + n) eps`
-/// stays below `sqrt(eps) / 2`, that is for `m + n` up to about `7.8e6` (argued here, not proved;
-/// no fit or product in this library reaches such a system). The SVD's own error constant is not
-/// quantified by LAPACK; the margin is observed, not proved, to cover it.
+/// `tau / 2 - gamma - rcond > 0` follows from the `2 m n eps` part of the `4 (m n eps + rcond)`
+/// term from three columns on, at every size; with two columns it needs `rcond >= 0.3 m eps`.
+/// Otherwise it rests on the floor `sqrt(eps)`, which closes it while
+/// `4.3 (m + n - 2) eps + rcond` stays below `sqrt(eps) / 2`: for `rcond` up to `1e-10` that is
+/// `m + n` up to about `7.7e6`; a single column ends at about `6.3e6` rows with the default
+/// `rcond` and `5.1e6` with the largest `rcond` the floor admits, and two columns at `7.3e6`
+/// (argued here, not proved; no fit or product in this library reaches such a system). The
+/// SVD's own error constant is not quantified by LAPACK; the margin is observed, not proved, to
+/// cover it.
 ///
 /// No answer is given for a non-finite `A` or `B` (the SVD path spreads a NaN or an infinity in
 /// its own way), for fewer rows than columns, or where the test fails. Everything is computed in
