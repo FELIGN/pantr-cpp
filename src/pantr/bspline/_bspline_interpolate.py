@@ -212,7 +212,8 @@ def _solve_tensor(
         ValueError: No node in some direction (NumPy's reshape message, as before).
     """
     if values.size == 0:
-        # The previous solve reshaped the empty value tensor along its first axis.
+        # The previous solve failed reshaping the empty value tensor; its message named the
+        # extent of the direction it was solving, here the first one's.
         raise ValueError(f"cannot reshape array of size 0 into shape ({values.shape[0]},newaxis)")
     compute = _linalg_dtype(np.result_type(mat_dtype, value_dtype))
     rank = int(values.shape[-1])
@@ -893,8 +894,7 @@ def _solve_kronecker(
         matrices (list[npt.NDArray]): One matrix per parametric direction,
             each of shape ``(m_d, n_d)``.
         rhs (npt.NDArray): Tensor of shape ``(m_0, m_1, ...)``.
-        tol (float | None): SVD truncation tolerance forwarded to
-            :func:`_solve_1d`.
+        tol (float | None): SVD truncation tolerance of each direction's solve.
 
     Returns:
         npt.NDArray: Coefficient tensor of shape ``(n_0, n_1, ...)``.

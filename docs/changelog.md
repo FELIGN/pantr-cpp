@@ -781,7 +781,15 @@
   such a result is not reproducible across releases. The `RuntimeWarning` "divide by zero
   encountered in divide" that the SVD path emitted for an exactly zero singular value is gone:
   with `tol >= 0` the value was dropped either way, and with a negative `tol` its reciprocal is
-  still infinite, now without the warning.
+  still infinite, now without that warning or the "invalid value encountered in matmul" one
+  that followed it.
+- **A non-numeric `tol` in the B-spline fits raises `ValueError`** (Python's float conversion)
+  on every system. The previous release raised `TypeError` from the SVD path and ignored `tol`
+  on a system that LU solved, so a string `tol` passed silently there.
+- **Two error messages of the B-spline fits changed wording, not type:** a node outside the
+  domain names the domain as `(0.0, 1.0)` rather than `(np.float64(0.0), np.float64(1.0))`, as
+  the B-spline evaluation messages already do, and a tensor fit with no node in a later
+  direction reports the first direction's extent in its reshape message.
 - **`fit_bspline` with scattered integer nodes and an explicit `tol` fits the basis values.**
   The previous release built the collocation matrix in the nodes' integer dtype, truncating
   every basis value to an integer, and returned a fit to that matrix; with `tol=None` it raised
