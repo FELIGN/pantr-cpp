@@ -35,10 +35,11 @@ Main exports:
 from __future__ import annotations
 
 import itertools
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING, Any, Self
 
 import numpy as np
 
+from .._ext import ext
 from .._numba_compat import wait_for_jit_warmup
 from ._grid import Grid, GridRestriction
 from ._grid_utils import _as_float64, _mask_nonfinite_locate
@@ -452,6 +453,31 @@ class HierarchicalGrid(Grid):
         self._rebuild()
         return self
 
+    def _state(self) -> tuple[Any, ...]:
+        """Return the constructor state: the root, the factor, the blocks and the version.
+
+        Returns:
+            tuple[Any, ...]: What :meth:`_from_state` rebuilds the grid from.
+        """
+        blocks = [list(level_blocks) for level_blocks in self._blocks]
+        return (self._root, self._factor, blocks, self._version)
+
+    @classmethod
+    def _from_state(cls, state: tuple[Any, ...]) -> Self:
+        """Rebuild a grid from :meth:`_state`, at the version it was taken.
+
+        Args:
+            state (tuple[Any, ...]): The result of :meth:`_state`.
+
+        Returns:
+            Self: The rebuilt grid.
+        """
+        root, factor, blocks, version = state
+        grid = cls._from_blocks(root, factor, blocks)
+        grid._version = int(version) - 1
+        grid._rebuild()  # bumps the version back to the one given
+        return grid
+
     # ------------------------------------------------------------------
     # Properties
     # ------------------------------------------------------------------
@@ -539,9 +565,17 @@ class HierarchicalGrid(Grid):
         self._level_base = level_base
         self._num_cells = base
         self._version += 1
-        self._bvh = None
+        self._bvh_w = None
         self._cell_tags = None
         self._facet_tags = None
+        # INTERIM: the Grid defaults (cell_aabb, neighbors, query_aabb, ...) forward to a compiled
+        # grid, so keep one in step with the blocks until this class is itself a wrapper over it.
+        self._h = ext.grid.HierarchicalGrid.from_blocks(
+            self._root._h,
+            list(self._factor),
+            [[(list(lo), list(hi)) for lo, hi in level] for level in self._blocks],
+            self._version,
+        )
 
         # Pack the per-level block lists for the Numba kernels, in the same
         # order flat ids are assigned (level by level, block by block, C-order

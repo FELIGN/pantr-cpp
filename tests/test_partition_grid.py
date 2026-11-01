@@ -9,13 +9,13 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
+from pantr._testing import _divisors, _factor_blocks
 from pantr.grid import (
     Partition,
     hierarchical_grid,
     partition_grid,
     uniform_grid,
 )
-from pantr.grid._partition_grid import _divisors, _factor_blocks
 
 
 def _cell_multi_indices(cells_per_axis: tuple[int, ...]) -> npt.NDArray[np.intp]:

@@ -9,12 +9,16 @@ and is intentionally space-agnostic: it stores only an integer owner per cell.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from .._ext import ext
+
 if TYPE_CHECKING:
     import numpy.typing as npt
+
+_cpp = ext.grid
 
 
 class Partition:
@@ -27,7 +31,11 @@ class Partition:
     :attr:`n_parts`, :attr:`n_cells`, and :attr:`active_mask` properties.
     """
 
-    __slots__ = ("_cell_owner", "_n_parts")
+    __slots__ = ("_cell_owner", "_h", "_n_parts")
+
+    #: The compiled partition (private).
+    _h: Any
+    _cell_owner: npt.NDArray[np.int32]
 
     def __init__(self, cell_owner: npt.ArrayLike, n_parts: int) -> None:
         """Build a partition from a per-cell owner array.
@@ -41,20 +49,47 @@ class Partition:
             ValueError: If ``n_parts < 1``, ``cell_owner`` is not 1D integer, or any
                 owner is outside ``[-1, n_parts)``.
         """
+        # The order of the checks is part of the contract: the part count is refused first.
         if n_parts < 1:
             raise ValueError(f"n_parts must be >= 1; got {n_parts}.")
         owner = np.asarray(cell_owner)
         if owner.ndim != 1 or not np.issubdtype(owner.dtype, np.integer):
             raise ValueError("cell_owner must be a 1D integer array.")
-        owner = np.ascontiguousarray(owner, dtype=np.int32)
-        if owner.size and (int(owner.min()) < -1 or int(owner.max()) >= n_parts):
-            raise ValueError(
-                f"cell_owner values must lie in [-1, {n_parts}); "
-                f"got range [{int(owner.min())}, {int(owner.max())}]."
-            )
-        owner.flags.writeable = False
-        self._cell_owner = owner
-        self._n_parts = int(n_parts)
+        self._init_from_handle(
+            _cpp.Partition(np.ascontiguousarray(owner, dtype=np.int32), int(n_parts))
+        )
+
+    def _init_from_handle(self, h: Any) -> None:  # noqa: ANN401
+        """Adopt a compiled partition and read its owner view and part count once.
+
+        Args:
+            h (Any): The compiled partition.
+        """
+        self._h = h
+        self._cell_owner = h.cell_owner
+        self._n_parts = int(h.n_parts)
+
+    @classmethod
+    def _from_handle(cls, h: Any) -> Partition:  # noqa: ANN401
+        """Wrap a compiled partition without copying it.
+
+        Args:
+            h (Any): The compiled partition.
+
+        Returns:
+            Partition: The wrapper.
+        """
+        part = object.__new__(cls)
+        part._init_from_handle(h)
+        return part
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        """Pickle and copy through the constructor.
+
+        Returns:
+            tuple[Any, ...]: The class and its arguments.
+        """
+        return (type(self), (self._cell_owner, self._n_parts))
 
     @property
     def cell_owner(self) -> npt.NDArray[np.int32]:
@@ -91,7 +126,8 @@ class Partition:
             npt.NDArray[np.bool\_]: Fresh ``(n_cells,)`` mask; ``True`` where the cell
             owner is not ``-1``.
         """
-        return self._cell_owner >= 0
+        mask: npt.NDArray[np.bool_] = self._h.active_mask()
+        return mask
 
     def owned_cells(self, rank: int) -> npt.NDArray[np.int64]:
         """Return the flat ids of the cells owned by ``rank``, ascending.
@@ -105,9 +141,8 @@ class Partition:
         Raises:
             ValueError: If ``rank`` is outside ``[0, n_parts)``.
         """
-        if not 0 <= rank < self._n_parts:
-            raise ValueError(f"rank must be in [0, {self._n_parts}); got {rank}.")
-        return np.flatnonzero(self._cell_owner == rank).astype(np.int64)
+        owned: npt.NDArray[np.int64] = self._h.owned_cells(int(rank))
+        return owned
 
 
 __all__ = ["Partition"]

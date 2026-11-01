@@ -3,14 +3,15 @@
 :class:`TensorProductGrid` is the first-class concrete :class:`pantr.grid.Grid`:
 a tensor product of axis-aligned boxes, stored as one strictly-increasing
 breakpoint array per axis. A cell is addressed by a flat row-major (C-order)
-identifier; see :mod:`pantr.grid._cell_index` for the convention, which matches
+identifier -- the last axis varies fastest, as :func:`numpy.ravel_multi_index` and
+:func:`numpy.unravel_index` number them -- which matches
 :class:`pantr.bspline.SpanwiseElementExtraction` so a grid and an extraction
 operator built on the same :class:`pantr.bspline.BsplineSpace` agree on cell ids.
 
 Footprint
 ---------
 
-The grid stores only references to the per-axis breakpoint arrays (total size
+The grid stores only the per-axis breakpoint arrays (total size
 ``sum_k (cells_per_axis[k] + 1)``) plus a handful of small metadata arrays. It
 never materializes per-cell bounds or connectivity -- those are computed on
 demand. The only ``O(num_cells)`` structure, the :class:`pantr.grid.BVH` behind
@@ -30,16 +31,13 @@ Construction
 
 from __future__ import annotations
 
-import math
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Any, Self
 
 import numpy as np
 
-from .._numba_compat import wait_for_jit_warmup
-from ._cell_index import c_order_strides, flat_to_multi, multi_to_flat
+from .._ext import ext
 from ._grid import Grid, GridRestriction
-from ._grid_utils import _as_float64, _mask_nonfinite_locate
-from ._locate_core import _locate_points_core
+from ._grid_utils import _as_float64
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -48,12 +46,7 @@ if TYPE_CHECKING:
 
     from ..bspline import BsplineSpace
 
-# Absolute tolerance for detecting uniform per-axis spacing. Chosen so a
-# ``1e6``-cell uniform grid still registers as uniform despite double-precision
-# round-off from the ``linspace`` that generated it.
-_UNIFORM_SPACING_ATOL: Final[float] = 1e-10
-# Smallest useful grid: at least one cell per axis (two breakpoints).
-_MIN_BREAKPOINTS_PER_AXIS: Final[int] = 2
+_cpp = ext.grid
 
 
 class TensorProductGrid(Grid):
@@ -73,8 +66,10 @@ class TensorProductGrid(Grid):
         "_is_uniform",
         "_ndim",
         "_num_cells",
-        "_strides",
     )
+
+    _bounds: npt.NDArray[np.float64]
+    _breakpoints: tuple[npt.NDArray[np.float64], ...]
 
     def __init__(self, breakpoints: Sequence[npt.ArrayLike]) -> None:
         """Build a tensor-product grid from per-axis breakpoint vectors.
@@ -90,42 +85,71 @@ class TensorProductGrid(Grid):
             TypeError: If a breakpoint array cannot be cast to ``float64``.
         """
         super().__init__()
-        ndim = len(breakpoints)
-        if ndim < 1:
-            raise ValueError(f"TensorProductGrid needs at least one axis; got {ndim}.")
-        validated: list[npt.NDArray[np.float64]] = []
-        cells_per_axis: list[int] = []
-        for d, bp in enumerate(breakpoints):
-            arr = _as_float64(bp, name=f"breakpoints[{d}]").ravel()
-            if arr.shape[0] < _MIN_BREAKPOINTS_PER_AXIS:
-                raise ValueError(
-                    f"breakpoints[{d}] must have at least {_MIN_BREAKPOINTS_PER_AXIS} entries "
-                    f"(>= 1 cell); got shape {arr.shape}."
-                )
-            if not np.all(np.isfinite(arr)):
-                raise ValueError(f"breakpoints[{d}] must contain only finite values.")
-            if not np.all(np.diff(arr) > 0.0):
-                raise ValueError(f"breakpoints[{d}] must be strictly increasing.")
-            frozen = np.ascontiguousarray(arr.copy(), dtype=np.float64)
-            frozen.flags.writeable = False
-            validated.append(frozen)
-            cells_per_axis.append(int(frozen.shape[0]) - 1)
-        self._ndim = ndim
-        self._breakpoints = tuple(validated)
-        self._cells_per_axis = tuple(cells_per_axis)
-        self._num_cells = math.prod(self._cells_per_axis)
-        bounds = np.empty((ndim, 2), dtype=np.float64)
-        for d in range(ndim):
-            bounds[d, 0] = self._breakpoints[d][0]
-            bounds[d, 1] = self._breakpoints[d][-1]
-        bounds.flags.writeable = False
-        self._bounds = bounds
-        self._strides = c_order_strides(self._cells_per_axis)
-        self._strides.flags.writeable = False
-        self._is_uniform = all(
-            bool(np.ptp(np.diff(bp)) < _UNIFORM_SPACING_ATOL) if bp.shape[0] > 2 else True  # noqa: PLR2004
-            for bp in self._breakpoints
-        )
+        axes = [
+            _as_float64(bp, name=f"breakpoints[{d}]").ravel() for d, bp in enumerate(breakpoints)
+        ]
+        self._init_from_handle(_cpp.TensorProductGrid(axes))
+
+    def _init_from_handle(self, h: Any) -> None:  # noqa: ANN401
+        """Adopt a compiled grid and read its metadata and array views once.
+
+        The metadata of an immutable grid is read when the wrapper is built (not
+        on every property access); the breakpoint and bound arrays are read-only
+        views of the compiled value.
+
+        Args:
+            h (Any): The compiled grid.
+        """
+        self._h = h
+        self._ndim = int(h.ndim)
+        self._num_cells = int(h.num_cells)
+        self._cells_per_axis = tuple(int(n) for n in h.cells_per_axis)
+        self._breakpoints = tuple(h.breakpoints(d) for d in range(self._ndim))
+        self._bounds = h.bounds
+        self._is_uniform = bool(h.is_uniform)
+
+    @classmethod
+    def _from_handle(cls, h: Any) -> Self:  # noqa: ANN401
+        """Wrap a compiled grid without copying it.
+
+        Args:
+            h (Any): The compiled grid.
+
+        Returns:
+            Self: The wrapper.
+        """
+        grid = object.__new__(cls)
+        Grid.__init__(grid)
+        grid._init_from_handle(h)
+        return grid
+
+    def _state(self) -> tuple[Any, ...]:
+        """Return the breakpoints, which rebuild the grid.
+
+        Returns:
+            tuple[Any, ...]: The per-axis breakpoint arrays.
+        """
+        return self._breakpoints
+
+    @classmethod
+    def _from_state(cls, state: tuple[Any, ...]) -> Self:
+        """Rebuild a grid from its breakpoints.
+
+        Args:
+            state (tuple[Any, ...]): The result of :meth:`_state`.
+
+        Returns:
+            Self: The rebuilt grid.
+        """
+        return cls(state)
+
+    def _clone(self) -> Self:
+        """Return a new wrapper of the same compiled grid.
+
+        Returns:
+            Self: A grid sharing this one's immutable compiled value.
+        """
+        return type(self)._from_handle(self._h)
 
     # ------------------------------------------------------------------
     # Read-only attributes
@@ -183,7 +207,7 @@ class TensorProductGrid(Grid):
 
         Returns:
             bool: ``True`` iff each axis's spacing is constant to within an
-            absolute tolerance (``_UNIFORM_SPACING_ATOL``).
+            absolute tolerance (``uniform_spacing_atol`` in the C++ grid).
         """
         return self._is_uniform
 
@@ -203,7 +227,7 @@ class TensorProductGrid(Grid):
         Raises:
             IndexError: If ``cid`` is out of range.
         """
-        return flat_to_multi(int(cid), self._cells_per_axis)
+        return tuple(self._h.cell_multi_index(int(cid)))
 
     def flat_cell_index(self, multi: Sequence[int]) -> int:
         """Map per-axis cell indices to the flat cell identifier (C-order).
@@ -219,7 +243,7 @@ class TensorProductGrid(Grid):
             ValueError: If ``len(multi) != ndim``.
             IndexError: If any per-axis index is out of range.
         """
-        return multi_to_flat(multi, self._cells_per_axis)
+        return int(self._h.flat_cell_index([int(i) for i in multi]))
 
     # ------------------------------------------------------------------
     # Grid contract overrides
@@ -241,12 +265,7 @@ class TensorProductGrid(Grid):
         Raises:
             IndexError: If ``cid`` is out of range.
         """
-        multi = self.cell_multi_index(cid)
-        lo = np.empty(self._ndim, dtype=np.float64)
-        hi = np.empty(self._ndim, dtype=np.float64)
-        for d, i in enumerate(multi):
-            lo[d] = self._breakpoints[d][i]
-            hi[d] = self._breakpoints[d][i + 1]
+        lo, hi = self._h.cell_bounds(int(cid))
         return lo, hi
 
     def locate(self, pt: npt.ArrayLike) -> int | None:
@@ -267,23 +286,11 @@ class TensorProductGrid(Grid):
         Raises:
             ValueError: If ``pt`` does not have length ``ndim``.
         """
-        arr = _as_float64(pt, name="pt").ravel()
-        if arr.shape != (self._ndim,):
-            raise ValueError(f"pt must have shape ({self._ndim},); got {arr.shape}.")
-        cid = 0
-        for d in range(self._ndim):
-            bp = self._breakpoints[d]
-            x = float(arr[d])
-            # The negated chained comparison is NaN-safe (NaN fails both bounds).
-            if not bp[0] <= x <= bp[-1]:
-                return None
-            idx = int(np.searchsorted(bp, x, side="left")) - 1
-            idx = min(max(idx, 0), self._cells_per_axis[d] - 1)
-            cid += idx * int(self._strides[d])
-        return cid
+        found: int | None = self._h.locate(_as_float64(pt, name="pt").ravel())
+        return found
 
     def locate_many(self, points: npt.ArrayLike) -> npt.NDArray[np.int64]:
-        """Locate a batch of points via the Numba per-axis search kernel.
+        """Locate a batch of points by a per-axis binary search, in parallel over the points.
 
         Args:
             points (npt.ArrayLike): ``(npts, ndim)`` array-like of points, or a
@@ -296,19 +303,7 @@ class TensorProductGrid(Grid):
         Raises:
             ValueError: If the trailing axis of ``points`` is not ``ndim``.
         """
-        pts = self._normalize_points(points)
-        counts = np.array([bp.shape[0] for bp in self._breakpoints], dtype=np.int64)
-        knot_starts = np.zeros(self._ndim, dtype=np.int64)
-        knot_starts[1:] = np.cumsum(counts[:-1])
-        knots_flat = np.concatenate(self._breakpoints).astype(np.float64, copy=False)
-        cells_per_axis = np.array(self._cells_per_axis, dtype=np.int64)
-        out = np.empty(pts.shape[0], dtype=np.int64)
-        # The Numba kernel behind this is ``parallel=True`` and the import-time
-        # warmup compiles on a background thread; Numba's workqueue layer aborts
-        # the process rather than raising if a parallel call races it.
-        wait_for_jit_warmup()
-        _locate_points_core(pts, knots_flat, knot_starts, cells_per_axis, self._strides, out)
-        _mask_nonfinite_locate(pts, out)
+        out: npt.NDArray[np.int64] = self._h.locate_many(self._normalize_points(points))
         return out
 
     def neighbor_across_facet(self, cid: int, lfid: int) -> int | None:
@@ -326,39 +321,20 @@ class TensorProductGrid(Grid):
         Raises:
             IndexError: If ``cid`` or ``lfid`` is out of range.
         """
-        self._check_lfid(cid, lfid)
-        axis, side = divmod(int(lfid), 2)
-        multi = list(self.cell_multi_index(cid))
-        i = multi[axis]
-        if side == 0:
-            if i == 0:
-                return None
-            multi[axis] = i - 1
-        else:
-            if i == self._cells_per_axis[axis] - 1:
-                return None
-            multi[axis] = i + 1
-        return self.flat_cell_index(multi)
+        neighbor: int | None = self._h.neighbor_across_facet(int(cid), int(lfid))
+        return neighbor
 
     def collect_cell_bounds(
         self,
     ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
-        """Materialize per-cell ``(lo, hi)`` in C-order via per-axis broadcasting.
+        """Materialize per-cell ``(lo, hi)`` in C-order from the per-axis breakpoints.
 
         Returns:
             tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
             ``(cell_lo, cell_hi)`` of shape ``(num_cells, ndim)`` in cell-id
             order.
         """
-        lo_axes = [bp[:-1] for bp in self._breakpoints]
-        hi_axes = [bp[1:] for bp in self._breakpoints]
-        idx_grids = np.meshgrid(*[np.arange(n) for n in self._cells_per_axis], indexing="ij")
-        cell_lo = np.empty((self._num_cells, self._ndim), dtype=np.float64)
-        cell_hi = np.empty((self._num_cells, self._ndim), dtype=np.float64)
-        for d in range(self._ndim):
-            flat_idx = idx_grids[d].ravel()
-            cell_lo[:, d] = lo_axes[d][flat_idx]
-            cell_hi[:, d] = hi_axes[d][flat_idx]
+        cell_lo, cell_hi = self._h.collect_cell_bounds()
         return cell_lo, cell_hi
 
     def restrict(self, cell_ids: npt.ArrayLike) -> GridRestriction:
@@ -384,33 +360,8 @@ class TensorProductGrid(Grid):
             IndexError: If any cell id is out of range ``[0, num_cells)``.
             TypeError: If ``cell_ids`` is not integer-valued.
         """
-        ids = np.asarray(cell_ids).ravel()
-        if ids.size == 0:
-            raise ValueError("restrict: cell_ids must be non-empty.")
-        if not np.issubdtype(ids.dtype, np.integer):
-            raise TypeError(f"restrict: cell_ids must be integer-valued; got dtype {ids.dtype}.")
-        ids = ids.astype(np.int64, copy=False)
-        lo, hi = int(ids.min()), int(ids.max())
-        if lo < 0 or hi >= self._num_cells:
-            raise IndexError(
-                f"restrict: cell id out of range [0, {self._num_cells}); got [{lo}, {hi}]."
-            )
-        multi = np.unravel_index(ids, self._cells_per_axis)
-        imin = [int(m.min()) for m in multi]
-        imax = [int(m.max()) for m in multi]
-        sub_breakpoints = [self._breakpoints[d][imin[d] : imax[d] + 2] for d in range(self._ndim)]
-        sub_grid = TensorProductGrid(sub_breakpoints)
-        sub_cells_per_axis = [imax[d] - imin[d] + 1 for d in range(self._ndim)]
-        idx_grids = np.meshgrid(
-            *[np.arange(n, dtype=np.int64) for n in sub_cells_per_axis], indexing="ij"
-        )
-        local_to_global = np.zeros(int(math.prod(sub_cells_per_axis)), dtype=np.int64)
-        for d in range(self._ndim):
-            local_to_global += (idx_grids[d].ravel() + imin[d]) * int(self._strides[d])
-        in_subset = np.isin(local_to_global, ids)
-        local_to_global.flags.writeable = False
-        in_subset.flags.writeable = False
-        return GridRestriction(sub_grid, local_to_global, in_subset)
+        handle, local_to_global, in_subset = self._restrict_handle(cell_ids)
+        return GridRestriction(TensorProductGrid._from_handle(handle), local_to_global, in_subset)
 
     def __repr__(self) -> str:
         """Return a compact representation useful for debugging.

@@ -92,7 +92,6 @@ from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 
-from .._numba_compat import wait_for_jit_warmup
 from ..geometry import AABB
 from ..grid import BVH, tensor_product_grid
 from ..tolerance import get_default
@@ -1357,12 +1356,6 @@ def _locate_impl(
     """
     dim, rank = spline.dim, spline.rank
     _validate_invertible(spline, tol, max_iter)
-
-    # Ensure background JIT compilation is complete before calling Numba kernels that use
-    # parallel=True (avoids concurrent-compilation crash), as the other Layer 2 entry points
-    # over parallel kernels do. The inversion evaluates the mapping many times in quick
-    # succession, so it hits the window the import-time warmup thread leaves open.
-    wait_for_jit_warmup()
 
     pts = _validate_points(points, rank)
     context = _locate_context(spline)

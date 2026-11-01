@@ -20,11 +20,15 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from .._ext import ext
+
 if TYPE_CHECKING:
     import numpy.typing as npt
 
     from ..quad import QuadratureRule
     from ._grid import Grid
+
+_cpp = ext.grid
 
 
 def cell_quadrature(
@@ -57,54 +61,42 @@ def cell_quadrature(
             array-like, or any id is outside ``[0, num_cells)``.
 
     Note:
-        Cell boxes for the whole grid are materialized once (an
-        ``O(num_cells * ndim)`` temporary), then the requested subset is
-        selected; this keeps the common all-cells path vectorized.
+        Only the requested cells' boxes are computed. Without a selection the
+        boxes of every cell come from one pass over the grid.
     """
-    if rule.ndim != grid.ndim:
-        raise ValueError(f"rule.ndim ({rule.ndim}) must match grid.ndim ({grid.ndim}).")
-
-    cell_lo_all, cell_hi_all = grid.collect_cell_bounds()
-    if cells is None:
-        cell_lo, cell_hi = cell_lo_all, cell_hi_all
-    else:
-        ids = _resolve_cell_ids(cells, grid.num_cells)
-        cell_lo, cell_hi = cell_lo_all[ids], cell_hi_all[ids]
-
-    span = cell_hi - cell_lo
-    points = cell_lo[:, None, :] + span[:, None, :] * rule.points[None, :, :]
-    weights = rule.weights[None, :] * np.prod(span, axis=1)[:, None]
+    ids = None if cells is None else _resolve_cell_ids(cells)
+    points, weights = _cpp.cell_quadrature(
+        grid._h,
+        np.ascontiguousarray(rule.points, dtype=np.float64),
+        np.ascontiguousarray(rule.weights, dtype=np.float64),
+        ids,
+    )
     return points, weights
 
 
-def _resolve_cell_ids(cells: npt.ArrayLike, num_cells: int) -> npt.NDArray[np.intp]:
-    """Validate and normalize a ``cells`` selector to a 1D index array.
+def _resolve_cell_ids(cells: npt.ArrayLike) -> npt.NDArray[np.int64]:
+    """Normalize a ``cells`` selector to a 1D ``int64`` array.
+
+    The range of the ids is checked by the compiled mapping.
 
     Args:
         cells (npt.ArrayLike): Cell-id selector (a scalar id or a 1D integer
             array-like).
-        num_cells (int): Total number of cells; valid ids are ``[0, num_cells)``.
 
     Returns:
-        npt.NDArray[np.intp]: A 1D array of cell ids suitable for fancy indexing.
+        npt.NDArray[np.int64]: A 1D array of cell ids.
 
     Raises:
-        ValueError: If ``cells`` does not have an integer dtype, is not 1D, or
-            contains an id outside ``[0, num_cells)``.
+        ValueError: If ``cells`` does not have an integer dtype or is not 1D.
     """
     arr = np.atleast_1d(np.asarray(cells))
     if arr.ndim != 1:
         raise ValueError(f"cells must be 1D; got shape {arr.shape}.")
     if arr.size == 0:
-        return np.empty(0, dtype=np.intp)
+        return np.empty(0, dtype=np.int64)
     if arr.dtype.kind not in ("i", "u"):
         raise ValueError(f"cells must be an integer array of cell ids; got dtype {arr.dtype!r}.")
-    ids = arr.astype(np.intp, copy=False)
-    if int(ids.min()) < 0 or int(ids.max()) >= num_cells:
-        raise ValueError(
-            f"cells must lie in [0, {num_cells}); got range [{int(ids.min())}, {int(ids.max())}]."
-        )
-    return ids
+    return np.ascontiguousarray(arr, dtype=np.int64)
 
 
 __all__ = ["cell_quadrature"]

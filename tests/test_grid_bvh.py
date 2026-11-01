@@ -283,8 +283,8 @@ def _chain_bvh_arrays(
 def test_ctor_unbalanced_chain_raises_at_construction() -> None:
     """A hand-built 148-leaf linear-chain tree exceeds the kernel stack depth.
 
-    148 leaves force a chain of depth 148, past the traversal kernels' fixed
-    stack depth (``_BVH_STACK_DEPTH == 128`` in ``_bvh_core.py``). Unlike
+    148 leaves force a chain of depth 148, past the traversal's fixed stack
+    depth (128, the library's ``bvh_stack_depth``). Unlike
     ``from_cell_bounds``, the raw constructor accepts arbitrary node arrays, so
     this depth cannot be inferred from ``n_cells`` alone; ``BVH.__init__`` must
     reject it before any query touches the fixed-size kernel stack.
@@ -337,7 +337,7 @@ def test_ctor_rejects_a_cyclic_node_graph_without_hanging() -> None:
     node_lo, node_hi, node_left, node_right, node_cell = _chain_bvh_arrays(4)
     node_right[0] = 0  # root points back at itself
 
-    with pytest.raises(ValueError, match="stack depth"):
+    with pytest.raises(ValueError, match="do not encode a tree"):
         BVH(node_lo, node_hi, node_left, node_right, node_cell, n_cells=4)
 
 
@@ -444,14 +444,45 @@ def test_from_cell_bounds_always_satisfies_the_consistency_invariant() -> None:
         )
 
 
-def test_stack_overflow_guard(monkeypatch: pytest.MonkeyPatch) -> None:
-    """from_cell_bounds raises when the tree depth would overflow the kernel stack."""
-    import pantr.grid._bvh as _bvh_mod  # noqa: PLC0415
+def test_stack_overflow_guard() -> None:
+    """The raw constructor refuses a caterpillar tree far deeper than the traversal stack.
 
-    monkeypatch.setattr(_bvh_mod, "_BVH_STACK_DEPTH", 1)
-    lo, hi = _grid_cells(2, 2)  # 4 cells → depth 3 > 1
-    with pytest.raises(ValueError, match="stack depth"):
-        BVH.from_cell_bounds(lo, hi)
+    The depth walk stops at the first path past the limit, so a 1000-leaf caterpillar is
+    refused at depth 129 without being walked in full. A tree built by ``from_cell_bounds``
+    can never reach the limit (its median split keeps the depth at ``ceil(log2 n) + 1``), so
+    the guard is reachable only through the raw constructor: this replaces the retired test
+    that lowered the limit of the Numba kernel.
+    """
+    node_lo, node_hi, node_left, node_right, node_cell = _chain_bvh_arrays(1000)
+    with pytest.raises(ValueError, match="stack depth") as info:
+        BVH(node_lo, node_hi, node_left, node_right, node_cell, n_cells=1000)
+    assert "depth 129 or more" in str(info.value)
+
+
+def _tree_depth(bvh: BVH) -> int:
+    """Count the nodes on the longest root-to-leaf path of a BVH (the root counts as 1)."""
+    depth = 0
+    stack = [(0, 1)]
+    while stack:
+        node, d = stack.pop()
+        depth = max(depth, d)
+        for child in (int(bvh.node_left[node]), int(bvh.node_right[node])):
+            if child != -1:
+                stack.append((child, d + 1))
+    return depth
+
+
+@pytest.mark.parametrize("n_cells", [1, 2, 3, 100, 1024, 1025, 5000])
+def test_median_split_depth_is_logarithmic(n_cells: int) -> None:
+    """A built tree has depth ``ceil(log2 n) + 1``, far below the traversal's stack depth.
+
+    This is the property that makes the fixed stack safe for ``from_cell_bounds``: the depth
+    grows with the logarithm of the cell count, so no int64 count can reach 128.
+    """
+    lo = np.arange(n_cells, dtype=np.float64).reshape(-1, 1)
+    bvh = BVH.from_cell_bounds(lo, lo + 1.0)
+    expected = 1 if n_cells == 1 else int(np.ceil(np.log2(n_cells))) + 1
+    assert _tree_depth(bvh) == expected
 
 
 # ---------------------------------------------------------------------------

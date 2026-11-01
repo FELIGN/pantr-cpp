@@ -18,6 +18,12 @@ Both registries are created lazily by :class:`pantr.grid.Grid` and stay empty
 (zero per-cell footprint) until the first :meth:`set` call. Classification logic
 (deciding which cells are inside / outside / cut) is the consumer's
 responsibility; these classes only store the result.
+
+Each registry is a wrapper over an immutable compiled registry (``_h``): :meth:`set`
+and :meth:`remove` replace the wrapper's compiled value, so the wrapper keeps its
+identity while a registry value obtained before the change is never altered. The
+``(ids, values)`` arrays :meth:`__getitem__` returns are read-only views of the
+compiled value and stay valid after later changes.
 """
 
 from __future__ import annotations
@@ -26,11 +32,15 @@ from typing import TYPE_CHECKING, Any, Final
 
 import numpy as np
 
+from .._ext import ext
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
     import numpy.typing as npt
 
+
+_cpp = ext.grid
 
 # A facet key is the pair (cell_id, local_facet_id); stored as a (M, 2) array.
 _FACET_KEY_WIDTH: Final[int] = 2
@@ -100,7 +110,10 @@ class CellTags:
     grid's cell count is exposed through the :attr:`num_cells` property.
     """
 
-    __slots__ = ("_num_cells", "_tags")
+    __slots__ = ("_h", "_num_cells")
+
+    #: The compiled registry (private).
+    _h: Any
 
     def __init__(self, num_cells: int) -> None:
         """Create an empty cell-tag registry.
@@ -111,10 +124,28 @@ class CellTags:
         Raises:
             ValueError: If ``num_cells`` is negative.
         """
-        if int(num_cells) < 0:
-            raise ValueError(f"num_cells must be >= 0; got {num_cells}.")
-        self._num_cells = int(num_cells)
-        self._tags: dict[str, tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]] = {}
+        self._h = _cpp.CellTags(int(num_cells))
+        self._num_cells = int(self._h.num_cells)
+
+    def _copy(self) -> CellTags:
+        """Return a new wrapper over the same compiled registry.
+
+        Returns:
+            CellTags: A registry equal to this one that changes independently of it.
+        """
+        new = object.__new__(CellTags)
+        new._h = self._h
+        new._num_cells = self._num_cells
+        return new
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        """Pickle and copy through the constructor and the tags in insertion order.
+
+        Returns:
+            tuple[Any, ...]: The rebuild function and its arguments.
+        """
+        entries = [(name, *self[name]) for name in self]
+        return (_rebuild_cell_tags, (self._num_cells, entries))
 
     @property
     def num_cells(self) -> int:
@@ -142,20 +173,8 @@ class CellTags:
                 ``len(ids)``.
         """
         id_arr = _as_int64_1d(ids, name="ids")
-        if id_arr.shape[0] > 0 and (int(id_arr.min()) < 0 or int(id_arr.max()) >= self._num_cells):
-            raise ValueError(
-                f"cell ids must be in [0, {self._num_cells}); "
-                f"got range [{int(id_arr.min())}, {int(id_arr.max())}]."
-            )
-        if np.unique(id_arr).shape[0] != id_arr.shape[0]:
-            raise ValueError(f"cell ids for tag {name!r} must be unique; got duplicates.")
         val_arr = _broadcast_values(values, id_arr.shape[0], name="values")
-        order = np.argsort(id_arr, kind="stable")
-        sorted_ids = np.ascontiguousarray(id_arr[order])
-        sorted_vals = np.ascontiguousarray(val_arr[order])
-        sorted_ids.flags.writeable = False
-        sorted_vals.flags.writeable = False
-        self._tags[str(name)] = (sorted_ids, sorted_vals)
+        self._h = self._h.set(str(name), id_arr, val_arr)
 
     def __getitem__(self, name: str) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]:
         """Return the ``(ids, values)`` arrays for tag ``name``.
@@ -170,7 +189,10 @@ class CellTags:
         Raises:
             KeyError: If no tag named ``name`` exists.
         """
-        return self._tags[name]
+        if not (isinstance(name, str) and self._h.contains(name)):
+            raise KeyError(name)
+        ids, values = self._h.get(name)
+        return ids, values
 
     def __contains__(self, name: object) -> bool:
         """Return whether a tag named ``name`` exists.
@@ -181,7 +203,7 @@ class CellTags:
         Returns:
             bool: ``True`` iff ``name`` is a registered tag.
         """
-        return name in self._tags
+        return isinstance(name, str) and bool(self._h.contains(name))
 
     def __iter__(self) -> Iterator[str]:
         """Iterate over the registered tag names.
@@ -189,7 +211,7 @@ class CellTags:
         Returns:
             Iterator[str]: Iterator over tag names in insertion order.
         """
-        return iter(self._tags)
+        return iter(self.names)
 
     def __len__(self) -> int:
         """Return the number of registered tags.
@@ -197,7 +219,7 @@ class CellTags:
         Returns:
             int: Count of distinct tag names.
         """
-        return len(self._tags)
+        return int(self._h.size())
 
     @property
     def names(self) -> tuple[str, ...]:
@@ -206,7 +228,7 @@ class CellTags:
         Returns:
             tuple[str, ...]: Tag names in insertion order.
         """
-        return tuple(self._tags)
+        return tuple(self._h.names())
 
     def remove(self, name: str) -> None:
         """Delete the tag ``name``.
@@ -217,7 +239,9 @@ class CellTags:
         Raises:
             KeyError: If no tag named ``name`` exists.
         """
-        del self._tags[name]
+        if name not in self:
+            raise KeyError(name)
+        self._h = self._h.remove(name)
 
     def to_dense(
         self,
@@ -253,7 +277,7 @@ class CellTags:
         out_dtype = np.dtype(dtype)
         if out_dtype.kind not in ("i", "u"):
             raise TypeError(f"dtype must be an integer dtype; got {out_dtype!r}.")
-        ids, values = self._tags[name]
+        ids, values = self[name]
         if ids.shape[0] > 0 and out_dtype.itemsize < 8:  # noqa: PLR2004
             info = np.iinfo(out_dtype)
             vmin, vmax = int(values.min()), int(values.max())
@@ -280,7 +304,10 @@ class FacetTags:
     :attr:`facets_per_cell` properties.
     """
 
-    __slots__ = ("_facets_per_cell", "_num_cells", "_tags")
+    __slots__ = ("_facets_per_cell", "_h", "_num_cells")
+
+    #: The compiled registry (private).
+    _h: Any
 
     def __init__(self, num_cells: int, facets_per_cell: int) -> None:
         """Create an empty facet-tag registry.
@@ -293,13 +320,30 @@ class FacetTags:
             ValueError: If ``num_cells`` is negative or ``facets_per_cell`` is
                 ``< 1``.
         """
-        if int(num_cells) < 0:
-            raise ValueError(f"num_cells must be >= 0; got {num_cells}.")
-        if int(facets_per_cell) < 1:
-            raise ValueError(f"facets_per_cell must be >= 1; got {facets_per_cell}.")
-        self._num_cells = int(num_cells)
-        self._facets_per_cell = int(facets_per_cell)
-        self._tags: dict[str, tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]] = {}
+        self._h = _cpp.FacetTags(int(num_cells), int(facets_per_cell))
+        self._num_cells = int(self._h.num_cells)
+        self._facets_per_cell = int(self._h.facets_per_cell)
+
+    def _copy(self) -> FacetTags:
+        """Return a new wrapper over the same compiled registry.
+
+        Returns:
+            FacetTags: A registry equal to this one that changes independently of it.
+        """
+        new = object.__new__(FacetTags)
+        new._h = self._h
+        new._num_cells = self._num_cells
+        new._facets_per_cell = self._facets_per_cell
+        return new
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        """Pickle and copy through the constructor and the tags in insertion order.
+
+        Returns:
+            tuple[Any, ...]: The rebuild function and its arguments.
+        """
+        entries = [(name, *self[name]) for name in self]
+        return (_rebuild_facet_tags, (self._num_cells, self._facets_per_cell, entries))
 
     @property
     def num_cells(self) -> int:
@@ -343,29 +387,8 @@ class FacetTags:
         key_arr = np.ascontiguousarray(key_raw.astype(np.int64, copy=False))
         if key_arr.ndim != _FACET_KEY_WIDTH or key_arr.shape[1] != _FACET_KEY_WIDTH:
             raise ValueError(f"keys must have shape (M, 2); got shape {key_arr.shape}.")
-        if key_arr.shape[0] > 0:
-            cids = key_arr[:, 0]
-            lfids = key_arr[:, 1]
-            if int(cids.min()) < 0 or int(cids.max()) >= self._num_cells:
-                raise ValueError(
-                    f"facet cell ids must be in [0, {self._num_cells}); "
-                    f"got range [{int(cids.min())}, {int(cids.max())}]."
-                )
-            if int(lfids.min()) < 0 or int(lfids.max()) >= self._facets_per_cell:
-                raise ValueError(
-                    f"local facet ids must be in [0, {self._facets_per_cell}); "
-                    f"got range [{int(lfids.min())}, {int(lfids.max())}]."
-                )
-            if np.unique(key_arr, axis=0).shape[0] != key_arr.shape[0]:
-                raise ValueError(f"facet keys for tag {name!r} must be unique; got duplicates.")
         val_arr = _broadcast_values(values, key_arr.shape[0], name="values")
-        # Lexicographic sort by (cell_id, local_facet_id) for deterministic order.
-        order = np.lexsort((key_arr[:, 1], key_arr[:, 0]))
-        sorted_keys = np.ascontiguousarray(key_arr[order])
-        sorted_vals = np.ascontiguousarray(val_arr[order])
-        sorted_keys.flags.writeable = False
-        sorted_vals.flags.writeable = False
-        self._tags[str(name)] = (sorted_keys, sorted_vals)
+        self._h = self._h.set(str(name), key_arr.reshape(-1), val_arr)
 
     def __getitem__(self, name: str) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]:
         """Return the ``(keys, values)`` arrays for tag ``name``.
@@ -381,7 +404,10 @@ class FacetTags:
         Raises:
             KeyError: If no tag named ``name`` exists.
         """
-        return self._tags[name]
+        if not (isinstance(name, str) and self._h.contains(name)):
+            raise KeyError(name)
+        ids, values = self._h.get(name)
+        return ids, values
 
     def __contains__(self, name: object) -> bool:
         """Return whether a tag named ``name`` exists.
@@ -392,7 +418,7 @@ class FacetTags:
         Returns:
             bool: ``True`` iff ``name`` is a registered tag.
         """
-        return name in self._tags
+        return isinstance(name, str) and bool(self._h.contains(name))
 
     def __iter__(self) -> Iterator[str]:
         """Iterate over the registered tag names.
@@ -400,7 +426,7 @@ class FacetTags:
         Returns:
             Iterator[str]: Iterator over tag names in insertion order.
         """
-        return iter(self._tags)
+        return iter(self.names)
 
     def __len__(self) -> int:
         """Return the number of registered tags.
@@ -408,7 +434,7 @@ class FacetTags:
         Returns:
             int: Count of distinct tag names.
         """
-        return len(self._tags)
+        return int(self._h.size())
 
     @property
     def names(self) -> tuple[str, ...]:
@@ -417,7 +443,7 @@ class FacetTags:
         Returns:
             tuple[str, ...]: Tag names in insertion order.
         """
-        return tuple(self._tags)
+        return tuple(self._h.names())
 
     def remove(self, name: str) -> None:
         """Delete the tag ``name``.
@@ -428,7 +454,9 @@ class FacetTags:
         Raises:
             KeyError: If no tag named ``name`` exists.
         """
-        del self._tags[name]
+        if name not in self:
+            raise KeyError(name)
+        self._h = self._h.remove(name)
 
     def to_dense(
         self,
@@ -464,7 +492,7 @@ class FacetTags:
         out_dtype = np.dtype(dtype)
         if out_dtype.kind not in ("i", "u"):
             raise TypeError(f"dtype must be an integer dtype; got {out_dtype!r}.")
-        keys, values = self._tags[name]
+        keys, values = self[name]
         if keys.shape[0] > 0 and out_dtype.itemsize < 8:  # noqa: PLR2004
             info = np.iinfo(out_dtype)
             vmin, vmax = int(values.min()), int(values.max())
@@ -488,8 +516,50 @@ class FacetTags:
         return (
             f"FacetTags(num_cells={self._num_cells}, "
             f"facets_per_cell={self._facets_per_cell}, "
-            f"tags={list(self._tags)!r})"
+            f"tags={list(self)!r})"
         )
+
+
+def _rebuild_cell_tags(
+    num_cells: int,
+    entries: list[tuple[str, npt.NDArray[np.int64], npt.NDArray[np.int64]]],
+) -> CellTags:
+    """Unpickle a :class:`CellTags`: an empty registry with its tags set in order.
+
+    Args:
+        num_cells (int): Number of cells in the owning grid.
+        entries (list[tuple[str, npt.NDArray[np.int64], npt.NDArray[np.int64]]]): The tags as
+            ``(name, ids, values)``, in insertion order.
+
+    Returns:
+        CellTags: The rebuilt registry.
+    """
+    tags = CellTags(num_cells)
+    for name, ids, values in entries:
+        tags.set(name, ids, values)
+    return tags
+
+
+def _rebuild_facet_tags(
+    num_cells: int,
+    facets_per_cell: int,
+    entries: list[tuple[str, npt.NDArray[np.int64], npt.NDArray[np.int64]]],
+) -> FacetTags:
+    """Unpickle a :class:`FacetTags`: an empty registry with its tags set in order.
+
+    Args:
+        num_cells (int): Number of cells in the owning grid.
+        facets_per_cell (int): Number of local facets per cell.
+        entries (list[tuple[str, npt.NDArray[np.int64], npt.NDArray[np.int64]]]): The tags as
+            ``(name, keys, values)``, in insertion order.
+
+    Returns:
+        FacetTags: The rebuilt registry.
+    """
+    tags = FacetTags(num_cells, facets_per_cell)
+    for name, keys, values in entries:
+        tags.set(name, keys, values)
+    return tags
 
 
 __all__ = ["CellTags", "FacetTags"]

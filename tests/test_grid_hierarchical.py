@@ -11,16 +11,7 @@ import numpy as np
 import numpy.testing as np_testing
 import pytest
 
-from pantr.geometry import AABB
-from pantr.grid import (
-    Grid,
-    GridRestriction,
-    HierarchicalGrid,
-    TensorProductGrid,
-    hierarchical_grid,
-    uniform_grid,
-)
-from pantr.grid._hierarchical_grid import (
+from pantr._testing import (
     _MAX_DIAGNOSED_CELLS,
     _MAX_NAMED_CELLS,
     _block_size,
@@ -31,6 +22,15 @@ from pantr.grid._hierarchical_grid import (
     _peel,
     _rect_intersect,
     _try_merge,
+)
+from pantr.geometry import AABB
+from pantr.grid import (
+    Grid,
+    GridRestriction,
+    HierarchicalGrid,
+    TensorProductGrid,
+    hierarchical_grid,
+    uniform_grid,
 )
 
 if TYPE_CHECKING:
