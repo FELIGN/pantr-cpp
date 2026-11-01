@@ -1275,3 +1275,14 @@ class TestKnownDefects:
         spline = quasi_interpolate_bspline(_exact_sampler(space, ctrl), space)
         got = np.asarray(spline.control_points)
         assert float(np.max(np.abs(got - ctrl))) <= _qi_bound(space, float(np.max(np.abs(ctrl))))
+
+
+def test_fit_with_no_node_in_a_direction_raises() -> None:
+    """A tensor fit with an empty node array raises, as the previous release did.
+
+    Oracle: the previous release's error (NumPy's reshape of the empty value tensor). A port that
+    solved the empty system returned an all-zero spline instead.
+    """
+    space = create_uniform_space(3, 4)
+    with pytest.raises(ValueError, match="cannot reshape array of size 0"):
+        fit_bspline(np.array([]), [np.array([])], space)

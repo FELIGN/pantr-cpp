@@ -12,11 +12,14 @@
 /// square one whose LU meets an exactly zero pivot, by the truncated SVD that drops the singular
 /// values `s <= tol * s_max`. The decompositions run in `double` and their results are rounded to
 /// the computation type, as NumPy's did. A collocation matrix is banded (each row holds the
-/// `degree + 1` functions supported at its node), so before either dense path the system is
-/// offered to `linalg::try_lstsq_banded`, which answers only where its certificate shows the
-/// system has full column rank well clear of the cutoff the dense path would apply; there the
-/// dense paths have the same unique solution in exact arithmetic, and the banded QR computes it in
-/// `O(m w (w + c))` instead of `O(m n^2)`.
+/// `degree + 1` functions supported at its node), so a square system is LU-factored within its
+/// band (LAPACK's `gbtrf` algorithm, whose pivots are the dense algorithm's) where the band is
+/// narrow, in `O(n w^2)`, and a rectangular system is first offered to
+/// `linalg::try_lstsq_banded`, which answers only where its certificate shows full column rank
+/// well clear of the cutoff the dense path would apply; there the dense path has the same unique
+/// solution in exact arithmetic, and the banded QR computes it in `O(m w (w + c))` instead of
+/// `O(m n^2)`, plus `O(n^2 w)` for its certificate. The matrices are stored dense, as they were,
+/// so every solve still scans its matrix once or more (`O(m n)`).
 #pragma once
 
 #include "pantr/bezier/detail/along_axis.hpp"
@@ -128,12 +131,12 @@ void put_derivative_rows(const BsplineSpace1D<T>& space, P x, long long count, R
   }
   const auto order = static_cast<std::size_t>(space.degree()) + 1;
   const auto first = static_cast<std::size_t>(d.first.data()[0]);
-  const std::size_t width = (std::min)(order, n - (std::min)(first, n));
+  // A non-periodic row's `order` functions start at `first` and end inside the matrix.
   for (std::size_t k = 0; k < slots; ++k) {
     P* row = mat.data() + (range.start + k) * n;
     std::fill(row, row + n, P(0));
     const P* src = d.values.data() + (k + 1) * order;  // point 0, order k + 1
-    std::copy(src, src + width, row + first);
+    std::copy(src, src + order, row + first);
   }
 }
 
@@ -197,6 +200,123 @@ template <StorageFloat C>
   return x;
 }
 
+/// The lower and upper bandwidths of a square matrix in its row order: `kl = max(i - first_i)`
+/// and `ku = max(last_i - i)` over its rows' nonzeros.
+///
+/// Attributes:
+///     kl (Eigen::Index): Lower bandwidth.
+///     ku (Eigen::Index): Upper bandwidth.
+struct Bandwidths {
+  Eigen::Index kl = 0;
+  Eigen::Index ku = 0;
+};
+
+template <StorageFloat C>
+[[nodiscard]] Bandwidths bandwidths(const linalg::RowMatrix<C>& a) {
+  Bandwidths bw;
+  const Eigen::Index n = a.cols();
+  for (Eigen::Index i = 0; i < a.rows(); ++i) {
+    Eigen::Index first = 0;
+    while (first < n && a(i, first) == C(0)) {
+      ++first;
+    }
+    if (first == n) {
+      continue;  // a zero row: no constraint on the band
+    }
+    Eigen::Index last = n - 1;
+    while (a(i, last) == C(0)) {
+      --last;
+    }
+    bw.kl = (std::max)(bw.kl, i - first);
+    bw.ku = (std::max)(bw.ku, last - i);
+  }
+  return bw;
+}
+
+/// Whether the banded LU is cheaper than the dense one: the band, with the fill-in partial
+/// pivoting adds (`kl` more columns above the diagonal), covers well under the matrix. The factor
+/// 4 is an admitted heuristic: below it the dense factorisation's blocked kernels win.
+[[nodiscard]] inline bool band_pays(Bandwidths bw, Eigen::Index n) {
+  return 4 * (2 * bw.kl + bw.ku + 1) < n;
+}
+
+/// LU with partial pivoting of a banded square matrix (LAPACK `gbtrf`/`gbtrs`): the row chosen at
+/// step `k` is the first one of largest magnitude in column `k` among rows `k..k+kl`, which is the
+/// dense algorithm's choice, since the rows below hold zeros there. Computed in `double`.
+///
+/// Returns:
+///     std::optional<NdArray<C>>: `(n, cols)`, or no value where a pivot is exactly zero or NaN
+///     (the condition under which `gesv` reports a singular matrix).
+///
+/// Note:
+///     `a` is assumed square with the bandwidths `bw` (no validation performed).
+template <StorageFloat C>
+[[nodiscard]] std::optional<NdArray<C>> banded_lu_solve(const linalg::RowMatrix<C>& a,
+                                                        const linalg::RowMatrix<C>& b,
+                                                        Bandwidths bw) {
+  const Eigen::Index n = a.cols();
+  const Eigen::Index kl = bw.kl;
+  const Eigen::Index width = 2 * kl + bw.ku + 1;  // columns i - kl .. i + ku + kl of row i
+  Eigen::MatrixXd band = Eigen::MatrixXd::Zero(n, width);
+  const auto at = [&band, kl](Eigen::Index i, Eigen::Index j) -> double& {
+    return band(i, j - i + kl);
+  };
+  for (Eigen::Index i = 0; i < n; ++i) {
+    const Eigen::Index lo = (std::max)(Eigen::Index{0}, i - kl);
+    const Eigen::Index hi = (std::min)(n - 1, i + bw.ku);
+    for (Eigen::Index j = lo; j <= hi; ++j) {
+      at(i, j) = static_cast<double>(a(i, j));
+    }
+  }
+  Eigen::MatrixXd x = b.template cast<double>();
+  const Eigen::Index cols = x.cols();
+  for (Eigen::Index k = 0; k < n; ++k) {
+    const Eigen::Index last_row = (std::min)(n - 1, k + kl);
+    const Eigen::Index last_col = (std::min)(n - 1, k + bw.ku + kl);
+    Eigen::Index piv = k;
+    double best = std::abs(at(k, k));
+    for (Eigen::Index r = k + 1; r <= last_row; ++r) {
+      const double v = std::abs(at(r, k));
+      if (v > best) {
+        best = v;
+        piv = r;
+      }
+    }
+    if (piv != k) {
+      for (Eigen::Index j = k; j <= last_col; ++j) {
+        std::swap(at(k, j), at(piv, j));
+      }
+      x.row(k).swap(x.row(piv));
+    }
+    const double pivot = at(k, k);
+    if (pivot == 0.0 || std::isnan(pivot)) {
+      return std::nullopt;  // singular for gesv; the caller takes the SVD
+    }
+    for (Eigen::Index r = k + 1; r <= last_row; ++r) {
+      const double l = at(r, k) / pivot;
+      for (Eigen::Index j = k + 1; j <= last_col; ++j) {
+        at(r, j) -= l * at(k, j);
+      }
+      for (Eigen::Index c = 0; c < cols; ++c) {
+        x(r, c) -= l * x(k, c);
+      }
+    }
+  }
+  for (Eigen::Index i = n; i-- > 0;) {
+    const Eigen::Index last_col = (std::min)(n - 1, i + bw.ku + kl);
+    for (Eigen::Index c = 0; c < cols; ++c) {
+      double s = x(i, c);
+      for (Eigen::Index j = i + 1; j <= last_col; ++j) {
+        s -= at(i, j) * x(j, c);
+      }
+      x(i, c) = s / at(i, i);
+    }
+  }
+  NdArray<C> out({static_cast<std::size_t>(n), static_cast<std::size_t>(cols)}, for_overwrite);
+  Eigen::Map<linalg::RowMatrix<C>>(out.data(), n, cols) = x.template cast<C>();
+  return out;
+}
+
 /// The truncated-SVD solve of the previous release: `V diag(s_inv) U^T b` with `s_inv = 1 / s`
 /// where `s > tol * s_max` and zero elsewhere, the factors computed in `double` and rounded to
 /// `C`, the rest in `C`.
@@ -243,8 +363,9 @@ template <StorageFloat C>
 /// Args:
 ///     a (const linalg::RowMatrix<C>&): Extents `(m, n)`, finite.
 ///     b (const linalg::RowMatrix<C>&): Extents `(m, k)`.
-///     tol (double): Relative truncation tolerance of the SVD path; NaN drops every singular value
-///         and a negative value none, as the previous comparison did.
+///     tol (double): Relative truncation tolerance of the SVD path, compared as `s > tol * s_max`,
+///         as before: NaN drops every singular value, and a negative value keeps every one, an
+///         exactly zero one included (its reciprocal is then infinite).
 ///
 /// Returns:
 ///     NdArray<C>: Extents `(n, k)`.
@@ -260,35 +381,37 @@ template <StorageFloat C>
     throw value_error("solve_collocation: the matrix has " + std::to_string(m) +
                       " rows and the right-hand side " + std::to_string(b.rows()) + ".");
   }
-  if (m >= n && n > 0) {
-    // A square system is solved without truncation, so its certificate is the strictest one; a
-    // rectangular one keeps every singular value above `tol * s_max`, so its certificate must
-    // clear that cutoff. A NaN or infinite tolerance drops every singular value, which no
-    // full-rank certificate can stand for.
-    const bool square = m == n;
-    if (square || std::isfinite(tol)) {
-      const double rcond = square ? linalg::lstsq_rcond(m, n) : (std::max)(tol, 0.0);
-      if (std::optional<NdArray<C>> x = detail::try_banded<C>(a, b, rcond)) {
+  if (m == n && n > 0) {
+    // numpy.linalg.solve: LU with partial pivoting in double (gesv), the solution rounded to the
+    // result type; an exactly zero or NaN pivot sends the system to the truncated SVD.
+    const detail::Bandwidths bw = detail::bandwidths<C>(a);
+    if (detail::band_pays(bw, n)) {
+      if (std::optional<NdArray<C>> x = detail::banded_lu_solve<C>(a, b, bw)) {
         return std::move(*x);
       }
+    } else {
+      using MatD = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic>;
+      const Eigen::PartialPivLU<MatD> lu(a.template cast<double>());
+      const auto& factors = lu.matrixLU();
+      bool singular = false;
+      for (Eigen::Index i = 0; i < n && !singular; ++i) {
+        const double pivot = factors(i, i);
+        singular = pivot == 0.0 || std::isnan(pivot);
+      }
+      if (!singular) {
+        NdArray<C> out({static_cast<std::size_t>(n), static_cast<std::size_t>(b.cols())},
+                       for_overwrite);
+        Eigen::Map<linalg::RowMatrix<C>>(out.data(), n, b.cols()) =
+            lu.solve(b.template cast<double>()).template cast<C>();
+        return out;
+      }
     }
-  }
-  if (m == n && n > 0) {
-    using MatD = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic>;
-    const Eigen::PartialPivLU<MatD> lu(a.template cast<double>());
-    const auto& factors = lu.matrixLU();
-    bool singular = false;
-    for (Eigen::Index i = 0; i < n && !singular; ++i) {
-      const double pivot = factors(i, i);
-      singular = pivot == 0.0 || std::isnan(pivot);
-    }
-    if (!singular) {
-      // numpy.linalg.solve: LU in double (gesv), the solution rounded to the result type.
-      NdArray<C> out({static_cast<std::size_t>(n), static_cast<std::size_t>(b.cols())},
-                     for_overwrite);
-      Eigen::Map<linalg::RowMatrix<C>>(out.data(), n, b.cols()) =
-          lu.solve(b.template cast<double>()).template cast<C>();
-      return out;
+  } else if (m > n && n > 0 && std::isfinite(tol)) {
+    // A rectangular system keeps every singular value above `tol * s_max` (a negative `tol` keeps
+    // all), so the QR's certificate must clear that cutoff; a NaN or infinite one drops every
+    // singular value, which no full-rank certificate can stand for.
+    if (std::optional<NdArray<C>> x = detail::try_banded<C>(a, b, (std::max)(tol, 0.0))) {
+      return std::move(*x);
     }
   }
   return detail::truncated_svd_solve<C>(a, b, tol);
@@ -473,8 +596,9 @@ class TensorCollocation {
   /// Solve for the coefficients of values given on the node grid, one component at a time.
   ///
   /// Each component's right-hand side has the rows of its derivative constraints set to zero
-  /// and is solved by `solve_kronecker` on its own, so that a component's coefficients do not
-  /// depend on the other components.
+  /// and is solved by `solve_kronecker` on its own, as the distributed fits in `pantr.mpi` solve
+  /// them, so that both give the same bits. The price is that each component repeats the per-solve
+  /// work (scans, QR, certificate).
   ///
   /// Args:
   ///     values (std::span<const C>): Row-major over `(m_0, ..., m_{d-1}, rank)`.
@@ -699,8 +823,8 @@ template <StorageFloat T>
 ///         (`const quad::PointsLattice<T>&`); returns an `NdArray<T>` of `num_points()` values
 ///         (scalar) or `(num_points(), rank)`, rows in the lattice's C order (last direction
 ///         fastest).
-///     nodes (std::optional<std::vector<std::vector<T>>>): One node array per direction; the
-///         Greville abscissae when absent.
+///     nodes (std::vector<std::vector<T>>): One node array per direction; the Greville
+///         abscissae when empty.
 ///     derivatives (const std::vector<std::optional<BoundaryDerivatives>>&): See
 ///         `TensorCollocation`.
 ///     tol (std::optional<double>): Truncation tolerance; `100 * eps(T)` when absent.
@@ -713,14 +837,11 @@ template <StorageFloat T>
 template <StorageFloat T, class F>
   requires std::invocable<F&, const quad::PointsLattice<T>&>
 [[nodiscard]] Bspline<T> interpolate(
-    const BsplineSpace<T>& space, F&& f,
-    std::optional<std::vector<std::vector<T>>> nodes = std::nullopt,
+    const BsplineSpace<T>& space, F&& f, std::vector<std::vector<T>> nodes = {},
     const std::vector<std::optional<BoundaryDerivatives>>& derivatives = {},
     std::optional<double> tol = std::nullopt) {
-  std::vector<std::vector<T>> per_dir;
-  if (nodes) {
-    per_dir = std::move(*nodes);
-  } else {
+  std::vector<std::vector<T>> per_dir = std::move(nodes);
+  if (per_dir.empty()) {
     for (const BsplineSpace1D<T>& s : space.spaces()) {
       per_dir.push_back(s.greville());
     }

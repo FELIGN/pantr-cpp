@@ -762,23 +762,26 @@
   defaults and dtype rules it had: which dtype a solve runs in, which values are refused and
   with which exception, the error raised before the user's function is called, and how often
   and on which lattices that function is called (once per boundary trace and output component
-  in `l2_project_bspline`, as before). Each solve keeps the previous rule (LU for a square
-  system, the truncated SVD with `tol` for a rectangular one or where LU meets an exactly zero
-  pivot), but a banded QR now answers first wherever it certifies that the system has full
-  rank well clear of that rule's cutoff, so that a fit costs time linear in the number of basis
-  functions per direction instead of cubic; the mass matrices and loads of the L2 projection are
-  accumulated over the quadrature points rather than by dense products. Results move within
-  rounding: over 80 sampled cases (scalar and vector, 1D and 2D, open and periodic, float32 and
-  float64, square, over- and underdetermined, with and without boundary constraints), the
-  largest difference from the previous release was 52 units of the dtype's epsilon relative to
-  the largest coefficient, with two exceptions. Scattered `float32` nodes fitted into a
-  `float64` space moved by up to 3e-7 relative, because the previous release rounded the SVD
-  factors to `float32`; the result is now the more accurate one. And where the system is
-  singular (for example `l2_project_bspline` with fewer quadrature points than `degree + 1`),
-  whether LU or the SVD answers depends on the last bits of the matrix, as it already did
-  between BLAS libraries, so such a result is not reproducible across releases. The
-  `RuntimeWarning` "divide by zero encountered in divide" that the SVD path emitted for an
-  exactly zero singular value is gone (the value was dropped either way).
+  in `l2_project_bspline`, as before). Each solve keeps the previous rule (LU with partial
+  pivoting for a square system, the truncated SVD with `tol` for a rectangular one or where LU
+  meets an exactly zero pivot), but a square system with a narrow band is now factored within its
+  band, and a rectangular one is first offered to a banded QR that answers only where it
+  certifies full rank well clear of that rule's cutoff; the mass matrices and loads of the L2
+  projection are accumulated over the quadrature points rather than by dense products. A fit
+  still stores its matrices dense, so its cost per direction grows with the square of the number
+  of basis functions rather than the cube. Results move within the rounding of the system's
+  conditioning, measured against the previous release over sampled cases (scalar and vector, 1D
+  and 2D, open and periodic, `float32` and `float64`, square, over- and underdetermined, with and
+  without boundary constraints), with two exceptions. Where `float32` nodes (scattered, or a
+  `float32` `PointsLattice`) are fitted into a `float64` space through the SVD, the previous
+  release rounded the SVD factors to `float32`; the result now keeps `float64` accuracy and moves
+  by up to the `float32` rounding of that solve. And where the system is singular (for example
+  `l2_project_bspline` with fewer quadrature points than `degree + 1`), whether LU or the SVD
+  answers depends on the last bits of the matrix, as it already did between BLAS libraries, so
+  such a result is not reproducible across releases. The `RuntimeWarning` "divide by zero
+  encountered in divide" that the SVD path emitted for an exactly zero singular value is gone:
+  with `tol >= 0` the value was dropped either way, and with a negative `tol` its reciprocal is
+  still infinite, now without the warning.
 - **`fit_bspline` with scattered integer nodes and an explicit `tol` fits the basis values.**
   The previous release built the collocation matrix in the nodes' integer dtype, truncating
   every basis value to an integer, and returned a fit to that matrix; with `tol=None` it raised

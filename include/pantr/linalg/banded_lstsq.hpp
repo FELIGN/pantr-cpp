@@ -117,11 +117,13 @@ struct Rotation {
 /// value (a caller whose dense path truncates at another relative cutoff passes that one): the
 /// SVD would keep all of them, its minimum-norm solution is the unique least-squares solution
 /// the QR computes, and the two differ by rounding, not by rank. The steps bound exact singular
-/// values; the SVD thresholds computed ones, which the margin above the cutoff also covers. For
-/// `n >= 2`, `tau / 2 - gamma - rcond > 0` follows from the `4 (m n eps + rcond)` term; the floor
-/// `sqrt(eps)` carries a single column up to about `6.4e6` rows, beyond which the argument does not
-/// close (no product reaches such a system). The SVD's own error constant is not quantified by
-/// LAPACK; the margin is observed, not proved, to cover it.
+/// values; the SVD thresholds computed ones, which the margin above the cutoff also covers.
+/// `tau / 2 - gamma - rcond > 0` follows from the `4 (m n eps + rcond)` term where that term is
+/// the larger one and `rcond` is not far below the default; otherwise, a small `rcond` or a single
+/// column included, it rests on the floor `sqrt(eps)`, which closes it while `4.3 (m + n) eps`
+/// stays below `sqrt(eps) / 2`, that is for `m + n` up to about `7.8e6` (argued here, not proved;
+/// no fit or product in this library reaches such a system). The SVD's own error constant is not
+/// quantified by LAPACK; the margin is observed, not proved, to cover it.
 ///
 /// No answer is given for a non-finite `A` or `B` (the SVD path spreads a NaN or an infinity in
 /// its own way), for fewer rows than columns, or where the test fails. Everything is computed in
@@ -131,8 +133,8 @@ struct Rotation {
 ///     a (const RowMatrix<T>&): Extents `(m, n)`.
 ///     b (const RowMatrix<T>&): Extents `(m, cols)`.
 ///     border (Eigen::Index): Trailing columns of `a` held dense, in `[0, n]`. Defaults to 0.
-///     rcond (std::optional<double>): The relative cutoff of the dense path the answer stands for,
-///         finite and `>= 0`; `lstsq_rcond(m, n)` when absent.
+///     rcond (std::optional<double>): The relative cutoff of the dense path the answer stands for;
+///         `lstsq_rcond(m, n)` when absent. A NaN, infinite or negative one gets no answer.
 ///
 /// Returns:
 ///     std::optional<NdArray<T>>: Extents `(n, cols)`, or no value where the QR's answer is not
@@ -152,6 +154,9 @@ template <StorageFloat T>
   const auto md = static_cast<double>(m);
   const auto nd = static_cast<double>(n);
   const double cutoff = rcond ? *rcond : lstsq_rcond(m, n);
+  if (!(cutoff >= 0.0) || !std::isfinite(cutoff)) {
+    return std::nullopt;  // no certificate stands for a NaN, infinite or negative cutoff
+  }
   const double tau = (std::max)(std::sqrt(eps), 4.0 * md * nd * eps + 4.0 * cutoff);
   if (m < n || !a.allFinite() || !b.allFinite()) {
     return std::nullopt;

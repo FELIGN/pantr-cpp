@@ -492,7 +492,7 @@ def fit_bspline(
     Recover B-spline coefficients by solving the collocation system.
     For tensor-product nodes, uses per-direction solves (Kronecker
     structure). For scattered nodes, builds the full collocation matrix
-    and solves via SVD.
+    and solves it as a single system.
 
     The output dtype is inferred from *values*.
 
@@ -596,12 +596,11 @@ def _fit_from_tensor_product(
     system, mat_dtype = _tensor_collocation(space, node_arrays, None)
 
     value_dtype = _native(values.dtype)
-    if not _is_linalg_float(value_dtype):
-        # The first direction's square system went to numpy.linalg.solve, which refused the
-        # dtype; otherwise the coefficients came back in it and the constructor refuses them.
-        first = system.matrices[0]
-        if first.shape[0] == first.shape[1]:
-            raise _unsupported_in_linalg(value_dtype)
+    # A float NumPy's linalg does not support: the first direction's square system went to
+    # numpy.linalg.solve, which refused it; otherwise the coefficients came back in that dtype and
+    # the constructor refuses them.
+    if not _is_linalg_float(value_dtype) and grid_shape[0] == space.spaces[0].num_basis:
+        raise _unsupported_in_linalg(value_dtype)
 
     stacked = np.stack(components, axis=-1)
     ctrl = _solve_tensor(system, mat_dtype, stacked, value_dtype, tol)
