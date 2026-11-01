@@ -412,7 +412,7 @@ TEST_CASE("grid: BVH: a copy shares the arrays") {
   const Boxes b = random_boxes(10, 2, 1);
   const BVH t = build(b);
   const BVH copy = t;  // NOLINT(performance-unnecessary-copy-initialization)
-  CHECK(copy.rep() == t.rep());
+  CHECK(static_cast<const void*>(copy.rep().get()) == static_cast<const void*>(t.rep().get()));
   CHECK(copy.node_lo().data() == t.node_lo().data());
 }
 
@@ -501,7 +501,7 @@ TEST_CASE("grid: BVH constructor: a tree round-trips through its raw arrays") {
   const std::vector<double> qlo = {2.0, 2.0};
   const std::vector<double> qhi = {6.0, 6.0};
   CHECK(copy.query_aabb(qlo, qhi) == t.query_aabb(qlo, qhi));
-  CHECK(copy.rep() != t.rep());
+  CHECK(static_cast<const void*>(copy.rep().get()) != static_cast<const void*>(t.rep().get()));
 }
 
 TEST_CASE("grid: BVH constructor: shape and structure errors carry the Python messages") {
