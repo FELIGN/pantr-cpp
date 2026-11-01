@@ -32,6 +32,7 @@ set(_pantr_test_sources
     test_grid_index_bvh.cpp
     test_grid_tags.cpp
     test_grid_tensor_product.cpp
+    test_grid_hierarchical.cpp
     test_grid_partition.cpp
     test_grid_overlay_quadrature.cpp
     test_bspline_knots.cpp
