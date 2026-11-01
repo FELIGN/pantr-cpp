@@ -1022,11 +1022,131 @@ def _s5_fit_cases() -> list[Case]:
     return cases
 
 
+def _s6_grid_cases() -> list[Case]:
+    """The grid and point-location cases of the S6 stage (C6.1, C6.2).
+
+    - ``tpg_locate_many``: a 64 x 64 uniform grid, 1, 1e3 and 1e6 random points (a few outside).
+    - ``hgrid_refine_coarsen``: one ``refine`` of a single level-0 cell followed by the
+      ``coarsen`` that undoes it (both mutate; the pair leaves the structure as it was), on a
+      grid already holding 1, 10 and 100 separate level-1 blocks. The grid's block count is what
+      the refinement's cost grows with.
+    - ``bvh_query_aabb``: one query of a box covering about four cells, on a BVH over the cells of
+      a 2 x 2, 32 x 32 and 1024 x 1024 uniform grid (built in the setup).
+    - ``bspline_locate``: ``Bspline.locate`` of 1, 1e3 and 1e4 points inside a bicubic surface of
+      8 x 8 intervals (a smooth bijection of the unit square); the locate context is built in the
+      setup.
+    - ``partition_grid_rcb`` and ``partition_grid_block``: 2, 8 and 16 parts of a 2 x 2,
+      32 x 32 and 256 x 256 uniform grid.
+    """
+    from pantr.bspline import (  # noqa: PLC0415
+        Bspline,
+        create_uniform_space,
+        get_greville_abscissae,
+    )
+    from pantr.geometry import AABB  # noqa: PLC0415
+    from pantr.grid import BVH, HierarchicalGrid, partition_grid, uniform_grid  # noqa: PLC0415
+
+    cases: list[Case] = []
+
+    def add(name: str, size: str, what: str, setup: Callable[[], Callable[[], Any]]) -> None:
+        cases.append(Case(f"S6.{name}.{size}", "S6", size, what, setup))
+
+    unit = [[0.0, 1.0], [0.0, 1.0]]
+    for size, n in SIZES.items():
+
+        def setup_locate(n: int = n) -> Callable[[], Any]:
+            grid = uniform_grid(unit, 64)
+            pts = np.random.default_rng(1234).uniform(-0.01, 1.01, size=(n, 2))
+            return lambda: grid.locate_many(pts)
+
+        add(
+            "tpg_locate_many",
+            size,
+            f"TensorProductGrid.locate_many, 64^2 cells, {n} points",
+            setup_locate,
+        )
+
+    for size, blocks in {"tiny": 1, "medium": 10, "large": 100}.items():
+
+        def setup_refine(blocks: int = blocks) -> Callable[[], Any]:
+            side = 2 * blocks + 2
+            grid = HierarchicalGrid(uniform_grid(unit, [side, 4]), 2)
+            for b in range(blocks):
+                grid.refine(0, [2 * b, 0], [2 * b + 1, 1])
+            target = ([side - 1, 3], [side, 4])
+
+            def run() -> None:
+                grid.refine(0, *target)
+                grid.coarsen(0, *target)
+
+            return run
+
+        add(
+            "hgrid_refine_coarsen",
+            size,
+            f"HierarchicalGrid.refine + coarsen of one cell, {blocks} level-1 blocks",
+            setup_refine,
+        )
+
+    for size, side in {"tiny": 2, "medium": 32, "large": 1024}.items():
+
+        def setup_bvh(side: int = side) -> Callable[[], Any]:
+            grid = uniform_grid(unit, side)
+            bvh = BVH.from_cell_bounds(*grid.collect_cell_bounds())
+            h = 1.0 / side
+            box = AABB([0.5 - 0.5 * h, 0.5 - 0.5 * h], [0.5 + 0.5 * h, 0.5 + 0.5 * h])
+            return lambda: bvh.query_aabb(box)
+
+        add(
+            "bvh_query_aabb",
+            size,
+            f"BVH.query_aabb of a box over 4 cells, {side}^2 cells",
+            setup_bvh,
+        )
+
+    for size, n in {"tiny": 1, "medium": 1_000, "large": 10_000}.items():
+
+        def setup_bspline_locate(n: int = n) -> Callable[[], Any]:
+            space = create_uniform_space([3, 3], [8, 8])
+            g = get_greville_abscissae(space.spaces[0])
+            u, v = np.meshgrid(g, g, indexing="ij")
+            cp = np.stack([u + 0.1 * np.sin(np.pi * v), v + 0.1 * np.sin(np.pi * u)], axis=-1)
+            surface = Bspline(space, cp)
+            params = np.random.default_rng(1234).uniform(0.05, 0.95, size=(n, 2))
+            pts = np.asarray(surface.evaluate(params)).reshape(n, 2)
+            surface.locate(pts[:1])  # builds and caches the locate context
+            return lambda: surface.locate(pts)
+
+        add(
+            "bspline_locate",
+            size,
+            f"Bspline.locate, bicubic 8^2 intervals, {n} points",
+            setup_bspline_locate,
+        )
+
+    for size, (side, parts) in {"tiny": (2, 2), "medium": (32, 8), "large": (256, 16)}.items():
+        for backend in ("rcb", "block"):
+
+            def setup_partition(
+                side: int = side, parts: int = parts, backend: str = backend
+            ) -> Callable[[], Any]:
+                grid = uniform_grid(unit, side)
+                return lambda: partition_grid(grid, parts, backend=backend)
+
+            add(
+                f"partition_grid_{backend}",
+                size,
+                f"partition_grid({backend}), {side}^2 cells, {parts} parts",
+                setup_partition,
+            )
+    return cases
+
+
 def all_cases() -> list[Case]:
     """Return every case this tree can run.
 
     Returns:
-        list[Case]: The S1 cases, the S2 cases, the S4 cases, the S5 cases, then the r6 cases.
+        list[Case]: The S1, S2, S4, S5 and S6 cases, then the r6 cases.
     """
     return (
         _s1_cases()
@@ -1037,5 +1157,6 @@ def all_cases() -> list[Case]:
         + _s4_bspline_cases()
         + _s4_extraction_cases()
         + _s5_fit_cases()
+        + _s6_grid_cases()
         + _r6_cases()
     )
