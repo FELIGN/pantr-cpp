@@ -32,7 +32,6 @@ if TYPE_CHECKING:
     from ..bezier import Bezier
     from ..quad import PointsLattice
     from ..transform import AffineTransform
-    from ._bspline_locate import _LocateContext
     from ._bspline_space_1d import BsplineSpace1D
     from ._bspline_space_nd import BsplineSpace
 
@@ -59,8 +58,8 @@ class Bspline:
         _dtype (np.dtype): ``float32`` or ``float64``.
         _beziers_cache (``npt.NDArray[np.object_] | None``): Cached Bézier
             decomposition, or ``None`` if not yet computed.
-        _locate_cache (``_LocateContext | None``): Cached point-inversion state
-            (see :meth:`locate`), or ``None`` if not yet computed. Invalidated
+        _locate_cache (``Any``): The compiled point-inversion context (see :meth:`locate`),
+            or ``None`` if not yet computed. Invalidated
             alongside ``_beziers_cache`` by the in-place mutators.
 
     The read-only control point view is read from ``_h`` on first use and kept in the instance
@@ -73,7 +72,7 @@ class Bspline:
     _is_rational: bool
     _dtype: np.dtype[np.float32] | np.dtype[np.float64]
     _beziers_cache: npt.NDArray[np.object_] | None
-    _locate_cache: _LocateContext | None
+    _locate_cache: Any
 
     def __init__(
         self, space: BsplineSpace, control_points: npt.ArrayLike, is_rational: bool = False

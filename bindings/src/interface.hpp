@@ -9,7 +9,7 @@ namespace pantr::bindings {
 /// Version of the module's interface. pantr/_ext.py refuses a module whose version differs from
 /// its EXPECTED_INTERFACE, so a stale build fails at import instead of as a phantom regression.
 /// Bump both together with any change to what the module exposes.
-inline constexpr int kInterfaceVersion = 12;
+inline constexpr int kInterfaceVersion = 13;
 
 /// Register the translation of pantr's C++ exceptions to Python exceptions.
 void register_errors(nanobind::module_& m);
@@ -98,6 +98,10 @@ void register_bspline_product(nanobind::module_& m);
 /// quasi-interpolation) and the solve and load kernels the distributed fits reach, in the
 /// `bspline` submodule. After `register_bspline`.
 void register_bspline_fit(nanobind::module_& m);
+
+void register_bspline_locate(nanobind::module_& m);
+
+void register_bspline_locate_testing(nanobind::module_& m);
 
 /// Register the Morken-Reimers kernel, its merge and its insertion budget in the `_testing`
 /// submodule.

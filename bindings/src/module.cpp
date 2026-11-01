@@ -69,6 +69,7 @@ NB_MODULE(PANTR_EXT_MODULE_NAME, m) {
   pantr::bindings::register_bspline_spanwise(bspline);
   pantr::bindings::register_bspline_product(bspline);
   pantr::bindings::register_bspline_fit(bspline);
+  pantr::bindings::register_bspline_locate(bspline);
   nb::module_ grid =
       m.def_submodule("grid", "Structured grids, BVH, tags and partitions (private).");
   pantr::bindings::register_grid(grid);
@@ -89,4 +90,5 @@ NB_MODULE(PANTR_EXT_MODULE_NAME, m) {
   pantr::bindings::register_bspline_spanwise_testing(testing);
   pantr::bindings::register_bspline_product_testing(testing);
   pantr::bindings::register_grid_testing(testing);
+  pantr::bindings::register_bspline_locate_testing(testing);
 }

@@ -714,3 +714,46 @@ def factor_blocks(cells_per_axis: Sequence[int], n_parts: int) -> list[int]:
 
 def divisors(n: int) -> list[int]:
     """The positive divisors of n, ascending."""
+
+def locate_cell_physical_bounds(
+    ctx: pantr._pantr.bspline.LocateContext,
+) -> tuple[NDArray[numpy.float64], NDArray[numpy.float64]]:
+    """The per-cell physical control-point boxes `(lo, hi)`, `(n_cells, rank)`."""
+
+def locate_parametric_reach(
+    lo: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    hi: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+) -> NDArray[numpy.float64]:
+    """Per direction, `max(|lo|, |hi|) / (hi - lo)` (0 if empty)."""
+
+def locate_geometric_scale(physical: float, parametric: float) -> float:
+    """`max(physical, parametric)`."""
+
+def locate_newton_refine(
+    ctx: pantr._pantr.bspline.LocateContext,
+    targets: Annotated[
+        NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu", writable=False)
+    ],
+    starts: Annotated[
+        NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu", writable=False)
+    ],
+    stop: float,
+    accept: float,
+    max_iter: int,
+) -> tuple[NDArray[numpy.bool_], NDArray[numpy.float64]]:
+    """Run one Newton solve per target from its start: `(converged, last iterate)`."""
+
+def locate_nearest_corner_starts(
+    ctx: pantr._pantr.bspline.LocateContext,
+    cells: Annotated[
+        NDArray[numpy.int64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    targets: Annotated[
+        NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu", writable=False)
+    ],
+) -> NDArray[numpy.float64]:
+    """The corner of each cell whose image is nearest its target, `(n, dim)`."""

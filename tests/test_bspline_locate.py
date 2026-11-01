@@ -2,29 +2,26 @@
 
 from __future__ import annotations
 
-import sys
 from collections.abc import Callable
 
 import numpy as np
 import numpy.typing as npt
 import pytest
 
-from pantr.bspline import Bspline, BsplineSpace, BsplineSpace1D
-from pantr.bspline._bspline_locate import (
-    _cell_midpoints,
-    _cell_parametric_bounds,
-    _cell_physical_bounds,
-    _default_tolerance,
-    _geometric_scale,
-    _locate_context,
-    _LocateContext,
-    _LocateThresholds,
-    _nearest_corner_starts,
-    _newton_refine,
-    _parametric_reach,
-    _parametric_scale,
+from pantr._testing import (
+    LocateThresholds,
+    locate_cell_physical_bounds,
+    locate_context,
+    locate_default_thresholds,
+    locate_geometric_scale,
+    locate_nearest_corner_starts,
+    locate_newton_refine,
+    locate_parametric_reach,
+    locate_parametric_scale,
 )
+from pantr.bspline import Bspline, BsplineSpace, BsplineSpace1D
 from pantr.geometry import AABB
+from pantr.grid import BVH
 from pantr.tolerance import get_default
 from pantr.transform import AffineTransform
 
@@ -57,11 +54,11 @@ _PARAMETRIC_ULPS_ALLOWED: float = 4.0
 How many parametric ulps' worth of residual a returned coordinate may carry.
 
 One ulp of a parametric coordinate is ``eps * |xi_k|``, which the map turns into a physical
-displacement of ``eps * |xi_k| * ||J e_k||``; :func:`_parametric_scale` is exactly that
+displacement of ``eps * |xi_k| * ||J e_k||``; :func:`locate_parametric_scale` is exactly that
 product with the control net's span standing in for the local stretch, so
-``eps * _parametric_scale(spline)`` is the physical length the parametrization quantizes at
+``eps * locate_parametric_scale(spline)`` is the physical length the parametrization quantizes at
 and no returned coordinate can do better than a fraction of it. The bound is therefore
-``_PARAMETRIC_ULPS_ALLOWED * eps * _parametric_scale(spline)``, which is the acceptance
+``_PARAMETRIC_ULPS_ALLOWED * eps * locate_parametric_scale(spline)``, which is the acceptance
 threshold divided by ``64 / _PARAMETRIC_ULPS_ALLOWED``.
 
 **Why four.** Two ulps for where the last Newton step lands relative to the true root, and a
@@ -75,11 +72,11 @@ single-threshold policy it replaces exceeds it on 9 of 60 queries in both famili
 worst case of 52 ulps, so the two policies are separated by any factor from 3 to 16 -- but
 not by every factor below that, since the good policy itself passes 1.33 on a sibling.
 
-**What it is not an oracle for.** The bound calls :func:`_parametric_scale`, the same
+**What it is not an oracle for.** The bound calls :func:`locate_parametric_scale`, the same
 function that builds the acceptance threshold, so it cannot detect an error in *that*
 length -- inflating it threefold leaves every test using this bound green. What it detects
 is the stopping rule, because the residual it grades is produced by the Newton iteration's
-own arithmetic and not by any threshold. :func:`_parametric_scale`'s numeric value is
+own arithmetic and not by any threshold. :func:`locate_parametric_scale`'s numeric value is
 pinned independently by :class:`TestParametricStretch`, against hand-derived literals.
 """
 
@@ -337,7 +334,7 @@ def _steep_span_patch(offset: float, n_elem: int, flat_fraction: float = 0.5) ->
     parametric term has to absorb is therefore set by ``n_elem`` alone, and is ``n_elem / 2 +
     1 / 2`` at the default fraction.
 
-    This is the family the ``sigma_max`` substitution in :func:`_geometric_scale` is argued
+    This is the family the ``sigma_max`` substitution in :func:`locate_geometric_scale` is argued
     against: a map whose *local* stretch exceeds the average over its own direction is
     exactly what a net span underestimates.
     """
@@ -398,23 +395,64 @@ def _parametric_ulp_image(spline: Bspline) -> float:
     would put the bound below the residual floor the coordinates themselves impose and the
     test would fail for a reason having nothing to do with the parametrization.
     """
-    scale = _geometric_scale(_physical_only_scale(spline), _parametric_scale(spline))
+    scale = _scale_of(spline)
     return float(np.finfo(np.float64).eps) * scale
 
 
-def _first_candidates(
-    context: _LocateContext, targets: npt.NDArray[np.float64], thresholds: _LocateThresholds
-) -> npt.NDArray[np.int64]:
-    """Return the first candidate cell of each target, as ``_locate_impl``'s first round does.
+def _candidate_cells(
+    spline: Bspline, targets: npt.NDArray[np.float64], accept: float
+) -> list[npt.NDArray[np.int64]]:
+    """Return the candidate cells of each target, sorted by id, as ``locate`` orders them.
 
-    Lets a test drive :func:`_newton_refine` from the same starting guesses the solver uses
+    The cells whose physical box, padded by ``accept``, contains the target: the hierarchy
+    over the per-cell control-point boxes (:func:`locate_cell_physical_bounds`) that the C++
+    ``locate`` builds, queried the same way.
+    """
+    bvh = BVH.from_cell_bounds(*locate_cell_physical_bounds(spline))
+    return [np.sort(bvh.query_aabb(AABB(x, x).pad(accept))) for x in targets]
+
+
+def _first_candidates(
+    spline: Bspline, targets: npt.NDArray[np.float64], thresholds: LocateThresholds
+) -> npt.NDArray[np.int64]:
+    """Return the first candidate cell of each target, as the first round of ``locate`` does.
+
+    Lets a test drive :func:`locate_newton_refine` from the same starting guesses the solver uses
     without reaching into it, so a comparison between two threshold policies varies the
     policy alone.
     """
     return np.asarray(
-        [np.sort(context.bvh.query_aabb(AABB(x, x).pad(thresholds.accept)))[0] for x in targets],
+        [cells[0] for cells in _candidate_cells(spline, targets, thresholds.accept)],
         dtype=np.int64,
     )
+
+
+def _cell_parametric_bounds(
+    space: BsplineSpace, cell_ids: npt.NDArray[np.int64]
+) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+    """Return the parametric box ``(lo, hi)``, each ``(n, dim)``, of the given flat cell ids.
+
+    The consecutive breakpoints bracketing each cell in each direction, cells flat in C order
+    over ``space.num_intervals``.
+    """
+    multi = np.unravel_index(cell_ids, space.num_intervals)
+    lo = np.empty((cell_ids.shape[0], space.dim), dtype=np.float64)
+    hi = np.empty_like(lo)
+    for axis, sub in enumerate(space.spaces):
+        breakpoints = np.asarray(
+            sub.get_unique_knots_and_multiplicity(in_domain=True)[0], dtype=np.float64
+        )
+        lo[:, axis] = breakpoints[multi[axis]]
+        hi[:, axis] = breakpoints[multi[axis] + 1]
+    return lo, hi
+
+
+def _cell_midpoints(
+    space: BsplineSpace, cell_ids: npt.NDArray[np.int64]
+) -> npt.NDArray[np.float64]:
+    """Return the parametric midpoint of each of the given flat cell ids."""
+    lo, hi = _cell_parametric_bounds(space, cell_ids)
+    return 0.5 * (lo + hi)
 
 
 def _physical_only_scale(spline: Bspline) -> float:
@@ -423,7 +461,7 @@ def _physical_only_scale(spline: Bspline) -> float:
     Written out here rather than imported, so the "did this loosen anything" comparisons
     have an oracle that cannot move with the code they grade.
     """
-    lo, hi = _cell_physical_bounds(spline)
+    lo, hi = locate_cell_physical_bounds(spline)
     box_lo, box_hi = lo.min(axis=0), hi.max(axis=0)
     diagonal = float(np.linalg.norm(box_hi - box_lo))
     magnitude = float(max(np.abs(box_lo).max(), np.abs(box_hi).max()))
@@ -433,17 +471,20 @@ def _physical_only_scale(spline: Bspline) -> float:
 
 def _scale_of(spline: Bspline) -> float:
     """Return the geometric scale the default acceptance threshold is expressed in."""
-    return _geometric_scale(_physical_only_scale(spline), _parametric_scale(spline))
+    return float(
+        locate_geometric_scale(_physical_only_scale(spline), locate_parametric_scale(spline))
+    )
 
 
-def _cache_of(spline: Bspline) -> _LocateContext | None:
-    """Return the point-inversion cache attribute of ``spline``.
+def _cache_of(spline: Bspline) -> object | None:
+    """Return the point-inversion cache attribute of ``spline`` (the compiled context).
 
     Read through a function rather than inline: an inline ``assert spline._locate_cache is
     None`` narrows the attribute's type for the rest of the test, and mypy then calls the
     later assertions unreachable. A call expression is not narrowed.
     """
-    return spline._locate_cache
+    cache: object | None = spline._locate_cache
+    return cache
 
 
 def _sample_parametric(
@@ -688,9 +729,6 @@ class TestCandidateCells:
 
     def test_stretched_patch_with_overlapping_boxes(self) -> None:
         """A sheared patch whose cell boxes overlap still resolves every point."""
-        from pantr.bspline._bspline_locate import _locate_context  # noqa: PLC0415
-        from pantr.geometry import AABB  # noqa: PLC0415
-
         spline = _stretched_patch()
         xi_true = _sample_parametric(spline, 300, seed=13, margin=0.01)
         assert np.all(_jacobian_determinants(spline, xi_true) > 0.0)
@@ -699,9 +737,9 @@ class TestCandidateCells:
         cell_ids, ref_coords = spline.locate(points)
 
         # The premise of the test: the AABB test really is ambiguous here.
-        context = _locate_context(spline)
+        context = locate_context(spline)
         tol_phys = 1e-12 * context.scale
-        counts = np.array([context.bvh.query_aabb(AABB(x, x).pad(tol_phys)).size for x in points])
+        counts = np.array([cells.size for cells in _candidate_cells(spline, points, tol_phys)])
         assert counts.mean() > 2.0, "expected genuinely ambiguous candidate boxes"
 
         assert np.all(cell_ids >= 0)
@@ -883,9 +921,9 @@ class TestNewtonGlobalization:
         """
         spline = _warped_patch()
         target = _evaluate_at(spline, _CYCLING_PARAMETER)
-        context = _locate_context(spline)
+        context = locate_context(spline)
         tol = get_default(spline.dtype) * context.scale
-        candidates = np.sort(context.bvh.query_aabb(AABB(target[0], target[0]).pad(tol)))
+        candidates = _candidate_cells(spline, target, tol)[0]
         assert candidates.tolist() == [3], "the premise: one candidate, so there is no fallback"
         start = _cell_midpoints(spline.space, candidates)
 
@@ -894,8 +932,8 @@ class TestNewtonGlobalization:
                 np.linalg.norm(
                     _evaluate_at(
                         spline,
-                        _newton_refine(
-                            spline, target, start, _LocateThresholds(stop=tol, accept=tol), k
+                        locate_newton_refine(
+                            spline, target, start, LocateThresholds(stop=tol, accept=tol), k
                         )[1],
                     )
                     - target
@@ -951,17 +989,17 @@ class TestNewtonGlobalization:
         spline = _warped_patch()
         xi_true = np.array([[0.9485013, 0.34608885]])
         target = _evaluate_at(spline, xi_true)
-        context = _locate_context(spline)
+        context = locate_context(spline)
         tol = get_default(spline.dtype) * context.scale
-        candidates = np.sort(context.bvh.query_aabb(AABB(target[0], target[0]).pad(tol)))
+        candidates = _candidate_cells(spline, target, tol)[0]
         assert candidates.tolist() == [32], "the premise: one candidate, so there is no fallback"
 
-        thresholds = _LocateThresholds(stop=tol, accept=tol)
-        from_midpoint = _newton_refine(
+        thresholds = LocateThresholds(stop=tol, accept=tol)
+        from_midpoint = locate_newton_refine(
             spline, target, _cell_midpoints(spline.space, candidates), thresholds, 40
         )
-        from_corner = _newton_refine(
-            spline, target, _nearest_corner_starts(spline, candidates, target), thresholds, 40
+        from_corner = locate_newton_refine(
+            spline, target, locate_nearest_corner_starts(spline, candidates, target), thresholds, 40
         )
 
         assert not bool(from_midpoint[0][0]), "the midpoint start is expected to jam"
@@ -985,8 +1023,8 @@ class TestNewtonGlobalization:
         cells = np.array([0, 17, 35], dtype=np.int64)
         lo, hi = _cell_parametric_bounds(spline.space, cells)
 
-        finite = _nearest_corner_starts(spline, cells, _evaluate_at(spline, 0.5 * (lo + hi)))
-        unrankable = _nearest_corner_starts(spline, cells, np.full((3, 2), np.nan))
+        finite = locate_nearest_corner_starts(spline, cells, _evaluate_at(spline, 0.5 * (lo + hi)))
+        unrankable = locate_nearest_corner_starts(spline, cells, np.full((3, 2), np.nan))
 
         for starts in (finite, unrankable):
             assert np.all(np.isfinite(starts))
@@ -1240,7 +1278,7 @@ class TestParametricResolution:
         spline = Bspline(BsplineSpace([space]), cp)
 
         # ``a / (2a)``, which IEEE makes exactly one half since ``2a`` is exact.
-        reach = _parametric_reach(np.asarray(spline.space.domain, dtype=np.float64))
+        reach = locate_parametric_reach(np.asarray(spline.space.domain, dtype=np.float64))
         assert reach.tolist() == [0.5]
         # Diagonal and magnitude of the image ``[-a, a]``: ``2a`` and ``a``.
         assert _scale_of(spline) == pytest.approx(2.0 * half_width, rel=1e-15)
@@ -1324,14 +1362,14 @@ class TestParametricResolution:
         infinite threshold reports every query "found", which is worse than the "not found"
         this ticket exists to remove.
 
-        Exercised on :func:`_parametric_reach` directly rather than through
+        Exercised on :func:`locate_parametric_reach` directly rather than through
         :meth:`Bspline.locate`, which raises on such a space for an unrelated reason: with no
         knot-span cell there is no per-cell box to reduce over. Guarding the division here
         keeps the term total on its own inputs whatever that separate question is settled to.
         """
         domain = np.array([[5.0, 5.0], [0.0, 1.0]])
 
-        reach = _parametric_reach(domain)
+        reach = locate_parametric_reach(domain)
 
         assert np.all(np.isfinite(reach))
         # The zero-extent direction contributes nothing; the ordinary one gives reach 1.
@@ -1341,10 +1379,11 @@ class TestParametricResolution:
 class TestParametricStretch:
     """The one substitution in the derivation, on the family built to break it.
 
-    ``_net_span_per_direction`` stands in for ``sup||J e_k||``. That is exact for an affine
-    map and an underestimate for one whose local stretch exceeds the average over its own
-    direction, by the amplification ``A = L_k * sup||J e_k|| / net_span_k``. The floor is a
-    half ulp against a tier of ``64 * eps``, so the gap is absorbed to ``A`` of order 100.
+    ``net_span_per_direction`` (``include/pantr/bspline/locate.hpp``) stands in for
+    ``sup||J e_k||``. That is exact for an affine map and an underestimate for one whose
+    local stretch exceeds the average over its own direction, by the amplification
+    ``A = L_k * sup||J e_k|| / net_span_k``. The floor is a half ulp against a tier of
+    ``64 * eps``, so the gap is absorbed to ``A`` of order 100.
     """
 
     @pytest.mark.parametrize(("n_elem", "amplification"), [(4, 2.5), (64, 32.5), (256, 128.5)])
@@ -1428,8 +1467,8 @@ class TestParametricStretch:
         thick = _anisotropic_patch(1.0e6, 1.0)
         thin = _anisotropic_patch(1.0e6, 1.0e-6)
 
-        assert _parametric_scale(thick) == pytest.approx(1.0e6, rel=1.0e-5)
-        assert _parametric_scale(thin) == pytest.approx(1.0, rel=1.0e-5)
+        assert locate_parametric_scale(thick) == pytest.approx(1.0e6, rel=1.0e-5)
+        assert locate_parametric_scale(thin) == pytest.approx(1.0, rel=1.0e-5)
 
     @pytest.mark.parametrize("window", [(984375.0, 1.0e6), (999984.375, 1.0e6)])
     def test_restricting_a_patch_leaves_its_absolute_threshold_alone(
@@ -1559,7 +1598,7 @@ class TestStoppingVersusAcceptance:
         not do of its own accord.
 
         **One ulp, not a number picked to work.** The image of one ulp of a parametric
-        coordinate is what :func:`_parametric_scale` measures, and the acceptance threshold
+        coordinate is what :func:`locate_parametric_scale` measures, and the acceptance threshold
         is the tolerance tier times that length, so a one-ulp start sits below the loose bar
         by about the tier itself and far above the tight one. Measured over 20 seeds of 20
         queries: at worst ``0.025`` of the acceptance threshold (a margin of 40, against the
@@ -1569,8 +1608,7 @@ class TestStoppingVersusAcceptance:
         premise assertion has to do if its failure is to mean anything.
         """
         spline = _parametrically_offset_patch()
-        context = _locate_context(spline)
-        thresholds = _default_tolerance(spline, context)
+        thresholds = locate_default_thresholds(spline)
         xi_true = _sample_parametric(spline, 20, seed=17)
         targets = _evaluate_at(spline, xi_true)
         start = xi_true.copy()
@@ -1579,10 +1617,10 @@ class TestStoppingVersusAcceptance:
         assert np.all(start_residual > thresholds.stop), "the premise: above the tight bar"
         assert np.all(start_residual <= thresholds.accept), "the premise: inside the loose one"
 
-        loose_only = _newton_refine(
-            spline, targets, start, _LocateThresholds(thresholds.accept, thresholds.accept), 30
+        loose_only = locate_newton_refine(
+            spline, targets, start, LocateThresholds(thresholds.accept, thresholds.accept), 30
         )
-        split = _newton_refine(spline, targets, start, thresholds, 30)
+        split = locate_newton_refine(spline, targets, start, thresholds, 30)
 
         assert np.all(loose_only[0]) and np.all(split[0]), "both policies report found"
         assert np.array_equal(loose_only[1], start), "one threshold returns the guess as given"
@@ -1601,15 +1639,14 @@ class TestStoppingVersusAcceptance:
         loss.
         """
         spline = _parametrically_offset_patch()
-        context = _locate_context(spline)
-        thresholds = _default_tolerance(spline, context)
-        tight_only = _LocateThresholds(stop=thresholds.stop, accept=thresholds.stop)
+        thresholds = locate_default_thresholds(spline)
+        tight_only = LocateThresholds(stop=thresholds.stop, accept=thresholds.stop)
         xi_true = _sample_parametric(spline, 20, seed=17)
         targets = _half_ulp_targets(spline, xi_true)
-        starts = _cell_midpoints(spline.space, _first_candidates(context, targets, thresholds))
+        starts = _cell_midpoints(spline.space, _first_candidates(spline, targets, thresholds))
 
-        by_the_tight_bar, _ = _newton_refine(spline, targets, starts, tight_only, 30)
-        converged, xi = _newton_refine(spline, targets, starts, thresholds, 30)
+        by_the_tight_bar, _ = locate_newton_refine(spline, targets, starts, tight_only, 30)
+        converged, xi = locate_newton_refine(spline, targets, starts, thresholds, 30)
 
         residuals = np.linalg.norm(_evaluate_at(spline, xi) - targets, axis=1)
         assert not np.any(by_the_tight_bar), "the premise: no iterate reaches the tight bar"
@@ -1622,24 +1659,24 @@ class TestStoppingVersusAcceptance:
     def test_the_split_never_returns_a_worse_coordinate_than_one_threshold_did(self) -> None:
         """Coverage may not shrink, checked on the geometry with the widest gap.
 
-        The argument is in :class:`_LocateThresholds`: accepted steps never raise the
-        residual, so lowering the *stopping* test only extends trajectories. This runs both
-        policies from the same starts and pins the two consequences -- residuals no larger,
-        and therefore verdicts no fewer -- on queries on and off the mapping's image.
+        The argument is in ``include/pantr/bspline/locate.hpp`` (``LocateThresholds``): accepted
+        steps never raise the residual, so lowering the *stopping* test only extends
+        trajectories. This runs both policies from the same starts and pins the two
+        consequences -- residuals no larger, and therefore verdicts no fewer -- on queries on
+        and off the mapping's image.
         """
         spline = _parametrically_offset_patch()
-        context = _locate_context(spline)
-        thresholds = _default_tolerance(spline, context)
-        loose = _LocateThresholds(stop=thresholds.accept, accept=thresholds.accept)
+        thresholds = locate_default_thresholds(spline)
+        loose = LocateThresholds(stop=thresholds.accept, accept=thresholds.accept)
         # Without this the test goes quiet rather than red: were the two bars ever equal,
         # `loose` would be `thresholds` and every comparison below a run against itself.
         assert thresholds.stop < thresholds.accept, "the premise: the two policies differ"
         xi_true = _sample_parametric(spline, 60, seed=321)
         for targets in (_evaluate_at(spline, xi_true), _half_ulp_targets(spline, xi_true)):
-            starts = _cell_midpoints(spline.space, _first_candidates(context, targets, thresholds))
+            starts = _cell_midpoints(spline.space, _first_candidates(spline, targets, thresholds))
 
-            single, xi_single = _newton_refine(spline, targets, starts, loose, 30)
-            split, xi_split = _newton_refine(spline, targets, starts, thresholds, 30)
+            single, xi_single = locate_newton_refine(spline, targets, starts, loose, 30)
+            split, xi_split = locate_newton_refine(spline, targets, starts, thresholds, 30)
 
             res_single = np.linalg.norm(_evaluate_at(spline, xi_single) - targets, axis=1)
             res_split = np.linalg.norm(_evaluate_at(spline, xi_split) - targets, axis=1)
@@ -1668,7 +1705,7 @@ class TestStoppingVersusAcceptance:
         before, step for step, which is why no cost measurement is needed here.
         """
         spline = factory()
-        thresholds = _default_tolerance(spline, _locate_context(spline))
+        thresholds = locate_default_thresholds(spline)
 
         assert thresholds.stop == thresholds.accept
         assert thresholds.stop == get_default(spline.dtype) * _physical_only_scale(spline)
@@ -1680,7 +1717,7 @@ class TestStoppingVersusAcceptance:
         nothing anywhere.
         """
         spline = _parametrically_offset_patch()
-        thresholds = _default_tolerance(spline, _locate_context(spline))
+        thresholds = locate_default_thresholds(spline)
 
         assert thresholds.stop < thresholds.accept
         assert thresholds.stop == get_default(spline.dtype) * _physical_only_scale(spline)
@@ -1691,7 +1728,7 @@ class TestStoppingVersusAcceptance:
         """A float32 caller gets one threshold at every offset its knot vector can carry.
 
         Not an accident of these four rows. The acceptance threshold's parametric term is
-        format-independent by construction -- :func:`_parametric_scale` multiplies by
+        format-independent by construction -- :func:`locate_parametric_scale` multiplies by
         ``eps64 / eps(dtype)``, so ``get_default(dtype)`` times it is ``64 * eps64 * reach *
         span`` in every format -- while the stopping threshold is ``64 * eps(dtype) *
         physical``. Opening the split therefore needs ``reach * span > (eps(dtype) / eps64)
@@ -1714,7 +1751,7 @@ class TestStoppingVersusAcceptance:
             BsplineSpace([BsplineSpace1D(knots, 2)]),
             np.ascontiguousarray(np.asarray(spline.control_points, dtype=np.float32)),
         )
-        thresholds = _default_tolerance(spline32, _locate_context(spline32))
+        thresholds = locate_default_thresholds(spline32)
 
         assert thresholds.stop == thresholds.accept
         assert thresholds.stop == get_default(np.float32) * _physical_only_scale(spline32)
@@ -1735,49 +1772,47 @@ class TestStoppingVersusAcceptance:
         with pytest.raises(ValueError, match="collapsed every knot"):
             BsplineSpace1D(knots, 2)
 
-    def test_an_explicit_tolerance_governs_stopping_as_well(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_an_explicit_tolerance_governs_stopping_as_well(self) -> None:
         """A named threshold is not silently refined past, so a proximity query stays cheap.
 
         The caller who passes ``tol`` has said what distance they mean; answering to eight
         decades better would charge them for accuracy they did not ask for, and the split is
         exactly what makes that newly possible.
 
-        Read off the thresholds :func:`_locate_impl` hands the solver rather than off the
-        residual it happens to produce. A residual assertion cannot pin this: on this
-        geometry the internal stopping bar is eleven decades below a coarse ``tol``, so a
-        partial leak of it into ``stop`` still leaves every residual far above anything a
-        residual test could distinguish, and passes. The thresholds themselves are exact.
+        Read off the coordinates the solver returns rather than off the residual they happen
+        to produce. A residual assertion cannot pin this: on this geometry the internal
+        stopping bar is eleven decades below a coarse ``tol``, so a partial leak of it into
+        ``stop`` still leaves every residual far above anything a residual test could
+        distinguish, and passes. The coordinates are exact: for a point found from its first
+        candidate's midpoint, ``locate(tol=t)`` must return, bit for bit, what
+        :func:`locate_newton_refine` returns for ``LocateThresholds(t, t)`` from that start,
+        and not what it returns for the default stopping bar with ``t`` as the acceptance one.
+        The second comparison is what shows the first can tell the two policies apart.
         """
+        tol = 1.0e-2
         spline = _warped_patch()
         targets = _evaluate_at(spline, _sample_parametric(spline, 30, seed=5))
-        seen: list[_LocateThresholds] = []
-        module = sys.modules["pantr.bspline._bspline_locate"]
+        explicit = LocateThresholds(stop=tol, accept=tol)
+        leaked = LocateThresholds(stop=locate_default_thresholds(spline).stop, accept=tol)
+        assert leaked.stop < explicit.stop, "the premise: the default stopping bar is the tighter"
+        starts = _cell_midpoints(spline.space, _first_candidates(spline, targets, explicit))
 
-        def _record(
-            sp: Bspline,
-            pts: npt.NDArray[np.float64],
-            start: npt.NDArray[np.float64],
-            thresholds: _LocateThresholds,
-            max_iter: int,
-        ) -> tuple[npt.NDArray[np.bool_], npt.NDArray[np.float64]]:
-            # The module-level import still names the real function; only the module
-            # attribute the solver looks up is redirected.
-            seen.append(thresholds)
-            return _newton_refine(sp, pts, start, thresholds, max_iter)
+        cell_ids, ref_coords = spline.locate(targets, tol=tol)
+        found_explicit, xi_explicit = locate_newton_refine(spline, targets, starts, explicit, 30)
+        _, xi_leaked = locate_newton_refine(spline, targets, starts, leaked, 30)
 
-        monkeypatch.setattr(module, "_newton_refine", _record)
-
-        cell_ids, ref_coords = spline.locate(targets, tol=1.0e-2)
-
-        assert seen, "the premise: the solver was reached at all"
-        assert all(t == _LocateThresholds(stop=1.0e-2, accept=1.0e-2) for t in seen), (
-            f"an explicit tol must govern both thresholds; got {set(seen)}"
+        # Restricted to the points the first candidate's midpoint solves: for those, `locate`
+        # stops at its first solve and returns that solve's iterate.
+        assert int(found_explicit.sum()) >= 10, (
+            "the premise: most points solve from the first start"
+        )
+        assert np.array_equal(ref_coords[found_explicit], xi_explicit[found_explicit])
+        assert np.any(np.any(xi_explicit != xi_leaked, axis=1)[found_explicit]), (
+            "the premise: refining to the default stopping bar changes some coordinate"
         )
         assert np.all(cell_ids >= 0)
         residuals = np.linalg.norm(_evaluate_at(spline, ref_coords) - targets, axis=1)
-        assert residuals.max() <= 1.0e-2, "the threshold asked for must still hold"
+        assert residuals.max() <= tol, "the threshold asked for must still hold"
 
 
 class TestNearCriticalJacobian:
@@ -1794,8 +1829,10 @@ class TestNearCriticalJacobian:
         orders clear of the rank guard, so nothing about this is degenerate.
 
         Uncapped, the line search spends its budget shortening a step 300 domain extents long:
-        11 halvings were needed where 8 were allowed, and ``locate`` returned ``-1`` at library
-        defaults. Capping the first trial at one domain extent drops the requirement to 2.
+        11 halvings were needed where ``max_step_halvings == 8`` were allowed, and ``locate``
+        returned ``-1`` at library defaults. Capping the first trial at ``max_step_extents == 1``
+        domain extent drops the requirement to 2 (both are
+        ``detail::locate_kernels`` constants in ``include/pantr/bspline/locate.hpp``).
         """
         knots = np.array([0.0] * 6 + [1.0] * 6)
         control_points = np.array(
@@ -1842,7 +1879,7 @@ class TestCellPhysicalBounds:
         """
         spline = spline_factory()
         space = spline.space
-        lo, hi = _cell_physical_bounds(spline)
+        lo, hi = locate_cell_physical_bounds(spline)
 
         supports = space.cell_supports(np.arange(space.num_total_intervals))
         cp = np.asarray(spline.control_points, dtype=np.float64).reshape(space.num_total_basis, -1)
@@ -1867,7 +1904,6 @@ class TestCaching:
         second = _cache_of(spline)
         assert second is first
         assert second is not None
-        assert second.bvh is first.bvh
 
     @pytest.mark.parametrize("mutate", ["reverse", "permute_directions", "transform"])
     def test_in_place_mutation_invalidates_the_context(self, mutate: str) -> None:
@@ -1965,3 +2001,45 @@ class TestValidation:
         annulus = _quarter_annulus()
         with pytest.raises(ValueError, match="tol"):
             annulus.locate(np.array([[1.2, 0.3]]), tol=tol)
+
+
+class TestThreadCount:
+    """The batch runs over the thread pool, and no point's answer depends on the thread count."""
+
+    def test_one_thread_and_several_agree(self) -> None:
+        """Cell ids are equal and reference coordinates equal (NaN to NaN) at 1 and 8 threads.
+
+        Every point is solved alone from data that do not depend on the thread count, so the
+        derived bound on the coordinates is zero. The batch is mixed: points on the image
+        (oracle: the residual at the returned coordinates is within the acceptance threshold,
+        the contract on a map that may fold) and points shifted far off it (oracle: not found).
+        """
+        import numba as nb  # noqa: PLC0415 -- the cap NUMBA_NUM_THREADS puts on pantr.num_threads
+
+        from pantr import num_threads  # noqa: PLC0415
+        from pantr._ext import ext  # noqa: PLC0415
+
+        many = min(8, nb.config.NUMBA_NUM_THREADS, ext.max_threads())
+        if many < 2:
+            pytest.skip("a single thread is available, so there is no parallel run to compare")
+        spline = _warped_patch()
+        params = _sample_parametric(spline, 4000, seed=21)
+        targets = np.concatenate([_evaluate_at(spline, params), params + 50.0])
+        with num_threads(1):
+            ids_1, ref_1 = spline.locate(targets)
+        with num_threads(many):
+            ids_n, ref_n = spline.locate(targets)
+        np.testing.assert_array_equal(ids_n, ids_1)
+        np.testing.assert_array_equal(ref_n, ref_1)  # NaN positions equal too
+        n = params.shape[0]
+        # This degree-1 patch folds, and a few queries on its image are lost to the C0 knot lines
+        # (see `armijo_decrease` in include/pantr/bspline/locate.hpp; the previous release lost
+        # the same 8 of these 4000), so the found ones are what is checked.
+        found = ids_1[:n] >= 0
+        assert found.sum() >= 0.99 * n
+        assert np.all(ids_1[n:] == -1)
+        accept = locate_default_thresholds(spline).accept
+        residual = np.linalg.norm(
+            _evaluate_at(spline, ref_1[:n][found]) - targets[:n][found], axis=1
+        )
+        assert residual.max() <= accept

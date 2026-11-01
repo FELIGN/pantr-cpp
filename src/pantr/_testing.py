@@ -5,6 +5,9 @@ module's ``_testing`` submodule and re-exported here; a test imports them from `
 and from no other private path (design/port_design.md §3.8). Nothing in the library imports this
 module.
 
+- The internals of ``Bspline.locate`` (``locate_*``): the inversion context's lengths, the default
+  thresholds, the parametric reach and scale, the per-cell boxes, and one Newton solve or second
+  start at a time, which no public call isolates.
 - :func:`empty_views`: the binding's read-only view of empty, null-data storage.
 - The Bernstein recurrences at one point, the degree up to which the unmirrored one runs, and
   the Bernstein derivative tabulation (no public function returns derivatives).
@@ -54,7 +57,7 @@ module.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, Final
+from typing import Any, Final, NamedTuple
 
 import numpy as np
 import numpy.typing as npt
@@ -67,7 +70,9 @@ from .basis._basis_tabulate import _variant_code
 from .basis._basis_utils import _allocate_or_validate_out, _validate_out_array
 from .bezier._find_roots import _get_state as root_provider_state
 from .bezier._find_roots import _set_state as set_root_provider_state
+from .bspline._bspline import Bspline
 from .bspline._bspline_space_1d import BsplineSpace1D
+from .bspline._bspline_space_nd import BsplineSpace
 from .bspline.spanwise_element_extraction import (
     _OP_CODES,
     OpKind,
@@ -883,6 +888,201 @@ CARDINAL_BSPLINE: Final = _Family.CARDINAL_BSPLINE
 LEGENDRE: Final = _Family.LEGENDRE
 """The shifted Legendre family, for :data:`gram_projection`."""
 
+
+class LocateThresholds(NamedTuple):
+    """The stopping and acceptance thresholds of one ``locate`` solve, ``stop <= accept``.
+
+    Attributes:
+        stop (float): The residual at or below which the iteration stops.
+        accept (float): The residual at or below which a result counts as found.
+    """
+
+    stop: float
+    accept: float
+
+
+class LocateContext(NamedTuple):
+    """What a ``locate`` test reads of a spline's inversion context.
+
+    Attributes:
+        spline (Bspline): The spline the solver inverts: the caller's when it is float64, else an
+            exact float64 copy (the solver's own precision contract).
+        handle (Any): The compiled context, which the other ``locate_*`` probes take.
+        scale (float): The length the default acceptance threshold is a multiple of.
+        physical (float): The image-only length the default stopping threshold is a multiple of.
+        diagonal (float): The control points' bounding-box diagonal.
+        parametric (float): The parametric length (one ulp of a coordinate, in physical units).
+    """
+
+    spline: Bspline
+    handle: Any
+    scale: float
+    physical: float
+    diagonal: float
+    parametric: float
+
+
+def _promote_to_float64(spline: Bspline) -> Bspline:
+    """Return an exact float64 copy of ``spline`` (``spline`` itself when already float64).
+
+    Args:
+        spline (Bspline): The spline.
+
+    Returns:
+        Bspline: The same mapping over float64 knots and control points.
+    """
+    if np.dtype(spline.dtype) == np.float64:
+        return spline
+    spaces = [
+        BsplineSpace1D(np.asarray(sub.knots, dtype=np.float64), sub.degree, periodic=sub.periodic)
+        for sub in spline.space.spaces
+    ]
+    return Bspline(
+        BsplineSpace(spaces),
+        np.asarray(spline.control_points, dtype=np.float64),
+        is_rational=spline.is_rational,
+    )
+
+
+def locate_context(spline: Bspline) -> LocateContext:
+    """Build ``spline``'s inversion context, as :meth:`Bspline.locate` does on its first call.
+
+    Args:
+        spline (Bspline): A spline ``locate`` accepts.
+
+    Returns:
+        LocateContext: The context's lengths and handle.
+    """
+    h = ext.bspline.locate_context(spline._h)
+    return LocateContext(
+        spline=_promote_to_float64(spline),
+        handle=h,
+        scale=float(h.scale),
+        physical=float(h.physical),
+        diagonal=float(h.diagonal),
+        parametric=float(h.parametric),
+    )
+
+
+def locate_default_thresholds(spline: Bspline) -> LocateThresholds:
+    """Return the default thresholds of ``spline``, or the refusal ``locate`` raises.
+
+    Args:
+        spline (Bspline): A spline ``locate`` accepts.
+
+    Returns:
+        LocateThresholds: ``get_default(dtype)`` times the physical and the geometric scale.
+    """
+    stop, accept = ext.bspline.locate_context(spline._h).default_thresholds()
+    return LocateThresholds(float(stop), float(accept))
+
+
+def locate_parametric_reach(domain: npt.ArrayLike) -> npt.NDArray[np.float64]:
+    """Return ``max(|lo|, |hi|) / (hi - lo)`` per direction of a ``(dim, 2)`` box (0 if empty).
+
+    Args:
+        domain (npt.ArrayLike): The parametric box, one ``(lo, hi)`` row per direction.
+
+    Returns:
+        npt.NDArray[np.float64]: Shape ``(dim,)``.
+    """
+    box = np.asarray(domain, dtype=np.float64)
+    return np.asarray(
+        _t.locate_parametric_reach(
+            np.ascontiguousarray(box[:, 0]), np.ascontiguousarray(box[:, 1])
+        ),
+        dtype=np.float64,
+    )
+
+
+def locate_parametric_scale(spline: Bspline) -> float:
+    """Return the parametric length of ``spline``'s default acceptance threshold.
+
+    Args:
+        spline (Bspline): A spline ``locate`` accepts.
+
+    Returns:
+        float: ``max_k reach_k * net_span_k``, times ``eps(float64) / eps(dtype)``.
+    """
+    return float(ext.bspline.locate_context(spline._h).parametric)
+
+
+locate_geometric_scale = _t.locate_geometric_scale
+"""``max(physical, parametric)``: the length the default acceptance threshold is a multiple of."""
+
+
+def locate_cell_physical_bounds(
+    spline: Bspline,
+) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+    """Return the physical box of every cell's supporting (projected) control points.
+
+    Args:
+        spline (Bspline): A spline ``locate`` accepts.
+
+    Returns:
+        tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]: ``(lo, hi)``, each
+        ``(num_cells, rank)``, cells flat in C order over ``space.num_intervals``.
+    """
+    lo, hi = _t.locate_cell_physical_bounds(ext.bspline.locate_context(spline._h))
+    return np.asarray(lo, dtype=np.float64), np.asarray(hi, dtype=np.float64)
+
+
+def locate_nearest_corner_starts(
+    spline: Bspline, cell_ids: npt.ArrayLike, targets: npt.ArrayLike
+) -> npt.NDArray[np.float64]:
+    """Return the corner of each cell whose image is nearest its target (the second start).
+
+    Args:
+        spline (Bspline): A spline ``locate`` accepts.
+        cell_ids (npt.ArrayLike): One flat cell id per target, ``(n,)``.
+        targets (npt.ArrayLike): Physical points, ``(n, rank)``.
+
+    Returns:
+        npt.NDArray[np.float64]: ``(n, dim)`` corners.
+    """
+    ctx = ext.bspline.locate_context(spline._h)
+    return np.asarray(
+        _t.locate_nearest_corner_starts(
+            ctx,
+            np.ascontiguousarray(cell_ids, dtype=np.int64),
+            np.ascontiguousarray(targets, dtype=np.float64),
+        ),
+        dtype=np.float64,
+    )
+
+
+def locate_newton_refine(
+    spline: Bspline,
+    targets: npt.ArrayLike,
+    starts: npt.ArrayLike,
+    thresholds: LocateThresholds,
+    max_iter: int,
+) -> tuple[npt.NDArray[np.bool_], npt.NDArray[np.float64]]:
+    """Run one damped Newton solve per target from its start, as ``locate`` does per candidate.
+
+    Args:
+        spline (Bspline): A spline ``locate`` accepts.
+        targets (npt.ArrayLike): Physical points, ``(n, rank)``.
+        starts (npt.ArrayLike): Starting parametric points, ``(n, dim)``; clipped to the domain.
+        thresholds (LocateThresholds): The stopping and acceptance thresholds.
+        max_iter (int): Maximum accepted Newton steps per solve.
+
+    Returns:
+        tuple[npt.NDArray[np.bool_], npt.NDArray[np.float64]]: ``(converged, xi)``: whether each
+        final residual is within ``thresholds.accept``, and each last accepted iterate.
+    """
+    ctx = ext.bspline.locate_context(spline._h)
+    converged, xi = _t.locate_newton_refine(
+        ctx,
+        np.ascontiguousarray(targets, dtype=np.float64),
+        np.ascontiguousarray(starts, dtype=np.float64),
+        float(thresholds.stop),
+        float(thresholds.accept),
+        int(max_iter),
+    )
+    return np.asarray(converged, dtype=np.bool_), np.asarray(xi, dtype=np.float64)
+
+
 __all__ = [
     "BERNSTEIN",
     "BERNSTEIN_MAX_UNMIRRORED_DEGREE_FLOAT32",
@@ -900,6 +1100,8 @@ __all__ = [
     "_CARDINAL_TO_LEGENDRE_MAX_DEGREE",
     "_MAX_DIAGNOSED_CELLS",
     "_MAX_NAMED_CELLS",
+    "LocateContext",
+    "LocateThresholds",
     "_DegreeLimit",
     "_block_size",
     "_cached_cardinal_to_bernstein_matrix",
@@ -966,6 +1168,14 @@ __all__ = [
     "l2_reduction_operator",
     "lagrange_extraction_1d",
     "lagrange_identity_mask",
+    "locate_cell_physical_bounds",
+    "locate_context",
+    "locate_default_thresholds",
+    "locate_geometric_scale",
+    "locate_nearest_corner_starts",
+    "locate_newton_refine",
+    "locate_parametric_reach",
+    "locate_parametric_scale",
     "newton_polish_scalar",
     "num_stacked_control_points",
     "oslo_matrix",

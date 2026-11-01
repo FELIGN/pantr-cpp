@@ -1756,3 +1756,47 @@ class QuasiInterpolationF32:
         ],
     ) -> NDArray[numpy.float64]:
         """The coefficients `(n_0, ..., n_{d-1}, rank)` float64 from `(M, rank)` samples."""
+
+class LocateContext:
+    """The per-spline state of `locate`: the promoted spline, the cell hierarchy and the lengths the default thresholds are expressed in (immutable)."""
+
+    @property
+    def tier(self) -> float:
+        """`get_default` of the caller's dtype."""
+
+    @property
+    def physical(self) -> float:
+        """The image-only length."""
+
+    @property
+    def parametric(self) -> float:
+        """The parametric length."""
+
+    @property
+    def diagonal(self) -> float:
+        """The control-point box diagonal."""
+
+    @property
+    def scale(self) -> float:
+        """`max(physical, parametric)`."""
+
+    def default_thresholds(self) -> tuple[float, float]:
+        """The default `(stop, accept)` thresholds, or a refusal."""
+
+@overload
+def locate_context(spline: BsplineF64) -> LocateContext:
+    """Validate a float64 B-spline for inversion and build its locate context."""
+
+@overload
+def locate_context(spline: BsplineF32) -> LocateContext:
+    """Validate a float32 B-spline for inversion and build its locate context (promoted)."""
+
+def locate(
+    ctx: LocateContext,
+    points: Annotated[
+        NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu", writable=False)
+    ],
+    tol: float | None,
+    max_iter: int,
+) -> tuple[NDArray[numpy.int64], NDArray[numpy.float64]]:
+    """Invert the mapping at `(n, rank)` points: `(cell_ids, ref_coords)`."""
