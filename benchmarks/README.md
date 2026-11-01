@@ -50,6 +50,7 @@ OpenMP run on one thread, and `NUMBA_NUM_THREADS` is the thread setting.
 | `results/2026-11-01-s6-ac6` | `compare.py --side main=<scratch>/main-11ab436/src --side branch=<this tree at 6d38e22>/src --k 10 --threads 1 8 --cpus 0-7 --filter '^S6\.'`: the grid and point-location cases (grid location, hierarchical refinement, BVH query, `Bspline.locate`, `partition_grid`); `partition_grid_block.large` is flagged at both thread counts (`summary.md` and `summary.json` only) |
 | `results/2026-11-01-s6-ac6-block-fix` | the same at 9d487e8 with `--filter '^S6\.partition_grid'`, after the block backend's per-cell divisions moved to per-axis tables: no case flagged (`summary.md` and `summary.json` only) |
 | `results/2026-11-01-s6-ac6-final` | the same at 41a0fc0 with `--filter '^S6\.'`: every grid and point-location case, fresh, after the stage's review fixes; no case flagged (`summary.md` and `summary.json` only) |
+| `results/2026-11-01-s6-locate-ac6` | the same at 3801e98 with `--filter '^S6\.'`, after `Bspline.locate` moved to C++ and int64 arrays to `numpy.int64`: every grid and point-location case; no case flagged (`summary.md` and `summary.json` only) |
 
 Each holds `summary.md` (the statistic and range per side and case, and the flags), `summary.json`
 (the same with every process median, the protocol, the commits and the machine) and `raw/` (each
