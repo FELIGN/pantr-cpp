@@ -56,3 +56,12 @@
 #include "pantr/bspline/spanwise_extraction.hpp"
 #include "pantr/bspline/to_beziers.hpp"
 #include "pantr/change_basis.hpp"
+
+#include "pantr/grid/bvh.hpp"
+#include "pantr/grid/cell_index.hpp"
+#include "pantr/grid/cell_quadrature.hpp"
+#include "pantr/grid/grid_base.hpp"
+#include "pantr/grid/overlay.hpp"
+#include "pantr/grid/partition.hpp"
+#include "pantr/grid/tags.hpp"
+#include "pantr/grid/tensor_product_grid.hpp"
