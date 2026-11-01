@@ -3,8 +3,8 @@
 // adjacency of the boxes, boundary facets against the domain bounds), analytic bounds of a dyadic
 // grid (exact in binary), counts and ids worked out by hand for small refinement patterns, the
 // exported mesh against the set of distinct cell corners, and values recorded from the Python
-// HierarchicalGrid of main (named where used; hierarchical_golden.hpp says how). Parallel results
-// are compared at 1 and 8 threads.
+// implementation (src/pantr/grid/_hierarchical_grid.py at 8d37752; named where used,
+// hierarchical_golden.hpp says how). Parallel results are compared at 1 and 8 threads.
 #include <doctest/doctest.h>
 
 #include "hierarchical_golden.hpp"
@@ -126,6 +126,38 @@ HierarchicalGrid grid3d() {
 HierarchicalGrid golden_grid() {
   return apply(hg({{0.0, 0.3, 1.1, 1.7}, {-0.5, 0.1, 0.7}}, {2, 3}),
                {{0, {0, 0}, {2, 1}}, {1, {1, 0}, {3, 2}}, {2, {2, 0}, {4, 3}}});
+}
+
+/// The largest |computed - recorded| allowed for the coordinate `v` of a cell corner, where `bp`
+/// are the root breakpoints of its axis.
+///
+/// Derivation. A corner is `root_lo + sub * size` (a lower bound) or that plus `size` (an upper
+/// bound), with `size = (root_hi - root_lo) / m`: one subtraction, one division, one multiply and
+/// one or two additions, each correctly rounded. The Python implementation and this one perform
+/// the same operations in the same order, so they can differ only where a build changes one of
+/// them. The change that `-ffp-contract=on` still allows within a statement is fusing the
+/// multiply into the addition. With `u = eps / 2` that moves the product by at most
+/// `u |step|`, and the addition then lands on a neighbor at most `2 u |lo|` away, with
+/// `|lo| <= |root_lo| + |step|`; the extra addition of an upper bound adds another `2 u |hi|`.
+/// Collecting the terms, the difference is below `4 eps (|root_lo| + |v - root_lo|)`: a few units
+/// of the operand magnitudes, and not of the cell width, so a tiny corner in a deep cell is held
+/// to a tiny bound. The constant 4 is that collection rounded up. A corner on a root breakpoint
+/// may have been computed from the root cell on either side, so the larger bound of the two
+/// applies.
+double corner_tolerance(const std::vector<double>& bp, double v) {
+  double scale = 0.0;
+  for (std::size_t i = 0; i + 1 < bp.size(); ++i) {
+    if (bp[i] <= v && v <= bp[i + 1]) {
+      scale = (std::max)(scale, std::abs(bp[i]) + std::abs(v - bp[i]));
+    }
+  }
+  return 4.0 * std::numeric_limits<double>::epsilon() * scale;
+}
+
+/// Whether `computed` agrees with the recorded corner coordinate `recorded` within
+/// `corner_tolerance`. Bit identity is not asked for: it is not a property of the mathematics.
+bool near_recorded(double computed, double recorded, const std::vector<double>& bp) {
+  return std::abs(computed - recorded) <= corner_tolerance(bp, recorded);
 }
 
 /// Random refinements of `g`: regions of up to three cells per axis at random levels.
@@ -319,10 +351,6 @@ void check_boundary_facets(const HierarchicalGrid& g) {
 
 }  // namespace
 
-// ---------------------------------------------------------------------------------------------
-// Block helpers
-// ---------------------------------------------------------------------------------------------
-
 TEST_CASE("grid: hierarchical block helpers: size, membership and intersection") {
   CHECK(gd::block_size({2}, {5}) == 3);
   CHECK(gd::block_size({0, 0}, {3, 4}) == 12);
@@ -464,10 +492,6 @@ TEST_CASE("grid: hierarchical block helpers: checked powers refuse what int64 ca
   CHECK_THROWS_AS(static_cast<void>(gd::checked_pow(10, 19)), std::overflow_error);
 }
 
-// ---------------------------------------------------------------------------------------------
-// Construction, ids and bounds
-// ---------------------------------------------------------------------------------------------
-
 TEST_CASE("grid: hierarchical construction: every root cell is active at level 0, version 1") {
   const HierarchicalGrid g = hg(dyadic_root_2d(), {2, 3});
   CHECK(g.ndim() == 2);
@@ -599,10 +623,6 @@ TEST_CASE("grid: hierarchical index errors carry the Python messages") {
   CHECK(g.locate_many(std::vector<double>{}, 0).size() == 0);
 }
 
-// ---------------------------------------------------------------------------------------------
-// Location
-// ---------------------------------------------------------------------------------------------
-
 TEST_CASE("grid: hierarchical locate: ties go to the lower root cell and the upper child") {
   // Root {0, 1, 2}, both cells refined by 2: level 1 holds [0, .5], [.5, 1], [1, 1.5], [1.5, 2]
   // as ids 0..3. A point on the interior root breakpoint 1 belongs to the lower root cell, then
@@ -652,10 +672,6 @@ TEST_CASE("grid: hierarchical locate: the center of every cell is found in a non
   }
 }
 
-// ---------------------------------------------------------------------------------------------
-// Facet adjacency and boundary
-// ---------------------------------------------------------------------------------------------
-
 TEST_CASE("grid: hierarchical adjacency: matches the geometric adjacency of the boxes") {
   check_adjacency(grid2d());
   check_adjacency(grid3d());
@@ -694,10 +710,6 @@ TEST_CASE("grid: hierarchical boundary_facets: exactly the facets on the domain 
   CHECK(single.data()[11] == 5);
 }
 
-// ---------------------------------------------------------------------------------------------
-// Values recorded from the Python implementation
-// ---------------------------------------------------------------------------------------------
-
 TEST_CASE("grid: hierarchical golden (recorded from Python): bounds, location, adjacency") {
   namespace gold = pantr_golden;
   const HierarchicalGrid g = golden_grid();
@@ -710,19 +722,22 @@ TEST_CASE("grid: hierarchical golden (recorded from Python): bounds, location, a
   CHECK(g.active_blocks(2) == std::vector<gd::Block>{{{2, 3}, {4, 6}}, {{4, 0}, {6, 6}}});
   CHECK(g.active_blocks(3) == std::vector<gd::Block>{{{4, 0}, {8, 9}}});
 
-  // The bounds are compared exactly, which pins the floating-point expression order.
+  // The bounds agree with the recorded ones within the bound derived at `corner_tolerance`.
   const auto [all_lo, all_hi] = g.collect_cell_bounds();
+  const Bp& root_bp = g.root().breakpoints();
   for (I64 c = 0; c < gold::cells; ++c) {
     const auto i = static_cast<std::size_t>(c);
     const auto [lo, hi] = g.cell_bounds(c);
-    CHECK(lo[0] == gold::bounds[i][0]);
-    CHECK(lo[1] == gold::bounds[i][1]);
-    CHECK(hi[0] == gold::bounds[i][2]);
-    CHECK(hi[1] == gold::bounds[i][3]);
-    CHECK(all_lo.data()[2 * i] == gold::bounds[i][0]);
-    CHECK(all_lo.data()[2 * i + 1] == gold::bounds[i][1]);
-    CHECK(all_hi.data()[2 * i] == gold::bounds[i][2]);
-    CHECK(all_hi.data()[2 * i + 1] == gold::bounds[i][3]);
+    for (std::size_t k = 0; k < 2; ++k) {
+      CHECK_MESSAGE(near_recorded(lo[k], gold::bounds[i][k], root_bp[k]),
+                    "cell " << c << " lower bound, axis " << k);
+      CHECK_MESSAGE(near_recorded(hi[k], gold::bounds[i][2 + k], root_bp[k]),
+                    "cell " << c << " upper bound, axis " << k);
+      CHECK_MESSAGE(near_recorded(all_lo.data()[2 * i + k], gold::bounds[i][k], root_bp[k]),
+                    "cell " << c << " collected lower bound, axis " << k);
+      CHECK_MESSAGE(near_recorded(all_hi.data()[2 * i + k], gold::bounds[i][2 + k], root_bp[k]),
+                    "cell " << c << " collected upper bound, axis " << k);
+    }
   }
 
   // Corners, centers and root-breakpoint points: ties and the descent's clamps.
@@ -765,9 +780,12 @@ TEST_CASE("grid: hierarchical golden (recorded from Python): export_cells") {
   CHECK(points.shape()[1] == 2);
   REQUIRE(conn.shape()[0] == static_cast<std::size_t>(gold::cells));
   CHECK(conn.shape()[1] == 4);
+  const Bp& root_bp = g.root().breakpoints();
   for (std::size_t v = 0; v < points.shape()[0]; ++v) {
-    CHECK(points.data()[2 * v] == gold::vertices[v][0]);
-    CHECK(points.data()[2 * v + 1] == gold::vertices[v][1]);
+    for (std::size_t k = 0; k < 2; ++k) {
+      CHECK_MESSAGE(near_recorded(points.data()[2 * v + k], gold::vertices[v][k], root_bp[k]),
+                    "vertex " << v << ", axis " << k);
+    }
   }
   for (std::size_t c = 0; c < conn.shape()[0]; ++c) {
     for (std::size_t j = 0; j < 4; ++j) {
@@ -824,7 +842,7 @@ TEST_CASE("grid: hierarchical golden (recorded from Python): 3D hanging faces ac
 TEST_CASE("grid: hierarchical golden (recorded from Python): coarsened_cells block lists") {
   namespace gold = pantr_golden;
   // The order the parents are demoted in shapes the block lists, through the greedy merge, and so
-  // the flat ids; the result must be the one main produces.
+  // the flat ids; the result must be the one the Python implementation (at 8d37752) produces.
   const HierarchicalGrid g = hg(uniform_bp(4, 2), {2, 2})
                                  .refined_cells(Ivec{5, 6, 9, 10})
                                  .refined(1, Ivec{2, 2}, Ivec{6, 6})
@@ -851,7 +869,8 @@ TEST_CASE("grid: hierarchical golden (recorded from Python): coarsened_cells blo
 
 TEST_CASE("grid: hierarchical golden (recorded from Python): a grid with 2^60 cells per level") {
   namespace gold = pantr_golden;
-  // Main keeps block coordinates as Python integers, so cell_bounds and locate stay right at
+  // The Python implementation (at 8d37752) keeps block coordinates as Python integers, so
+  // cell_bounds and locate stay right at
   // depths where a 64-bit kernel would wrap.
   const I64 f = I64{1} << 20;
   const HierarchicalGrid g =
@@ -868,8 +887,11 @@ TEST_CASE("grid: hierarchical golden (recorded from Python): a grid with 2^60 ce
   for (std::size_t i = 0; i < std::size(gold::deep_ids); ++i) {
     const auto [lo, hi] = g.cell_bounds(gold::deep_ids[i]);
     for (std::size_t d = 0; d < 3; ++d) {
-      CHECK(lo[d] == gold::deep_bounds[i][d]);
-      CHECK(hi[d] == gold::deep_bounds[i][3 + d]);
+      const std::vector<double>& bp = g.root().breakpoints()[d];
+      CHECK_MESSAGE(near_recorded(lo[d], gold::deep_bounds[i][d], bp),
+                    "deep cell " << i << " lower bound, axis " << d);
+      CHECK_MESSAGE(near_recorded(hi[d], gold::deep_bounds[i][3 + d], bp),
+                    "deep cell " << i << " upper bound, axis " << d);
     }
   }
   const std::vector<double> pt(std::begin(gold::deep_point), std::end(gold::deep_point));
@@ -893,10 +915,6 @@ TEST_CASE("grid: hierarchical golden (recorded from Python): a grid with 2^60 ce
                        "level 4 would have more than 9223372036854775807 cells along axis 0.",
                        std::overflow_error);
 }
-
-// ---------------------------------------------------------------------------------------------
-// Refinement, coarsening, versions
-// ---------------------------------------------------------------------------------------------
 
 TEST_CASE("grid: hierarchical refine: a change bumps the version, a no-op is the same value") {
   const HierarchicalGrid g0 = hg({{0.0, 0.25, 0.5, 0.75, 1.0}}, {2});
@@ -932,6 +950,110 @@ TEST_CASE("grid: hierarchical refine: a region at the deepest level hidden by co
   CHECK(same.same_rep(g));
   CHECK(same.version() == g.version());
   CHECK(g.refined(1, Ivec{4}, Ivec{5}).version() == g.version() + 1);
+}
+
+// The block lists below come from the greedy merge in `normalize_blocks`, which depends on the
+// order of the blocks it is given. Each case pins one of those orders through the public
+// operations. The expected lists were recorded from the Python HierarchicalGrid
+// (src/pantr/grid/_hierarchical_grid.py at 8d37752) running the same operations, with the root
+// breakpoints 0, 1, ..., n on every axis.
+
+TEST_CASE("grid: hierarchical refined_cells (recorded from Python): levels in ascending order") {
+  // Root 0..4, factor 2. refine(0,[0],[1]) and refine(0,[3],[4]) leave level-0 cells 1 and 2 (ids
+  // 0, 1) and the level-1 blocks [0,2) and [6,8) (ids 2..5). Naming ids 0, 1, 3, 4 asks for level
+  // 0 at [1,3) and level 1 at [1,7), the bounding box of level-1 cells 1 and 6. Level 0 goes
+  // first, which creates level-1 cells 2..5, so the level-1 region then finds cells 1..6 all
+  // active and refines them, to level 2 [2,14) with level 1 left [0,1) and [7,8). Descending
+  // order would refine only level-1 cells 1 and 6 and leave a different block list.
+  const HierarchicalGrid g = hg({{0.0, 1.0, 2.0, 3.0, 4.0}}, {2})
+                                 .refined(0, Ivec{0}, Ivec{1})
+                                 .refined(0, Ivec{3}, Ivec{4});
+  REQUIRE(g.version() == 3);
+  REQUIRE(g.cell_level(0) == 0);
+  REQUIRE(g.cell_level(1) == 0);
+  REQUIRE(g.cell_level(3) == 1);
+  REQUIRE(g.cell_level(4) == 1);
+  const HierarchicalGrid r = g.refined_cells(Ivec{0, 1, 3, 4});
+  CHECK(r.version() == 5);
+  CHECK(r.num_cells() == 14);
+  CHECK(r.blocks() == Levels{{}, {{{0}, {1}}, {{7}, {8}}}, {{{2}, {14}}}});
+}
+
+TEST_CASE("grid: hierarchical refined (recorded from Python): old level+1 blocks, then children") {
+  // Root 2 x 2, factor (2, 2). The first refinement leaves level 1 the block [0,2) x [0,2); the
+  // second adds the children [0,2) x [2,4) and [2,4) x [2,4). The greedy merge takes the blocks
+  // in list order, the old one first: it absorbs [0,2) x [2,4), and [2,4) x [2,4) stays alone.
+  // Children first would join the two children into [0,4) x [2,4) and leave the old block alone.
+  const HierarchicalGrid g = hg(uniform_bp(2, 2), {2, 2});
+  const HierarchicalGrid r =
+      g.refined(0, Ivec{0, 0}, Ivec{1, 1}).refined(0, Ivec{0, 1}, Ivec{2, 2});
+  CHECK(r.version() == 3);
+  CHECK(r.num_cells() == 13);
+  CHECK(r.blocks() == Levels{{{{1, 0}, {2, 1}}}, {{{0, 0}, {2, 4}}, {{2, 2}, {4, 4}}}});
+}
+
+TEST_CASE("grid: hierarchical refined (recorded from Python): slabs in block scan order") {
+  // Root 3 x 3 x 3, factor (2, 3, 1). The last refinement cuts level-0 blocks into slabs; the
+  // slabs of a cut block sit in the list where the block was, between the blocks before and after
+  // it, and the greedy merge of that list fixes the level-0 result. Putting the slabs before, or
+  // after, all the untouched blocks gives a different list.
+  const HierarchicalGrid base = hg(uniform_bp(3, 3), {2, 3, 1});
+  const HierarchicalGrid r = base.refined(0, Ivec{1, 2, 1}, Ivec{3, 3, 3})
+                                 .refined(0, Ivec{1, 1, 2}, Ivec{2, 2, 3})
+                                 .refined(0, Ivec{0, 0, 1}, Ivec{3, 2, 2});
+  CHECK(r.version() == 4);
+  CHECK(r.num_cells() == 82);
+  CHECK(r.blocks() == Levels{{{{0, 0, 0}, {3, 2, 1}},
+                              {{0, 0, 2}, {1, 2, 3}},
+                              {{0, 2, 0}, {1, 3, 3}},
+                              {{1, 0, 2}, {2, 1, 3}},
+                              {{1, 2, 0}, {3, 3, 1}},
+                              {{2, 0, 2}, {3, 2, 3}}},
+                             {{{0, 0, 1}, {2, 6, 2}},
+                              {{2, 0, 1}, {4, 3, 2}},
+                              {{2, 3, 1}, {4, 6, 3}},
+                              {{2, 6, 1}, {6, 9, 3}},
+                              {{4, 0, 1}, {6, 6, 2}}}});
+}
+
+TEST_CASE("grid: hierarchical coarsened (recorded from Python): the demoted block goes last") {
+  // Root 2 x 3, factor (2, 2). After the two refinements level 0 holds the blocks [0,1) x [0,2),
+  // [1,2) x [0,1) and [1,2) x [2,3). Coarsening (1,1)-(2,2) appends that cell to the list, so
+  // the cell [1,2) x [0,1) absorbs it and the pass after joins the result to [0,1) x [0,2): level
+  // 0 ends as [0,2) x [0,2) and [1,2) x [2,3). With the cell listed first it would absorb both
+  // [1,2) x [0,1) and [1,2) x [2,3).
+  const Bp bp = {{0.0, 1.0, 2.0}, {0.0, 1.0, 2.0, 3.0}};
+  const HierarchicalGrid g =
+      hg(bp, {2, 2}).refined(0, Ivec{1, 1}, Ivec{2, 2}).refined(0, Ivec{0, 2}, Ivec{1, 3});
+  REQUIRE(g.version() == 3);
+  REQUIRE(g.blocks() == Levels{{{{0, 0}, {1, 2}}, {{1, 0}, {2, 1}}, {{1, 2}, {2, 3}}},
+                               {{{0, 4}, {2, 6}}, {{2, 2}, {4, 4}}}});
+  const HierarchicalGrid c = g.coarsened(0, Ivec{1, 1}, Ivec{2, 2});
+  CHECK(c.version() == 4);
+  CHECK(c.num_cells() == 9);
+  CHECK(c.blocks() == Levels{{{{0, 0}, {2, 2}}, {{1, 2}, {2, 3}}}, {{{0, 4}, {2, 6}}}});
+}
+
+TEST_CASE(
+    "grid: hierarchical export_cells (recorded from Python): the far edge is the breakpoint") {
+  // Root {0, 0.13, 0.99}, factor 3, cell 1 refined: the lattice has 3 steps per root cell and the
+  // last vertex sits at lattice coordinate 6 = 3 * 2, the far edge. Evaluating it as the last root
+  // cell's lower breakpoint plus 3 steps of (0.99 - 0.13) / 3 need not give 0.99 back, so the edge
+  // takes the breakpoint itself. The Python implementation (at 8d37752) returns, for the five
+  // vertices, 0, 0.13, 0x1.aaaaaaaaaaaabp-2, 0x1.681b4e81b4e82p-1 and 0.99.
+  const HierarchicalGrid g = hg({{0.0, 0.13, 0.99}}, {3}).refined(0, Ivec{1}, Ivec{2});
+  const auto [points, conn] = g.export_cells();
+  REQUIRE(points.shape()[0] == 5);
+  REQUIRE(points.shape()[1] == 1);
+  const std::vector<double>& bp = g.root().breakpoints()[0];
+  CHECK(points.data()[0] == 0.0);
+  CHECK(points.data()[1] == 0.13);
+  CHECK(near_recorded(points.data()[2], 0x1.aaaaaaaaaaaabp-2, bp));
+  CHECK(near_recorded(points.data()[3], 0x1.681b4e81b4e82p-1, bp));
+  // Exact: the breakpoint is an input, copied and not computed.
+  CHECK(points.data()[4] == 0.99);
+  CHECK(conn.shape()[0] == 4);
+  CHECK(Ivec(conn.data(), conn.data() + 8) == Ivec{0, 1, 1, 2, 2, 3, 3, 4});
 }
 
 TEST_CASE("grid: hierarchical refine: argument errors carry the Python messages") {
@@ -1136,7 +1258,8 @@ TEST_CASE("grid: hierarchical coarsen refusals: the messages (recorded from Pyth
 
 TEST_CASE("grid: hierarchical coarsen refusals: a region beyond int64 cells is still a refusal") {
   // Three axes of factor 2^20: level 2 has 2^40 cells per axis, so a box over all of it holds
-  // 2^120 cells, more than int64 counts. Main prints the exact count; here it is a bound.
+  // 2^120 cells, more than int64 counts. The Python implementation (at 8d37752) prints the exact
+  // count; here it is a bound.
   const I64 f = I64{1} << 20;
   const HierarchicalGrid g =
       apply(hg({{0.0, 1.0}, {0.0, 1.0}, {0.0, 1.0}}, {f, f, f}),
@@ -1149,10 +1272,6 @@ TEST_CASE("grid: hierarchical coarsen refusals: a region beyond int64 cells is s
       "9223372036854775807 cells, too many to name.",
       pantr::value_error);
 }
-
-// ---------------------------------------------------------------------------------------------
-// Masks, export, restrict, from_blocks
-// ---------------------------------------------------------------------------------------------
 
 TEST_CASE("grid: hierarchical masks: leaf and subdomain masks against locate at cell centers") {
   const HierarchicalGrid g = grid2d();
@@ -1377,11 +1496,15 @@ TEST_CASE("grid: hierarchical from_blocks: malformed input is refused") {
   CHECK_THROWS_WITH_AS(
       static_cast<void>(HierarchicalGrid::from_blocks(root, {2, 2}, Levels{{{{0}, {4}}}}, 1)),
       "factor must be a scalar or length-1 sequence; got length 2.", pantr::value_error);
+  // A version counts structural changes from 1, so a smaller one cannot have been reported.
+  CHECK_THROWS_WITH_AS(
+      static_cast<void>(HierarchicalGrid::from_blocks(root, {2}, Levels{{{{0}, {4}}}}, 0)),
+      "version must be >= 1; got 0.", pantr::value_error);
+  CHECK_THROWS_WITH_AS(
+      static_cast<void>(HierarchicalGrid::from_blocks(root, {2}, Levels{{{{0}, {4}}}}, -3)),
+      "version must be >= 1; got -3.", pantr::value_error);
+  CHECK(HierarchicalGrid::from_blocks(root, {2}, Levels{{{{0}, {4}}}}, 1).version() == 1);
 }
-
-// ---------------------------------------------------------------------------------------------
-// Overflow
-// ---------------------------------------------------------------------------------------------
 
 TEST_CASE("grid: hierarchical overflow: a level past int64 cells along an axis is refused") {
   // One root cell, factor 2^21: level l has 2^(21 l) cells, so level 3 would have 2^63.
@@ -1425,7 +1548,7 @@ TEST_CASE("grid: hierarchical locate: a factor of INT64_MAX keeps the child inde
   // One root cell, factor 2^63 - 1: the children number 2^63 - 1, the most int64 holds. The child
   // size is 2^-63 after rounding, so a point at the far end gives a ratio of 2^63, which no int64
   // holds: the descent must clamp before converting, and pick the last child.
-  const I64 f = std::numeric_limits<I64>::max();
+  const I64 f = (std::numeric_limits<I64>::max)();
   const HierarchicalGrid g = hg({{0.0, 1.0}}, {f}).refined(0, Ivec{0}, Ivec{1});
   REQUIRE(g.num_cells() == f);
   const auto locate = [&](double x) { return g.locate(std::vector<double>{x}); };
@@ -1437,6 +1560,38 @@ TEST_CASE("grid: hierarchical locate: a factor of INT64_MAX keeps the child inde
   const std::vector<double> xs = {1.0, 0.0, 0.5};
   const auto many = g.locate_many(xs, 3);
   CHECK(Ivec(many.data(), many.data() + 3) == Ivec{f - 1, 0, I64{1} << 62});
+}
+
+TEST_CASE("grid: hierarchical export_cells: a size product past size_t is refused, not wrapped") {
+  // Thirty nested refinements of a 2 x 2 root with factor 2 leave 2^62 leaves. The vertex array
+  // would hold 2^62 * 4 corners * 2 coordinates: the products wrap to 0 in unsigned arithmetic,
+  // and an unchecked allocation of the wrapped size is followed by writes through it.
+  HierarchicalGrid g = hg({{0.0, 1.0, 2.0}, {0.0, 1.0, 2.0}}, {2, 2});
+  for (I64 level = 0; level < 30; ++level) {
+    g = g.refined(level, Ivec{0, 0}, Ivec{I64{2} << level, I64{2} << level});
+  }
+  REQUIRE(g.max_level() == 30);
+  REQUIRE(g.num_cells() == I64{1} << 62);
+  CHECK_THROWS_AS(static_cast<void>(g.export_cells()), pantr::capacity_error);
+}
+
+TEST_CASE("grid: hierarchical factor 1: a descent as deep as the level count does not recurse") {
+  // Factor 1 gives every cell exactly one child, so finding the leaves under a coarse cell walks
+  // one step per level. The two leaves share no level: cell 0 sits at level 0 and cell 1 at level
+  // N, so the facing neighbor of cell 0 is found N levels down. A call-stack recursion of that
+  // depth overflows the stack for N this large; the walk keeps its own stack.
+  constexpr std::size_t n_levels = 60000;
+  const TensorProductGrid root = hg({{0.0, 1.0, 2.0}}, {1}).root();
+  Levels blocks(n_levels + 1);
+  blocks[0].push_back({{0}, {1}});
+  blocks[n_levels].push_back({{1}, {2}});
+  const HierarchicalGrid g = HierarchicalGrid::from_blocks(root, {1}, blocks, 1);
+  REQUIRE(g.max_level() == static_cast<I64>(n_levels));
+  REQUIRE(g.num_cells() == 2);
+  CHECK(g.hanging_neighbors(0, 1) == Ivec{1});
+  CHECK(g.neighbor_across_facet(0, 1) == std::optional<I64>(1));
+  // Looking up instead: the deep leaf finds its coarse neighbor.
+  CHECK(g.hanging_neighbors(1, 0) == Ivec{0});
 }
 
 TEST_CASE("grid: hierarchical factor 1: levels deepen without subdividing") {
@@ -1459,10 +1614,6 @@ TEST_CASE("grid: hierarchical factor 1: levels deepen without subdividing") {
   CHECK(g.locate(std::vector<double>{1.5}) == std::optional<I64>(0));
 }
 
-// ---------------------------------------------------------------------------------------------
-// GridBase, the generic consumers, and threads
-// ---------------------------------------------------------------------------------------------
-
 TEST_CASE("grid: hierarchical GridBase: the BVH is lazy, shared by copies, fresh per new value") {
   const HierarchicalGrid g = grid2d();
   CHECK_FALSE(g.bvh_built());
@@ -1483,6 +1634,7 @@ TEST_CASE("grid: hierarchical GridBase: the BVH is lazy, shared by copies, fresh
     CHECK(sorted(g.query_aabb(query)) == expected);
   }
   CHECK(g.bvh_built());
+  // The copy is the thing under test (it must share the built index), so it is not redundant.
   const HierarchicalGrid copy = g;  // NOLINT(performance-unnecessary-copy-initialization)
   CHECK(copy.bvh_built());
   // A no-op refinement is the same value, so the built BVH is still there; a change is a new
@@ -1580,6 +1732,18 @@ TEST_CASE("grid: hierarchical threads: locate_many and collect_cell_bounds at 1 
   REQUIRE(g.num_cells() == 176128);
   REQUIRE(par::worth_parallel(static_cast<std::size_t>(g.num_cells()), par::WorkEstimate{1.0}));
 
+  // eight_threads() is capped by the CPU mask: with fewer than two CPUs both runs are serial, and
+  // agreement between them says nothing about the pool.
+  const bool pool = par::max_threads() >= 2;
+  if (pool) {
+    const ThreadsGuard guard(eight_threads());
+    CHECK(par::get_num_threads() > 1);
+  } else {
+    MESSAGE(
+        "max_threads() < 2: the 8-thread runs are serial, so the comparison does not exercise "
+        "the pool");
+  }
+
   const auto collect = [&](std::size_t threads) {
     const ThreadsGuard guard(threads);
     return g.collect_cell_bounds();
@@ -1589,8 +1753,10 @@ TEST_CASE("grid: hierarchical threads: locate_many and collect_cell_bounds at 1 
   REQUIRE(lo1.size() == lo8.size());
   // No reduction is involved and every cell's bounds are a function of that cell alone, so the
   // arrays agree bit for bit whatever the chunking.
-  CHECK(std::memcmp(lo1.data(), lo8.data(), lo1.size() * sizeof(double)) == 0);
-  CHECK(std::memcmp(hi1.data(), hi8.data(), hi1.size() * sizeof(double)) == 0);
+  if (pool) {
+    CHECK(std::memcmp(lo1.data(), lo8.data(), lo1.size() * sizeof(double)) == 0);
+    CHECK(std::memcmp(hi1.data(), hi8.data(), hi1.size() * sizeof(double)) == 0);
+  }
   // And they are the exact values: the root breakpoints i / 256 and every subdivision are dyadic,
   // so a level-l cell at index m spans [m, m + 1] * 2^-(8 + l) with no rounding anywhere.
   for (I64 c = 0; c < g.num_cells(); ++c) {
@@ -1627,7 +1793,9 @@ TEST_CASE("grid: hierarchical threads: locate_many and collect_cell_bounds at 1 
   };
   const auto serial = locate(1);
   const auto parallel = locate(eight_threads());
-  CHECK(std::equal(serial.data(), serial.data() + npts, parallel.data()));
+  if (pool) {
+    CHECK(std::equal(serial.data(), serial.data() + npts, parallel.data()));
+  }
   for (std::size_t c = 0; c < n_centers; ++c) {
     if (serial.data()[c] != static_cast<I64>(c)) {
       FAIL_CHECK("center of cell " << c << " located in " << serial.data()[c]);

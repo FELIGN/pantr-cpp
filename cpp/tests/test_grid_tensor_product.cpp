@@ -320,6 +320,17 @@ TEST_CASE(
   pts[(npts - 1) * 3 + 2] = inf;
   pts[5 * 3] = -inf;
 
+  // eight_threads() is capped by the CPU mask: with fewer than two CPUs both runs are serial, and
+  // agreement between them says nothing about the pool.
+  const bool pool = par::max_threads() >= 2;
+  if (pool) {
+    const ThreadsGuard guard(eight_threads());
+    CHECK(par::get_num_threads() > 1);
+  } else {
+    MESSAGE(
+        "max_threads() < 2: the 8-thread run is serial, so the comparison does not exercise "
+        "the pool");
+  }
   const auto run = [&](std::size_t threads) {
     const ThreadsGuard guard(threads);
     return g.locate_many(pts, npts);
@@ -328,7 +339,9 @@ TEST_CASE(
   const auto parallel = run(eight_threads());
   REQUIRE(serial.size() == npts);
   CHECK(serial.shape()[0] == npts);
-  CHECK(std::equal(serial.data(), serial.data() + npts, parallel.data()));
+  if (pool) {
+    CHECK(std::equal(serial.data(), serial.data() + npts, parallel.data()));
+  }
 
   for (std::size_t p = 0; p < npts; ++p) {
     const std::vector<double> pt = {pts[p * 3], pts[p * 3 + 1], pts[p * 3 + 2]};

@@ -41,11 +41,9 @@ namespace pantr::grid::detail {
 ///     block_hi (std::vector<std::int64_t>): Packed block upper bounds, same layout.
 ///     block_base (std::vector<std::int64_t>): Flat id of each block's first cell.
 ///     level_start (std::vector<std::int64_t>): Block index range of each level, one entry more
-///     than
-///         there are levels.
+///         than there are levels.
 ///     level_base (std::vector<std::int64_t>): Flat-id base of each level, one entry more than
-///     there
-///         are levels (the last is `num_cells`).
+///         there are levels (the last is `num_cells`).
 ///     num_cells (std::int64_t): Total active cells.
 ///     version (std::int64_t): Structural-change counter, at least 1.
 ///     bvh (pantr::detail::Lazy<BVH>): The spatial index over the cells, built on first use.
@@ -66,6 +64,10 @@ struct HierarchicalGridRep {
 };
 
 /// Get the number of cells along one axis at a level, or no value if it exceeds `int64`.
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed): `axis < ndim` and
+///     `level >= 0`.
 ///
 /// Args:
 ///     root (const TensorProductGrid&): The level-0 grid.
@@ -90,9 +92,9 @@ struct HierarchicalGridRep {
 /// arrays.
 ///
 /// Note:
-///     The blocks are taken as they are: sorted, non-empty, non-overlapping, inside their level's
-///     index range, and together tiling the root consistently with `factor`. The callers
-///     establish this.
+///     Inputs are assumed to be correct (no validation performed). The blocks are taken as they
+///     are: sorted, non-empty, non-overlapping, inside their level's index range, and together
+///     tiling the root consistently with `factor`. The callers establish this.
 ///
 /// Args:
 ///     root (TensorProductGrid): The level-0 grid.
@@ -236,8 +238,8 @@ struct HierarchicalGridRep {
 ///
 /// Returns:
 ///     std::int64_t: The cell's level.
-inline std::int64_t decode_flat_id(const HierarchicalGridRep& rep, std::int64_t cid,
-                                   std::int64_t* out_midx) noexcept {
+[[nodiscard]] inline std::int64_t decode_flat_id(const HierarchicalGridRep& rep, std::int64_t cid,
+                                                 std::int64_t* out_midx) noexcept {
   const std::size_t nd = rep.factor.size();
   const std::size_t b = block_of_cid(rep, cid);
   const std::int64_t* lo = rep.block_lo.data() + b * nd;
@@ -254,8 +256,9 @@ inline std::int64_t decode_flat_id(const HierarchicalGridRep& rep, std::int64_t 
 /// Get the per-axis `(lo, hi)` bounds of a cell along one axis.
 ///
 /// Evaluates `lo = root_lo + sub * size`, `hi = lo + size` with `size = (root_hi - root_lo) /
-/// m_pow`, each product in a statement of its own so the build's contraction setting cannot fuse
-/// it into the sum: the Python kernels do not contract, and this keeps the bounds equal to theirs.
+/// m_pow`, each product in a statement of its own. A statement boundary stops contraction under
+/// the project's `-ffp-contract=on` (it would not under `-ffp-contract=fast`), so the product is
+/// rounded before the sum, as in the Python kernels, which do not contract.
 ///
 /// Note:
 ///     No validation is performed: `bp` holds the axis's root breakpoints and `ik / m_pow` indexes
@@ -280,6 +283,10 @@ inline void axis_bounds(const std::vector<double>& bp, std::int64_t ik, std::int
 }
 
 /// Get the `(lo, hi)` corners of the cell `(level, midx)`.
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed): `midx` holds `ndim` indices of
+///     an existing cell of `level`.
 ///
 /// Args:
 ///     rep (const HierarchicalGridRep&): The grid.
@@ -485,6 +492,10 @@ inline void collect_bounds_range(const HierarchicalGridRep& rep, std::int64_t fi
 
 /// Get the active leaf covering `(level, midx)` at the nearest strictly coarser level.
 ///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed): `level` is below the number of
+///     levels and `midx` holds `ndim` non-negative indices.
+///
 /// Args:
 ///     rep (const HierarchicalGridRep&): The grid.
 ///     level (std::int64_t): Level of the queried position.
@@ -507,57 +518,88 @@ inline void collect_bounds_range(const HierarchicalGridRep& rep, std::int64_t fi
   return std::nullopt;
 }
 
+/// The face a descent through the subdivision tree follows.
+///
+/// Attributes:
+///     axis (std::size_t): Axis normal to the face.
+///     face_j (std::int64_t): Child offset along `axis` next to the facet plane.
+struct FaceTarget {
+  std::size_t axis;
+  std::int64_t face_j;
+};
+
 /// Collect the active leaves inside `(level, midx)` that touch one of its faces.
 ///
 /// Descends through the subdivision tree keeping, at each step, only the children on the facet
 /// plane (offset `face_j` along `axis`) and enumerating the other axes in row-major order, depth
-/// first, so the ids come out ordered by their position along the face.
+/// first, so the ids come out ordered by their position along the face. The descent keeps its own
+/// stack of pending positions, so its depth is limited by memory and not by the call stack: with
+/// every factor 1 the depth is the number of levels, which is unbounded.
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed). `midx` has `ndim` entries,
+///     `target.axis < ndim` and `0 <= target.face_j < factor[target.axis]`.
 ///
 /// Args:
 ///     rep (const HierarchicalGridRep&): The grid.
 ///     level (std::int64_t): Level of the starting position.
 ///     midx (const Index&): Per-axis index in level-`level` coordinates.
-///     axis (std::size_t): Axis normal to the face.
-///     face_j (std::int64_t): Child offset along `axis` next to the facet plane.
+///     target (const FaceTarget&): The face to follow.
 ///     out (std::vector<std::int64_t>&): Receives the ids, appended; the id of `(level, midx)`
 ///         itself when it is an active leaf.
 inline void active_face_descendants(const HierarchicalGridRep& rep, std::int64_t level,
-                                    const Index& midx, std::size_t axis, std::int64_t face_j,
+                                    const Index& midx, const FaceTarget& target,
                                     std::vector<std::int64_t>& out) {
-  const std::optional<std::int64_t> cid = encode_midx(rep, level, midx);
-  if (cid.has_value()) {
-    out.push_back(*cid);
-    return;
-  }
-  if (level + 1 >= static_cast<std::int64_t>(rep.blocks.size())) {
-    return;
-  }
   const std::size_t nd = midx.size();
-  Index offsets(nd, 0);
-  for (std::size_t k = 0; k < nd; ++k) {
-    offsets[k] = (k == axis) ? face_j : 0;
-  }
-  Index child(nd);
-  while (true) {
-    for (std::size_t k = 0; k < nd; ++k) {
-      child[k] = midx[k] * rep.factor[k] + offsets[k];
+  const auto n_levels = static_cast<std::int64_t>(rep.blocks.size());
+  // A position whose children are being enumerated: its level, its index, and the offset of the
+  // next child to visit (the odometer; offsets[target.axis] stays at face_j).
+  struct Frame {
+    std::int64_t level;
+    Index midx;
+    Index offsets;
+  };
+  std::vector<Frame> stack;
+  // Emit the leaf at `(lvl, pos)`, or open a frame for its children when it is subdivided.
+  const auto visit = [&](std::int64_t lvl, const Index& pos) {
+    const std::optional<std::int64_t> cid = encode_midx(rep, lvl, pos);
+    if (cid.has_value()) {
+      out.push_back(*cid);
+      return;
     }
-    active_face_descendants(rep, level + 1, child, axis, face_j, out);
-    // Odometer over the axes other than `axis`, last axis fastest.
+    if (lvl + 1 >= n_levels) {
+      return;
+    }
+    Index offsets(nd, 0);
+    offsets[target.axis] = target.face_j;
+    stack.push_back(Frame{lvl, pos, std::move(offsets)});
+  };
+  visit(level, midx);
+  Index child(nd);
+  while (!stack.empty()) {
+    Frame& top = stack.back();
+    const std::int64_t child_level = top.level + 1;
+    for (std::size_t k = 0; k < nd; ++k) {
+      child[k] = top.midx[k] * rep.factor[k] + top.offsets[k];
+    }
+    // Odometer over the axes other than `axis`, last axis fastest. Advancing before the child is
+    // visited is equivalent to doing it after (the child does not depend on it), and lets the
+    // frame be dropped before a deeper one is pushed on top of it.
     bool advanced = false;
     for (std::size_t k = nd; k-- > 0;) {
-      if (k == axis) {
+      if (k == target.axis) {
         continue;
       }
-      if (++offsets[k] < rep.factor[k]) {
+      if (++top.offsets[k] < rep.factor[k]) {
         advanced = true;
         break;
       }
-      offsets[k] = 0;
+      top.offsets[k] = 0;
     }
     if (!advanced) {
-      return;
+      stack.pop_back();
     }
+    visit(child_level, child);
   }
 }
 

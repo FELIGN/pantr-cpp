@@ -178,6 +178,23 @@ TEST_CASE("grid: cell index: a negative cell count is refused before checked_mul
   CHECK_THROWS_AS(static_cast<void>(multi_to_flat(multi, empty_axis)), pantr::index_error);
 }
 
+TEST_CASE(
+    "grid: cell index: multi_to_flat refuses a cell count that overflows, like flat_to_multi") {
+  // 3037000500^2 > INT64_MAX, so the total does not fit. The old loop's multiplication
+  // 3037000499 * 3037000500 still fit; only the following `+ 3037000499` overflowed, which the
+  // checked multiply did not see. The product check refuses first, as flat_to_multi does.
+  const I64 cells[2] = {3037000500, 3037000500};
+  const I64 multi[2] = {3037000499, 3037000499};
+  CHECK_THROWS_AS(static_cast<void>(multi_to_flat(multi, cells)), std::overflow_error);
+  CHECK_THROWS_AS(static_cast<void>(flat_to_multi(0, cells)), std::overflow_error);
+  // The largest total that fits: its last cell round-trips.
+  const I64 fits[2] = {3037000499, 3037000499};
+  const I64 last[2] = {3037000498, 3037000498};
+  const I64 flat = multi_to_flat(last, fits);
+  CHECK(flat == 3037000499LL * 3037000499LL - 1);
+  CHECK(flat_to_multi(flat, fits) == std::vector<I64>{3037000498, 3037000498});
+}
+
 TEST_CASE("grid: checked_mul: exact at the int64 boundary, refusing the first product past it") {
   using pantr::grid::detail::checked_mul;
   constexpr I64 hi = std::numeric_limits<I64>::max();
@@ -584,16 +601,16 @@ TEST_CASE("grid: BVH constructor: a node that is its own child is not a tree") {
   const std::vector<I64> internal = {-1};
   CHECK_THROWS_WITH_AS(
       static_cast<void>(BVH(lo, hi, shape, shape, self, self, internal, 1)),
-      "BVH: the node arrays do not encode a tree: a node is reachable from the root more than "
-      "once.",
+      "BVH: the node arrays do not encode a tree: every node must be reachable from the root "
+      "exactly once.",
       pantr::value_error);
 }
 
 TEST_CASE("grid: BVH constructor: internal nodes sharing children are refused without a blow-up") {
   // 31 cells, 61 nodes: nodes 0..29 are internal with both children the next node, nodes 30..60
   // are leaves. Every index is in range and the depth is only 31, but there are 2^30 root-to-leaf
-  // paths, so a walk that enumerates paths never returns; a walk that counts nodes refuses at the
-  // 62nd pop.
+  // paths, so a walk that enumerates paths never returns; a walk that marks nodes refuses at the
+  // first node popped a second time.
   constexpr I64 n_cells = 31;
   constexpr std::size_t n_nodes = 61;
   std::vector<I64> left(n_nodes, -1);
@@ -611,7 +628,43 @@ TEST_CASE("grid: BVH constructor: internal nodes sharing children are refused wi
   const std::vector<std::size_t> shape = {n_nodes, 1};
   CHECK_THROWS_WITH_AS(
       static_cast<void>(BVH(lo, hi, shape, shape, left, right, cell, n_cells)),
-      "BVH: the node arrays do not encode a tree: a node is reachable from the root more than "
-      "once.",
+      "BVH: the node arrays do not encode a tree: every node must be reachable from the root "
+      "exactly once.",
       pantr::value_error);
+}
+
+TEST_CASE("grid: BVH constructor: a shared child with an orphan node is not a tree") {
+  // Nodes 0:(1,2), 1:(3,3); leaves 2, 3, 4 hold cells 0, 1, 2. Node 3 is popped twice and node 4
+  // never, so the walk makes exactly n_nodes = 5 pops: a pop count alone accepts it, and a query
+  // would then return cell 1 twice. Only the visited marks refuse it.
+  constexpr I64 n_cells = 3;
+  const std::vector<double> lo = {0.0, 0.0, 1.0, 2.0, 3.0};
+  const std::vector<double> hi = {4.0, 4.0, 1.5, 2.5, 3.5};
+  const std::vector<std::size_t> shape = {5, 1};
+  const std::vector<I64> left = {1, 3, -1, -1, -1};
+  const std::vector<I64> right = {2, 3, -1, -1, -1};
+  const std::vector<I64> cell = {-1, -1, 0, 1, 2};
+  CHECK_THROWS_WITH_AS(
+      static_cast<void>(BVH(lo, hi, shape, shape, left, right, cell, n_cells)),
+      "BVH: the node arrays do not encode a tree: every node must be reachable from the root "
+      "exactly once.",
+      pantr::value_error);
+}
+
+TEST_CASE("grid: BVH constructor: an unreachable subtree is not a tree") {
+  // Control: 0:(1,2), 1:(3,4) is a tree over leaves 2, 3, 4. Re-pointing node 0 at leaves 2 and 3
+  // leaves nodes 1 and 4 unreached. No node is popped twice, so only the final "every node was
+  // reached" check refuses it.
+  constexpr I64 n_cells = 3;
+  const std::vector<double> lo = {0.0, 0.0, 1.0, 2.0, 3.0};
+  const std::vector<double> hi = {4.0, 4.0, 1.5, 2.5, 3.5};
+  const std::vector<std::size_t> shape = {5, 1};
+  const std::vector<I64> cell = {-1, -1, 0, 1, 2};
+  const std::vector<I64> left = {1, 3, -1, -1, -1};
+  const std::vector<I64> right = {2, 4, -1, -1, -1};
+  CHECK_NOTHROW(static_cast<void>(BVH(lo, hi, shape, shape, left, right, cell, n_cells)));
+  const std::vector<I64> left_cut = {2, 3, -1, -1, -1};
+  const std::vector<I64> right_cut = {3, 4, -1, -1, -1};
+  CHECK_THROWS_AS(static_cast<void>(BVH(lo, hi, shape, shape, left_cut, right_cut, cell, n_cells)),
+                  pantr::value_error);
 }

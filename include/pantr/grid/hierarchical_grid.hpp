@@ -33,6 +33,7 @@
 #include "pantr/parallel/work_model.hpp"
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -85,13 +86,14 @@ class HierarchicalGrid : public GridBase<HierarchicalGrid> {
   ///     factor (std::vector<std::int64_t>): Per-axis subdivision factor.
   ///     blocks (std::vector<std::vector<detail::Block>>): `blocks[l]` lists the active
   ///         rectangles of level `l` in level-`l` coordinates; at least one level.
-  ///     version (std::int64_t): The version the value reports.
+  ///     version (std::int64_t): The version the value reports, at least 1.
   ///
   /// Returns:
   ///     HierarchicalGrid: The grid.
   ///
   /// Raises:
-  ///     value_error: `factor` is invalid, there is no level, or a block is not a non-empty
+  ///     value_error: `factor` is invalid, `version < 1`, there is no level, or a block is not a
+  ///     non-empty
   ///         rectangle of `ndim` bounds inside its level's index range.
   ///     std::overflow_error: A level's cell count along an axis, or the total, exceeds `int64`.
   [[nodiscard]] static HierarchicalGrid from_blocks(TensorProductGrid root,
@@ -99,6 +101,9 @@ class HierarchicalGrid : public GridBase<HierarchicalGrid> {
                                                     std::vector<std::vector<detail::Block>> blocks,
                                                     std::int64_t version) {
     check_factor(root.ndim(), factor);
+    if (version < 1) {
+      throw value_error("version must be >= 1; got " + std::to_string(version) + ".");
+    }
     if (blocks.empty()) {
       throw value_error("from_blocks: blocks must hold at least one level.");
     }
@@ -461,11 +466,9 @@ class HierarchicalGrid : public GridBase<HierarchicalGrid> {
   ///     not yet created, refined away, or `midx` has the wrong length.
   [[nodiscard]] std::optional<std::int64_t> cell_id(std::int64_t level,
                                                     std::span<const std::int64_t> midx) const {
-    const detail::Index index(midx.begin(), midx.end());
-    if (std::any_of(index.begin(), index.end(), [](std::int64_t i) { return i < 0; })) {
-      return std::nullopt;
-    }
-    return detail::encode_midx(*rep_, level, index);
+    // A negative index lies below every block (block lower bounds are at least 0), so
+    // `encode_midx` finds no leaf for it.
+    return detail::encode_midx(*rep_, level, detail::Index(midx.begin(), midx.end()));
   }
 
   /// Report whether `(level, midx)` is an active leaf.
@@ -913,24 +916,59 @@ class HierarchicalGrid : public GridBase<HierarchicalGrid> {
   /// Corner `c` of a row takes the upper bound on axis `k` iff bit `k` of `c` is set, axis 0 the
   /// least significant bit (the basix and dolfinx convention, unlike the row-major cell ids).
   ///
-  /// Each vertex coordinate is `b + s * (w / steps)` from the root cell's lower breakpoint `b`,
-  /// width `w` and lattice offset `s`, whereas `cell_bounds` builds the same corner from different
-  /// expressions, so the two agree to a few units in the last place of `|x| + w`, bitwise when
-  /// every intermediate is exactly representable. Bitwise agreement in general is unattainable: for
-  /// a corner shared between two levels `cell_bounds` evaluates a different expression on each
-  /// side and can return two floats one unit apart.
+  /// Note:
+  ///     `points[conn[cid]]` reproduces the corners of `cell_bounds` to within
+  ///     `2 gamma_2 |x| + 2 gamma_4 |x - b|`, where `b` is the lower breakpoint of the root cell
+  ///     holding the corner and `gamma_m = m u / (1 - m u)` with `u = eps / 2`. Both sides build
+  ///     `b + s * w / factor ** level` from different expressions; forming `w`, the division, the
+  ///     integer-scaled multiply and the addition are four correctly rounded operations each,
+  ///     with a fifth on the `cell_bounds` side of a `hi` corner, which it writes as
+  ///     `lo + size`.
+  ///
+  ///     The second term is what the bound is about. `|x - b|` is bounded by the root cell's
+  ///     width and not by `|x|`, so only where every coordinate dominates its own offset (a
+  ///     domain with `b >= 0` is the usual reason) does this collapse to a multiple of
+  ///     `eps |x|`. A corner small against the width of the root cell holding it is a
+  ///     counterexample rather than a corner case.
+  ///
+  ///     It is bitwise whenever every intermediate is exactly representable: a dyadic `factor`
+  ///     on dyadic root breakpoints, which covers the usual unit-domain power-of-two case.
+  ///     Bitwise agreement in general is not merely unimplemented, it is unattainable:
+  ///     `cell_bounds` scales a root cell's width by `factor ** level`, so for a corner shared
+  ///     between two levels it evaluates a different expression on each side and can return two
+  ///     floats one unit in the last place apart, and no single deduplicated vertex can equal
+  ///     both.
+  ///
+  ///     Stated hypothesis: coordinates are normal, not subnormal. The bound is a product of
+  ///     relative factors with the magnitudes, so below roughly `2e-308` both terms underflow to
+  ///     exactly zero while the difference they bound is still a nonzero subnormal: the
+  ///     expression stops implementing the inequality, though the inequality itself still holds
+  ///     in the reals. Nothing excludes that domain, so this is a hypothesis and not a
+  ///     guarantee.
+  ///
+  /// Warning:
+  ///     Materializes `O(num_cells * 2 ** ndim * ndim)` integers before deduplication, so a
+  ///     large 3D hierarchy costs several times `conn` in peak memory.
   ///
   /// Returns:
   ///     std::pair<NdArray<double>, NdArray<std::int64_t>>: `(points, conn)`. `points` has shape
   ///     `(num_vertices, ndim())`, sorted lexicographically by lattice coordinate; `conn` has shape
   ///     `(num_cells(), 2 ** ndim())` and indexes `points`, one row per leaf in flat-id order.
+  ///
+  /// Raises:
+  ///     capacity_error: `num_cells() * 2 ** ndim() * ndim()` overflows `std::size_t`.
   [[nodiscard]] std::pair<NdArray<double>, NdArray<std::int64_t>> export_cells() const {
     const std::size_t nd = ndim();
     const std::size_t nc = std::size_t{1} << nd;
     const auto n = static_cast<std::size_t>(rep_->num_cells);
     const std::int64_t top = max_level();
+    // The two sizes below are products of runtime counts: refuse a wrapped one before allocating.
+    const std::array<std::size_t, 2> corner_dims{n, nc};
+    const std::array<std::size_t, 3> lattice_dims{n, nc, nd};
+    const std::size_t total = pantr::checked_product(corner_dims);
+    const std::size_t lattice_size = pantr::checked_product(lattice_dims);
     // lattice[(cell * nc + corner) * nd + k]: corner `corner` of cell `cell` on axis `k`.
-    std::vector<std::int64_t> lattice(n * nc * nd);
+    std::vector<std::int64_t> lattice(lattice_size);
     detail::Index scale(nd);
     detail::Index midx(nd);
     for (std::size_t b = 0; b < rep_->block_base.size(); ++b) {
@@ -960,7 +998,6 @@ class HierarchicalGrid : public GridBase<HierarchicalGrid> {
       }
     }
     // The distinct lattice rows in lexicographic order, with each row's rank among them.
-    const std::size_t total = n * nc;
     std::vector<std::size_t> order(total);
     std::iota(order.begin(), order.end(), std::size_t{0});
     const auto row_less = [&lattice, nd](std::size_t a, std::size_t b) {
@@ -1017,6 +1054,14 @@ class HierarchicalGrid : public GridBase<HierarchicalGrid> {
   explicit HierarchicalGrid(std::shared_ptr<const detail::HierarchicalGridRep> rep)
       : rep_(std::move(rep)) {}
 
+  /// Check a subdivision factor against the grid dimension.
+  ///
+  /// Args:
+  ///     nd (std::size_t): The dimension.
+  ///     factor (const std::vector<std::int64_t>&): The per-axis factors.
+  ///
+  /// Raises:
+  ///     value_error: `factor` does not have `nd` entries, or an entry is below 1.
   static void check_factor(std::size_t nd, const std::vector<std::int64_t>& factor) {
     if (factor.size() != nd) {
       throw value_error("factor must be a scalar or length-" + std::to_string(nd) +
@@ -1028,6 +1073,17 @@ class HierarchicalGrid : public GridBase<HierarchicalGrid> {
     }
   }
 
+  /// Build the representation of an unrefined grid: one level holding the whole root as a block.
+  ///
+  /// Args:
+  ///     root (TensorProductGrid): The level-0 grid.
+  ///     factor (std::vector<std::int64_t>): The per-axis subdivision factors.
+  ///
+  /// Returns:
+  ///     std::shared_ptr<const detail::HierarchicalGridRep>: The representation, version 1.
+  ///
+  /// Raises:
+  ///     value_error: `factor` is invalid (see `check_factor`).
   static std::shared_ptr<const detail::HierarchicalGridRep> make_initial(
       TensorProductGrid root, std::vector<std::int64_t> factor) {
     check_factor(root.ndim(), factor);
@@ -1038,18 +1094,41 @@ class HierarchicalGrid : public GridBase<HierarchicalGrid> {
     return detail::make_hier_rep(std::move(root), std::move(factor), std::move(blocks), 1);
   }
 
+  /// Build the message for a level whose per-axis cell count does not fit `int64`.
+  ///
+  /// Args:
+  ///     level (std::int64_t): The level that would be created.
+  ///     axis (std::size_t): The axis whose count overflows.
+  ///
+  /// Returns:
+  ///     std::string: The message.
   static std::string level_overflow_message(std::int64_t level, std::size_t axis) {
     return "level " + std::to_string(level) +
            " would have more than 9223372036854775807 cells along axis " + std::to_string(axis) +
            ".";
   }
 
-  /// Cells along `axis` at an existing `level`; never overflows, since the level exists.
+  /// Get the cells along `axis` at an existing `level`.
+  ///
+  /// Args:
+  ///     level (std::int64_t): An existing level.
+  ///     axis (std::size_t): The axis, below `ndim()`.
+  ///
+  /// Returns:
+  ///     std::int64_t: `root.cells_per_axis()[axis] * factor[axis] ** level`; the count of an
+  ///     existing level fits `int64`, so this does not overflow.
   [[nodiscard]] std::int64_t cells_at(std::int64_t level, std::size_t axis) const {
     return detail::checked_mul(rep_->root.cells_per_axis()[axis],
                                detail::checked_pow(rep_->factor[axis], level));
   }
 
+  /// Check that `level` is an existing level.
+  ///
+  /// Args:
+  ///     level (std::int64_t): The level to check.
+  ///
+  /// Raises:
+  ///     value_error: `level` is outside `[0, max_level()]`.
   void check_level(std::int64_t level) const {
     if (!(0 <= level && level <= max_level())) {
       throw value_error("level must be in [0, " + std::to_string(max_level()) + "]; got " +
@@ -1058,6 +1137,18 @@ class HierarchicalGrid : public GridBase<HierarchicalGrid> {
   }
 
   /// Validate a region at an existing level and return it as two index vectors.
+  ///
+  /// Args:
+  ///     level (std::int64_t): An existing level.
+  ///     lo (std::span<const std::int64_t>): Inclusive lower corner.
+  ///     hi (std::span<const std::int64_t>): Exclusive upper corner.
+  ///
+  /// Returns:
+  ///     std::pair<detail::Index, detail::Index>: `(lo, hi)` as vectors.
+  ///
+  /// Raises:
+  ///     value_error: A length differs from `ndim()`, `lo >= hi` on some axis, or the region
+  ///         leaves `[0, cells)` of the level.
   [[nodiscard]] std::pair<detail::Index, detail::Index> check_region(
       std::int64_t level, std::span<const std::int64_t> lo,
       std::span<const std::int64_t> hi) const {
@@ -1083,7 +1174,16 @@ class HierarchicalGrid : public GridBase<HierarchicalGrid> {
     return {detail::Index(lo.begin(), lo.end()), detail::Index(hi.begin(), hi.end())};
   }
 
-  /// The message of a refused coarsening, naming the offending cells when the region is small.
+  /// Build the message of a refused coarsening, naming the offending cells when the region is
+  /// small.
+  ///
+  /// Args:
+  ///     level (std::int64_t): The level being coarsened.
+  ///     lo (const detail::Index&): Inclusive lower corner of the region.
+  ///     hi (const detail::Index&): Exclusive upper corner of the region.
+  ///
+  /// Returns:
+  ///     std::string: The message.
   [[nodiscard]] std::string refusal_message(std::int64_t level, const detail::Index& lo,
                                             const detail::Index& hi) const {
     const std::optional<std::int64_t> region = detail::try_block_size(lo, hi);
@@ -1106,7 +1206,18 @@ class HierarchicalGrid : public GridBase<HierarchicalGrid> {
            extra;
   }
 
-  /// The neighbors across a facet: all of them, or just the first.
+  /// Get the neighbors across a facet: all of them, or just the first.
+  ///
+  /// Args:
+  ///     cid (std::int64_t): Flat cell id.
+  ///     lfid (std::int64_t): Local facet id.
+  ///     first_only (bool): Keep only the first neighbor of a finer side.
+  ///
+  /// Returns:
+  ///     std::vector<std::int64_t>: The neighbor ids; empty on the outer boundary.
+  ///
+  /// Raises:
+  ///     index_error: `cid` or `lfid` is out of range.
   [[nodiscard]] std::vector<std::int64_t> facet_neighbors(std::int64_t cid, std::int64_t lfid,
                                                           bool first_only) const {
     check_lfid(cid, lfid);
@@ -1130,7 +1241,7 @@ class HierarchicalGrid : public GridBase<HierarchicalGrid> {
     // Finer: the leaves touching the shared face, however many levels down.
     const std::int64_t face_j = side == 0 ? rep_->factor[axis] - 1 : 0;
     std::vector<std::int64_t> below;
-    detail::active_face_descendants(*rep_, level, nbr, axis, face_j, below);
+    detail::active_face_descendants(*rep_, level, nbr, detail::FaceTarget{axis, face_j}, below);
     if (first_only && below.size() > 1) {
       below.resize(1);
     }
@@ -1140,8 +1251,18 @@ class HierarchicalGrid : public GridBase<HierarchicalGrid> {
   /// Map a finest-level lattice coordinate along `axis` to a parametric coordinate.
   ///
   /// The lattice has `factor ** top` steps per root cell, so every leaf corner of every level is a
-  /// node. The far edge borrows the last root cell and then takes its breakpoint exactly. Each
-  /// product is its own statement so the build's contraction setting cannot fuse it.
+  /// node. The far edge takes its breakpoint exactly. Each product is its own statement, which
+  /// stops contraction under the project's `-ffp-contract=on` (a statement boundary); it would not
+  /// under `-ffp-contract=fast`.
+  ///
+  /// Args:
+  ///     axis (std::size_t): The axis.
+  ///     coord (std::int64_t): The lattice coordinate, in `[0, steps * cells]`.
+  ///     top (std::int64_t): The finest level, `max_level()`.
+  ///
+  /// Returns:
+  ///     double: The coordinate, `bp + offset * (width / steps)` from the root cell's lower
+  ///     breakpoint, or the last breakpoint exactly at the far edge.
   [[nodiscard]] double lattice_coordinate(std::size_t axis, std::int64_t coord,
                                           std::int64_t top) const {
     const std::vector<double>& bp = rep_->root.breakpoints()[axis];
@@ -1150,7 +1271,8 @@ class HierarchicalGrid : public GridBase<HierarchicalGrid> {
     if (coord == detail::checked_mul(steps, num_root)) {
       return bp[static_cast<std::size_t>(num_root)];
     }
-    const std::int64_t root_cell = (std::min)(coord / steps, num_root - 1);
+    // coord < steps * num_root here (the far edge returned above), so root_cell < num_root.
+    const std::int64_t root_cell = coord / steps;
     const std::int64_t offset = coord - root_cell * steps;
     const double width =
         bp[static_cast<std::size_t>(root_cell) + 1] - bp[static_cast<std::size_t>(root_cell)];
@@ -1187,15 +1309,14 @@ inline HierarchicalGridRestriction HierarchicalGrid::restrict(
                       "); got [" + std::to_string(*lo_it) + ", " + std::to_string(*hi_it) + "].");
   }
   const std::size_t nd = ndim();
-  std::vector<std::int64_t> unique_ids(ids.begin(), ids.end());
-  std::sort(unique_ids.begin(), unique_ids.end());
-  unique_ids.erase(std::unique(unique_ids.begin(), unique_ids.end()), unique_ids.end());
+  std::vector<std::int64_t> sorted_ids(ids.begin(), ids.end());
+  std::sort(sorted_ids.begin(), sorted_ids.end());
 
   // The root-cell bounding box over the requested leaves.
   detail::Index r_lo(rep_->root.cells_per_axis().begin(), rep_->root.cells_per_axis().end());
   detail::Index r_hi(nd, 0);
   detail::Index midx(nd);
-  for (const std::int64_t cid : unique_ids) {
+  for (const std::int64_t cid : sorted_ids) {
     const std::int64_t level = detail::decode_flat_id(*rep_, cid, midx.data());
     for (std::size_t k = 0; k < nd; ++k) {
       const std::int64_t root_ik = midx[k] / detail::checked_pow(rep_->factor[k], level);
@@ -1278,7 +1399,7 @@ inline HierarchicalGridRestriction HierarchicalGrid::restrict(
   std::vector<std::uint8_t> in_subset(local_to_global.size(), 0);
   for (std::size_t i = 0; i < local_to_global.size(); ++i) {
     in_subset[i] =
-        std::binary_search(unique_ids.begin(), unique_ids.end(), local_to_global[i]) ? 1 : 0;
+        std::binary_search(sorted_ids.begin(), sorted_ids.end(), local_to_global[i]) ? 1 : 0;
   }
   return HierarchicalGridRestriction{std::move(sub), std::move(local_to_global),
                                      std::move(in_subset)};

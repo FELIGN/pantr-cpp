@@ -119,6 +119,10 @@ inline void check_counts_non_negative(std::span<const std::int64_t> cells_per_ax
     throw value_error("multi-index has length " + std::to_string(multi.size()) + "; expected " +
                       std::to_string(cells_per_axis.size()) + ".");
   }
+  // The total cell count fits int64 (or this throws), and every partial result below is a
+  // multi-index of a prefix of the axes, so it is less than a partial product of the counts, hence
+  // less than the total: the arithmetic below cannot overflow.
+  static_cast<void>(detail::checked_product(cells_per_axis));
   for (std::size_t k = 0; k < multi.size(); ++k) {
     if (!(0 <= multi[k] && multi[k] < cells_per_axis[k])) {
       throw index_error("axis " + std::to_string(k) + " index " + std::to_string(multi[k]) +
@@ -127,7 +131,7 @@ inline void check_counts_non_negative(std::span<const std::int64_t> cells_per_ax
   }
   std::int64_t flat = 0;
   for (std::size_t k = 0; k < multi.size(); ++k) {
-    flat = detail::checked_mul(flat, cells_per_axis[k]) + multi[k];
+    flat = flat * cells_per_axis[k] + multi[k];
   }
   return flat;
 }

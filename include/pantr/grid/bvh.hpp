@@ -126,29 +126,38 @@ inline void check_tree_structure(const BVHRep& rep) {
   }
 }
 
-/// Measure a node array's maximum root-to-leaf depth, capped at `limit`.
+/// Measure a node array's maximum root-to-leaf depth, capped at `limit`, and check it is a tree.
 ///
 /// The walk stops as soon as it finds a path deeper than `limit`, which is all the caller needs.
 /// That alone does not bound it: node arrays in which internal nodes share children (a DAG) have
-/// exponentially many root-to-leaf paths, none of them deep. A tree reaches each node exactly
-/// once, so the walk counts its pops and refuses as soon as they exceed `n_nodes`; that count is
-/// also what ends it on a cycle.
+/// exponentially many root-to-leaf paths, none of them deep. So the walk marks each node it pops
+/// and refuses a node popped a second time, which also ends it on a cycle. Arrays encode a tree
+/// exactly when the walk from the root pops every node once, so a walk that ends having popped
+/// fewer than `n_nodes` nodes (an orphan the root does not reach) is refused too.
 ///
 /// Args:
 ///     rep (const BVHRep&): A structure-checked tree.
-///     limit (std::int64_t): Depth beyond which the exact value no longer matters.
+///     limit (std::int64_t): Depth beyond which the exact value no longer matters. A walk that
+///         stops on this bound has not visited every node and does not check for orphans; the
+///         caller refuses such a tree for its depth.
 ///
 /// Returns:
 ///     std::int64_t: The number of nodes on the longest root-to-leaf path (the root counts as
 ///     depth 1); 0 for no nodes. A value greater than `limit` means only "deeper than `limit`".
 ///
 /// Raises:
-///     value_error: A node is reachable from the root more than once, so the arrays are not a
-///         tree.
+///     value_error: A node is reachable from the root more than once, or a node is not reachable
+///         from it at all, so the arrays are not a tree.
 [[nodiscard]] inline std::int64_t max_tree_depth(const BVHRep& rep, std::int64_t limit) {
   if (rep.n_nodes == 0) {
     return 0;
   }
+  const auto not_a_tree = []() {
+    return value_error(
+        "BVH: the node arrays do not encode a tree: every node must be reachable from the root "
+        "exactly once.");
+  };
+  std::vector<char> visited(static_cast<std::size_t>(rep.n_nodes), 0);
   std::vector<std::pair<std::int64_t, std::int64_t>> stack;
   stack.emplace_back(0, 1);
   std::int64_t max_depth = 0;
@@ -156,11 +165,12 @@ inline void check_tree_structure(const BVHRep& rep) {
   while (!stack.empty()) {
     const auto [node, depth] = stack.back();
     stack.pop_back();
-    if (++pops > rep.n_nodes) {
-      throw value_error(
-          "BVH: the node arrays do not encode a tree: a node is reachable from the root more "
-          "than once.");
+    char& seen = visited[static_cast<std::size_t>(node)];
+    if (seen != 0) {
+      throw not_a_tree();
     }
+    seen = 1;
+    ++pops;
     max_depth = (std::max)(max_depth, depth);
     if (max_depth > limit) {
       return max_depth;
@@ -173,6 +183,9 @@ inline void check_tree_structure(const BVHRep& rep) {
     if (right != -1) {
       stack.emplace_back(right, depth + 1);
     }
+  }
+  if (pops != rep.n_nodes) {
+    throw not_a_tree();
   }
   return max_depth;
 }
@@ -372,8 +385,8 @@ class BVH {
   ///     value_error: Shapes are inconsistent, `ndim < 1`, `n_nodes != 2 * n_cells - 1` (0 when
   ///         `n_cells <= 0`), `node_cell` and the child pointers disagree about which nodes are
   ///         leaves, an internal node's children or a leaf's cell id are out of range, the
-  ///         arrays are not a tree (a node reachable twice), or the tree is deeper than the
-  ///         traversal stack allows.
+  ///         arrays are not a tree (a node reachable twice, or not reachable from the root), or the
+  ///         tree is deeper than the traversal stack allows.
   ///     capacity_error: A shape's product overflows `std::size_t`.
   BVH(std::span<const double> node_lo, std::span<const double> node_hi,
       std::span<const std::size_t> lo_shape, std::span<const std::size_t> hi_shape,

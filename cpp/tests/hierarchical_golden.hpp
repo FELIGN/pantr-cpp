@@ -1,7 +1,9 @@
-// Recorded from the Python HierarchicalGrid of main (src/pantr/grid/_hierarchical_grid.py) by a
+// Recorded from the Python HierarchicalGrid (src/pantr/grid/_hierarchical_grid.py at 8d37752) by a
 // throwaway script; do not edit by hand. The grid: root breakpoints x = {0, 0.3, 1.1, 1.7},
 // y = {-0.5, 0.1, 0.7}, factor (2, 3), then refine(0, [0, 0], [2, 1]), refine(1, [1, 0], [3, 2]),
-// refine(2, [2, 0], [4, 3]). Doubles are C++ hexfloat literals, so equality is exact.
+// refine(2, [2, 0], [4, 3]). Doubles are C++ hexfloat literals, so each recorded value is the
+// Python double bit for bit; the tests compare computed values to it within a derived bound, not
+// for equality.
 #pragma once
 
 #include <cstdint>
