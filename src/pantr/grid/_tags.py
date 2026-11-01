@@ -111,10 +111,12 @@ class CellTags:
     grid's cell count is exposed through the :attr:`num_cells` property.
     """
 
-    __slots__ = ("_h", "_num_cells")
+    __slots__ = ("_cache", "_h", "_num_cells")
 
     #: The compiled registry (private).
     _h: Any
+    #: The ``(ids, values)`` tuple :meth:`__getitem__` returned for each name (private).
+    _cache: dict[str, tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]]
 
     def __init__(self, num_cells: int) -> None:
         """Create an empty cell-tag registry.
@@ -126,6 +128,7 @@ class CellTags:
             ValueError: If ``num_cells`` is negative.
         """
         self._h = _cpp.CellTags(int(num_cells))
+        self._cache = {}
         self._num_cells = int(self._h.num_cells)
 
     def _copy(self) -> CellTags:
@@ -136,6 +139,7 @@ class CellTags:
         """
         new = object.__new__(CellTags)
         new._h = self._h
+        new._cache = dict(self._cache)
         new._num_cells = self._num_cells
         return new
 
@@ -192,6 +196,7 @@ class CellTags:
         id_arr = _as_int64_1d(ids, name="ids")
         val_arr = _broadcast_values(values, id_arr.shape[0], name="values")
         self._h = self._h.set(str(name), id_arr, val_arr)
+        self._cache.pop(str(name), None)
 
     def __getitem__(self, name: str) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]:
         """Return the ``(ids, values)`` arrays for tag ``name``.
@@ -206,10 +211,7 @@ class CellTags:
         Raises:
             KeyError: If no tag named ``name`` exists.
         """
-        if not (isinstance(name, str) and self._h.contains(name)):
-            raise KeyError(name)
-        ids, values = self._h.get(name)
-        return ids, values
+        return _tag_entry(self._h, self._cache, name)
 
     def __contains__(self, name: object) -> bool:
         """Return whether a tag named ``name`` exists.
@@ -259,6 +261,7 @@ class CellTags:
         if name not in self:
             raise KeyError(name)
         self._h = self._h.remove(name)
+        self._cache.pop(name, None)
 
     def to_dense(
         self,
@@ -321,10 +324,12 @@ class FacetTags:
     :attr:`facets_per_cell` properties.
     """
 
-    __slots__ = ("_facets_per_cell", "_h", "_num_cells")
+    __slots__ = ("_cache", "_facets_per_cell", "_h", "_num_cells")
 
     #: The compiled registry (private).
     _h: Any
+    #: The ``(ids, values)`` tuple :meth:`__getitem__` returned for each name (private).
+    _cache: dict[str, tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]]
 
     def __init__(self, num_cells: int, facets_per_cell: int) -> None:
         """Create an empty facet-tag registry.
@@ -338,6 +343,7 @@ class FacetTags:
                 ``< 1``.
         """
         self._h = _cpp.FacetTags(int(num_cells), int(facets_per_cell))
+        self._cache = {}
         self._num_cells = int(self._h.num_cells)
         self._facets_per_cell = int(self._h.facets_per_cell)
 
@@ -349,6 +355,7 @@ class FacetTags:
         """
         new = object.__new__(FacetTags)
         new._h = self._h
+        new._cache = dict(self._cache)
         new._num_cells = self._num_cells
         new._facets_per_cell = self._facets_per_cell
         return new
@@ -422,6 +429,7 @@ class FacetTags:
             raise ValueError(f"keys must have shape (M, 2); got shape {key_arr.shape}.")
         val_arr = _broadcast_values(values, key_arr.shape[0], name="values")
         self._h = self._h.set(str(name), key_arr.reshape(-1), val_arr)
+        self._cache.pop(str(name), None)
 
     def __getitem__(self, name: str) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]:
         """Return the ``(keys, values)`` arrays for tag ``name``.
@@ -437,10 +445,7 @@ class FacetTags:
         Raises:
             KeyError: If no tag named ``name`` exists.
         """
-        if not (isinstance(name, str) and self._h.contains(name)):
-            raise KeyError(name)
-        ids, values = self._h.get(name)
-        return ids, values
+        return _tag_entry(self._h, self._cache, name)
 
     def __contains__(self, name: object) -> bool:
         """Return whether a tag named ``name`` exists.
@@ -490,6 +495,7 @@ class FacetTags:
         if name not in self:
             raise KeyError(name)
         self._h = self._h.remove(name)
+        self._cache.pop(name, None)
 
     def to_dense(
         self,
@@ -551,6 +557,39 @@ class FacetTags:
             f"facets_per_cell={self._facets_per_cell}, "
             f"tags={list(self)!r})"
         )
+
+
+def _tag_entry(
+    h: Any,  # noqa: ANN401
+    cache: dict[str, tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]],
+    name: object,
+) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]:
+    """Return the ``(ids, values)`` tuple of tag ``name``, the same object on every read.
+
+    The compiled value is immutable, so a tuple of read-only views of it stays valid; it is
+    built on the first read and kept until ``set`` or ``remove`` of that name drops it.
+
+    Args:
+        h (Any): The compiled registry.
+        cache (dict[str, tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]]): The wrapper's
+            tuples by name.
+        name (object): The requested tag name.
+
+    Returns:
+        tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]: Read-only ``(ids, values)``.
+
+    Raises:
+        KeyError: If no tag named ``name`` exists.
+    """
+    if isinstance(name, str):
+        entry = cache.get(name)
+        if entry is not None:
+            return entry
+        if h.contains(name):
+            ids, values = h.get(name)
+            cache[name] = (ids, values)
+            return cache[name]
+    raise KeyError(name)
 
 
 def _rebuild_cell_tags(
