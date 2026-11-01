@@ -7,12 +7,20 @@
 #include "pantr/basis/lagrange_variant.hpp"
 #include "pantr/basis/tabulate.hpp"
 #include "pantr/change_basis.hpp"
+#include "pantr/grid/detail/hier_blocks.hpp"
+#include "pantr/grid/partition.hpp"
 #include "pantr/parallel/shared.hpp"
 
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
+#include <nanobind/stl/optional.h>
+#include <nanobind/stl/pair.h>
+#include <nanobind/stl/string.h>
+#include <nanobind/stl/vector.h>
 
 #include <cstddef>
+#include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
@@ -135,6 +143,57 @@ void register_testing(nb::module_& m) {
         cb::cache_clear<float>();
       },
       "Empty the change-of-basis process tables (matrices handed out stay valid).");
+}
+
+// The pure block and factorization helpers of the grids, for the tests that pin them directly.
+void register_grid_testing(nb::module_& m) {
+  namespace gd = pantr::grid::detail;
+  using Mask = nb::ndarray<bool, nb::c_contig, nb::device::cpu>;
+  using ConstMask = nb::ndarray<const bool, nb::c_contig, nb::device::cpu>;
+  m.attr("max_named_cells") = gd::max_named_cells;
+  m.attr("max_diagnosed_cells") = gd::max_diagnosed_cells;
+  m.def("block_size", &gd::block_size, nb::arg("lo"), nb::arg("hi"),
+        "The number of cells in the block [lo, hi).");
+  m.def("in_block", &gd::in_block, nb::arg("midx"), nb::arg("lo"), nb::arg("hi"),
+        "Whether midx lies in [lo, hi).");
+  m.def("rect_intersect", &gd::rect_intersect, nb::arg("lo1"), nb::arg("hi1"), nb::arg("lo2"),
+        nb::arg("hi2"), "The intersection of two blocks, or None.");
+  m.def("peel", &gd::peel, nb::arg("outer_lo"), nb::arg("outer_hi"), nb::arg("inner_lo"),
+        nb::arg("inner_hi"), "The slabs of the outer block minus the inner one.");
+  m.def("try_merge", &gd::try_merge, nb::arg("lo1"), nb::arg("hi1"), nb::arg("lo2"), nb::arg("hi2"),
+        "The merge of two adjacent aligned blocks, or None.");
+  m.def("normalize_blocks", &gd::normalize_blocks, nb::arg("blocks"),
+        "Greedily merge, then sort, a list of blocks.");
+  m.def(
+      "mark_region_cells",
+      [](Mask mask, const gd::Index& lo, const gd::Index& hi, const gd::Block& block) {
+        gd::mark_region_cells(
+            std::span<std::uint8_t>(reinterpret_cast<std::uint8_t*>(mask.data()), mask.size()), lo,
+            hi, block);
+      },
+      nb::arg("mask"), nb::arg("lo"), nb::arg("hi"), nb::arg("block"),
+      "Set, in place, the cells of a region mask that a block covers.");
+  m.def(
+      "name_marked_cells",
+      [](const ConstMask& mask, const gd::Index& origin) {
+        gd::Index shape(mask.ndim());
+        for (std::size_t k = 0; k < mask.ndim(); ++k) {
+          shape[k] = static_cast<std::int64_t>(mask.shape(k));
+        }
+        return gd::name_marked_cells(
+            std::span<const std::uint8_t>(reinterpret_cast<const std::uint8_t*>(mask.data()),
+                                          mask.size()),
+            shape, origin);
+      },
+      nb::arg("mask"), nb::arg("origin"), "Spell the marked cells of a region mask.");
+  m.def(
+      "factor_blocks",
+      [](const std::vector<std::int64_t>& cells_per_axis, std::int64_t n_parts) {
+        return gd::factor_blocks(cells_per_axis, n_parts);
+      },
+      nb::arg("cells_per_axis"), nb::arg("n_parts"),
+      "The per-axis block counts of the Cartesian partition.");
+  m.def("divisors", &gd::divisors, nb::arg("n"), "The positive divisors of n, ascending.");
 }
 
 }  // namespace pantr::bindings

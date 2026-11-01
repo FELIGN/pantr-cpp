@@ -69,6 +69,9 @@ NB_MODULE(PANTR_EXT_MODULE_NAME, m) {
   pantr::bindings::register_bspline_spanwise(bspline);
   pantr::bindings::register_bspline_product(bspline);
   pantr::bindings::register_bspline_fit(bspline);
+  nb::module_ grid =
+      m.def_submodule("grid", "Structured grids, BVH, tags and partitions (private).");
+  pantr::bindings::register_grid(grid);
   nb::module_ kernels = m.def_submodule(
       "_kernels", "Ported kernels for Python callers not yet ported (private, interim).");
   pantr::bindings::register_bezier_kernels(kernels);
@@ -85,4 +88,5 @@ NB_MODULE(PANTR_EXT_MODULE_NAME, m) {
   pantr::bindings::register_bspline_extraction_testing(testing);
   pantr::bindings::register_bspline_spanwise_testing(testing);
   pantr::bindings::register_bspline_product_testing(testing);
+  pantr::bindings::register_grid_testing(testing);
 }

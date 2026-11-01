@@ -44,6 +44,10 @@ module.
   :func:`bspline_find_roots_with_budget`, the public route with a budget small enough to exhaust.
 - The knot classes of a raw knot vector at an explicit tolerance
   (:func:`unique_knots_and_multiplicity`), which a space only reaches with its own tolerance.
+- The pure block helpers of the hierarchical grid (``_block_size``, ``_in_block``,
+  ``_rect_intersect``, ``_peel``, ``_try_merge``, ``_normalize_blocks``, ``_mark_region_cells``,
+  ``_name_marked_cells`` and the two message limits), and the Cartesian factorization behind the
+  ``"block"`` partition backend (``_factor_blocks``, ``_divisors``).
 """
 
 from __future__ import annotations
@@ -684,6 +688,177 @@ def kron_apply(  # noqa: PLR0913 -- the operation, its factors, flags, operand a
     return result
 
 
+# -- grids --
+_MAX_NAMED_CELLS: Final[int] = _t.max_named_cells
+"""Cells a rejected-coarsening message spells out before it counts the rest."""
+
+_MAX_DIAGNOSED_CELLS: Final[int] = _t.max_diagnosed_cells
+"""Region size above which a coarsening diagnosis is not computed."""
+
+_Block = tuple[tuple[int, ...], tuple[int, ...]]
+
+
+def _block(raw: tuple[Sequence[int], Sequence[int]]) -> _Block:
+    """Turn a compiled block (two lists) into a block of tuples.
+
+    Args:
+        raw (tuple[Sequence[int], Sequence[int]]): ``(lo, hi)`` as the compiled helper returns it.
+
+    Returns:
+        _Block: ``(lo, hi)`` as tuples of ints.
+    """
+    return tuple(raw[0]), tuple(raw[1])
+
+
+def _block_size(lo: Sequence[int], hi: Sequence[int]) -> int:
+    """Get the number of cells in the block ``[lo, hi)``.
+
+    Args:
+        lo (Sequence[int]): Lower bound per axis.
+        hi (Sequence[int]): Upper bound per axis.
+
+    Returns:
+        int: The product of the extents.
+    """
+    return int(_t.block_size(list(lo), list(hi)))
+
+
+def _in_block(midx: Sequence[int], lo: Sequence[int], hi: Sequence[int]) -> bool:
+    """Get whether ``midx`` lies in the block ``[lo, hi)``.
+
+    Args:
+        midx (Sequence[int]): A multi-index.
+        lo (Sequence[int]): Lower bound per axis (inclusive).
+        hi (Sequence[int]): Upper bound per axis (exclusive).
+
+    Returns:
+        bool: Whether every coordinate is in range.
+    """
+    return bool(_t.in_block(list(midx), list(lo), list(hi)))
+
+
+def _rect_intersect(
+    lo1: Sequence[int], hi1: Sequence[int], lo2: Sequence[int], hi2: Sequence[int]
+) -> _Block | None:
+    """Get the intersection of two blocks.
+
+    Args:
+        lo1 (Sequence[int]): First block lower bound.
+        hi1 (Sequence[int]): First block upper bound.
+        lo2 (Sequence[int]): Second block lower bound.
+        hi2 (Sequence[int]): Second block upper bound.
+
+    Returns:
+        _Block | None: ``(lo, hi)`` of the overlap, or ``None`` when it is empty.
+    """
+    found = _t.rect_intersect(list(lo1), list(hi1), list(lo2), list(hi2))
+    return None if found is None else _block(found)
+
+
+def _peel(
+    outer_lo: Sequence[int],
+    outer_hi: Sequence[int],
+    inner_lo: Sequence[int],
+    inner_hi: Sequence[int],
+) -> list[_Block]:
+    """Subtract the inner block from the outer one.
+
+    Args:
+        outer_lo (Sequence[int]): Outer block lower bound.
+        outer_hi (Sequence[int]): Outer block upper bound.
+        inner_lo (Sequence[int]): Inner block lower bound (inside the outer block).
+        inner_hi (Sequence[int]): Inner block upper bound.
+
+    Returns:
+        list[_Block]: At most ``2 * ndim`` slabs covering the outer block minus the inner one.
+    """
+    slabs = _t.peel(list(outer_lo), list(outer_hi), list(inner_lo), list(inner_hi))
+    return [_block(slab) for slab in slabs]
+
+
+def _try_merge(
+    lo1: Sequence[int], hi1: Sequence[int], lo2: Sequence[int], hi2: Sequence[int]
+) -> _Block | None:
+    """Merge two blocks that are adjacent along one axis and aligned on the others.
+
+    Args:
+        lo1 (Sequence[int]): First block lower bound.
+        hi1 (Sequence[int]): First block upper bound.
+        lo2 (Sequence[int]): Second block lower bound.
+        hi2 (Sequence[int]): Second block upper bound.
+
+    Returns:
+        _Block | None: The merged block, or ``None`` when the two cannot merge.
+    """
+    merged = _t.try_merge(list(lo1), list(hi1), list(lo2), list(hi2))
+    return None if merged is None else _block(merged)
+
+
+def _normalize_blocks(blocks: Sequence[_Block]) -> list[_Block]:
+    """Merge adjacent blocks greedily, then sort them.
+
+    Args:
+        blocks (Sequence[_Block]): ``(lo, hi)`` blocks.
+
+    Returns:
+        list[_Block]: The normalized blocks.
+    """
+    normalized = _t.normalize_blocks([(list(lo), list(hi)) for lo, hi in blocks])
+    return [_block(block) for block in normalized]
+
+
+def _mark_region_cells(
+    mask: npt.NDArray[np.bool_], lo: Sequence[int], hi: Sequence[int], block: _Block
+) -> None:
+    """Set, in place, the cells of a region mask that a block covers.
+
+    Args:
+        mask (npt.NDArray[np.bool_]): C-contiguous region-shaped mask, indexed relative to ``lo``.
+        lo (Sequence[int]): Region lower bound.
+        hi (Sequence[int]): Region upper bound.
+        block (_Block): The block to mark, in the region's coordinates.
+    """
+    _t.mark_region_cells(mask, list(lo), list(hi), (list(block[0]), list(block[1])))
+
+
+def _name_marked_cells(mask: npt.NDArray[np.bool_], origin: Sequence[int]) -> str:
+    """Spell the marked cells of a region mask as absolute index tuples.
+
+    Args:
+        mask (npt.NDArray[np.bool_]): C-contiguous region-shaped mask.
+        origin (Sequence[int]): Index of the region's first cell.
+
+    Returns:
+        str: The first few marked cells, then ``and N more`` when there are others.
+    """
+    return str(_t.name_marked_cells(np.ascontiguousarray(mask), list(origin)))
+
+
+def _factor_blocks(cells_per_axis: Sequence[int], n_parts: int) -> tuple[int, ...]:
+    """Factor ``n_parts`` into a per-axis block count proportional to the cell counts.
+
+    Args:
+        cells_per_axis (Sequence[int]): Cell count along each axis.
+        n_parts (int): Number of parts.
+
+    Returns:
+        tuple[int, ...]: Block count per axis; the product is ``n_parts``.
+    """
+    return tuple(int(b) for b in _t.factor_blocks(list(cells_per_axis), int(n_parts)))
+
+
+def _divisors(n: int) -> list[int]:
+    """Get all positive divisors of ``n``, ascending.
+
+    Args:
+        n (int): A positive integer.
+
+    Returns:
+        list[int]: The sorted divisors of ``n``.
+    """
+    return [int(d) for d in _t.divisors(int(n))]
+
+
 BERNSTEIN: Final = _Family.BERNSTEIN
 """The Bernstein family, for :data:`gram_projection`."""
 CARDINAL_BSPLINE: Final = _Family.CARDINAL_BSPLINE
@@ -706,12 +881,24 @@ __all__ = [
     "_BERNSTEIN_TO_LAGRANGE_MAX_DEGREE",
     "_CARDINAL_TO_BERNSTEIN_MAX_DEGREE",
     "_CARDINAL_TO_LEGENDRE_MAX_DEGREE",
+    "_MAX_DIAGNOSED_CELLS",
+    "_MAX_NAMED_CELLS",
     "_DegreeLimit",
+    "_block_size",
     "_cached_cardinal_to_bernstein_matrix",
     "_cached_cardinal_to_legendre_matrix",
     "_cached_lagrange_to_bernstein_matrix",
     "_cached_legendre_to_cardinal_matrix",
+    "_divisors",
+    "_factor_blocks",
     "_get_lagrange_points",
+    "_in_block",
+    "_mark_region_cells",
+    "_name_marked_cells",
+    "_normalize_blocks",
+    "_peel",
+    "_rect_intersect",
+    "_try_merge",
     "bernstein_derivatives_point",
     "bernstein_derivatives_point_f32",
     "bernstein_interpolate",

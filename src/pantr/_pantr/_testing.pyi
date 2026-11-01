@@ -655,3 +655,56 @@ def bspline_merge_roots(
     ],
 ) -> tuple[NDArray[numpy.float64], NDArray[numpy.int64]]:
     """Merge runs of ascending roots within their radii, as `(merged, labels)` (no validation)."""
+
+max_named_cells: int = ...
+
+max_diagnosed_cells: int = ...
+
+def block_size(lo: Sequence[int], hi: Sequence[int]) -> int:
+    """The number of cells in the block [lo, hi)."""
+
+def in_block(midx: Sequence[int], lo: Sequence[int], hi: Sequence[int]) -> bool:
+    """Whether midx lies in [lo, hi)."""
+
+def rect_intersect(
+    lo1: Sequence[int], hi1: Sequence[int], lo2: Sequence[int], hi2: Sequence[int]
+) -> tuple[list[int], list[int]] | None:
+    """The intersection of two blocks, or None."""
+
+def peel(
+    outer_lo: Sequence[int],
+    outer_hi: Sequence[int],
+    inner_lo: Sequence[int],
+    inner_hi: Sequence[int],
+) -> list[tuple[list[int], list[int]]]:
+    """The slabs of the outer block minus the inner one."""
+
+def try_merge(
+    lo1: Sequence[int], hi1: Sequence[int], lo2: Sequence[int], hi2: Sequence[int]
+) -> tuple[list[int], list[int]] | None:
+    """The merge of two adjacent aligned blocks, or None."""
+
+def normalize_blocks(
+    blocks: Sequence[tuple[Sequence[int], Sequence[int]]],
+) -> list[tuple[list[int], list[int]]]:
+    """Greedily merge, then sort, a list of blocks."""
+
+def mark_region_cells(
+    mask: Annotated[NDArray[numpy.bool_], dict(order="C", device="cpu")],
+    lo: Sequence[int],
+    hi: Sequence[int],
+    block: tuple[Sequence[int], Sequence[int]],
+) -> None:
+    """Set, in place, the cells of a region mask that a block covers."""
+
+def name_marked_cells(
+    mask: Annotated[NDArray[numpy.bool_], dict(order="C", device="cpu", writable=False)],
+    origin: Sequence[int],
+) -> str:
+    """Spell the marked cells of a region mask."""
+
+def factor_blocks(cells_per_axis: Sequence[int], n_parts: int) -> list[int]:
+    """The per-axis block counts of the Cartesian partition."""
+
+def divisors(n: int) -> list[int]:
+    """The positive divisors of n, ascending."""
