@@ -843,13 +843,15 @@
   returned cell id, owner and tag array was equal, and every returned coordinate array had the
   same bytes, except in the cases the entries below describe.
 - **`copy.copy` of a grid, a `CellTags` or a `FacetTags` gives an independent tag registry.** In
-  the previous release `copy.copy(grid).cell_tags is grid.cell_tags` held, and a tag set on a
-  shallow copy of a registry appeared on the original; now it does not.
+  the previous release `copy.copy(grid).cell_tags is grid.cell_tags` held once the grid's registry
+  existed, and a tag set on a shallow copy of a registry appeared on the original; now it does
+  not.
 - **`copy.deepcopy` of a grid, a tag registry, a `BVH` or a `Partition` returns read-only arrays**
   (`breakpoints`, `bounds`, the tag ids and values, the node arrays, `cell_owner`), as the
   originals are; the previous release's deep copies had writable arrays.
 - **Pickles of the grid classes written by this release do not load in the previous release**
-  (`TensorProductGrid`, `HierarchicalGrid`, `BVH` and `CellTags` raise `AttributeError` there).
+  (`TensorProductGrid`, `HierarchicalGrid`, `BVH`, `CellTags` and `FacetTags` raise
+  `AttributeError` there).
   Pickles written by the previous release still load.
 - **`Grid`, `TensorProductGrid` and `HierarchicalGrid` can no longer be subclassed**: defining a
   subclass raises `TypeError` when the class is created. The grids are C++ values with no
