@@ -331,13 +331,25 @@ namespace detail {
   const std::vector<std::int64_t> bpa = factor_blocks(cpa, n_parts);
   const std::size_t nd = cpa.size();
   const auto n = static_cast<std::size_t>(grid.num_cells());
+  // Per axis, each cell index's contribution to the owner rank: its block `i * b_d / c_d` times
+  // the C-order stride of the block grid. Tabulated once, so the integer divisions and overflow
+  // checks stay out of the per-cell loop; the ranks are the same integers.
+  std::vector<std::vector<std::int64_t>> contribution(nd);
+  std::int64_t block_stride = 1;
+  for (std::size_t d = nd; d-- > 0;) {
+    contribution[d].resize(static_cast<std::size_t>(cpa[d]));
+    for (std::int64_t i = 0; i < cpa[d]; ++i) {
+      const std::int64_t block = checked_mul(i, bpa[d]) / cpa[d];
+      contribution[d][static_cast<std::size_t>(i)] = checked_mul(block, block_stride);
+    }
+    block_stride = checked_mul(block_stride, bpa[d]);
+  }
   std::vector<std::int32_t> owner(n);
   std::vector<std::int64_t> multi(nd, 0);
   for (std::size_t c = 0; c < n; ++c) {
-    std::int64_t rank = 0;
+    std::int64_t rank = 0;  // a sum of per-axis terms, < prod(bpa) = n_parts: no overflow
     for (std::size_t d = 0; d < nd; ++d) {
-      const std::int64_t block = checked_mul(multi[d], bpa[d]) / cpa[d];
-      rank = checked_mul(rank, bpa[d]) + block;
+      rank += contribution[d][static_cast<std::size_t>(multi[d])];
     }
     owner[c] = to_owner(rank);
     for (std::size_t d = nd; d-- > 0;) {
