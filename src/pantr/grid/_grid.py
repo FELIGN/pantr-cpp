@@ -58,7 +58,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple, Self
 import numpy as np
 
 from ._bvh import BVH
-from ._grid_utils import _as_float64
+from ._grid_utils import _as_float64, _previous_release_slots
 from ._tags import CellTags, FacetTags
 
 if TYPE_CHECKING:
@@ -611,6 +611,35 @@ class Grid(abc.ABC):
             NotImplementedError: Always; each concrete grid defines it.
         """
         raise NotImplementedError(f"{cls.__name__} does not define _from_state().")
+
+    def _restore_previous_release(self, slots: dict[str, Any]) -> None:
+        """Rebuild the grid from the slot values a previous release pickled.
+
+        Args:
+            slots (dict[str, Any]): The previous release's slot name to value map.
+
+        Raises:
+            NotImplementedError: Always; each concrete grid defines it.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not define it.")
+
+    def __setstate__(self, state: Any) -> None:  # noqa: ANN401
+        """Rebuild the grid from a pickle written by a previous release.
+
+        A previous release pickled the slots of the grid itself (its arrays, blocks and
+        tag registries). Pickles written by this release go through :meth:`__reduce__` and
+        never reach here. The tag registries are kept; the previous release's lazily built
+        spatial index is dropped and rebuilt on first use.
+
+        Args:
+            state (Any): The pickled state: ``(None, {slot: value})`` for the protocols
+                that pickle slots, or the bare mapping.
+        """
+        slots = _previous_release_slots(state)
+        Grid.__init__(self)
+        self._restore_previous_release(slots)
+        self._cell_tags = slots.get("_cell_tags")
+        self._facet_tags = slots.get("_facet_tags")
 
     def _clone(self) -> Grid:
         """Return a new wrapper of the same grid value (tags not carried over).

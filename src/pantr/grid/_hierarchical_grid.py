@@ -203,17 +203,45 @@ class HierarchicalGrid(Grid):
         Returns:
             Self: The rebuilt grid.
         """
-        root, factor, blocks, version = state
+        grid = object.__new__(cls)
+        Grid.__init__(grid)
+        grid._init_from_blocks(*state)
+        return grid
+
+    def _init_from_blocks(
+        self,
+        root: TensorProductGrid,
+        factor: Sequence[int],
+        blocks: Sequence[Sequence[_Block]],
+        version: int,
+    ) -> None:
+        """Build the compiled grid from its blocks, at the given version, and adopt it.
+
+        Args:
+            root (TensorProductGrid): The level-0 grid.
+            factor (Sequence[int]): The subdivision factor.
+            blocks (Sequence[Sequence[_Block]]): The active-leaf blocks of every level.
+            version (int): The mutation counter to restore.
+        """
         h = _cpp.HierarchicalGrid.from_blocks(
             root._h,
-            list(factor),
+            [int(f) for f in factor],
             [[(list(lo), list(hi)) for lo, hi in level] for level in blocks],
             int(version),
         )
-        grid = object.__new__(cls)
-        Grid.__init__(grid)
-        grid._init_from_handle(h, root, tuple(int(f) for f in factor))
-        return grid
+        self._init_from_handle(h, root, tuple(int(f) for f in factor))
+
+    def _restore_previous_release(self, slots: dict[str, Any]) -> None:
+        """Rebuild the compiled grid from the blocks a previous release pickled.
+
+        Args:
+            slots (dict[str, Any]): The previous release's slots; ``_root``, ``_factor``,
+                ``_blocks`` and ``_version`` determine the grid (the packed arrays it also
+                held are derived from the blocks).
+        """
+        self._init_from_blocks(
+            slots["_root"], slots["_factor"], slots["_blocks"], slots["_version"]
+        )
 
     # ------------------------------------------------------------------
     # Properties

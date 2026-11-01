@@ -143,6 +143,16 @@ class TensorProductGrid(Grid):
         """
         return cls(state)
 
+    def _restore_previous_release(self, slots: dict[str, Any]) -> None:
+        """Rebuild the compiled grid from the breakpoints a previous release pickled.
+
+        Args:
+            slots (dict[str, Any]): The previous release's slots; ``_breakpoints`` is the
+                tuple of per-axis breakpoint arrays.
+        """
+        axes = [np.ascontiguousarray(bp, dtype=np.float64) for bp in slots["_breakpoints"]]
+        self._init_from_handle(_cpp.TensorProductGrid(axes))
+
     def _clone(self) -> Self:
         """Return a new wrapper of the same compiled grid.
 

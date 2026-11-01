@@ -46,7 +46,7 @@ from typing import TYPE_CHECKING, Any, Self
 import numpy as np
 
 from .._ext import ext
-from ._grid_utils import _as_float64
+from ._grid_utils import _as_float64, _previous_release_slots
 
 if TYPE_CHECKING:
     import numpy.typing as npt
@@ -206,6 +206,27 @@ class BVH:
                 self._node_cell,
                 self.n_cells,
             ),
+        )
+
+    def __setstate__(self, state: Any) -> None:  # noqa: ANN401
+        """Rebuild the compiled tree from a pickle written by a previous release.
+
+        A previous release pickled the five node arrays and the counts as slots. Pickles
+        written by this release go through :meth:`__reduce__` and never reach here.
+
+        Args:
+            state (Any): The pickled state: ``(None, {slot: value})`` for the protocols
+                that pickle slots, or the bare mapping.
+        """
+        slots = _previous_release_slots(state)
+        BVH.__init__(
+            self,
+            slots["_node_lo"],
+            slots["_node_hi"],
+            slots["_node_left"],
+            slots["_node_right"],
+            slots["_node_cell"],
+            n_cells=slots["n_cells"],
         )
 
     @classmethod

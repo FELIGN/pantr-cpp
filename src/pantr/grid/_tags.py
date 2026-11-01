@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, Any, Final
 import numpy as np
 
 from .._ext import ext
+from ._grid_utils import _previous_release_slots
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -146,6 +147,22 @@ class CellTags:
         """
         entries = [(name, *self[name]) for name in self]
         return (_rebuild_cell_tags, (self._num_cells, entries))
+
+    def __setstate__(self, state: Any) -> None:  # noqa: ANN401
+        """Rebuild the registry from a pickle written by a previous release.
+
+        A previous release pickled the cell count and a dict of ``name -> (ids, values)``
+        as slots. Pickles written by this release go through :meth:`__reduce__` and never
+        reach here.
+
+        Args:
+            state (Any): The pickled state: ``(None, {slot: value})`` for the protocols
+                that pickle slots, or the bare mapping.
+        """
+        slots = _previous_release_slots(state)
+        CellTags.__init__(self, slots["_num_cells"])
+        for name, (ids, values) in slots["_tags"].items():
+            self.set(name, ids, values)
 
     @property
     def num_cells(self) -> int:
@@ -344,6 +361,22 @@ class FacetTags:
         """
         entries = [(name, *self[name]) for name in self]
         return (_rebuild_facet_tags, (self._num_cells, self._facets_per_cell, entries))
+
+    def __setstate__(self, state: Any) -> None:  # noqa: ANN401
+        """Rebuild the registry from a pickle written by a previous release.
+
+        A previous release pickled the cell and facet counts and a dict of
+        ``name -> (keys, values)`` as slots. Pickles written by this release go through
+        :meth:`__reduce__` and never reach here.
+
+        Args:
+            state (Any): The pickled state: ``(None, {slot: value})`` for the protocols
+                that pickle slots, or the bare mapping.
+        """
+        slots = _previous_release_slots(state)
+        FacetTags.__init__(self, slots["_num_cells"], slots["_facets_per_cell"])
+        for name, (keys, values) in slots["_tags"].items():
+            self.set(name, keys, values)
 
     @property
     def num_cells(self) -> int:

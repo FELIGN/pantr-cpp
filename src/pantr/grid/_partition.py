@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from .._ext import ext
+from ._grid_utils import _previous_release_slots
 
 if TYPE_CHECKING:
     import numpy.typing as npt
@@ -90,6 +91,19 @@ class Partition:
             tuple[Any, ...]: The class and its arguments.
         """
         return (type(self), (self._cell_owner, self._n_parts))
+
+    def __setstate__(self, state: Any) -> None:  # noqa: ANN401
+        """Rebuild the compiled partition from a pickle written by a previous release.
+
+        A previous release pickled the owner array and the part count as slots. Pickles
+        written by this release go through :meth:`__reduce__` and never reach here.
+
+        Args:
+            state (Any): The pickled state: ``(None, {slot: value})`` for the protocols
+                that pickle slots, or the bare mapping.
+        """
+        slots = _previous_release_slots(state)
+        Partition.__init__(self, slots["_cell_owner"], slots["_n_parts"])
 
     @property
     def cell_owner(self) -> npt.NDArray[np.int32]:
