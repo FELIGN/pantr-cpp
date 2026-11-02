@@ -61,8 +61,12 @@ using thb_test::Ivec;
 using thb_test::k2;
 using thb_test::k2_3d;
 using thb_test::k2n;
+using thb_test::k3;
+using thb_test::Lcg;
+using thb_test::make_thb_space;
 using thb_test::Reg;
 using thb_test::ThreadsGuard;
+using thb_test::uniform_knots;
 using thb_test::value_error_units;
 using Space = THBSplineSpace<double>;
 
@@ -75,50 +79,22 @@ constexpr double entry_error = 4096.0 * eps;
 
 // ---- Setups ----------------------------------------------------------------------------------
 
-const std::vector<double> k3 = {0.0, 0.0, 0.0, 0.0, 0.25, 0.5, 0.75, 1.0, 1.0, 1.0, 1.0};
-
-/// Degree-2 knots with `n` equal spans on [0, 1].
-std::vector<double> uniform_knots(int n) {
-  std::vector<double> knots = {0.0, 0.0, 0.0};
-  for (int i = 1; i < n; ++i) {
-    knots.push_back(static_cast<double>(i) / static_cast<double>(n));
-  }
-  knots.insert(knots.end(), {1.0, 1.0, 1.0});
-  return knots;
-}
-
-/// A space on the root whose knots and degrees are given, an unrefined grid whose cells are the
-/// root's knot spans, and the given factor.
-Space make_space(const std::vector<std::vector<double>>& knots, const std::vector<int>& degrees,
-                 const Ivec& factor, const Reg& regularity, bool truncate) {
-  std::vector<bs::BsplineSpace1D<double>> dirs;
-  std::vector<std::vector<double>> breakpoints;
-  for (std::size_t k = 0; k < knots.size(); ++k) {
-    dirs.emplace_back(std::span<const double>(knots[k]), degrees[k]);
-    const std::span<const double> unique = dirs.back().unique_knots_and_multiplicity(true).first;
-    breakpoints.emplace_back(unique.begin(), unique.end());
-  }
-  bs::BsplineSpace<double> root(std::move(dirs));
-  gd::HierarchicalGrid grid(gd::TensorProductGrid(std::move(breakpoints)), factor);
-  return Space(std::move(root), std::move(grid), truncate, regularity);
-}
-
 /// The 4 x 4 root cells, degree (2, 2), factor (2, 2) space the golden values were recorded on.
 Space base_2d(bool truncate = true) {
-  return make_space({k2, k2}, {2, 2}, {2, 2}, {std::nullopt, std::nullopt}, truncate);
+  return make_thb_space({k2, k2}, {2, 2}, {2, 2}, {std::nullopt, std::nullopt}, truncate);
 }
 
-Space base_1d(bool truncate = true) { return make_space({k3}, {3}, {2}, {0}, truncate); }
+Space base_1d(bool truncate = true) { return make_thb_space({k3}, {3}, {2}, {0}, truncate); }
 
 Space base_3d() {
-  return make_space({k2_3d, k2_3d, k2_3d}, {2, 2, 2}, {2, 2, 2},
-                    {std::nullopt, std::nullopt, std::nullopt}, true);
+  return make_thb_space({k2_3d, k2_3d, k2_3d}, {2, 2, 2}, {2, 2, 2},
+                        {std::nullopt, std::nullopt, std::nullopt}, true);
 }
 
 /// A space with `n x n` root cells, degree (2, 2), factor (2, 2).
 Space base_uniform(int n) {
-  return make_space({uniform_knots(n), uniform_knots(n)}, {2, 2}, {2, 2},
-                    {std::nullopt, std::nullopt}, true);
+  return make_thb_space({uniform_knots(n), uniform_knots(n)}, {2, 2}, {2, 2},
+                        {std::nullopt, std::nullopt}, true);
 }
 
 /// Refine the cell `(l, 0, ..., 0)`, for `l = 0 .. steps - 1`, one `refine` call each.
@@ -180,21 +156,6 @@ std::set<Ivec> cell_row_set(std::span<const I64> flat, std::size_t width) {
   }
   return rows;
 }
-
-/// A reproducible stream of numbers in `[0, 1)`.
-class Lcg {
- public:
-  Lcg() = default;
-  explicit Lcg(std::uint64_t seed) : state_(seed) {}
-
-  double next() {
-    state_ = state_ * 6364136223846793005ULL + 1442695040888963407ULL;
-    return static_cast<double>(state_ >> 11) / 9007199254740992.0;
-  }
-
- private:
-  std::uint64_t state_ = 0x9E3779B97F4A7C15ULL;
-};
 
 /// `P u` for a CSR matrix.
 std::vector<double> multiply(const ProlongationCsr& p, const std::vector<double>& u) {
@@ -564,7 +525,7 @@ TEST_CASE("prolongation_csr: the refinement relation holds at points of every fi
     check_refinement_relation(coarse, coarse.refine(Ivec{*cid}, 2));
   }
   SUBCASE("2D THB, factor (2, 3)") {
-    const Space root = make_space({k2, k2}, {2, 2}, {2, 3}, {std::nullopt, std::nullopt}, true);
+    const Space root = make_thb_space({k2, k2}, {2, 2}, {2, 3}, {std::nullopt, std::nullopt}, true);
     const Space coarse = region(root, 0, {0, 0}, {2, 2}, std::nullopt);
     check_refinement_relation(coarse, region(coarse, 1, {0, 0}, {3, 3}, std::nullopt));
   }
@@ -583,8 +544,8 @@ TEST_CASE("prolongation_csr: a refinement whose local solve needs an accurate SV
   // conditioned, yet a divide-and-conquer SVD reconstructs it with an error far above eps, which
   // the residual gate (4096 eps of one plus the size) refuses; an LAPACK `gelsd` solve (the Python
   // implementation) passes it.
-  const Space root = make_space({k2, k2, k2}, {2, 2, 2}, {2, 2, 1},
-                                {std::nullopt, std::nullopt, std::nullopt}, false);
+  const Space root = make_thb_space({k2, k2, k2}, {2, 2, 2}, {2, 2, 1},
+                                    {std::nullopt, std::nullopt, std::nullopt}, false);
   const Space prev = root.refine(Ivec{49, 56}, std::nullopt);
   const Space fine = prev.refine(Ivec{7, 51}, 2);
   check_refinement_relation(prev, fine);
@@ -610,8 +571,8 @@ TEST_CASE("prolongation_csr: random 3D refine chains give valid prolongations") 
     const auto draw = [&rng](I64 n) {
       return static_cast<I64>(rng.next() * static_cast<double>(n));
     };
-    Space space = make_space({k2, k2, k2}, {2, 2, 2}, factor,
-                             {std::nullopt, std::nullopt, std::nullopt}, truncate);
+    Space space = make_thb_space({k2, k2, k2}, {2, 2, 2}, factor,
+                                 {std::nullopt, std::nullopt, std::nullopt}, truncate);
     for (int step = 0; step < 2; ++step) {
       Ivec lo(3);
       Ivec hi(3);
@@ -871,7 +832,7 @@ TEST_CASE("restrict: every single-cell window builds and maps into the global do
     sweep(base_1d().refine_region(0, Ivec{1}, Ivec{3}, 2).refine_region(1, Ivec{2}, Ivec{4}, 2));
   }
   SUBCASE("1D unclamped") {
-    const Space s = make_space({unclamped}, {2}, {2}, {std::nullopt}, true);
+    const Space s = make_thb_space({unclamped}, {2}, {2}, {std::nullopt}, true);
     sweep(s.refine_region(0, Ivec{0}, Ivec{2}, 2));
   }
 }
@@ -966,9 +927,10 @@ TEST_CASE("restrict refuses what the grid refuses") {
 TEST_CASE("prolongation_csr refuses what the Python implementation refuses") {
   const Space coarse = base_2d().refine_region(0, Ivec{0, 0}, Ivec{2, 2}, std::nullopt);
   SUBCASE("every structural mismatch is listed") {
-    const Space coarse_reg = make_space({k2, k2}, {2, 2}, {2, 2}, {std::nullopt, 1}, true)
+    const Space coarse_reg = make_thb_space({k2, k2}, {2, 2}, {2, 2}, {std::nullopt, 1}, true)
                                  .refine_region(0, Ivec{0, 0}, Ivec{2, 2}, std::nullopt);
-    const Space fine = make_space({k2n, k2}, {2, 2}, {2, 3}, {std::nullopt, std::nullopt}, false);
+    const Space fine =
+        make_thb_space({k2n, k2}, {2, 2}, {2, 3}, {std::nullopt, std::nullopt}, false);
     THB_THROWS_WITH_AS(
         coarse_reg.prolongation_csr(fine),
         "fine must be a refinement of this space; mismatches: truncate: self=True vs "
@@ -977,7 +939,7 @@ TEST_CASE("prolongation_csr refuses what the Python implementation refuses") {
         pantr::value_error);
   }
   SUBCASE("a dimension mismatch, with the one-entry tuple spelled as Python does") {
-    const Space coarse_1d = make_space({k3}, {3}, {2}, {std::nullopt}, true);
+    const Space coarse_1d = make_thb_space({k3}, {3}, {2}, {std::nullopt}, true);
     THB_THROWS_WITH_AS(coarse_1d.prolongation_csr(base_2d()),
                        "fine must be a refinement of this space; mismatches: dim: self=1 vs "
                        "fine=2; factor: self=(2,) vs fine=(2, 2); regularity: self=(None,) vs "
@@ -985,8 +947,9 @@ TEST_CASE("prolongation_csr refuses what the Python implementation refuses") {
                        pantr::value_error);
   }
   SUBCASE("a different root with the same structure") {
-    const Space other = make_space({k2n, k2n}, {2, 2}, {2, 2}, {std::nullopt, std::nullopt}, true)
-                            .refine_region(0, Ivec{0, 0}, Ivec{2, 2}, std::nullopt);
+    const Space other =
+        make_thb_space({k2n, k2n}, {2, 2}, {2, 2}, {std::nullopt, std::nullopt}, true)
+            .refine_region(0, Ivec{0, 0}, Ivec{2, 2}, std::nullopt);
     THB_THROWS_WITH_AS(coarse.prolongation_csr(other),
                        "fine must be a refinement of this space; mismatches: root knot vectors "
                        "differ.",

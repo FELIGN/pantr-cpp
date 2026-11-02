@@ -47,13 +47,12 @@ using thb_test::eight_threads;
 using thb_test::eps;
 using thb_test::I64;
 using thb_test::Ivec;
+using thb_test::k3;
 using thb_test::Lcg;
 using thb_test::ThreadsGuard;
 using thb_test::value_error_units;
 using Space = THBSplineSpace<double>;
 using Qi = THBQuasiInterpolation<double>;
-
-const std::vector<double> k3 = {0.0, 0.0, 0.0, 0.0, 0.25, 0.5, 0.75, 1.0, 1.0, 1.0, 1.0};
 
 std::vector<Space> test_spaces() {
   std::vector<Space> out;

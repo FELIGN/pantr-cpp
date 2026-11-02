@@ -61,6 +61,7 @@ using thb_test::Ivec;
 using thb_test::k2;
 using thb_test::k2_3d;
 using thb_test::k2n;
+using thb_test::k3;
 using thb_test::Reg;
 using thb_test::ThreadsGuard;
 using thb_test::value_error_units;
@@ -84,7 +85,6 @@ struct Setup {
   bool truncate = true;
 };
 
-const std::vector<double> k3 = {0.0, 0.0, 0.0, 0.0, 0.25, 0.5, 0.75, 1.0, 1.0, 1.0, 1.0};
 /// Degree 2 and not clamped: domain [0, 1], and the first two-scale rows start left of column 0.
 const std::vector<double> k_unclamped = {-0.5, -0.25, 0.0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5};
 

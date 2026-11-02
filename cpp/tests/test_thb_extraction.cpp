@@ -47,11 +47,10 @@ using thb_test::build_slack;
 using thb_test::eps;
 using thb_test::I64;
 using thb_test::Ivec;
+using thb_test::k3;
 using thb_test::value_error_units;
 using Space = THBSplineSpace<double>;
 using Target = bs::ExtractionTarget;
-
-const std::vector<double> k3 = {0.0, 0.0, 0.0, 0.0, 0.25, 0.5, 0.75, 1.0, 1.0, 1.0, 1.0};
 
 // ---- Spaces ----------------------------------------------------------------------------------
 

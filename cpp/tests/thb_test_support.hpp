@@ -54,6 +54,8 @@ inline const std::vector<double> k2 = {0.0, 0.0, 0.0, 0.25, 0.5, 0.75, 1.0, 1.0,
 inline const std::vector<double> k2n = {0.0, 0.0, 0.0, 0.3, 0.55, 0.8, 1.0, 1.0, 1.0};
 /// Degree 2, two equal spans on [0, 1].
 inline const std::vector<double> k2_3d = {0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0};
+/// Degree 3, four equal spans on [0, 1].
+inline const std::vector<double> k3 = {0.0, 0.0, 0.0, 0.0, 0.25, 0.5, 0.75, 1.0, 1.0, 1.0, 1.0};
 
 // ---- Spaces ----------------------------------------------------------------------------------
 
