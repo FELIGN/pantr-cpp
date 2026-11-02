@@ -60,6 +60,70 @@ struct LlmDirection {
   return s + "]";
 }
 
+/// The `order` equispaced interior points of `[lo, hi]`, `lo + (hi - lo) k / (order + 1)` for
+/// `k = 1, ..., order`.
+///
+/// Interior placement keeps the points off the knots, where a local collocation block can become
+/// singular. The product and the sum are separate statements, so that no fused multiply-add changes
+/// the points.
+///
+/// Args:
+///     lo (double): The interval's lower end.
+///     hi (double): The interval's upper end.
+///     out (std::span<double>): `order` entries, written in full.
+inline void llm_interval_points(double lo, double hi, std::span<double> out) noexcept {
+  const std::size_t order = out.size();
+  for (std::size_t k = 0; k < order; ++k) {
+    const double frac = static_cast<double>(k + 1) / static_cast<double>(order + 1);
+    const double step = (hi - lo) * frac;
+    out[k] = lo + step;
+  }
+}
+
+/// The weight row of function `j` for the points `pts` of one knot interval: row `j - first` of
+/// the inverse of the local collocation block, `first` the first function non-zero there, so that
+/// `weights . f(pts)` is the coefficient of `B_j` of the local interpolant.
+///
+/// Args:
+///     space (const BsplineSpace1D<T>&): The 1D space.
+///     j (std::size_t): The target function, in `[0, num_basis)`; it must be one of the block's
+///         functions.
+///     pts (std::span<const double>): `degree + 1` distinct points inside one knot interval.
+///     row (std::span<double>): `degree + 1` entries, written in full.
+///
+/// Raises:
+///     value_error: The local collocation block is singular (an exactly zero or NaN pivot) or its
+///         inverse is not finite.
+///     index_error: `j` is not among the block's functions (a Python index outside
+///         `[-order, order)`, as before).
+template <StorageFloat T>
+void llm_weight_row(const BsplineSpace1D<T>& space, std::size_t j, std::span<const double> pts,
+                    std::span<double> row) {
+  const auto order = static_cast<long long>(pts.size());
+  const auto [block, first] = space.template tabulate_basis<double>(pts);
+  const std::optional<NdArray<double>> inv = linalg::try_inverse<double>(block);
+  if (!inv) {
+    throw value_error("Local collocation matrix for basis function " + std::to_string(j) +
+                      " is singular.");
+  }
+  if (!std::all_of(inv->data(), inv->data() + inv->size(),
+                   [](double v) { return std::isfinite(v); })) {
+    throw value_error(
+        "Local collocation matrix inversion for basis function " + std::to_string(j) +
+        " produced non-finite values (condition number too large). Points: " + py_list(pts));
+  }
+  long long local = static_cast<long long>(j) - first.data()[0];
+  if (local < -order || local >= order) {
+    throw index_error("index " + std::to_string(local) + " is out of bounds for axis 0 with size " +
+                      std::to_string(order));
+  }
+  if (local < 0) {
+    local += order;  // a negative index counts from the end, as before
+  }
+  const double* src = inv->data() + static_cast<std::size_t>(local) * pts.size();
+  std::copy(src, src + pts.size(), row.begin());
+}
+
 /// Build one direction's Lee-Lyche-Mørken data.
 ///
 /// Raises:
@@ -84,38 +148,9 @@ template <StorageFloat T>
                                      [](double v, T b) { return v < static_cast<double>(b); });
     const auto above = static_cast<std::size_t>(it - breaks.begin());
     const std::size_t mu = above == 0 ? 0 : (std::min)(above - 1, n_intervals - 1);
-    const auto lo = static_cast<double>(breaks[mu]);
-    const auto hi = static_cast<double>(breaks[mu + 1]);
-    for (std::size_t k = 0; k < order; ++k) {
-      // Interior points keep the block off the knots, where it can become singular.
-      const double frac = static_cast<double>(k + 1) / static_cast<double>(order + 1);
-      const double step = (hi - lo) * frac;
-      pts[k] = lo + step;
-    }
-    const auto [block, first] = space.template tabulate_basis<double>(std::span<const double>(pts));
-    const std::optional<NdArray<double>> inv = linalg::try_inverse<double>(block);
-    if (!inv) {
-      throw value_error("Local collocation matrix for basis function " + std::to_string(j) +
-                        " is singular.");
-    }
-    if (!std::all_of(inv->data(), inv->data() + inv->size(),
-                     [](double v) { return std::isfinite(v); })) {
-      throw value_error(
-          "Local collocation matrix inversion for basis function " + std::to_string(j) +
-          " produced non-finite values (condition number too large). Points: " + py_list(pts));
-    }
-    long long local = static_cast<long long>(j) - first.data()[0];
-    const auto ord = static_cast<long long>(order);
-    if (local < -ord || local >= ord) {
-      throw index_error("index " + std::to_string(local) +
-                        " is out of bounds for axis 0 with size " + std::to_string(order));
-    }
-    if (local < 0) {
-      local += ord;  // a negative index counts from the end, as before
-    }
-    const double* row = inv->data() + static_cast<std::size_t>(local) * order;
+    llm_interval_points(static_cast<double>(breaks[mu]), static_cast<double>(breaks[mu + 1]), pts);
+    llm_weight_row<T>(space, j, pts, std::span<double>(out.weights.data() + j * order, order));
     std::copy(pts.begin(), pts.end(), out.points.data() + j * order);
-    std::copy(row, row + order, out.weights.data() + j * order);
   }
   return out;
 }
