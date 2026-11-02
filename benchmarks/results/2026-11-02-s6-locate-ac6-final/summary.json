@@ -1,0 +1,303 @@
+{
+ "protocol": {
+  "k": 10,
+  "repeats": 30,
+  "threads": [
+   1,
+   8
+  ],
+  "cpus": "0-7",
+  "reference": "main",
+  "argv": [
+   "benchmarks/compare.py",
+   "--side",
+   "main=<main src>",
+   "--side",
+   "branch=<branch src>",
+   "--k",
+   "10",
+   "--threads",
+   "1",
+   "8",
+   "--cpus",
+   "0-7",
+   "--filter",
+   "^S6\\.bspline_locate",
+   "--out-dir",
+   "benchmarks/results/2026-11-02-s6-locate-ac6-final"
+  ]
+ },
+ "sides": {
+  "main": {
+   "commit": "11ab436abd94edf8f414d1ec2d9ed0bf77e38e89",
+   "extension": "none"
+  },
+  "branch": {
+   "commit": "5523ce6e542f8b8853e77065cde1b69201036e5d",
+   "extension": "pantr._pantr_v4 (v4, _pantr_v4.abi3.so)"
+  }
+ },
+ "machine": {
+  "cpu": "Intel(R) Xeon(R) Gold 6148 CPU @ 2.40GHz",
+  "platform": "Linux-5.15.0-144-generic-x86_64-with-glibc2.35",
+  "affinity": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7
+  ],
+  "governor": "schedutil"
+ },
+ "cases": {
+  "S6.bspline_locate.tiny@t1": {
+   "what": {
+    "main": "Bspline.locate, bicubic 8^2 intervals, 1 points",
+    "branch": "Bspline.locate, bicubic 8^2 intervals, 1 points"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 1877448.5,
+     "range_ns": 78093.5,
+     "process_medians_ns": [
+      1888208.0,
+      1861362.25,
+      1844569.0,
+      1836765.0,
+      1866689.0,
+      1864232.75,
+      1906014.75,
+      1914858.5,
+      1912029.75,
+      1906861.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 11575.155084033613,
+     "range_ns": 4648.319693237796,
+     "process_medians_ns": [
+      16094.650862068966,
+      11558.054285714286,
+      11544.021341463415,
+      11844.557803468208,
+      15972.977477477478,
+      11482.316770186335,
+      11446.33116883117,
+      11499.506493506495,
+      11592.255882352942,
+      11933.708333333334
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.bspline_locate.medium@t1": {
+   "what": {
+    "main": "Bspline.locate, bicubic 8^2 intervals, 1000 points",
+    "branch": "Bspline.locate, bicubic 8^2 intervals, 1000 points"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 55597719.25,
+     "range_ns": 2603707.0,
+     "process_medians_ns": [
+      56610748.5,
+      54923823.5,
+      55870534.0,
+      55054653.5,
+      54343328.0,
+      54602846.5,
+      56947035.0,
+      55344393.5,
+      56206046.5,
+      55851045.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 5671175.5,
+     "range_ns": 1993592.5,
+     "process_medians_ns": [
+      5573574.5,
+      5579264.0,
+      5780553.0,
+      5639615.0,
+      7481825.0,
+      5488232.5,
+      5807569.0,
+      5702736.0,
+      5611259.0,
+      6095540.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.bspline_locate.large@t1": {
+   "what": {
+    "main": "Bspline.locate, bicubic 8^2 intervals, 10000 points",
+    "branch": "Bspline.locate, bicubic 8^2 intervals, 10000 points"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 536767942.75,
+     "range_ns": 33395362.0,
+     "process_medians_ns": [
+      542406787.5,
+      536869798.0,
+      534638711.0,
+      528751593.5,
+      526842900.0,
+      536666087.5,
+      560238262.0,
+      534150352.5,
+      553997532.0,
+      539369646.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 56832392.75,
+     "range_ns": 4115067.5,
+     "process_medians_ns": [
+      56272741.0,
+      55970166.0,
+      58362903.0,
+      56530686.0,
+      60085233.5,
+      56374310.0,
+      58114938.5,
+      57035458.5,
+      56629327.0,
+      57818290.5
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.bspline_locate.tiny@t8": {
+   "what": {
+    "main": "Bspline.locate, bicubic 8^2 intervals, 1 points",
+    "branch": "Bspline.locate, bicubic 8^2 intervals, 1 points"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 1952990.75,
+     "range_ns": 91851.0,
+     "process_medians_ns": [
+      1922940.0,
+      1944206.0,
+      1936397.5,
+      1914140.5,
+      2005361.5,
+      1962223.0,
+      2005991.5,
+      1941523.0,
+      1961775.5,
+      1999807.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 11580.206631231087,
+     "range_ns": 5795.060705741627,
+     "process_medians_ns": [
+      11283.481366459626,
+      11615.40705128205,
+      16480.736842105263,
+      10685.676136363636,
+      12404.034013605444,
+      12265.91393442623,
+      11472.408805031446,
+      11471.130303030302,
+      11723.257668711656,
+      11545.006211180124
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.bspline_locate.medium@t8": {
+   "what": {
+    "main": "Bspline.locate, bicubic 8^2 intervals, 1000 points",
+    "branch": "Bspline.locate, bicubic 8^2 intervals, 1000 points"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 56134931.25,
+     "range_ns": 7859850.0,
+     "process_medians_ns": [
+      54670158.5,
+      56180337.0,
+      55107036.0,
+      53730175.5,
+      61590025.5,
+      57678561.5,
+      58561204.0,
+      55855045.5,
+      57030638.5,
+      56089525.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 1047257.875,
+     "range_ns": 182934.16666666674,
+     "process_medians_ns": [
+      1049584.75,
+      1044931.0,
+      944747.8333333333,
+      1068232.75,
+      1127682.0,
+      1002331.6666666667,
+      1064569.25,
+      1044249.75,
+      1050152.75,
+      1037277.25
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.bspline_locate.large@t8": {
+   "what": {
+    "main": "Bspline.locate, bicubic 8^2 intervals, 10000 points",
+    "branch": "Bspline.locate, bicubic 8^2 intervals, 10000 points"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 537050337.75,
+     "range_ns": 41818444.5,
+     "process_medians_ns": [
+      522034596.0,
+      530866623.5,
+      522531177.5,
+      517327338.0,
+      533113297.0,
+      555506870.0,
+      558947322.5,
+      540987378.5,
+      559145782.5,
+      549864063.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 8632954.5,
+     "range_ns": 1016034.0,
+     "process_medians_ns": [
+      8558762.0,
+      8881848.5,
+      8659947.0,
+      8605962.0,
+      8560358.0,
+      8775969.5,
+      8997692.5,
+      8070955.5,
+      9086989.5,
+      8571486.5
+     ],
+     "flagged": false
+    }
+   }
+  }
+ }
+}
