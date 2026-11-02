@@ -46,6 +46,7 @@
 #include "pantr/bspline/knot_insertion.hpp"
 #include "pantr/bspline/knot_removal.hpp"
 #include "pantr/bspline/knots.hpp"
+#include "pantr/bspline/local_space.hpp"
 #include "pantr/bspline/periodic.hpp"
 #include "pantr/bspline/product.hpp"
 #include "pantr/bspline/reparametrize.hpp"
@@ -70,6 +71,8 @@
 #include "pantr/partition/coupling_graph.hpp"
 #include "pantr/partition/partition_graph.hpp"
 
+#include "pantr/thb/coupling_graph.hpp"
+#include "pantr/thb/local_space.hpp"
 #include "pantr/thb/space.hpp"
 #include "pantr/thb/tolerances.hpp"
 #include "pantr/thb/types.hpp"
