@@ -17,6 +17,7 @@
 #include <doctest/doctest.h>
 
 #include "thb_refine_golden.hpp"
+#include "thb_test_support.hpp"
 
 #include <pantr/bspline/space.hpp>
 #include <pantr/bspline/space_1d.hpp>
@@ -50,16 +51,20 @@ using pantr::mdview;
 using pantr::thb::ProlongationCsr;
 using pantr::thb::THBSplineSpace;
 
-using I64 = std::int64_t;
-using Ivec = std::vector<I64>;
-using Reg = std::vector<std::optional<int>>;
+using thb_test::build_slack;
+using thb_test::cell_points;
+using thb_test::check_many_threads_are_used;
+using thb_test::eight_threads;
+using thb_test::eps;
+using thb_test::I64;
+using thb_test::Ivec;
+using thb_test::k2;
+using thb_test::k2_3d;
+using thb_test::k2n;
+using thb_test::Reg;
+using thb_test::ThreadsGuard;
+using thb_test::value_error_units;
 using Space = THBSplineSpace<double>;
-
-constexpr double eps = std::numeric_limits<double>::epsilon();
-
-/// The slack of a floating-point build over a rounding model (FMA contraction, vector width): the
-/// factor of four `pantr::tolerance` gives its default tier for the same reason.
-constexpr double build_slack = 4.0;
 
 /// The size of an entry's error in a prolongation: the library's own tier for the residual of the
 /// local solve that produces it (`prolongation_residual_tolerance`). The entries are refinement
@@ -68,32 +73,9 @@ constexpr double build_slack = 4.0;
 /// derived per entry. An admitted heuristic, not a derived bound.
 constexpr double entry_error = 4096.0 * eps;
 
-// The functions under test are [[nodiscard]]; a throw check discards the value on purpose.
-#define THB_THROWS_WITH_AS(expr, msg, ex) CHECK_THROWS_WITH_AS(static_cast<void>(expr), msg, ex)
-#define THB_NOTHROW(expr) CHECK_NOTHROW(static_cast<void>(expr))
-
-/// Restores the calling thread's parallelism setting on scope exit.
-class ThreadsGuard {
- public:
-  explicit ThreadsGuard(std::size_t n) : previous_(par::get_num_threads()) {
-    par::set_num_threads(static_cast<std::int64_t>(n));
-  }
-  ThreadsGuard(const ThreadsGuard&) = delete;
-  ThreadsGuard& operator=(const ThreadsGuard&) = delete;
-  ~ThreadsGuard() { par::set_num_threads(static_cast<std::int64_t>(previous_)); }
-
- private:
-  std::size_t previous_;
-};
-
-std::size_t eight_threads() { return (std::min)(std::size_t{8}, par::max_threads()); }
-
 // ---- Setups ----------------------------------------------------------------------------------
 
-const std::vector<double> k2 = {0.0, 0.0, 0.0, 0.25, 0.5, 0.75, 1.0, 1.0, 1.0};
-const std::vector<double> k2n = {0.0, 0.0, 0.0, 0.3, 0.55, 0.8, 1.0, 1.0, 1.0};
 const std::vector<double> k3 = {0.0, 0.0, 0.0, 0.0, 0.25, 0.5, 0.75, 1.0, 1.0, 1.0, 1.0};
-const std::vector<double> k2_3d = {0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0};
 
 /// Degree-2 knots with `n` equal spans on [0, 1].
 std::vector<double> uniform_knots(int n) {
@@ -243,40 +225,6 @@ std::size_t max_row_nnz(const ProlongationCsr& p) {
     most = (std::max)(most, static_cast<std::size_t>(p.indptr[r + 1] - p.indptr[r]));
   }
   return most;
-}
-
-/// A bound on the relative rounding error of one function's value, in units of `eps`, as the
-/// existing THB tests derive it: `2 p` per direction for the Cox-de Boor recurrence, `D` for the
-/// product over the directions, and the size of the largest coefficient box for the sum.
-double value_error_units(const Space& space) {
-  const int p = *std::max_element(space.degrees().begin(), space.degrees().end());
-  const auto d = static_cast<double>(space.dim());
-  std::size_t box = 1;
-  for (I64 dof = 0; dof < space.num_total_basis(); ++dof) {
-    if (const auto* f = space.truncated(dof)) {
-      box = (std::max)(box, f->coeffs.size());
-    }
-  }
-  return 2.0 * p * d + d + static_cast<double>(box);
-}
-
-/// Points of cell `cid`: `lo + t * (hi - lo)` for `t` in `ts` along every axis (product grid).
-std::vector<double> cell_points(const Space& space, I64 cid, const std::vector<double>& ts) {
-  const auto [lo, hi] = space.grid().cell_bounds(cid);
-  const std::size_t d = space.dim();
-  std::size_t count = 1;
-  for (std::size_t k = 0; k < d; ++k) {
-    count *= ts.size();
-  }
-  std::vector<double> pts(count * d);
-  for (std::size_t i = 0; i < count; ++i) {
-    std::size_t rest = i;
-    for (std::size_t k = d; k-- > 0;) {
-      pts[i * d + k] = lo[k] + ts[rest % ts.size()] * (hi[k] - lo[k]);
-      rest /= ts.size();
-    }
-  }
-  return pts;
 }
 
 /// Whether the truncated functions acting on every cell belong to at most `m` successive levels
@@ -609,6 +557,10 @@ TEST_CASE("prolongation_csr: the partition of unity is carried through, and HB d
   for (const double v : carried_h) {
     worst_h = (std::max)(worst_h, std::abs(v - 1.0));
   }
+  // A control threshold needs only to be far above the round-off level (the bound above, a few
+  // `entry_error`) and far below the effect it detects (the weight of the coarse functions that
+  // truncation would have removed, a sizeable fraction of one): 0.01 is both, by orders of
+  // magnitude on either side.
   CHECK(worst_h > 0.01);
 }
 
@@ -802,6 +754,7 @@ TEST_CASE("prolongation_csr: the matrix does not depend on the thread count") {
     const ThreadsGuard guard(threads);
     return coarse.prolongation_csr(fine);
   };
+  check_many_threads_are_used();
   const ProlongationCsr one = build(1);
   const ProlongationCsr many = build(eight_threads());
   CHECK(one.rows == many.rows);

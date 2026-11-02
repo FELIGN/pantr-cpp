@@ -12,6 +12,7 @@
 #include <doctest/doctest.h>
 
 #include "thb_golden.hpp"
+#include "thb_test_support.hpp"
 
 #include <pantr/bspline/space.hpp>
 #include <pantr/bspline/space_1d.hpp>
@@ -50,27 +51,19 @@ namespace gold = pantr_thb_golden;
 using pantr::mdview;
 using pantr::thb::THBSplineSpace;
 
-using I64 = std::int64_t;
-using Ivec = std::vector<I64>;
-using Reg = std::vector<std::optional<int>>;
-
-constexpr double eps = std::numeric_limits<double>::epsilon();
-
-/// Restores the calling thread's parallelism setting on scope exit.
-class ThreadsGuard {
- public:
-  explicit ThreadsGuard(std::size_t n) : previous_(par::get_num_threads()) {
-    par::set_num_threads(static_cast<std::int64_t>(n));
-  }
-  ThreadsGuard(const ThreadsGuard&) = delete;
-  ThreadsGuard& operator=(const ThreadsGuard&) = delete;
-  ~ThreadsGuard() { par::set_num_threads(static_cast<std::int64_t>(previous_)); }
-
- private:
-  std::size_t previous_;
-};
-
-std::size_t eight_threads() { return (std::min)(std::size_t{8}, par::max_threads()); }
+using thb_test::build_slack;
+using thb_test::cell_points;
+using thb_test::check_many_threads_are_used;
+using thb_test::eight_threads;
+using thb_test::eps;
+using thb_test::I64;
+using thb_test::Ivec;
+using thb_test::k2;
+using thb_test::k2_3d;
+using thb_test::k2n;
+using thb_test::Reg;
+using thb_test::ThreadsGuard;
+using thb_test::value_error_units;
 
 // ---- Setups ----------------------------------------------------------------------------------
 
@@ -91,10 +84,7 @@ struct Setup {
   bool truncate = true;
 };
 
-const std::vector<double> k2 = {0.0, 0.0, 0.0, 0.25, 0.5, 0.75, 1.0, 1.0, 1.0};
 const std::vector<double> k3 = {0.0, 0.0, 0.0, 0.0, 0.25, 0.5, 0.75, 1.0, 1.0, 1.0, 1.0};
-const std::vector<double> k2n = {0.0, 0.0, 0.0, 0.3, 0.55, 0.8, 1.0, 1.0, 1.0};
-const std::vector<double> k2_3d = {0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0};
 /// Degree 2 and not clamped: domain [0, 1], and the first two-scale rows start left of column 0.
 const std::vector<double> k_unclamped = {-0.5, -0.25, 0.0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5};
 
@@ -166,28 +156,6 @@ THBSplineSpace<T> make_space(const Setup& s) {
 
 // ---- Helpers ---------------------------------------------------------------------------------
 
-/// Query points of cell `cid`: `lo + u * (hi - lo)` for `u` in `us` along every axis (the product
-/// grid of the parameters, C order).
-template <class T>
-std::vector<double> cell_points(const THBSplineSpace<T>& space, I64 cid,
-                                const std::vector<double>& us) {
-  const auto [lo, hi] = space.grid().cell_bounds(cid);
-  const std::size_t d = space.dim();
-  std::size_t count = 1;
-  for (std::size_t k = 0; k < d; ++k) {
-    count *= us.size();
-  }
-  std::vector<double> pts(count * d);
-  for (std::size_t i = 0; i < count; ++i) {
-    std::size_t rest = i;
-    for (std::size_t k = d; k-- > 0;) {
-      pts[i * d + k] = lo[k] + us[rest % us.size()] * (hi[k] - lo[k]);
-      rest /= us.size();
-    }
-  }
-  return pts;
-}
-
 mdview<const double, 2> rows_of(const std::vector<double>& pts, std::size_t d) {
   return mdview<const double, 2>(pts.data(), pts.size() / d, d);
 }
@@ -198,37 +166,11 @@ pantr::thb::TabulatedBasis tabulate(const THBSplineSpace<T>& space, I64 cid,
   return space.tabulate_basis(cid, rows_of(pts, space.dim()), orders);
 }
 
-/// A bound on the relative rounding error of one hierarchical function's value, in units of `eps`,
-/// all terms being non-negative: `2 p` for a 1D Cox-de Boor recurrence (`p` combinations, two
-/// operations each) in each of the `D` directions, `D` for their product, and for a truncated
-/// function the size of its coefficient box for the sum (taken at the largest box of the space).
-template <class T>
-double value_error_units(const THBSplineSpace<T>& space) {
-  const int p = *std::max_element(space.degrees().begin(), space.degrees().end());
-  const auto d = static_cast<double>(space.dim());
-  std::size_t box = 1;
-  for (I64 dof = 0; dof < space.num_total_basis(); ++dof) {
-    if (const auto* f = space.truncated(dof)) {
-      box = (std::max)(box, f->coeffs.size());
-    }
-  }
-  return 2.0 * p * d + d + static_cast<double>(box);
-}
-
 /// The unit roundoff scale of the root's storage type, as a double.
 template <class T>
 double storage_eps(const THBSplineSpace<T>& /*space*/) {
   return static_cast<double>(std::numeric_limits<T>::epsilon());
 }
-
-/// The slack of a floating-point build over the model above (FMA contraction, vector width): the
-/// factor of four `pantr::tolerance` gives its default tier for the same reason.
-constexpr double build_slack = 4.0;
-
-// The functions under test are [[nodiscard]]; a throw check discards the value on purpose.
-#define THB_THROWS_AS(expr, ex) CHECK_THROWS_AS(static_cast<void>(expr), ex)
-#define THB_THROWS_WITH_AS(expr, msg, ex) CHECK_THROWS_WITH_AS(static_cast<void>(expr), msg, ex)
-#define THB_NOTHROW(expr) CHECK_NOTHROW(static_cast<void>(expr))
 
 // ---- Golden values from the Python implementation --------------------------------------------
 
@@ -665,6 +607,10 @@ TEST_CASE("THBSplineSpace: the plain hierarchical basis does not sum to one at a
   const THBSplineSpace<double> thb = make_space(setup_2d(true, 2));
   const THBSplineSpace<double> hb = make_space(setup_2d(false, 2));
   CHECK(measure_unity(thb).worst_deviation <= unity_bound(thb));
+  // A control threshold needs only to be far above the round-off level (`unity_bound`, a few
+  // dozen eps) and far below the effect it detects (the weights of the coarse functions that
+  // truncation would have removed, a sizeable fraction of one): 1e-2 is both, by orders of
+  // magnitude on either side.
   CHECK(measure_unity(hb).worst_deviation > 1e-2);
   // Away from the interface, on the unrefined coarse corner, the two agree: the last cell of
   // level 0 is the farthest from the refined region.
@@ -686,9 +632,13 @@ TEST_CASE("THBSplineSpace: the plain hierarchical basis does not sum to one at a
 /// difference is exact when `p <= 2`. `|f'''|` is read from the derivative of order three, which
 /// is zero below degree 3 (and exercises an order above the degree). The rounding error of a value
 /// is `delta = build_slack * value_error_units * eps` (every value is at most 1), so the
-/// difference quotient carries `delta / h` (`delta / (h1 h2)` for the mixed one); the analytic
-/// derivative's own rounding is bounded by the same `delta` times its size. With `h = width / 64`
-/// at parameters 0.3 and 0.6 the points stay in the cell.
+/// difference quotient carries `delta / h` (`delta / (h1 h2)` for the mixed one). The analytic
+/// derivative's own rounding is taken as `delta * (1 + |a|)`, an admitted heuristic and not a bound
+/// in `sum |terms|` (the terms of the derivative recurrence are not exposed, and instrumenting it
+/// would be most of the implementation): each term is a value over a knot difference, so the
+/// error scales with the derivative's size as `|a|` does, and the dominant `delta / h` is 64 /
+/// width times larger than `delta` itself. With `h = width / 64` at parameters 0.3 and 0.6 the
+/// points stay in the cell.
 template <class T>
 void check_derivatives(const THBSplineSpace<T>& space) {
   const std::size_t d = space.dim();
@@ -806,6 +756,7 @@ Setup big_setup() {
 
 TEST_CASE("THBSplineSpace: the per-cell table does not depend on the thread count") {
   const Setup s = big_setup();
+  check_many_threads_are_used();
   const std::size_t threads = eight_threads();
   const THBSplineSpace<double> one = [&] {
     const ThreadsGuard guard(1);
@@ -957,8 +908,10 @@ TEST_CASE("THBSplineSpace: points at the slack edge of a boundary cell, on a one
           for (std::size_t i = 0; i < tab.values.size(); ++i) {
             sum += tab.values.data()[i];
           }
-          // Half a slack (a few eps) outside the end, on a unit domain.
-          CHECK(std::abs(sum - 1.0) <= 1e-12);
+          // Half a slack (4 eps of the cell's scale) outside the end: the piece's polynomial still
+          // sums to one, and the point only moves each affine weight of the recurrence by that
+          // much, so the sum errs by rounding, which `unity_bound` bounds.
+          CHECK(std::abs(sum - 1.0) <= unity_bound(space));
         }
       }
     }
@@ -1050,6 +1003,21 @@ TEST_CASE("THBSplineSpace: the constructor refuses what the Python implementatio
                        doctest::Contains("level 1 has 4 knot intervals along axis 0 but the grid "
                                          "has 6 cells there"),
                        pantr::value_error);
+  }
+  SUBCASE("a root function with an empty support is refused") {
+    // Knots the 1D space accepts, with a multiplicity of four at degree 2: the function whose
+    // knots `t_i .. t_{i + 3}` are all equal has a zero-width support, which no interval holds.
+    Setup inner{
+        {{0.0, 0.0, 0.0, 0.5, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0}}, {2}, {2}, {std::nullopt}, {}, true};
+    THB_THROWS_WITH_AS(make_space(inner),
+                       doctest::Contains("B-spline function(s) with empty support detected at "
+                                         "indices [3]. This indicates an invalid B-spline space."),
+                       pantr::state_error);
+    Setup first{{{0.0, 0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0}}, {2}, {2}, {std::nullopt}, {}, true};
+    THB_THROWS_WITH_AS(make_space(first),
+                       doctest::Contains("B-spline function(s) with empty support detected at "
+                                         "indices [0]."),
+                       pantr::state_error);
   }
   SUBCASE("a subdivision the knot functions refuse is refused with their text") {
     // A cell narrower than the tolerance of its own subdivision, three levels down: the knots chain
