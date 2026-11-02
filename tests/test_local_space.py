@@ -6,6 +6,9 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
+from pantr._testing import func_support_1d as _func_support_1d
+from pantr._testing import thb_dof_owner as _thb_dof_owner
+from pantr._testing import thb_halo as _thb_halo
 from pantr.bspline import (
     BsplineSpace,
     BsplineSpace1D,
@@ -17,8 +20,6 @@ from pantr.bspline import (
     dof_owner,
     dof_owner_windowed,
 )
-from pantr.bspline._local_space import _thb_dof_owner, _thb_halo
-from pantr.bspline._thb_spline_space import _func_support_1d
 from pantr.grid import Partition, hierarchical_grid, uniform_grid
 
 

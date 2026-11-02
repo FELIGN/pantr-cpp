@@ -8,6 +8,11 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
+from pantr._testing import (
+    cell_membership_tolerance,
+    func_support_1d,
+    prolongation_residual_tolerance,
+)
 from pantr.bspline import (
     BsplineSpace,
     BsplineSpace1D,
@@ -18,9 +23,8 @@ from pantr.bspline import (
     create_thb_space,
     create_uniform_space,
 )
-from pantr.bspline._thb_eval_core import _combine_tp_values
-from pantr.bspline._thb_spline_space import _box_all_true, _func_support_1d
 from pantr.grid import HierarchicalGrid, hierarchical_grid, tensor_product_grid, uniform_grid
+from tests._thb_support import VALUE_ATOL, tensor_product_rows
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -253,7 +257,7 @@ class TestSelection:
             num_basis = space.num_basis
             subdomain = grid.subdomain_mask(level)
             refined = subdomain & ~grid.active_leaf_mask(level)
-            support = [_func_support_1d(sp1d) for sp1d in space.spaces]
+            support = [func_support_1d(sp1d) for sp1d in space.spaces]
             for flat in thb.active_function_indices(level):
                 multi = np.unravel_index(int(flat), num_basis)
                 box = tuple(
@@ -471,19 +475,60 @@ class TestLevelSpaces:
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-def _refined_1d_three_levels() -> THBSplineSpace:
-    """Degree-2 1D space with the left region refined twice (truncated)."""
+def _refined_1d_three_levels(*, truncate: bool = True) -> THBSplineSpace:
+    """Degree-2 1D space with the left region refined twice (truncated unless told otherwise)."""
     grid = _grid_1d()
     grid.refine(0, [0], [2])
     grid.refine(1, [0], [2])
-    return THBSplineSpace(_root_1d(), grid, truncate=True)
+    return THBSplineSpace(_root_1d(), grid, truncate=truncate)
 
 
-def _refined_2d_corner() -> THBSplineSpace:
-    """Degree-(2, 2) space with the lower-left corner refined once (truncated)."""
+def _refined_2d_corner(*, truncate: bool = True) -> THBSplineSpace:
+    """Degree-(2, 2) space with the lower-left corner refined once (truncated unless told)."""
     grid = _grid_2d()
     grid.refine(0, [0, 0], [2, 2])
-    return THBSplineSpace(_root_2d(), grid, truncate=True)
+    return THBSplineSpace(_root_2d(), grid, truncate=truncate)
+
+
+_TRUNCATION_VISIBLE = 1.0e-3
+"""Smallest gap that counts as truncation.
+
+A truncated function loses refinement coefficients (each at least ``1/4`` per direction for a
+degree-2 halving) times finer B-spline values at the sampled interior points of a cell, which
+puts its gap far above rounding. The classification is not borderline:
+:meth:`TestTruncation.test_truncation_is_visible_or_absent_never_borderline` asserts that every
+gap is below ``VALUE_ATOL`` or above this value.
+"""
+
+
+def _truncation_gaps(truncated: THBSplineSpace, plain: THBSplineSpace) -> npt.NDArray[np.float64]:
+    """Return, per dof, the largest |THB - HB| over the interior points of every cell.
+
+    A function is truncated exactly where truncation changed it, so the dofs whose gap is large
+    are the truncated ones: the public route to what the Python implementation's ``_trunc`` map
+    stored. The two spaces must share a grid, hence an active set.
+
+    Args:
+        truncated (THBSplineSpace): The truncated (THB) space.
+        plain (THBSplineSpace): The non-truncated (HB) space over the same grid.
+
+    Returns:
+        npt.NDArray[np.float64]: One gap per global dof.
+    """
+    grid = truncated.grid
+    u = np.linspace(0.0, 1.0, truncated.degrees[0] + 3)[1:-1]
+    gaps = np.zeros(truncated.num_total_basis)
+    for cid in range(grid.num_cells):
+        lo, hi = grid.cell_bounds(cid)
+        mesh = np.meshgrid(
+            *[lo[k] + (hi[k] - lo[k]) * u for k in range(truncated.dim)], indexing="ij"
+        )
+        pts = np.stack([m.ravel() for m in mesh], axis=-1)
+        values_t, dofs_t = truncated.tabulate_basis(cid, pts)
+        values_h, dofs_h = plain.tabulate_basis(cid, pts)
+        np.testing.assert_array_equal(dofs_t, dofs_h)
+        gaps[dofs_t] = np.maximum(gaps[dofs_t], np.abs(values_t - values_h).max(axis=0))
+    return gaps
 
 
 class TestTruncation:
@@ -518,14 +563,46 @@ class TestTruncation:
         assert _max_reproduction_residual(thb, lambda p: p[:, 1]) < 1e-9
         assert _max_reproduction_residual(thb, lambda p: p[:, 0] * p[:, 1]) < 1e-9
 
+    def test_truncation_is_visible_or_absent_never_borderline(self) -> None:
+        """Every function differs from its HB twin by rounding or by a clear margin, not between.
+
+        Guards the classification the other truncation tests rest on: with a gap in between, the
+        choice of ``_TRUNCATION_VISIBLE`` would decide which functions count as truncated.
+        """
+        gaps = _truncation_gaps(_refined_2d_corner(), _refined_2d_corner(truncate=False))
+        assert np.all((gaps <= VALUE_ATOL) | (gaps >= _TRUNCATION_VISIBLE)), sorted(gaps)
+
     def test_some_functions_truncated(self) -> None:
         thb = _refined_2d_corner()
-        n_truncated = len(thb._trunc)
+        gaps = _truncation_gaps(thb, _refined_2d_corner(truncate=False))
+        n_truncated = int(np.count_nonzero(gaps >= _TRUNCATION_VISIBLE))
         assert 0 < n_truncated < thb.num_total_basis
+
+    @pytest.mark.parametrize(
+        ("name", "dofs"),
+        [("1d3", [0, 4]), ("2d_corner", [0, 4, 8, 9, 10])],
+    )
+    def test_the_truncated_functions_are_the_ones_the_python_implementation_stored(
+        self, name: str, dofs: list[int]
+    ) -> None:
+        """Pin which functions are truncated, from the Python implementation's own map.
+
+        Golden sets: the keys of ``_trunc`` of the Python implementation (main at 11ab436, the
+        port's oracle) on these two fixtures. Pins what main does, and the exact-arithmetic test
+        in ``test_thb_port.py`` (``TestTruncationAgainstExactRefinement``) is what says that it
+        is right, for two levels. A function missing from the set was left a plain B-spline
+        where it needed truncating (PoU lost); a function added is truncated without a finer
+        active component to remove.
+        """
+        build = _refined_1d_three_levels if name == "1d3" else _refined_2d_corner
+        gaps = _truncation_gaps(build(), build(truncate=False))
+        assert np.flatnonzero(gaps >= _TRUNCATION_VISIBLE).tolist() == dofs
 
     def test_no_truncation_when_unrefined(self) -> None:
         thb = THBSplineSpace(_root_1d(), _grid_1d(), truncate=True)
-        assert len(thb._trunc) == 0
+        hb = THBSplineSpace(_root_1d(), _grid_1d(), truncate=False)
+        gaps = _truncation_gaps(thb, hb)
+        assert np.all(gaps <= VALUE_ATOL)
         assert thb.num_total_basis == _root_1d().num_total_basis
 
     def test_truncation_identity_outside_refinement(self) -> None:
@@ -567,7 +644,10 @@ class TestTruncation:
         cid = thb.grid.locate([0.1, 0.1])
         assert cid is not None
         active = thb.active_basis(cid)
-        assert any(dof in thb._trunc for dof in active), "no truncated dof on this cell"
+        truncated = np.flatnonzero(
+            _truncation_gaps(thb, _refined_2d_corner(truncate=False)) >= _TRUNCATION_VISIBLE
+        )
+        assert np.intersect1d(active, truncated).size > 0, "no truncated dof on this cell"
         pts = np.array([[0.1, 0.1]])
         out_basis = np.empty((1, active.shape[0]), dtype=np.float64)
         vals, _ = thb.tabulate_basis(cid, pts, out_basis=out_basis)
@@ -575,15 +655,15 @@ class TestTruncation:
         exp, _ = thb.tabulate_basis(cid, pts)
         np.testing.assert_allclose(out_basis, exp)
 
-    def test_deepest_level_functions_not_in_trunc(self) -> None:
-        # Active functions at the deepest level have no finer level below;
-        # _compute_truncated_coeffs iterates over level < num_levels-1 only.
+    def test_deepest_level_functions_are_never_truncated(self) -> None:
+        # Active functions at the deepest level have no finer level below to lose components to.
         thb = _refined_1d_three_levels()
+        gaps = _truncation_gaps(thb, _refined_1d_three_levels(truncate=False))
         deepest = thb.num_levels - 1
-        offset = int(thb._func_offset[deepest])
-        count = int(thb.num_basis_per_level[deepest])
-        for i in range(count):
-            assert offset + i not in thb._trunc
+        offset = sum(thb.num_basis_per_level[:deepest])
+        count = thb.num_basis_per_level[deepest]
+        assert count > 0
+        assert np.all(gaps[offset : offset + count] <= VALUE_ATOL)
 
     def test_partition_of_unity_with_regularity_c0(self) -> None:
         root = _root_1d()
@@ -609,9 +689,10 @@ class TestTruncation:
         hb_active = hb.active_basis(cid)
         thb_vals = thb.tabulate_basis(cid, mid)[0][0]
         hb_vals = hb.tabulate_basis(cid, mid)[0][0]
+        truncated = set(np.flatnonzero(_truncation_gaps(thb, hb) >= _TRUNCATION_VISIBLE).tolist())
         found_truncated = False
         for i, dof in enumerate(thb_active):
-            if dof in thb._trunc:
+            if int(dof) in truncated:
                 found_truncated = True
                 thb_val = float(thb_vals[i])
                 j = int(np.searchsorted(hb_active, dof))
@@ -1365,22 +1446,19 @@ class TestProlongationResidualGate:
         A regression to a fixed absolute constant would break this even if the digits
         happened to match at float64.
         """
-        from pantr.bspline._thb_spline_space import (  # noqa: PLC0415
-            _prolongation_residual_tolerance,
-        )
         from pantr.tolerance import get_conservative  # noqa: PLC0415
 
-        assert _prolongation_residual_tolerance(1.0) == 2.0 * get_conservative(np.float64)
-        assert _prolongation_residual_tolerance(0.0) == get_conservative(np.float64)
+        assert prolongation_residual_tolerance(1.0) == 2.0 * get_conservative(np.float64)
+        assert prolongation_residual_tolerance(0.0) == get_conservative(np.float64)
         # Monotone in the size of the column it grades.
-        assert _prolongation_residual_tolerance(3.0) > _prolongation_residual_tolerance(1.0)
+        assert prolongation_residual_tolerance(3.0) > prolongation_residual_tolerance(1.0)
 
         # And the band the old `1e-8` wrongly certified is closed from both ends. Neither
         # direction test above lands near the threshold -- a genuine refinement sits at
         # ~18.5 eps and a real impostor at order one -- so this is what pins the
         # threshold's calibration rather than merely its existence.
         eps = float(np.finfo(np.float64).eps)
-        gate = _prolongation_residual_tolerance(1.0)
+        gate = prolongation_residual_tolerance(1.0)
         assert gate < 1.0e-11, "a residual of 1e-10 must no longer pass as a refinement"
         assert gate > 100.0 * eps, "the worst measured genuine refinement (18.5 eps) must clear"
 
@@ -1455,18 +1533,14 @@ class TestCellMembershipTolerance:
         Stated as an inequality against the old constant rather than as digits, so it
         survives a change of tier but not a reversion to an absolute band.
         """
-        from pantr.bspline._thb_spline_space import (  # noqa: PLC0415
-            _cell_membership_tolerance,
-        )
-
-        tol = _cell_membership_tolerance(np.array([0.0]), np.array([0.25]))[0]
+        tol = cell_membership_tolerance(0.0, 0.25)
         assert tol < 1.0e-12 / 1000.0
         # But not so tight that a point formed as `lo + xi * (hi - lo)` cannot survive:
         # three roundings at this magnitude is 3 * eps * 0.25.
         assert tol > 3.0 * float(np.finfo(np.float64).eps) * 0.25
 
     def test_a_float32_root_space_is_still_graded_in_float64(self) -> None:
-        """Pins the claim `_cell_membership_tolerance`'s docstring makes to justify its dtype.
+        """Pins the claim `cell_membership_tolerance`'s docstring makes to justify its dtype.
 
         It hardcodes ``get_strict(np.float64)`` rather than reading the root space's
         dtype, on the grounds that ``cell_bounds`` is float64 whatever the root space is
@@ -1497,17 +1571,13 @@ class TestCellMembershipTolerance:
         agreement a million times finer than the arithmetic that produced the bound can
         deliver; the ``|lo|``/``|hi|`` terms are what prevent that.
         """
-        from pantr.bspline._thb_spline_space import (  # noqa: PLC0415
-            _cell_membership_tolerance,
-        )
-
         eps = float(np.finfo(np.float64).eps)
-        narrow_far = _cell_membership_tolerance(np.array([1.0e6]), np.array([1.0e6 + 1.0e-6]))
-        assert narrow_far[0] == pytest.approx(8.0 * eps * 1.0e6, rel=1.0e-12)
+        narrow_far = cell_membership_tolerance(1.0e6, 1.0e6 + 1.0e-6)
+        assert narrow_far == pytest.approx(8.0 * eps * 1.0e6, rel=1.0e-12)
         # And it stays proportional under a change of scale.
-        unit = _cell_membership_tolerance(np.array([0.0]), np.array([1.0]))
-        scaled = _cell_membership_tolerance(np.array([0.0]), np.array([1.0e6]))
-        assert scaled[0] == pytest.approx(1.0e6 * unit[0], rel=1.0e-12)
+        unit = cell_membership_tolerance(0.0, 1.0)
+        scaled = cell_membership_tolerance(0.0, 1.0e6)
+        assert scaled == pytest.approx(1.0e6 * unit, rel=1.0e-12)
 
 
 def _assert_same_field(
@@ -2058,177 +2128,303 @@ class TestRestriction:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# _combine_tp_values kernel
+# What the Numba combine and box kernels protected, through the public API (bin 3)
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-class TestCombineTPValues:
-    """Direct unit tests for the _combine_tp_values Numba kernel."""
+class TestUnrefinedIsTensorProduct:
+    """An unrefined hierarchical space is the tensor-product space, function by function.
 
-    def test_in_support_1d(self) -> None:
-        # first_basis=1 → local indices [0,2] map to global [1,3].
-        # multi[0]=2: local = 2-1 = 1 → vals[0, 0, 1] = 0.5.
-        vals = np.array([[[0.3, 0.5, 0.2]]], dtype=np.float64)  # (1, 1, 3)
-        first_basis = np.array([[1]], dtype=np.int64)
-        multis = np.array([[2]], dtype=np.int64)
-        degrees = np.array([2], dtype=np.int64)
-        result = _combine_tp_values(vals, first_basis, multis, degrees)
-        assert result.shape == (1, 1)
-        np.testing.assert_allclose(result[0, 0], 0.5)
+    Bin 3 replacement of ``TestCombineTPValues``. Those tests called the Numba kernel that forms
+    an untruncated function's value, the product of the 1D values of the factors, with a
+    hand-made table: in support, below and above the support in one direction, and with
+    anisotropic degrees, where the degree of each direction (not the largest) bounds the support.
+    The property they protected is that every function of an unrefined space is the product of
+    its 1D B-splines and vanishes outside its support, which is checked here through
+    ``tabulate_basis`` against ``BsplineSpace.tabulate_basis`` over the whole collocation matrix
+    (every dof at every sampled point, so the zeros outside a support are asserted as well).
+    """
 
-    def test_out_of_support_high_index_1d(self) -> None:
-        # multi[0]=5, first_basis=1: local = 4 > degree 2 → product = 0 (early break).
-        vals = np.array([[[0.3, 0.5, 0.2]]], dtype=np.float64)
-        first_basis = np.array([[1]], dtype=np.int64)
-        multis = np.array([[5]], dtype=np.int64)
-        degrees = np.array([2], dtype=np.int64)
-        result = _combine_tp_values(vals, first_basis, multis, degrees)
-        np.testing.assert_allclose(result[0, 0], 0.0)
+    @pytest.mark.parametrize(
+        ("degrees", "cells"),
+        [([2], [4]), ([2, 2], [4, 4]), ([2, 3], [4, 3]), ([1, 2, 3], [3, 2, 2])],
+        ids=["1d", "2d_isotropic", "2d_degrees_2_3", "3d_degrees_1_2_3"],
+    )
+    @pytest.mark.parametrize("truncate", [True, False])
+    def test_collocation_equals_the_tensor_product_spaces(
+        self, degrees: list[int], cells: list[int], truncate: bool
+    ) -> None:
+        root = create_uniform_space(degrees, cells)
+        grid = hierarchical_grid(uniform_grid([[0.0, 1.0]] * len(cells), cells), 2)
+        thb = THBSplineSpace(root, grid, truncate=truncate)
+        mat, pts = _collocation(thb)
+        assert mat.shape[1] == root.num_total_basis
+        gap = np.abs(mat - tensor_product_rows(root, pts)).max()
+        assert gap <= VALUE_ATOL, f"max |THB - TP| = {gap:.3e} > {VALUE_ATOL:.3e}"
 
-    def test_out_of_support_low_index_1d(self) -> None:
-        # multi[0]=0, first_basis=2: local = -2 < 0 → product = 0 (early break).
-        vals = np.array([[[0.3, 0.5, 0.2]]], dtype=np.float64)
-        first_basis = np.array([[2]], dtype=np.int64)
-        multis = np.array([[0]], dtype=np.int64)
-        degrees = np.array([2], dtype=np.int64)
-        result = _combine_tp_values(vals, first_basis, multis, degrees)
-        np.testing.assert_allclose(result[0, 0], 0.0)
+    def test_a_function_is_not_listed_where_it_is_not_supported(self) -> None:
+        """Every function that is non-zero on a cell is listed, and no cell lists more than that.
 
-    def test_anisotropic_degrees_2d(self) -> None:
-        # degrees=(2,3) → max_order=4; direction 0 has only 3 valid entries.
-        # multi=(1,2), first_basis=(0,0): local=(1,2).
-        # dir 0: degree=2, local=1 → vals[0,0,1]=0.4; dir 1: degree=3, local=2 → vals[1,0,2]=0.4.
-        vals = np.zeros((2, 1, 4), dtype=np.float64)
-        vals[0, 0, :3] = [0.1, 0.4, 0.5]
-        vals[1, 0, :4] = [0.2, 0.3, 0.4, 0.1]
-        first_basis = np.zeros((2, 1), dtype=np.int64)
-        multis = np.array([[1, 2]], dtype=np.int64)
-        degrees = np.array([2, 3], dtype=np.int64)
-        result = _combine_tp_values(vals, first_basis, multis, degrees)
-        np.testing.assert_allclose(result[0, 0], 0.4 * 0.4)
+        Anisotropic degrees (2, 3): the degree of each direction bounds its support. A check made
+        with the larger degree, 3, in direction 0 would list four functions per row there instead
+        of three, and one made with the smaller in direction 1 would miss one.
+        """
+        root = create_uniform_space([2, 3], [4, 3])
+        thb = THBSplineSpace(root, hierarchical_grid(uniform_grid([[0.0, 1.0]] * 2, [4, 3]), 2))
+        u = np.linspace(0.0, 1.0, 5)[1:-1]
+        for cid in range(thb.grid.num_cells):
+            lo, hi = thb.grid.cell_bounds(cid)
+            mesh = np.meshgrid(*[lo[k] + (hi[k] - lo[k]) * u for k in range(2)], indexing="ij")
+            pts = np.stack([m.ravel() for m in mesh], axis=-1)
+            nonzero = np.flatnonzero(tensor_product_rows(root, pts).any(axis=0))
+            listed = thb.active_basis(cid)
+            np.testing.assert_array_equal(listed, nonzero, err_msg=f"cell {cid}")
+            assert listed.size == (2 + 1) * (3 + 1)
 
-    def test_anisotropic_out_of_support_second_direction(self) -> None:
-        # degrees=(2,3), multi=(1,5): dir 1 local=5 > 3 → early break → 0.
-        vals = np.zeros((2, 1, 4), dtype=np.float64)
-        vals[0, 0, :3] = [0.1, 0.4, 0.5]
-        vals[1, 0, :4] = [0.2, 0.3, 0.4, 0.1]
-        first_basis = np.zeros((2, 1), dtype=np.int64)
-        multis = np.array([[1, 5]], dtype=np.int64)
-        degrees = np.array([2, 3], dtype=np.int64)
-        result = _combine_tp_values(vals, first_basis, multis, degrees)
-        np.testing.assert_allclose(result[0, 0], 0.0)
+    def test_interior_uniform_cell_has_the_quadratic_bspline_weights(self) -> None:
+        """At the middle of an interior cell of a uniform quadratic, the values are 1/8, 3/4, 1/8.
 
-    def test_anisotropic_in_support_dir0_out_dir1_differs_from_isotropic(self) -> None:
-        # Confirms degrees[k] (not max(degrees)) gates the out-of-support check.
-        # If the check used max(degrees)=3 instead of degrees[0]=2,
-        # local=3 would pass for dir 0 and return a nonzero product.
-        vals = np.zeros((2, 1, 4), dtype=np.float64)
-        vals[0, 0, :4] = [0.1, 0.2, 0.3, 0.9]  # index 3 is nonzero
-        vals[1, 0, :4] = [0.2, 0.3, 0.4, 0.1]
-        first_basis = np.zeros((2, 1), dtype=np.int64)
-        # local for dir 0 = 3; degree[0]=2 → out of support → 0.
-        multis = np.array([[3, 1]], dtype=np.int64)
-        degrees = np.array([2, 3], dtype=np.int64)
-        result = _combine_tp_values(vals, first_basis, multis, degrees)
-        np.testing.assert_allclose(result[0, 0], 0.0)
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# _box_all_true SAT helper
-# ──────────────────────────────────────────────────────────────────────────────
-
-
-class TestBoxAllTrue:
-    """Direct unit tests for the _box_all_true summed-area-table helper."""
-
-    def test_all_true_2d(self) -> None:
-        mask = np.ones((5, 5), dtype=np.bool_)
-        lo = np.array([[1, 1]], dtype=np.int64)
-        hi = np.array([[4, 4]], dtype=np.int64)
-        assert bool(_box_all_true(mask, lo, hi)[0]) is True
-
-    def test_false_inside_box_2d(self) -> None:
-        mask = np.ones((5, 5), dtype=np.bool_)
-        mask[2, 2] = False
-        lo = np.array([[1, 1]], dtype=np.int64)
-        hi = np.array([[4, 4]], dtype=np.int64)
-        assert bool(_box_all_true(mask, lo, hi)[0]) is False
-
-    def test_false_outside_box_ignored_2d(self) -> None:
-        mask = np.ones((5, 5), dtype=np.bool_)
-        mask[0, 0] = False  # outside [1,4)x[1,4)
-        lo = np.array([[1, 1]], dtype=np.int64)
-        hi = np.array([[4, 4]], dtype=np.int64)
-        assert bool(_box_all_true(mask, lo, hi)[0]) is True
-
-    def test_single_cell_1d(self) -> None:
-        mask = np.array([True, False, True], dtype=np.bool_)
-        lo = np.array([[0], [1], [2]], dtype=np.int64)
-        hi = np.array([[1], [2], [3]], dtype=np.int64)
-        result = _box_all_true(mask, lo, hi)
-        assert [bool(r) for r in result] == [True, False, True]
-
-    def test_batch_1d_mixed(self) -> None:
-        # mask[3]=False; [0,3) is all-True; [2,4) contains the False.
-        mask = np.array([True, True, True, False, True, True], dtype=np.bool_)
-        lo = np.array([[0], [2]], dtype=np.int64)
-        hi = np.array([[3], [4]], dtype=np.int64)
-        result = _box_all_true(mask, lo, hi)
-        assert bool(result[0]) is True
-        assert bool(result[1]) is False
-
-    def test_full_mask_3d(self) -> None:
-        mask = np.ones((4, 4, 4), dtype=np.bool_)
-        lo = np.array([[0, 0, 0]], dtype=np.int64)
-        hi = np.array([[4, 4, 4]], dtype=np.int64)
-        assert bool(_box_all_true(mask, lo, hi)[0]) is True
-
-    def test_single_false_3d(self) -> None:
-        mask = np.ones((4, 4, 4), dtype=np.bool_)
-        mask[1, 2, 3] = False
-        lo = np.array([[0, 0, 0]], dtype=np.int64)
-        hi = np.array([[4, 4, 4]], dtype=np.int64)
-        assert bool(_box_all_true(mask, lo, hi)[0]) is False
+        Oracle: the closed form of the uniform quadratic B-spline at its knot-span midpoint,
+        ``((1 - t)**2 / 2, (1 + 2 t - 2 t**2) / 2, t**2 / 2)`` at ``t = 1/2``. The root has six
+        unit intervals, so cell 2 has three uniform neighbours on each side and is interior.
+        """
+        root = create_uniform_space(2, 6)
+        thb = THBSplineSpace(root, hierarchical_grid(uniform_grid([[0.0, 1.0]], 6), 2))
+        lo, hi = thb.grid.cell_bounds(2)
+        mid = 0.5 * (lo + hi)
+        values, dofs = thb.tabulate_basis(2, mid.reshape(1, 1))
+        np.testing.assert_array_equal(dofs, [2, 3, 4])
+        np.testing.assert_allclose(values[0], [0.125, 0.75, 0.125], rtol=0.0, atol=VALUE_ATOL)
+        # And the tensor product of two such factors in 2D: nine weights, the outer product.
+        root2 = create_uniform_space([2, 2], [6, 6])
+        thb2 = THBSplineSpace(root2, hierarchical_grid(uniform_grid([[0.0, 1.0]] * 2, 6), 2))
+        cid = thb2.grid.locate([2.5 / 6.0, 2.5 / 6.0])
+        assert cid is not None
+        lo2, hi2 = thb2.grid.cell_bounds(cid)
+        values2, _ = thb2.tabulate_basis(cid, (0.5 * (lo2 + hi2)).reshape(1, 2))
+        w = np.array([0.125, 0.75, 0.125])
+        np.testing.assert_allclose(
+            values2[0], np.outer(w, w).reshape(-1), rtol=0.0, atol=VALUE_ATOL
+        )
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# _contrib_cache
+# What the Numba summed-area box test protected, through the public API (bin 3)
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-class TestContribCache:
-    """Tests for the lazy per-cell _cell_contributions cache."""
+def _support_cells_from_knots(
+    knots: npt.NDArray[np.float64], degree: int, index: int, unique: npt.NDArray[np.float64]
+) -> tuple[int, int]:
+    """Return the first and last interval (inclusive) of function ``index``'s support.
 
-    def test_second_call_returns_same_object(self) -> None:
-        grid = _grid_1d()
+    The support of the ``index``-th function is ``[knots[index], knots[index + degree + 1]]``;
+    its intervals are the ones of ``unique`` between those two knot values. Read from the knot
+    values alone, so it shares nothing with the library's support computation.
+
+    Args:
+        knots (npt.NDArray[np.float64]): The knot vector.
+        degree (int): The degree.
+        index (int): The function.
+        unique (npt.NDArray[np.float64]): The distinct knots in increasing order.
+
+    Returns:
+        tuple[int, int]: ``(first, last)`` interval indices.
+    """
+    first = int(np.searchsorted(unique, knots[index]))
+    last = int(np.searchsorted(unique, knots[index + degree + 1])) - 1
+    return first, last
+
+
+def _kraft_selection_by_brute_force(thb: THBSplineSpace, level: int) -> list[int]:
+    """Return the flat functions of ``level`` that the Kraft rule selects, from first principles.
+
+    A level-``l`` function is active iff its support lies in the level-``l`` subdomain and not
+    entirely in the next level's: both read off the grid's per-level masks over the support box,
+    which is computed from the knot values (:func:`_support_cells_from_knots`).
+
+    Args:
+        thb (THBSplineSpace): The space.
+        level (int): The level.
+
+    Returns:
+        list[int]: Sorted flat (C-order) function indices.
+    """
+    space = thb.level_space(level)
+    grid = thb.grid
+    subdomain = grid.subdomain_mask(level)
+    refined = subdomain & ~grid.active_leaf_mask(level)
+    boxes = []
+    for sp in space.spaces:
+        unique, _ = sp.get_unique_knots_and_multiplicity(in_domain=True)
+        knots = np.asarray(sp.knots, dtype=np.float64)
+        boxes.append(
+            [
+                _support_cells_from_knots(knots, sp.degree, i, np.asarray(unique, dtype=np.float64))
+                for i in range(sp.num_basis)
+            ]
+        )
+    selected = []
+    for flat in range(space.num_total_basis):
+        multi = np.unravel_index(flat, space.num_basis)
+        box = tuple(
+            slice(boxes[k][int(multi[k])][0], boxes[k][int(multi[k])][1] + 1)
+            for k in range(thb.dim)
+        )
+        if subdomain[box].all() and not refined[box].all():
+            selected.append(flat)
+    return selected
+
+
+def _hole_1d() -> THBSplineSpace:
+    """Degree 2, eight cells; two separate refined boxes, so a support can straddle a hole."""
+    grid = hierarchical_grid(uniform_grid([[0.0, 1.0]], 8), 2)
+    grid.refine(0, [0], [2])
+    grid.refine(0, [5], [7])
+    return THBSplineSpace(create_uniform_space(2, 8), grid)
+
+
+def _hole_2d() -> THBSplineSpace:
+    """Degree (2, 2), 6x6 cells; two disjoint level-0 boxes, then a level-1 box inside the first."""
+    grid = hierarchical_grid(uniform_grid([[0.0, 1.0]] * 2, 6), 2)
+    grid.refine(0, [0, 0], [2, 3])
+    grid.refine(0, [4, 3], [6, 6])
+    grid.refine(1, [0, 2], [2, 6])
+    return THBSplineSpace(create_uniform_space([2, 2], [6, 6]), grid)
+
+
+def _hole_3d() -> THBSplineSpace:
+    """Degree (2, 1, 2), 4x4x4 cells; two opposite corners refined, so boxes meet a false cell."""
+    grid = hierarchical_grid(uniform_grid([[0.0, 1.0]] * 3, 4), 2)
+    grid.refine(0, [0, 0, 0], [2, 2, 2])
+    grid.refine(0, [3, 3, 3], [4, 4, 4])
+    return THBSplineSpace(create_uniform_space([2, 1, 2], [4, 4, 4]), grid)
+
+
+class TestKraftSelectionIsComplete:
+    """The active functions are exactly the ones the Kraft rule selects, not only a subset.
+
+    Bin 3 replacement of ``TestBoxAllTrue``. Those tests called the summed-area-table helper that
+    answers "is every cell of this box in the mask?" for a box of the mask, a false cell inside
+    the box, a false cell outside it, single-cell boxes, a batch and 3D masks. The helper exists
+    to select functions, so the property it protected is the selection itself: a function is
+    active iff its support box is entirely in the subdomain and not entirely in the finer one.
+    ``TestSelection.test_selection_invariant`` checks the "only" half; this checks the other:
+    every function with that property is active, and the brute-force reading of the rule here
+    (numpy ``all`` over the support box, supports from knot values) shares nothing with the
+    summed-area table. The fixtures put a false cell inside a support box (a hole between two
+    refined boxes), outside it, in one, two and three directions.
+    """
+
+    @pytest.mark.parametrize("build", [_hole_1d, _hole_2d, _hole_3d], ids=["1d", "2d", "3d"])
+    def test_active_functions_equal_the_brute_force_selection(
+        self, build: Callable[[], THBSplineSpace]
+    ) -> None:
+        thb = build()
+        assert thb.num_levels >= 2
+        total = 0
+        for level in range(thb.num_levels):
+            expected = _kraft_selection_by_brute_force(thb, level)
+            np.testing.assert_array_equal(
+                thb.active_function_indices(level), expected, err_msg=f"level {level}"
+            )
+            total += len(expected)
+        assert thb.num_total_basis == total
+
+    @pytest.mark.parametrize(
+        ("refined", "level_0", "level_1"),
+        [(1, [0, 1, 2, 3, 4], [3]), (0, [1, 2, 3, 4], [0, 1])],
+        ids=["interior_cell", "end_cell"],
+    )
+    def test_a_one_cell_refinement_selects_by_hand(
+        self, refined: int, level_0: list[int], level_1: list[int]
+    ) -> None:
+        """Degree 1 on four cells, one cell refined: the selection worked by hand.
+
+        Function ``i`` of a degree-1 space on open uniform knots spans cells ``i - 1`` and ``i``
+        (the end functions one cell). Refining cell 1 leaves every level-0 function with a cell
+        outside the refined one, so all five stay; at level 1 (eight cells, subdomain cells 2 and
+        3) the only function whose two cells are both inside is 3. Refining cell 0 supersedes
+        function 0, whose single cell is refined (the one-cell box), and keeps 1 to 4; level 1's
+        subdomain is cells 0 and 1, which hold functions 0 (cell 0) and 1 (cells 0 and 1).
+        """
+        grid = hierarchical_grid(uniform_grid([[0.0, 1.0]], 4), 2)
+        grid.refine(0, [refined], [refined + 1])
+        thb = THBSplineSpace(create_uniform_space(1, 4), grid, truncate=False)
+        assert thb.active_function_indices(0).tolist() == level_0
+        assert thb.active_function_indices(1).tolist() == level_1
+        assert level_0 == _kraft_selection_by_brute_force(thb, 0)
+        assert level_1 == _kraft_selection_by_brute_force(thb, 1)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# What the per-cell contribution cache protected, through the public API (bin 3)
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class TestRepeatedQueries:
+    """A space answers the same question the same way, however it has been used before.
+
+    Bin 3 replacement of ``TestContribCache``, which pinned the Python implementation's memo of
+    the per-cell contributions: the identity of the cached object on a second call, the cache
+    entry surviving a grid mutation, and entries of different cells being independent. The C++
+    space builds its per-cell table lazily and in parallel, so none of that is observable. The
+    properties the tests protected are, and are checked through the public methods: a repeated
+    query returns equal results, a warm space still detects a stale grid, and the results of
+    one cell do not depend on which other cells were queried first.
+    """
+
+    @staticmethod
+    def _refined_space(grid: HierarchicalGrid) -> THBSplineSpace:
         grid.refine(0, [0], [2])
-        thb = THBSplineSpace(_root_1d(), grid)
+        return THBSplineSpace(_root_1d(), grid)
+
+    def test_a_repeated_query_returns_equal_results(self) -> None:
+        grid = _grid_1d()
+        thb = self._refined_space(grid)
         cid = grid.locate([0.1])
         assert cid is not None
-        first = thb._cell_contributions(cid)
-        second = thb._cell_contributions(cid)
-        assert second is first
+        lo, hi = grid.cell_bounds(cid)
+        pts = lo + (hi - lo) * np.array([[0.1], [0.5], [0.9]])
+        first_dofs = thb.active_basis(cid)
+        first_values, first_values_dofs = thb.tabulate_basis(cid, pts)
+        np.testing.assert_array_equal(thb.active_basis(cid), first_dofs)
+        second_values, second_dofs = thb.tabulate_basis(cid, pts)
+        np.testing.assert_array_equal(second_values, first_values)
+        np.testing.assert_array_equal(second_dofs, first_values_dofs)
 
-    def test_cache_warm_stale_grid_still_raises(self) -> None:
+    def test_a_warm_space_still_detects_a_stale_grid(self) -> None:
         grid = _grid_1d()
         thb = THBSplineSpace(_root_1d(), grid)
-        _ = thb._cell_contributions(0)  # warm cache
-        assert 0 in thb._contrib_cache
-        grid.refine(0, [0], [2])  # mutate grid after cache is warm
+        thb.active_basis(0)  # warm the per-cell table
+        thb.tabulate_basis(0, np.array([[0.1]]))
+        thb.max_active_per_cell()
+        grid.refine(0, [0], [2])  # mutate the grid after the table is built
         with pytest.raises(RuntimeError, match="stale"):
-            thb._cell_contributions(0)
+            thb.active_basis(0)
+        with pytest.raises(RuntimeError, match="stale"):
+            thb.tabulate_basis(0, np.array([[0.1]]))
+        with pytest.raises(RuntimeError, match="stale"):
+            thb.max_active_per_cell()
 
-    def test_different_cells_cached_independently(self) -> None:
+    def test_the_results_of_a_cell_do_not_depend_on_the_cells_queried_before(self) -> None:
+        """Two spaces over the same grid, queried in opposite orders, agree on every cell."""
         grid = _grid_1d()
         grid.refine(0, [0], [2])
-        thb = THBSplineSpace(_root_1d(), grid)
-        c0 = grid.locate([0.1])
-        c1 = grid.locate([0.8])
-        assert c0 is not None and c1 is not None
-        r0 = thb._cell_contributions(c0)
-        r1 = thb._cell_contributions(c1)
-        assert thb._cell_contributions(c0) is r0
-        assert thb._cell_contributions(c1) is r1
+        forward = THBSplineSpace(_root_1d(), grid)
+        backward = THBSplineSpace(_root_1d(), grid)
+        n_cells = grid.num_cells
+        for cid in range(n_cells):
+            forward.active_basis(cid)
+        for cid in reversed(range(n_cells)):
+            backward.active_basis(cid)
+        for cid in range(n_cells):
+            lo, hi = grid.cell_bounds(cid)
+            pts = (lo + (hi - lo) * np.array([[0.25], [0.5], [0.75]])).reshape(3, 1)
+            np.testing.assert_array_equal(forward.active_basis(cid), backward.active_basis(cid))
+            values_f, _ = forward.tabulate_basis(cid, pts)
+            values_b, _ = backward.tabulate_basis(cid, pts)
+            np.testing.assert_array_equal(values_f, values_b)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -2273,17 +2469,25 @@ class TestMaxActivePerCell:
         hb = THBSplineSpace(root, grid, truncate=False)
         assert thb.max_active_per_cell() == hb.max_active_per_cell()
 
-    def test_cached_across_calls(self) -> None:
-        """The result is memoized: a second call recomputes nothing."""
+    def test_repeated_calls_agree_whatever_was_queried_before(self) -> None:
+        """The value is the same on a second call and after the per-cell queries.
+
+        Bin 3 replacement of the memo test, which cleared the Python per-cell cache and checked
+        that the memoized maximum did not walk the cells again: the property it protected is
+        that the maximum does not depend on what the per-cell table already holds. One space is
+        asked for the maximum cold, another after every cell was queried.
+        """
         grid = _grid_1d()
         grid.refine(0, [0], [2])
-        thb = THBSplineSpace(_root_1d(), grid)
+        cold = THBSplineSpace(_root_1d(), grid)
+        warm = THBSplineSpace(_root_1d(), grid)
+        for cid in range(grid.num_cells):
+            warm.active_basis(cid)
 
-        first = thb.max_active_per_cell()
-        # Recomputing would have to walk every cell and refill this cache.
-        thb._contrib_cache.clear()
-        assert thb.max_active_per_cell() == first
-        assert thb._contrib_cache == {}
+        first = cold.max_active_per_cell()
+        assert cold.max_active_per_cell() == first
+        assert warm.max_active_per_cell() == first
+        assert first == max(warm.active_basis(cid).size for cid in range(grid.num_cells))
 
     def test_stale_grid_raises(self) -> None:
         """A grid mutated after construction is rejected, as for active_basis."""

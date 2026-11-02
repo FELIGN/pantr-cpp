@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pytest
 
+from pantr._testing import thb_dof_owner as _thb_dof_owner
 from pantr.basis import tabulate_bernstein_1d
 from pantr.bezier import Bezier, find_roots
 from pantr.bspline import (
@@ -32,9 +33,9 @@ from pantr.bspline import (
     THBSplineSpace,
     build_local,
     create_uniform_space,
+    dof_owner,
     l2_project_bspline,
 )
-from pantr.bspline._local_space import _thb_dof_owner, dof_owner
 from pantr.change_basis import compute_monomial_to_bernstein_1d
 from pantr.grid import HierarchicalGrid, Partition, tensor_product_grid, uniform_grid
 from pantr.quad import PointsLattice, get_chebyshev_gauss_2nd_kind_1d
