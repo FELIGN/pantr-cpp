@@ -74,8 +74,11 @@ cpp:
 # so on a shared many-core machine it starts far more workers than the CPUs allowed. CI
 # runners are sized for their job, so CI passes PYTEST_WORKERS=auto explicitly.
 PYTEST_WORKERS ?= 8
+# The extension loads the highest ISA rung the CPU supports, so a second pass pins the
+# generic rung (no FMA): a result that depends on the rung otherwise shows only in CI's wheels.
 test:
 	pytest -n $(PYTEST_WORKERS)
+	PANTR_ISA=generic pytest -n $(PYTEST_WORKERS)
 
 # Run the docstring examples shipped in the package sources. Kept out of `test`
 # because `testpaths = tests` in pytest.ini deliberately excludes src/, and a plain
