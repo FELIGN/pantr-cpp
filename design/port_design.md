@@ -520,10 +520,14 @@ template <class P = Builtin, class T> RootSet<T> find_roots(const Bezier<T>&, Fi
 
 `template <class P> concept GraphPartitioner` with `partition(const CouplingGraph&, int n_parts, std::span<const
 std::uint8_t> active) -> Partition`. Implementations: `Spectral` (default, recursive Fiedler bisection:
-dense `Eigen::SelfAdjointEigenSolver` for `m <= _DENSE_FIEDLER_MAX`, as today; above it, Spectra `SymEigsSolver`
-with `SortRule::SmallestAlge` for **one** eigenpair of the Laplacian **projected onto the complement of the constant
-vector** (`x -> P L P x`, `P = I - 1 1^T / m`, the known null vector of a connected graph's Laplacian), with the same
-centred `v0`, falling back to the dense solver when Spectra reports non-convergence; the fallback is recorded in the returned
+a dense route for `m <= dense_fiedler_max` (as today), built as Householder tridiagonalization plus inverse
+iteration rather than a full `Eigen::SelfAdjointEigenSolver`; above it, Spectra `SymEigsSolver` with
+`SortRule::SmallestAlge` for **one** eigenpair of `P L P + s 1 1^T / m` (`P = I - 1 1^T / m`, `s` the largest
+absolute row sum of `L`). Projection alone deflates nothing, since `L 1 = 0` makes `P L P = L`; the shift `s >=
+lambda_max > lambda_2` moves the constant direction to the top of the spectrum, so the result no longer depends on
+the start vector. The start vector is a fixed splitmix64 sequence, not a centred ramp, which is orthogonal to every
+eigenvector symmetric under reversing the vertex order. Spectra non-convergence or failure falls back to the dense
+route; the fallback is recorded in the returned
 `PartitionInfo`, so it is not silent), and `providers/metis` (`-DPANTR_WITH_METIS=ON`, C++ users).
 
 Python `partition_graph(backend="metis")` keeps calling **pymetis** at the Python boundary (`pantr[metis]` unchanged),
