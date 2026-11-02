@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 from scipy import sparse
 from scipy.sparse import csgraph
-from scipy.sparse.linalg import ArpackError, eigsh
+from scipy.sparse.linalg import ArpackError, LinearOperator, eigsh
 
 from ..grid import Partition
 from ._coupling_graph import CouplingGraph
@@ -272,10 +272,17 @@ def _spectral_order(sub_adjacency: object) -> npt.NDArray[np.intp]:
         _, vectors = np.linalg.eigh(dense)
         fiedler = vectors[:, 1]
     else:
+        # Deflate the constant vector (the Laplacian's null vector) by shifting it to the top of
+        # the spectrum, L + s 1 1^T / m with s the largest absolute row sum: s >= lambda_max
+        # (Gershgorin) > lambda_2 (lambda_2 <= m / (m - 1) * min degree), so the smallest
+        # eigenpair is the Fiedler pair whatever the start vector holds.
+        lap = laplacian.tocsr().astype(np.float64)
+        shift = float(np.max(np.abs(lap).sum(axis=1)))
+        op = LinearOperator((m, m), matvec=lambda x: lap @ x + shift * np.mean(x), dtype=np.float64)
         v0 = np.arange(m, dtype=np.float64) - (m - 1) / 2.0
         try:
-            values, vectors = eigsh(laplacian.tocsr().astype(np.float64), k=2, which="SA", v0=v0)
-            fiedler = vectors[:, int(np.argsort(values)[1])]
+            _, vectors = eigsh(op, k=1, which="SA", v0=v0)
+            fiedler = vectors[:, 0]
         except ArpackError:
             _, vectors = np.linalg.eigh(laplacian.toarray())
             fiedler = vectors[:, 1]
