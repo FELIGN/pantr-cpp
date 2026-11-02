@@ -69,3 +69,7 @@
 #include "pantr/grid/tensor_product_grid.hpp"
 #include "pantr/partition/coupling_graph.hpp"
 #include "pantr/partition/partition_graph.hpp"
+
+#include "pantr/thb/space.hpp"
+#include "pantr/thb/tolerances.hpp"
+#include "pantr/thb/types.hpp"
