@@ -290,7 +290,7 @@ bool is_admissible(const Space& s, I64 m) {
     const std::vector<double> centre = cell_points(s, cid, {0.5});
     const auto vals = s.tabulate_basis(cid, mdview<const double, 2>(centre.data(), 1, d));
     const auto levels = s.contributions(cid).levels;
-    I64 lo = std::numeric_limits<I64>::max();
+    I64 lo = (std::numeric_limits<I64>::max)();
     I64 hi = -1;
     for (std::size_t j = 0; j < levels.size(); ++j) {
       if (vals.values.data()[j] > 0.0) {
@@ -857,7 +857,7 @@ TEST_CASE("unusual inputs: repeats, unsorted ids, a huge class, empty ids and an
     CHECK(cells_flat(a.grid()) == cells_flat(b.grid()));
   }
   SUBCASE("a class above every level grades nothing, like no class") {
-    const I64 huge = std::numeric_limits<I64>::max();
+    const I64 huge = (std::numeric_limits<I64>::max)();
     const Space a = s.refine(Ivec{0, 3}, huge);
     const Space b = s.refine(Ivec{0, 3}, std::nullopt);
     CHECK(cells_flat(a.grid()) == cells_flat(b.grid()));
