@@ -625,6 +625,32 @@ TEST_CASE("THBSplineSpace: the plain hierarchical basis does not sum to one at a
   CHECK(std::abs(sum - 1.0) <= unity_bound(hb));
 }
 
+// Bug (present in the previous release as well, identically): on a root of regularity -1 (a knot
+// of full multiplicity at every breakpoint) refined once, the basis tabulated at a point equal to a
+// cell's upper bound `hi` sums to 0 for some cells, where the partition of unity gives 1. The
+// parity pin states the correct sum and is marked as an expected failure, so the suite stays green;
+// when the evaluation is repaired this case fails and must be unmarked.
+TEST_CASE("inherited: regularity -1 basis vanishes at a cell's upper edge" *
+          doctest::should_fail()) {
+  // Degree 2 on four equal spans, regularity -1, the two left root cells refined: cells 0 and 1
+  // are the level-0 cells (indices 2 and 3), cells 2 to 5 the level-1 cells (indices 0 to 3). The
+  // vanishing sum is at the upper edge of cells 2 and 4.
+  const THBSplineSpace<double> space =
+      make_space(Setup{{k2}, {2}, {2}, {-1}, {{0, {0}, {2}}}, true});
+  REQUIRE(space.grid().num_cells() == 6);
+  for (const I64 cid : {I64{2}, I64{4}}) {
+    CAPTURE(cid);
+    const auto [lo, hi] = space.grid().cell_bounds(cid);
+    const std::vector<double> edge = {hi[0]};
+    const pantr::thb::TabulatedBasis tab = tabulate(space, cid, edge, {0});
+    double sum = 0.0;
+    for (std::size_t j = 0; j < tab.dofs.size(); ++j) {
+      sum += tab.values.data()[j];
+    }
+    CHECK(std::abs(sum - 1.0) <= unity_bound(space));
+  }
+}
+
 /// Derivatives against central finite differences of the values.
 ///
 /// On a cell every function is a polynomial of degree at most `p` in each variable, so a central
