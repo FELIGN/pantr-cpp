@@ -74,6 +74,7 @@
 #include "pantr/thb/coupling_graph.hpp"
 #include "pantr/thb/local_space.hpp"
 #include "pantr/thb/multilevel_extraction.hpp"
+#include "pantr/thb/quasi_interpolate.hpp"
 #include "pantr/thb/space.hpp"
 #include "pantr/thb/spline.hpp"
 #include "pantr/thb/tolerances.hpp"
