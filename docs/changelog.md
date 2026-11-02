@@ -895,28 +895,42 @@
   `ValueError` or `OverflowError` with a `RuntimeWarning`. A `TensorProductGrid` whose width
   overflows (`[[-1.7e308, 1.7e308]]`) no longer warns "overflow encountered in subtract".
 - **`Bspline.locate` runs in C++**, candidate search and Newton solve alike, with the previous
-  release's thresholds, line search and iteration budgets. A batch is solved one point at a time
-  over the thread pool, so it uses `pantr.set_num_threads` and no point's answer depends on the
-  number of threads. Compared with the previous release over dimensions 1 to 3, degrees 1 to 5,
-  rational and `float32` B-splines, repeated knots, physical and parametric offsets, explicit
-  `tol`, `max_iter=1` and points off the image: the same points are found, and the exceptions,
-  messages, dtypes and read-only flags are the same. The reference coordinates differ, because
-  the Jacobian's singular values and solve, and the evaluations, are computed by other code: each
-  is within its threshold of the query, so the images of the two releases' coordinates are within
-  twice that of each other. So a point within that distance of an
-  interior knot line can be reported in the other cell of that line; the tie rule applies to the
-  coordinates returned. An explicit `tol` below what the coordinates can resolve (one unit in the
-  last place of the physical coordinates, or less) leaves whether a point is found to rounding,
-  in this release as in the previous one, so the two can differ there. When a B-spline has a
-  non-finite control point, the error about it is now raised before the errors about
-  `max_iter`, `tol` and `points` (the previous release checked those first).
-  Where a Newton step reaches a Jacobian that is undefined or not finite, the candidate is now
-  abandoned, as a rank-deficient one is, instead of raising `numpy.linalg.LinAlgError` ("SVD did
-  not converge"): at the end of a domain closed by a knot of full multiplicity before a trailing
-  knot (knots `[0, 0, 0, 1, 2, 2, 2, 3]` at degree 2), or with an infinite NURBS weight. The point
-  is reported not found unless another candidate or start finds it. The `RuntimeWarning`s numpy
-  emitted on overflow (control points near `1e300`, weights near `1e-300`) are gone; the errors
-  raised there are unchanged.
+  release's thresholds, line search and iteration budgets; the default thresholds agree to within a
+  few units in the last place (up to 2.6e-16 relative in the sample). A batch is solved one point at
+  a time over the thread pool, so it uses `pantr.set_num_threads` and no point's answer depends on
+  the number of threads. Compared with the previous release over dimensions 1 to 3, degrees 1 to 5,
+  rational and `float32` B-splines, repeated knots, physical and parametric offsets, explicit `tol`,
+  `max_iter=1` and points off the image, the same points are found except in the cases below, and
+  the exceptions, messages, dtypes and read-only flags are the same except as listed here. The
+  reference coordinates differ, because the evaluations, and the Jacobian's singular values and
+  solve, are computed by other code: each is within its threshold of the query, so the images of the
+  two releases' coordinates are within twice that of each other. So a point within that distance of
+  an interior knot line can be reported in the other cell of that line; the tie rule applies to the
+  coordinates returned.
+  - **A point whose only preimage sits at a discontinuity** (a knot of multiplicity `degree + 1`, as
+    at the closed end of knots `[0, 0, 0, 1, 2, 2, 2, 3]` at degree 2) can be found in one release
+    and not in the other.
+  - **An explicit `tol` of a few units in the last place of the physical coordinates or less**
+    leaves whether a point is found to rounding, in this release as in the previous one, so the two
+    can differ there (in the sample, at 3 units or fewer and not from 4).
+  - **With control points near `1e200` to `1e307`, or NURBS coordinates near `1e300`, and an
+    explicit `tol`,** the points found can differ from the previous release's, whose computation
+    overflowed there; in the sample the new release found more in 17 of the 18 calls that
+    differed.
+  - **When a B-spline has a non-finite projected control point** (including a finite one whose
+    projection overflows), the error about it is now raised before the errors about `max_iter`,
+    `tol` and `points` (the previous release checked those first).
+  - **Where a Newton step reaches a Jacobian that is undefined or not finite**, the candidate is now
+    abandoned, as a rank-deficient one is, instead of raising `numpy.linalg.LinAlgError` ("SVD did
+    not converge", with one direction or from 4 096 points) or `ZeroDivisionError` ("division by
+    zero", with two or three directions below that): at the end of a domain closed by a knot of full
+    multiplicity before a trailing knot (knots `[0, 0, 0, 1, 2, 2, 2, 3]` at degree 2), or with an
+    infinite NURBS weight. The point is reported not found unless another candidate or start finds
+    it.
+  - **A query point near `1.7e308` with a `tol` of that size** is reported not found, where the
+    previous release raised `ValueError` for a point outside the knot vector domain.
+  - **The `RuntimeWarning`s numpy emitted on overflow** (control points near `1e300`, weights near
+    `1e-300`) are gone; the errors raised there are unchanged.
 
 ### Fixed
 - **`Bspline.multiply` no longer returns values that depend on memory it never wrote.** The
