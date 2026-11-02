@@ -287,6 +287,9 @@ class THBSpline {
         const detail::CellTask& task = tasks[t];
         const std::size_t n = task.end - task.begin;
         const std::size_t k = space().num_active_on(task.cid);
+        // `HierarchicalGrid::from_blocks` does not validate its tiling, so a space can hold a cell
+        // that no active function meets. Without this check the contraction would sum nothing and
+        // the point would silently evaluate to zero.
         if (k == 0) {
           throw state_error("cell " + std::to_string(task.cid) +
                             " has no active basis functions; the THBSplineSpace may be "

@@ -9,12 +9,6 @@
 /// such a cell truncation zeroes every coarser active function's component on `B^l_beta`, so
 /// `lambda^l_beta(s) = c_beta` for any THB spline `s` and the operator reproduces the truncated
 /// space. For the plain hierarchical basis it is a local approximant and not a projector.
-///
-/// The leaf cell of a function is the candidate nearest to its Greville target, where the
-/// candidates are the cells of the function's own level on whose functions it is listed, and the
-/// target is the Greville abscissa, at the function's level, of the first candidate's multi-index
-/// (the first candidate in increasing cell id). Of equally near candidates the one with the
-/// smallest cell id is taken.
 #pragma once
 
 #include "pantr/bspline/quasi_interpolate.hpp"
@@ -92,6 +86,18 @@ inline void contract_block(const double* values, const double* weights, const st
 /// The staged THB quasi-interpolant: the points to sample, then the coefficients from the samples.
 /// Immutable.
 ///
+/// The leaf cell of a function is the candidate nearest to its Greville target, where the
+/// candidates are the cells of the function's own level on whose functions it is listed, and the
+/// target is the Greville abscissa, at the function's level, of the first candidate's multi-index
+/// (the first candidate in increasing cell id). The distance is the square root of the sum of
+/// squares in direction order, compared with a strict `<` over the candidates in increasing cell
+/// id, so of candidates at equal computed distance the smallest cell id is taken. The rule is
+/// deterministic and does not depend on the thread count or the build's contraction. Candidates
+/// that are mirror images tie exactly only where the arithmetic is exact (dyadic geometry); at a
+/// near-tie within rounding the rule may pick a different leaf than the Python implementation,
+/// which takes `np.linalg.norm`, whose rounding depends on the BLAS. Both leaves give a valid
+/// quasi-interpolant, and THB splines are reproduced either way.
+///
 /// The points are listed function by function (in global dof order), each function's
 /// `prod(degree + 1)` points as the tensor grid of its per-direction points, in C order (the last
 /// direction fastest).
@@ -112,7 +118,8 @@ class THBQuasiInterpolation {
   ///     space (THBSplineSpace<T>): The target space.
   ///
   /// Raises:
-  ///     state_error: An active function has no leaf cell at its level (an invalid space).
+  ///     state_error: An active function has no leaf cell at its level (a tiling
+  ///         `HierarchicalGrid::from_blocks` accepted without validating it).
   ///     value_error, index_error: A local collocation block is singular, or its inverse is not
   ///         finite (`bspline::detail::llm_weight_row`).
   explicit THBQuasiInterpolation(THBSplineSpace<T> space) : space_(std::move(space)) {
@@ -169,8 +176,10 @@ class THBQuasiInterpolation {
                 greville[static_cast<std::size_t>(level)][k][static_cast<std::size_t>(idx[k])];
           }
         }
-        // The Euclidean distance as the square root of the sum of squares in direction order,
-        // each square its own statement: no contraction, so mirrored candidates tie exactly.
+        // The Euclidean distance: the square root of the sum of squares in direction order, each
+        // square its own statement so that no contraction fuses it into the sum. Strict `<` below
+        // keeps the first of equal distances, the smallest cell id, since cells go by in
+        // increasing id; see the class comment for the rule and its limit against Python.
         double squares = 0.0;
         for (std::size_t k = 0; k < d; ++k) {
           const double diff = centre[k] - target[dof * d + k];
@@ -189,6 +198,9 @@ class THBQuasiInterpolation {
     points_.assign(n * width_, 0.0);
     weights_.assign(n * width_, 0.0);
     for (std::size_t dof = 0; dof < n; ++dof) {
+      // `HierarchicalGrid::from_blocks` does not validate its tiling, so a space can hold a
+      // function that no cell of its own level lists. Without this check `leaf_[dof]` stays -1 and
+      // the function's points would be built on no cell, with an unrelated index error at best.
       if (level_of[dof] < 0) {
         throw state_error("active dof " + std::to_string(dof) +
                           " has no leaf cell at its level; the THB space is inconsistent.");

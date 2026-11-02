@@ -161,8 +161,9 @@ class MultiLevelExtraction {
   /// Raises:
   ///     index_error: `cid` is out of range.
   ///     value_error: `out` has another shape; a refinement step meets a zero two-scale slice.
-  ///     state_error: A refined coefficient box does not overlap the cell's window (an
-  ///         invariant of a valid space).
+  ///     state_error: A refined coefficient box does not overlap the cell's window (only a
+  ///         tiling `HierarchicalGrid::from_blocks` accepted without validating it reaches this;
+  ///         without the check the copy loop would read outside the box).
   void multilevel_operator(std::int64_t cid, mdview<double, 2> out) const {
     const CellContributions cell = space_.contributions(cid);
     const std::size_t d = dim();
@@ -276,7 +277,18 @@ class MultiLevelExtraction {
     const std::size_t k = space_.num_active_on(cid);
     basis::detail::check_out<double, 2>(out, {k, n_in});
     // `E` has `n_out = prod(p_k + 1)` rows, the width of `M`, for every target (each direction's
-    // operator is `(p + 1) x (p + 1)`).
+    // operator is `(p + 1) x (p + 1)`). The two come from different objects (the level's
+    // extraction and the space's degrees) and `multiply_rows` reads `n_out` entries of each row of
+    // `M` and each row of `E` unchecked, so their agreement is checked here.
+    std::size_t n_single = 1;
+    for (const int p : space_.degrees()) {
+      n_single *= static_cast<std::size_t>(p) + 1;
+    }
+    if (n_out != n_single) {
+      throw state_error("extraction_operator: the single-level operator has " +
+                        std::to_string(n_out) + " rows but the multi-level operator has " +
+                        std::to_string(n_single) + " columns.");
+    }
     const std::vector<std::int64_t> midx = grid.cell_multi_index(cid);
     const std::vector<std::size_t> cell(midx.begin(), midx.end());
     std::vector<T> single(n_out * n_in);

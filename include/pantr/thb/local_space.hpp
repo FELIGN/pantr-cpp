@@ -43,6 +43,9 @@ namespace pantr::thb {
 template <StorageFloat T>
 [[nodiscard]] std::vector<std::int64_t> compute_halo(const THBSplineSpace<T>& space,
                                                      std::span<const std::int64_t> owned_cells) {
+  if (owned_cells.empty()) {
+    return {};
+  }
   const auto n_cells = static_cast<std::size_t>(space.grid().num_cells());
   std::vector<unsigned char> owned(n_cells, 0);
   std::vector<unsigned char> marked(static_cast<std::size_t>(space.num_total_basis()), 0);
@@ -52,9 +55,6 @@ template <StorageFloat T>
       marked[static_cast<std::size_t>(d)] = 1;
     }
     owned[static_cast<std::size_t>(c)] = 1;
-  }
-  if (owned_cells.empty()) {
-    return {};
   }
   const CellIncidence inc = space.cell_dof_incidence();
   std::vector<unsigned char> touches(n_cells, 0);
