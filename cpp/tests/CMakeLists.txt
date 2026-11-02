@@ -60,6 +60,7 @@ set(_pantr_test_sources
     test_thb_spline.cpp
     test_thb_extraction.cpp
     test_thb_qi.cpp
+    test_linalg_dense.cpp
     test_kron_apply.cpp
     test_spanwise_extraction.cpp
     test_spanwise_extraction_batch.cpp

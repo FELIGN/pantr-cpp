@@ -12,6 +12,7 @@
 
 #include <Eigen/Core>
 #include <Eigen/LU>
+#include <Eigen/QR>
 #include <Eigen/SVD>
 
 #include <algorithm>
@@ -124,6 +125,47 @@ template <StorageFloat T, class Svd>
   return out;
 }
 
+/// The relative margin `tau` of the rank certificate of a QR factorization, for the factorization's
+/// backward error.
+///
+/// The certificate (the argument is made at `try_lstsq_banded`) keeps the QR path when `1 /
+/// ||R^-1||_F > tau ||A||_F`. `tau = max(sqrt(eps), 4 (growth + cutoff))`: the floor `sqrt(eps)`
+/// bounds the conditioning of `R` that the computed `||R^-1||_F` can be trusted at, and `growth`
+/// stands for the factorization's normwise backward error, `||A + E - Q R||_F <= growth * eps *
+/// ||A||_F` with `E` the rounding of the factorization. Then `tau / 2 - growth * eps - cutoff > 0`
+/// whichever of the two terms of the maximum binds, which is what makes `s_min(A)` exceed
+/// `cutoff * s_max(A)`.
+///
+/// Args:
+///     growth (double): The backward-error bound in units of `eps`; at least `m n` (the accuracy of
+///         the computed `||R^-1||_F` needs `tau >= 4 m n eps`).
+///     cutoff (double): The relative singular-value cutoff of the dense path the answer stands for.
+///
+/// Returns:
+///     std::optional<double>: `tau`, or no value for a NaN, infinite or negative `cutoff` (no
+///     certificate stands for it).
+[[nodiscard]] inline std::optional<double> rank_certificate_tau(double growth, double cutoff) {
+  if (!(cutoff >= 0.0) || !std::isfinite(cutoff)) {
+    return std::nullopt;
+  }
+  constexpr double eps = std::numeric_limits<double>::epsilon();
+  return (std::max)(std::sqrt(eps), 4.0 * (growth * eps) + 4.0 * cutoff);
+}
+
+/// The test of the rank certificate: `||R^-1||_F tau ||A||_F < 1`, written so that a NaN or an
+/// overflow to infinity fails it.
+///
+/// Args:
+///     inv_sq (double): `||R^-1||_F^2` of the computed factor.
+///     a_sq (double): `||A||_F^2`.
+///     tau (double): `rank_certificate_tau`.
+///
+/// Returns:
+///     bool: Whether the certificate holds.
+[[nodiscard]] inline bool rank_certificate_holds(double inv_sq, double a_sq, double tau) {
+  return std::sqrt(inv_sq) * tau * std::sqrt(a_sq) < 1.0;
+}
+
 }  // namespace detail
 
 /// Solve `A X = B` in the least-squares sense with the minimum-norm solution, as
@@ -203,6 +245,72 @@ template <StorageFloat T>
     throw value_error(detail::lstsq_failure);
   }
   return detail::lstsq_from_svd<T>(svd, b, a.rows(), a.cols());
+}
+
+/// Solve `A X = B` by Householder QR with column pivoting where `A` is shown to have full column
+/// rank, which makes the answer `lstsq_min_norm`'s up to rounding.
+///
+/// The cost is `2 m n^2 - 2 n^3 / 3` operations (Golub and Van Loan, Matrix Computations, 4th ed.,
+/// section 5.2.1), against the several sweeps of `lstsq_min_norm_jacobi`. The answer is given when
+/// `A` and `B` are finite, `m >= n`, and `1 / ||R^-1||_F > tau ||A||_F` for the computed factor
+/// `R`, with `tau` from `detail::rank_certificate_tau`: the argument of `try_lstsq_banded`, to
+/// which the only change is the factorization's backward error. The computed `R` of `A P` (`P` the
+/// pivoting) is the exact factor of `A P + E` with `||E||_F <= gamma ||A||_F`, `gamma = c m n u`
+/// for a small constant `c` and `u = eps / 2` (Higham, Accuracy and Stability of Numerical
+/// Algorithms, 2nd ed., Theorem 19.4, columnwise, for `A P`; the pivoting only permutes the
+/// columns). The theorem leaves `c` unspecified and the explicit constant was not re-read for this
+/// header, so `growth = 24 m n` is assumed, that is `gamma <= 24 m n eps` (`c <= 48`); the older
+/// explicit statement of the result, recalled and not re-read, is `(6 m - 3 n + 41) n u <= 23.5 m n
+/// eps`. Under that assumption `tau / 2 - gamma - rcond > 0` by construction of `tau`, and the rest
+/// of the argument is `try_lstsq_banded`'s unchanged: asserted under the assumption, not proved.
+///
+/// Everything is computed in `double` and the solution rounded to `T`, as `lstsq_min_norm` does.
+/// No answer is given for a non-finite `A` or `B`, for fewer rows than columns, or where the test
+/// fails (a rank-deficient or nearly rank-deficient `A`): the caller then runs the SVD path.
+///
+/// Args:
+///     a (const RowMatrix<T>&): Extents `(m, n)`.
+///     b (const RowMatrix<T>&): Extents `(m, k)`.
+///     rcond (std::optional<double>): The relative cutoff of the dense path the answer stands for;
+///         `lstsq_rcond(m, n)` when absent. A NaN, infinite or negative one gets no answer.
+///
+/// Returns:
+///     std::optional<NdArray<T>>: Extents `(n, k)`, or no value where the QR's answer is not shown
+///     to be `lstsq_min_norm`'s.
+///
+/// Note:
+///     `a` and `b` are assumed to have the same number of rows (no validation performed).
+template <StorageFloat T>
+[[nodiscard]] std::optional<NdArray<T>> try_lstsq_full_rank_qr(
+    const RowMatrix<T>& a, const RowMatrix<T>& b, std::optional<double> rcond = std::nullopt) {
+  using MatD = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic>;
+  const Eigen::Index m = a.rows();
+  const Eigen::Index n = a.cols();
+  const std::optional<double> tau = detail::rank_certificate_tau(
+      24.0 * static_cast<double>(m) * static_cast<double>(n), rcond ? *rcond : lstsq_rcond(m, n));
+  if (!tau || m < n || !a.allFinite() || !b.allFinite()) {
+    return std::nullopt;
+  }
+  if (n == 0) {
+    // No unknowns: the empty solution, trivially of full column rank. Eigen's pivoted QR reads the
+    // first pivot of an empty matrix.
+    return NdArray<T>({std::size_t{0}, static_cast<std::size_t>(b.cols())}, for_overwrite);
+  }
+  const MatD ad = a.template cast<double>();
+  const Eigen::ColPivHouseholderQR<MatD> qr(ad);
+  const auto r = qr.matrixQR().topLeftCorner(n, n).template triangularView<Eigen::Upper>();
+  const MatD r_inv = r.solve(MatD::Identity(n, n));
+  if (!detail::rank_certificate_holds(r_inv.squaredNorm(), ad.squaredNorm(), *tau)) {
+    return std::nullopt;
+  }
+  // `A P = Q R`, so `x = P R^-1 (Q^T b)` over the leading `n` rows.
+  MatD y = qr.householderQ().adjoint() * b.template cast<double>();
+  MatD top = y.topRows(n);
+  r.solveInPlace(top);
+  const MatD x = qr.colsPermutation() * top;
+  NdArray<T> out({static_cast<std::size_t>(n), static_cast<std::size_t>(b.cols())}, for_overwrite);
+  Eigen::Map<RowMatrix<T>>(out.data(), n, b.cols()) = x.template cast<T>();
+  return out;
 }
 
 }  // namespace pantr::linalg

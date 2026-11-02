@@ -387,10 +387,14 @@ template <StorageFloat T>
 /// The candidates are the fine functions whose support box shares a root cell with the coarse
 /// function's. All are expressed in the deepest representation level among them and the coarse
 /// function's own; the unknowns are the candidates' coefficients, the right-hand side the coarse
-/// function's coefficients, and the system is solved in the least-squares sense by
-/// `linalg::lstsq_min_norm_jacobi`: the residual gate that follows assumes a backward error of
-/// `gelsd`'s class, which the divide-and-conquer SVD of `lstsq_min_norm` does not give on every
-/// local system.
+/// function's coefficients, and the system is solved in the least-squares sense. The columns of the
+/// system are linearly independent hierarchical functions of a valid space, so it has full column
+/// rank and is solved by Householder QR with column pivoting (`linalg::try_lstsq_full_rank_qr`,
+/// which answers only where a rank certificate holds). Where it declines, a rank-deficient system
+/// that only a tiling `HierarchicalGrid::from_blocks` accepted without validating can reach, the
+/// minimum-norm solution by `linalg::lstsq_min_norm_jacobi` is used. Both are backward stable,
+/// which the residual gate that follows assumes; the divide-and-conquer SVD of `lstsq_min_norm` is
+/// not on every local system.
 ///
 /// Args:
 ///     coarse (const THBSpaceRep<T>&): The coarse space.
@@ -402,8 +406,8 @@ template <StorageFloat T>
 ///     ProlongationColumn: The solved column and its diagnostics.
 ///
 /// Raises:
-///     value_error: A refinement step meets a zero two-scale slice, or the solver refuses (see
-///         `linalg::lstsq_min_norm_jacobi`).
+///     value_error: A refinement step meets a zero two-scale slice, or the system has a NaN or an
+///         infinite entry (see `linalg::lstsq_min_norm_jacobi`).
 template <StorageFloat T>
 [[nodiscard]] ProlongationColumn solve_prolongation_column(const THBSpaceRep<T>& coarse,
                                                            const THBSpaceRep<T>& fine,
@@ -467,7 +471,9 @@ template <StorageFloat T>
       amat(row_of(c.flats[t]), cj) = c.coeffs[t];
     }
   }
-  const NdArray<double> sol = linalg::lstsq_min_norm_jacobi<double>(amat, rhs);
+  std::optional<NdArray<double>> full_rank = linalg::try_lstsq_full_rank_qr<double>(amat, rhs);
+  const NdArray<double> sol =
+      full_rank ? std::move(*full_rank) : linalg::lstsq_min_norm_jacobi<double>(amat, rhs);
   col.values.assign(sol.data(), sol.data() + n_cols);
   for (Eigen::Index r = 0; r < n_rows; ++r) {
     double acc = 0.0;
@@ -483,13 +489,15 @@ template <StorageFloat T>
 ///
 /// A column with `K` candidates builds `K` tensor-product columns of at least `V = prod(degree +
 /// 1)` coefficients (a function refined only grows its box), each refined once per direction, and
-/// solves a system of `R >= K V` rows and `K` columns by the SVD, whose leading cost is the
-/// bidiagonalization, `4 R K^2 - 4 K^3 / 3` operations (Golub and Van Loan, *Matrix Computations*,
-/// 4th ed., section 5.4.8), taken as `4 R K^2`. `K` is the mean over the coarse columns of the
-/// candidate count with a function counted once per root cell it shares with the coarse support, an
-/// upper bound on the distinct count. The lower bound on `R` and the upper bound on `K` pull in
-/// opposite directions; the estimate is an order of magnitude, an admitted heuristic, and it only
-/// chooses how many columns one chunk takes. It is floored at one operation, the least
+/// solves a system of `R >= K V` rows and `K` columns by Householder QR, whose leading cost is `2
+/// R K^2 - 2 K^3 / 3` operations (Golub and Van Loan, *Matrix Computations*, 4th ed., section
+/// 5.2.1), taken as `2 R K^2`; the rank certificate's triangular inverse, `K^3 / 3`, and the column
+/// pivoting's norm updates, `O(R K)`, are below it for `R >= K`. The rare rank-deficient column
+/// that falls back to the SVD costs more and is not priced. `K` is the mean over the coarse columns
+/// of the candidate count with a function counted once per root cell it shares with the coarse
+/// support, an upper bound on the distinct count. The lower bound on `R` and the upper bound on `K`
+/// pull in opposite directions; the estimate is an order of magnitude, an admitted heuristic, and
+/// it only chooses how many columns one chunk takes. It is floored at one operation, the least
 /// `parallel::WorkEstimate` accepts.
 ///
 /// Args:
@@ -508,7 +516,7 @@ template <StorageFloat T>
   }
   const double k = mean_candidates;
   return parallel::WorkEstimate{
-      (std::max)(1.0, k * v * static_cast<double>(dim) + 4.0 * (k * v) * k * k)};
+      (std::max)(1.0, k * v * static_cast<double>(dim) + 2.0 * (k * v) * k * k)};
 }
 
 /// Assemble the prolongation from a space to a validated refinement of it.

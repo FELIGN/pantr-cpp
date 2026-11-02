@@ -19,7 +19,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
-#include <limits>
 #include <optional>
 #include <vector>
 
@@ -153,14 +152,13 @@ template <StorageFloat T>
   const Eigen::Index m = a.rows();
   const Eigen::Index n = a.cols();
   const Eigen::Index nb = b.cols();
-  constexpr double eps = std::numeric_limits<double>::epsilon();
   const auto md = static_cast<double>(m);
   const auto nd = static_cast<double>(n);
-  const double cutoff = rcond ? *rcond : lstsq_rcond(m, n);
-  if (!(cutoff >= 0.0) || !std::isfinite(cutoff)) {
+  const std::optional<double> tau =
+      detail::rank_certificate_tau(md * nd, rcond ? *rcond : lstsq_rcond(m, n));
+  if (!tau) {
     return std::nullopt;  // no certificate stands for a NaN, infinite or negative cutoff
   }
-  const double tau = (std::max)(std::sqrt(eps), 4.0 * md * nd * eps + 4.0 * cutoff);
   if (m < n || !a.allFinite() || !b.allFinite()) {
     return std::nullopt;
   }
@@ -286,8 +284,7 @@ template <StorageFloat T>
     qr.back_substitute(col, j);
     inv_sq += col.topRows(j + 1).squaredNorm();
   }
-  // Written so that a NaN or an overflow to infinity fails the test.
-  if (!(std::sqrt(inv_sq) * tau * std::sqrt(a_norm_sq) < 1.0)) {
+  if (!detail::rank_certificate_holds(inv_sq, a_norm_sq, *tau)) {
     return std::nullopt;
   }
 
