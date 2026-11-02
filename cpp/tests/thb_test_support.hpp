@@ -59,11 +59,11 @@ inline const std::vector<double> k2_3d = {0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0};
 
 /// Degree-2 knots with `n` equal spans on [0, 1].
 inline std::vector<double> uniform_knots(int n) {
-  std::vector<double> knots = {0.0, 0.0, 0.0};
+  std::vector<double> knots(3, 0.0);
   for (int i = 1; i < n; ++i) {
     knots.push_back(static_cast<double>(i) / static_cast<double>(n));
   }
-  knots.insert(knots.end(), {1.0, 1.0, 1.0});
+  knots.insert(knots.end(), 3, 1.0);
   return knots;
 }
 
