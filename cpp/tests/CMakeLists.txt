@@ -54,6 +54,7 @@ set(_pantr_test_sources
     test_bspline_product.cpp
     test_bspline_fit.cpp
     test_bspline_locate.cpp
+    test_thb_space.cpp
     test_kron_apply.cpp
     test_spanwise_extraction.cpp
     test_spanwise_extraction_batch.cpp
