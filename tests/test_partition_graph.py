@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import importlib.util
 
+import numba as nb
 import numpy as np
 import numpy.typing as npt
 import pytest
 from scipy import sparse
-from scipy.sparse.linalg import ArpackError
 
+import pantr
+from pantr._ext import ext
+from pantr._testing import DENSE_FIEDLER_MAX, SpectralInfo, spectral_partition
 from pantr.bspline import (
     CouplingGraph,
     THBSplineSpace,
@@ -153,25 +156,37 @@ def test_large_grid_bisection_follows_the_fiedler_vector(dims: tuple[int, ...]) 
     assert set(owner[~expected_left].tolist()) == {1 - int(owner[0])}
 
 
-def test_eigsh_failure_falls_back_to_dense(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Force the sparse eigensolver to fail; the dense fallback must still partition.
-    def _boom(*args: object, **kwargs: object) -> object:
-        raise ArpackError(-1)
-
-    monkeypatch.setattr("pantr.bspline._partition_graph.eigsh", _boom)
-    n = 600
+def _path_graph(n: int) -> CouplingGraph:
+    """The unit-weight path graph on ``n`` vertices."""
     diag = np.ones(n - 1, dtype=np.int64)
     csr = sparse.diags([diag, diag], [1, -1], format="csr", dtype=np.int64)
-    graph = CouplingGraph(
+    return CouplingGraph(
         n,
         csr.indptr.astype(np.int64),
         csr.indices.astype(np.int64),
         csr.data.astype(np.int64),
         np.ones(n),
     )
-    owner = partition_graph(graph, 2).cell_owner
+
+
+def test_lanczos_failure_falls_back_to_dense() -> None:
+    # One Lanczos restart cannot converge on a 600-vertex path; the dense fallback must still
+    # partition, and the fallback is recorded rather than silent.
+    part, info = spectral_partition(_path_graph(600), 2, lanczos_max_iter=1)
+    assert info == SpectralInfo(
+        dense_solves=0, lanczos_solves=0, dense_fallbacks=1, component_orders=0
+    )
+    owner = part.cell_owner
     assert set(owner.tolist()) == {0, 1}
     assert int(np.sum(owner[:-1] != owner[1:])) == 1
+    # Without the limit the same graph takes the Lanczos path, to the same partition.
+    default_part, default_info = spectral_partition(_path_graph(600), 2)
+    assert default_info.lanczos_solves == 1
+    assert default_info.dense_fallbacks == 0
+    # The path's Fiedler vector is antisymmetric, so its two largest-magnitude entries tie up to
+    # rounding and the two solvers may label the halves the other way round.
+    other = default_part.cell_owner
+    assert np.array_equal(other, owner) or np.array_equal(other, 1 - owner)
 
 
 def test_clique_chain_into_three_parts() -> None:
@@ -186,19 +201,14 @@ def test_clique_chain_into_three_parts() -> None:
 
 
 def test_dense_threshold_boundary() -> None:
-    # m=512 must use dense eigh (<=); m=513 must use sparse eigsh (>).
+    # m=512 must use the dense solver (<=); m=513 the Lanczos solve (>).
+    assert DENSE_FIEDLER_MAX == 512
     for n in (512, 513):
-        diag = np.ones(n - 1, dtype=np.int64)
-        csr = sparse.diags([diag, diag], [1, -1], format="csr", dtype=np.int64)
-        graph = CouplingGraph(
-            n,
-            csr.indptr.astype(np.int64),
-            csr.indices.astype(np.int64),
-            csr.data.astype(np.int64),
-            np.ones(n),
-        )
+        graph = _path_graph(n)
         owner = partition_graph(graph, 2).cell_owner
         assert int(np.sum(owner[:-1] != owner[1:])) == 1
+        _, info = spectral_partition(graph, 2)
+        assert (info.dense_solves, info.lanczos_solves) == ((1, 0) if n <= 512 else (0, 1))
 
 
 # --------------------------------------------------------------------------- #
@@ -242,6 +252,43 @@ def test_is_deterministic() -> None:
     a = partition_graph(graph, 4).cell_owner
     b = partition_graph(graph, 4).cell_owner
     np.testing.assert_array_equal(a, b)
+
+
+def test_is_independent_of_the_thread_count() -> None:
+    # Nothing in the partitioner runs in parallel; one thread and several give the same owners.
+    many = min(8, nb.config.NUMBA_NUM_THREADS, ext.max_threads())
+    if many < 2:
+        pytest.skip("a single thread is available, so there is no parallel run to compare")
+    for graph in (coupling_graph(create_uniform_space([2, 2], [30, 25])), _grid_graph((32, 27))):
+        with pantr.num_threads(1):
+            serial = partition_graph(graph, 7).cell_owner
+        with pantr.num_threads(many):
+            parallel = partition_graph(graph, 7).cell_owner
+        np.testing.assert_array_equal(parallel, serial)
+
+
+def _edge_cut(graph: CouplingGraph, owner: npt.NDArray[np.int32]) -> int:
+    """The weight of the edges whose ends have different owners, each edge counted once."""
+    rows = np.repeat(np.arange(graph.num_vertices), np.diff(graph.xadj))
+    return int(graph.edge_weights[owner[rows] != owner[graph.adjncy]].sum()) // 2
+
+
+def test_two_way_balance_is_within_one_vertex_weight() -> None:
+    # The first part in Fiedler order ends at the first vertex whose running weight reaches half
+    # the total, so each part's weight is within the largest vertex weight of half.
+    space = create_uniform_space([2, 1], [30, 20])
+    weights = 1.0 + (np.arange(600) * 7 % 5)
+    owner = partition_graph(coupling_graph(space, cell_weights=weights), 2).cell_owner
+    total = float(weights.sum())
+    for r in (0, 1):
+        assert abs(float(weights[owner == r].sum()) - total / 2) < float(weights.max())
+
+
+def test_grid_graph_cut_is_one_slab_of_edges() -> None:
+    # The Fiedler split of the 32 x 27 grid graph separates slabs 15 and 16 of the first axis
+    # (see the regression test above), so the cut is the 27 unit edges between them.
+    graph = _grid_graph((32, 27))
+    assert _edge_cut(graph, partition_graph(graph, 2).cell_owner) == 27
 
 
 def test_n_parts_one() -> None:

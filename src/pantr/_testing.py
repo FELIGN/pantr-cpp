@@ -9,6 +9,8 @@ module.
   thresholds, the parametric reach and scale, the per-cell boxes, and one Newton solve or second
   start at a time, which no public call isolates.
 - :func:`empty_views`: the binding's read-only view of empty, null-data storage.
+- :func:`spectral_partition` (with :class:`SpectralInfo` and ``DENSE_FIEDLER_MAX``): the spectral
+  graph partitioner with its solver options, so a test can force the dense fallback.
 - The Bernstein recurrences at one point, the degree up to which the unmirrored one runs, and
   the Bernstein derivative tabulation (no public function returns derivatives).
 - The generic Gram projection behind the change-of-basis builders.
@@ -189,6 +191,65 @@ def bspline_find_roots_with_budget(
     from pantr.bspline._bspline_roots import _find_roots_impl  # noqa: PLC0415
 
     return _find_roots_impl(bspline, tol=tol, max_insertions=max_insertions)
+
+
+DENSE_FIEDLER_MAX: Final[int] = int(_t.dense_fiedler_max)
+"""The largest subgraph the spectral partitioner's dense eigensolver takes by size."""
+
+
+class SpectralInfo(NamedTuple):
+    """How a spectral partition was computed: one count per subgraph ordering.
+
+    Attributes:
+        dense_solves (int): Connected subgraphs ordered by the dense eigensolver by size.
+        lanczos_solves (int): Larger connected subgraphs whose Lanczos solve converged.
+        dense_fallbacks (int): Larger connected subgraphs whose Lanczos solve did not converge,
+            ordered by the dense eigensolver instead.
+        component_orders (int): Disconnected subgraphs, ordered by component.
+    """
+
+    dense_solves: int
+    lanczos_solves: int
+    dense_fallbacks: int
+    component_orders: int
+
+
+def spectral_partition(
+    coupling: Any,  # noqa: ANN401
+    n_parts: int,
+    *,
+    cell_active: npt.ArrayLike | None = None,
+    dense_max: int = DENSE_FIEDLER_MAX,
+    lanczos_max_iter: int | None = None,
+) -> tuple[Any, SpectralInfo]:
+    """Partition a coupling graph as ``partition_graph(backend="spectral")`` does, with its options.
+
+    A small ``lanczos_max_iter`` is how a test reaches the dense fallback, which no public call
+    can force.
+
+    Args:
+        coupling (Any): A :class:`~pantr.bspline.CouplingGraph`.
+        n_parts (int): Number of parts.
+        cell_active (npt.ArrayLike | None): Optional 1-D activity mask.
+        dense_max (int): The largest subgraph the dense eigensolver takes by size.
+        lanczos_max_iter (int | None): The Lanczos restart limit; ``None`` for ``10 m``.
+
+    Returns:
+        tuple[Any, SpectralInfo]: The :class:`~pantr.grid.Partition` and the solver counts.
+    """
+    from pantr.bspline._partition_graph import _coerce_active, _graph_arrays  # noqa: PLC0415
+    from pantr.grid import Partition  # noqa: PLC0415
+
+    n = int(coupling.num_vertices)
+    h, info = _t.spectral_partition(
+        n,
+        *_graph_arrays(coupling),
+        int(n_parts),
+        _coerce_active(cell_active, n),
+        dense_max,
+        lanczos_max_iter,
+    )
+    return Partition._from_handle(h), SpectralInfo(*info)
 
 
 def unique_knots_and_multiplicity(
@@ -1090,6 +1151,7 @@ __all__ = [
     "BINCOEFF_MAX_N",
     "CARDINAL_BSPLINE",
     "CHANGE_BASIS_CACHE_MAX_DEGREE",
+    "DENSE_FIEDLER_MAX",
     "LEGENDRE",
     "REDUCTION_CACHE_MAX_DEGREE",
     "ROOTS_CLIP_MAX_DEPTH",
@@ -1102,6 +1164,7 @@ __all__ = [
     "_MAX_NAMED_CELLS",
     "LocateContext",
     "LocateThresholds",
+    "SpectralInfo",
     "_DegreeLimit",
     "_block_size",
     "_cached_cardinal_to_bernstein_matrix",
@@ -1194,6 +1257,7 @@ __all__ = [
     "set_root_provider_state",
     "solve_monotone_root_kernel",
     "spans_zero",
+    "spectral_partition",
     "squared_l2_norm",
     "subdivide_scalar",
     "tabulate_bernstein_derivatives_1d",
