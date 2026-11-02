@@ -358,9 +358,10 @@ void def_thb_spline(nb::module_& m, const char* name) {
           "evaluate",
           [](const F& f, const F64Mat& pts, const std::vector<std::int64_t>& orders) {
             NdArray<double> out = [&] {
-              const ReleaseGil release(
-                  table_on_pool(f.space()) ||
-                  loop_on_pool(pts.shape(0), evaluate_point_work(f.space(), f.rank())));
+              // Two loops run on the pool: the location of the points and the cells' blocks.
+              const double ops = (std::max)(evaluate_point_work(f.space(), f.rank()),
+                                            f.space().grid().locate_work().ops_per_item);
+              const ReleaseGil release(table_on_pool(f.space()) || loop_on_pool(pts.shape(0), ops));
               return f.evaluate(view_of_points(pts), orders);
             }();
             return to_numpy(std::move(out));
