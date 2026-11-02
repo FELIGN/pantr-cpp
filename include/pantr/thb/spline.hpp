@@ -15,8 +15,10 @@
 #include "pantr/thb/types.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <numeric>
 #include <optional>
 #include <span>
@@ -103,62 +105,95 @@ struct CellTask {
   std::size_t end = 0;
 };
 
+/// The shared representation of a `THBSpline`: its space and its control points.
+///
+/// Attributes:
+///     space (THBSplineSpace<T>): The hierarchical space (a handle sharing its representation).
+///     data (std::shared_ptr<const double[]>): The control points, row-major over `shape`.
+///     shape (std::array<std::size_t, 2>): `(num_total_basis, rank)`.
+template <StorageFloat T>
+struct THBSplineRep {
+  THBSplineSpace<T> space;
+  std::shared_ptr<const double[]> data;
+  std::array<std::size_t, 2> shape;
+};
+
 }  // namespace detail
 
 /// An evaluable THB spline function `f = sum_i c_i phi_i`.
 ///
 /// The hierarchical analogue of `bspline::Bspline`: a `THBSplineSpace` with one control point per
 /// active function, `(num_total_basis, rank)` row-major (the Python wrapper keeps the scalar and
-/// the vector-valued spellings apart). An immutable value: construction validates the shape and
-/// nothing changes afterwards. A copy copies the control points.
+/// the vector-valued spellings apart). An immutable value (design section 2.2): construction
+/// validates the shape and nothing changes afterwards; the space and the control points are shared,
+/// read-only, by every copy (a copy is a reference-count increment), so a numeric view of the
+/// control points stays valid as long as any copy, or the representation `rep()` returns, lives.
 ///
 /// Evaluation locates each point's active leaf cell, groups the points by cell, and per cell
 /// combines the active functions' values with their control points. A point on a cell boundary
 /// belongs to the cell the grid's `locate_many` gives it.
 ///
 /// Attributes:
-///     space_ (THBSplineSpace<T>): The space.
-///     control_points_ (NdArray<double>): Extents `(num_total_basis, rank)`.
+///     rep_ (std::shared_ptr<const detail::THBSplineRep<T>>): The shared representation.
 template <StorageFloat T>
 class THBSpline {
  public:
+  /// The shared representation type.
+  using Rep = detail::THBSplineRep<T>;
+
   /// Build the function.
   ///
   /// Args:
   ///     space (THBSplineSpace<T>): The hierarchical space.
   ///     control_points (NdArray<double>): Extents `(space.num_total_basis(), rank)`, ordered by
-  ///         global dof.
+  ///         global dof; consumed (an lvalue is copied first).
   ///
   /// Raises:
   ///     value_error: `control_points` is not 2-D, or its leading dimension is not
   ///         `space.num_total_basis()`.
   THBSpline(THBSplineSpace<T> space, NdArray<double> control_points)
-      : space_(std::move(space)), control_points_(std::move(control_points)) {
-    if (control_points_.rank() != 2) {
-      throw value_error("control_points must be 2-D; got " +
-                        std::to_string(control_points_.rank()) + "-D.");
-    }
-    const auto n = static_cast<std::size_t>(space_.num_total_basis());
-    if (control_points_.shape()[0] != n) {
-      throw value_error("control_points leading dimension must be " + std::to_string(n) +
-                        "; got shape " + py_repr(control_points_.shape()) + ".");
-    }
-  }
+      : rep_(make_rep(std::move(space), std::move(control_points))) {}
 
-  /// Get the space. Holds: a reference valid while the spline lives.
-  [[nodiscard]] const THBSplineSpace<T>& space() const noexcept { return space_; }
+  /// Get the space. Holds: a reference valid while any copy of the spline lives.
+  [[nodiscard]] const THBSplineSpace<T>& space() const noexcept { return rep_->space; }
 
-  /// Get the control points. Holds: a reference valid while the spline lives.
+  /// Get the control points (a numeric view into the shared representation).
   ///
   /// Returns:
-  ///     const NdArray<double>&: Extents `(num_total_basis, rank)`.
-  [[nodiscard]] const NdArray<double>& control_points() const noexcept { return control_points_; }
+  ///     std::span<const double>: Row-major over `shape()`, valid while any copy of the value
+  ///     lives.
+  [[nodiscard]] std::span<const double> control_points() const noexcept {
+    return {rep_->data.get(), rep_->shape[0] * rep_->shape[1]};
+  }
+
+  /// Get the extents of the control points.
+  ///
+  /// Returns:
+  ///     std::span<const std::size_t>: `(num_total_basis, rank)`, valid while any copy of the value
+  ///     lives.
+  [[nodiscard]] std::span<const std::size_t> shape() const noexcept { return rep_->shape; }
+
+  /// Get the shared representation, for an owner that must keep the control points alive (a view
+  /// handed to another language).
+  ///
+  /// Returns:
+  ///     const std::shared_ptr<const Rep>&: The representation.
+  [[nodiscard]] const std::shared_ptr<const Rep>& rep() const noexcept { return rep_; }
+
+  /// Report whether two values share one representation.
+  ///
+  /// Args:
+  ///     other (const THBSpline&): The other value.
+  ///
+  /// Returns:
+  ///     bool: Whether the representations are the same object.
+  [[nodiscard]] bool same_rep(const THBSpline& other) const noexcept { return rep_ == other.rep_; }
 
   /// Get the number of parametric directions.
-  [[nodiscard]] std::size_t dim() const noexcept { return space_.dim(); }
+  [[nodiscard]] std::size_t dim() const noexcept { return space().dim(); }
 
   /// Get the number of value components.
-  [[nodiscard]] std::size_t rank() const noexcept { return control_points_.shape()[1]; }
+  [[nodiscard]] std::size_t rank() const noexcept { return rep_->shape[1]; }
 
   /// Evaluate one mixed partial derivative of the spline at `pts`, writing into `out`.
   ///
@@ -207,7 +242,7 @@ class THBSpline {
     if (m == 0) {
       return;
     }
-    const grid::HierarchicalGrid grid = space_.grid();
+    const grid::HierarchicalGrid grid = space().grid();
     const NdArray<std::int64_t> cids =
         grid.locate_many(std::span<const double>(pts.data_handle(), m * d), m);
     const std::int64_t* cell_of = cids.data();
@@ -242,7 +277,7 @@ class THBSpline {
     const parallel::WorkEstimate per_task{(std::max)(
         1.0, per_point.ops_per_item * static_cast<double>(m) / static_cast<double>(tasks.size()))};
 
-    const double* cp = control_points_.data();
+    const double* cp = rep_->data.get();
     parallel::parallel_for(tasks.size(), per_task, [&](std::size_t begin, std::size_t end) {
       std::vector<double> local;
       std::vector<double> values;
@@ -251,7 +286,7 @@ class THBSpline {
       for (std::size_t t = begin; t < end; ++t) {
         const detail::CellTask& task = tasks[t];
         const std::size_t n = task.end - task.begin;
-        const std::size_t k = space_.num_active_on(task.cid);
+        const std::size_t k = space().num_active_on(task.cid);
         if (k == 0) {
           throw state_error("cell " + std::to_string(task.cid) +
                             " has no active basis functions; the THBSplineSpace may be "
@@ -268,8 +303,8 @@ class THBSpline {
         }
         values.resize(n * k);
         dofs.resize(k);
-        space_.tabulate_basis(task.cid, mdview<const double, 2>(local.data(), n, d), orders,
-                              mdview<double, 2>(values.data(), n, k), dofs);
+        space().tabulate_basis(task.cid, mdview<const double, 2>(local.data(), n, d), orders,
+                               mdview<double, 2>(values.data(), n, k), dofs);
         detail::contract_cell(values.data(), dofs.data(), cp, rows.data(), n, k, rk);
       }
     });
@@ -319,7 +354,7 @@ class THBSpline {
   ///     value_error, index_error, state_error: As `THBSplineSpace::refine` and `prolong_to`.
   [[nodiscard]] THBSpline refine(std::span<const std::int64_t> cell_ids,
                                  std::optional<std::int64_t> admissible_class) const {
-    return prolong_to(space_.refine(cell_ids, admissible_class));
+    return prolong_to(space().refine(cell_ids, admissible_class));
   }
 
   /// Get the same function on the space with a region refined.
@@ -340,7 +375,7 @@ class THBSpline {
   [[nodiscard]] THBSpline refine_region(std::int64_t level, std::span<const std::int64_t> lo,
                                         std::span<const std::int64_t> hi,
                                         std::optional<std::int64_t> admissible_class) const {
-    return prolong_to(space_.refine_region(level, lo, hi, admissible_class));
+    return prolong_to(space().refine_region(level, lo, hi, admissible_class));
   }
 
   /// Get the same function on a refinement of the space.
@@ -360,14 +395,14 @@ class THBSpline {
   /// Raises:
   ///     value_error: `fine` is not a refinement of the space (see `prolongation_csr`).
   [[nodiscard]] THBSpline prolong_to(const THBSplineSpace<T>& fine) const {
-    const ProlongationCsr p = space_.prolongation_csr(fine);
+    const ProlongationCsr p = space().prolongation_csr(fine);
     const std::size_t rk = rank();
     const auto rows = static_cast<std::size_t>(p.rows);
     NdArray<double> out({rows, rk}, for_overwrite);  // every row is zeroed, then accumulated
     const double mean_row =
         rows == 0 ? 1.0 : static_cast<double>(p.indices.size()) / static_cast<double>(rows);
     const parallel::WorkEstimate work{(std::max)(1.0, 2.0 * static_cast<double>(rk) * mean_row)};
-    const double* cp = control_points_.data();
+    const double* cp = rep_->data.get();
     double* dst = out.data();
     parallel::parallel_for(rows, work, [&p, cp, dst, rk](std::size_t begin, std::size_t end) {
       detail::prolong_rows(p, cp, dst, begin, end, rk);
@@ -380,18 +415,34 @@ class THBSpline {
   [[nodiscard]] parallel::WorkEstimate point_work(std::size_t rk) const {
     const auto d = static_cast<double>(dim());
     int p_max = 0;
-    for (const int p : space_.degrees()) {
+    for (const int p : space().degrees()) {
       p_max = (std::max)(p_max, p);
     }
     const auto width = static_cast<double>(p_max) + 1.0;
-    const double tabulation = static_cast<double>(space_.num_levels()) * d * 2.0 * width * width;
+    const double tabulation = static_cast<double>(space().num_levels()) * d * 2.0 * width * width;
     const double per_function = d + 2.0 * static_cast<double>(rk);
-    return parallel::WorkEstimate{tabulation +
-                                  static_cast<double>(space_.max_active_per_cell()) * per_function};
+    return parallel::WorkEstimate{tabulation + static_cast<double>(space().max_active_per_cell()) *
+                                                   per_function};
   }
 
-  THBSplineSpace<T> space_;
-  NdArray<double> control_points_;
+  static std::shared_ptr<const Rep> make_rep(THBSplineSpace<T> space,
+                                             NdArray<double> control_points) {
+    if (control_points.rank() != 2) {
+      throw value_error("control_points must be 2-D; got " + std::to_string(control_points.rank()) +
+                        "-D.");
+    }
+    const auto n = static_cast<std::size_t>(space.num_total_basis());
+    if (control_points.shape()[0] != n) {
+      throw value_error("control_points leading dimension must be " + std::to_string(n) +
+                        "; got shape " + py_repr(control_points.shape()) + ".");
+    }
+    const std::array<std::size_t, 2> shape = {control_points.shape()[0], control_points.shape()[1]};
+    return std::make_shared<const Rep>(
+        Rep{std::move(space),
+            std::shared_ptr<const double[]>(std::move(control_points).into_buffer()), shape});
+  }
+
+  std::shared_ptr<const Rep> rep_;
 };
 
 }  // namespace pantr::thb

@@ -26,6 +26,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -114,7 +115,7 @@ Reference reference_value(const Spline& s, const double* pt, const Ivec& orders)
   Reference ref;
   ref.value.assign(rank, 0.0);
   const double units = value_error_units(s.space()) + static_cast<double>(k);
-  const auto cp = s.control_points().view<2>();
+  const mdview<const double, 2> cp(s.control_points().data(), s.shape()[0], s.shape()[1]);
   for (std::size_t r = 0; r < rank; ++r) {
     double abs_terms = 0.0;
     for (std::size_t j = 0; j < k; ++j) {
@@ -426,6 +427,33 @@ TEST_CASE("THBSpline: the refusals and their messages") {
                      pantr::value_error);
 }
 
+TEST_CASE("THBSpline: copies share the control points and a view outlives a handle swap") {
+  const Space space = thb_test::refined_2d(true);
+  const auto n = static_cast<std::size_t>(space.num_total_basis());
+  NdArray<double> cp = random_control_points(n, 3, 59);
+  const std::vector<double> sent(cp.data(), cp.data() + cp.size());
+  Spline s(space, std::move(cp));
+  CHECK(s.shape()[0] == n);
+  CHECK(s.shape()[1] == 3);
+  CHECK(s.control_points().size() == n * 3);
+  // A copy is a reference-count increment: same representation, same buffer.
+  const Spline copy = s;  // NOLINT(performance-unnecessary-copy-initialization)
+  CHECK(copy.same_rep(s));
+  CHECK(copy.control_points().data() == s.control_points().data());
+  // A view handed out with its owner stays valid after the handle is reassigned (an
+  // AddressSanitizer target: a dangling view would be a use after free).
+  const std::shared_ptr<const Spline::Rep> owner = s.rep();
+  const std::span<const double> view = s.control_points();
+  const double* const before = view.data();
+  s = s.refine_region(0, Ivec{0, 0}, Ivec{1, 1}, std::nullopt);
+  CHECK_FALSE(s.same_rep(copy));
+  CHECK(s.control_points().data() != before);
+  REQUIRE(view.size() == sent.size());
+  CHECK(std::equal(view.begin(), view.end(), sent.begin()));
+  CHECK(owner->data.get() == before);
+  CHECK(copy.control_points().data() == before);
+}
+
 TEST_CASE("THBSpline: one thread and several give bit-identical values") {
   check_many_threads_are_used();
   const Space space = thb_test::refined_2d(true);
@@ -463,8 +491,8 @@ TEST_CASE("THBSpline: the prolongation of control points does not depend on the 
     const ThreadsGuard guard(threads);
     fine.push_back(s.refine_region(0, Ivec{0, 0}, Ivec{4, 4}, std::nullopt));
   }
-  const auto& a = fine[0].control_points();
-  const auto& b = fine[1].control_points();
+  const std::span<const double> a = fine[0].control_points();
+  const std::span<const double> b = fine[1].control_points();
   REQUIRE(a.size() == b.size());
   CHECK(std::memcmp(a.data(), b.data(), a.size() * sizeof(double)) == 0);
 
@@ -472,8 +500,8 @@ TEST_CASE("THBSpline: the prolongation of control points does not depend on the 
   // most `nnz` terms, so it differs by at most `nnz eps sum |terms|` (times the build slack) from a
   // sum taken without contraction.
   const th::ProlongationCsr p = base.prolongation_csr(fine[0].space());
-  REQUIRE(a.shape()[0] == static_cast<std::size_t>(p.rows));
-  const auto cp = s.control_points().view<2>();
+  REQUIRE(fine[0].shape()[0] == static_cast<std::size_t>(p.rows));
+  const mdview<const double, 2> cp(s.control_points().data(), s.shape()[0], s.shape()[1]);
   for (std::size_t r = 0; r < static_cast<std::size_t>(p.rows); ++r) {
     const auto entries = static_cast<double>(p.indptr[r + 1] - p.indptr[r]);
     for (std::size_t c = 0; c < rank; ++c) {
