@@ -134,7 +134,7 @@ hiding the answer, so a site that needs more needs a derivation of its own.
 Both readings are in use. The long-accumulation one grades the prolongation
 residual of a THB refinement, an SVD least-squares solve whose backward-stability
 constant has no closed form
-(``pantr.bspline._thb_spline_space._prolongation_residual_tolerance``); the
+(``pantr::thb::prolongation_residual_tolerance``); the
 robustness one grades a Coons patch's corner match, where the caller's chain to
 the corner is unbounded and a false rejection costs more than a false accept
 (``pantr.cad._coons``).

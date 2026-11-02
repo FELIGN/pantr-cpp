@@ -91,12 +91,9 @@ def coupling_graph(
         True
     """
     if isinstance(space, THBSplineSpace):
-        n_cells = space.grid.num_cells
-        weights = _coerce_cell_weights(cell_weights, n_cells)
-        cell_ptr, dofs = _thb_incidence(space)
-        arrays = _cpp.coupling_graph_from_incidence(
-            n_cells, space.num_total_basis, cell_ptr, dofs, weights
-        )
+        weights = _coerce_cell_weights(cell_weights, space.grid.num_cells)
+        space._check_not_stale()
+        arrays = _cpp.coupling_graph_thb(space._h, weights)
     elif isinstance(space, BsplineSpace):
         if space._h is None:
             raise ValueError("a B-spline space needs at least one direction")
@@ -108,30 +105,6 @@ def coupling_graph(
         )
     num_vertices, xadj, adjncy, edge_weights, vertex_weights = arrays
     return CouplingGraph(int(num_vertices), xadj, adjncy, edge_weights, vertex_weights)
-
-
-def _thb_incidence(space: THBSplineSpace) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]:
-    """Build the cell -> DOF incidence of a THB-spline space in CSR form.
-
-    Uses :meth:`THBSplineSpace.active_basis` for the active global DOF ids on each cell.
-    ``active_basis`` returns all functions whose untruncated support intersects the cell,
-    including truncated functions that may evaluate to zero there; edge weights therefore
-    count support-intersecting functions, not just non-zero ones. This is the one place the
-    graph reads the THB space: a compiled THB space can hand the same incidence over instead.
-
-    Args:
-        space (THBSplineSpace): The hierarchical space.
-
-    Returns:
-        tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]: ``(cell_ptr, dofs)``: the DOFs
-        of cell ``c`` are ``dofs[cell_ptr[c]:cell_ptr[c + 1]]``.
-    """
-    n_cells = space.grid.num_cells
-    per_cell = [np.asarray(space.active_basis(cid), dtype=np.int64) for cid in range(n_cells)]
-    cell_ptr = np.zeros(n_cells + 1, dtype=np.int64)
-    np.cumsum([dofs.size for dofs in per_cell], out=cell_ptr[1:])
-    dofs = np.concatenate(per_cell) if per_cell else np.zeros(0, dtype=np.int64)
-    return cell_ptr, np.ascontiguousarray(dofs, dtype=np.int64)
 
 
 def _coerce_cell_weights(

@@ -12,10 +12,9 @@ projector onto the spline space (``Q B_β = B_β``).
 
 The tensor-product operator is built and applied in C++
 (``include/pantr/bspline/quasi_interpolate.hpp``): it lists the points to sample, this module
-calls ``f`` on them, and C++ contracts the samples with the weights. The NumPy helpers below
-(:func:`_interval_interior_points`, :func:`_local_weight_row`, :func:`_tensor_point_grid`,
-:func:`_contract_weights`) and :data:`QIKind` back the hierarchical quasi-interpolant in
-``_thb_quasi_interpolation``, which is not ported yet; :func:`_evaluate_func` serves both.
+calls ``f`` on them, and C++ contracts the samples with the weights. :data:`QIKind` and
+:func:`_evaluate_func` are shared with the hierarchical quasi-interpolant in
+``_thb_quasi_interpolation``, which is staged the same way.
 
 Main exports:
 
@@ -40,112 +39,8 @@ _cpp: Any = ext.bspline
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from ._bspline_space_1d import BsplineSpace1D
-
 QIKind = Literal["llm"]
 """Supported quasi-interpolation kinds (Lee-Lyche-Mørken local projector)."""
-
-
-# ---------------------------------------------------------------------------
-# Local Lee-Lyche-Mørken building blocks (shared with the hierarchical QI)
-# ---------------------------------------------------------------------------
-
-
-def _interval_interior_points(lo: float, hi: float, order: int) -> npt.NDArray[np.float64]:
-    """Return ``order`` equispaced interior points of ``[lo, hi]``.
-
-    Interior placement keeps the points off the knots, where the local collocation
-    block can become singular.
-
-    Args:
-        lo (float): Interval lower bound.
-        hi (float): Interval upper bound.
-        order (int): Number of points (``degree + 1``).
-
-    Returns:
-        npt.NDArray[np.float64]: Shape ``(order,)`` strictly inside ``(lo, hi)``.
-    """
-    frac = np.arange(1, order + 1, dtype=np.float64) / (order + 1)
-    return np.asarray(lo + (hi - lo) * frac, dtype=np.float64)
-
-
-def _local_weight_row(
-    space1d: BsplineSpace1D,
-    points: npt.NDArray[np.float64],
-    target_index: int,
-) -> npt.NDArray[np.float64]:
-    """Return the local functional weights for one basis function on one interval.
-
-    ``points`` must all lie in a single knot interval where ``target_index`` is one
-    of the ``order`` nonzero B-splines.  The local collocation block is inverted so
-    that ``λ(f) = weights · f(points)`` recovers the coefficient of
-    ``B_{target_index}`` of the local degree-``p`` interpolant.
-
-    Args:
-        space1d (BsplineSpace1D): The 1D B-spline space.
-        points (npt.NDArray[np.float64]): ``order`` distinct points in one interval.
-        target_index (int): Index of the target basis function within ``space1d``
-            (0-indexed within the 1D space, not a global hierarchical dof index).
-
-    Returns:
-        npt.NDArray[np.float64]: Weights of shape ``(order,)``.
-
-    Raises:
-        ValueError: If the local collocation matrix is singular or nearly singular
-            (non-finite inverse), which indicates degenerate knot intervals.
-    """
-    basis, first_basis = space1d.tabulate_basis(points)
-    block = np.asarray(basis, dtype=np.float64)
-    try:
-        inv = np.asarray(np.linalg.inv(block), dtype=np.float64)
-    except np.linalg.LinAlgError as exc:
-        err = ValueError(f"Local collocation matrix for basis function {target_index} is singular.")
-        err.add_note("This usually indicates repeated or degenerate knot intervals.")
-        err.add_note(f"Points: {points.tolist()}")
-        raise err from exc
-    if not np.all(np.isfinite(inv)):
-        raise ValueError(
-            f"Local collocation matrix inversion for basis function {target_index} "
-            f"produced non-finite values (condition number too large). "
-            f"Points: {points.tolist()}"
-        )
-    local = target_index - int(first_basis[0])
-    return np.asarray(inv[local], dtype=np.float64)
-
-
-def _tensor_point_grid(per_dir_points: list[npt.NDArray[np.float64]]) -> npt.NDArray[np.float64]:
-    """Build the tensor-product point grid from per-direction point arrays.
-
-    Args:
-        per_dir_points (list[npt.NDArray[np.float64]]): One ``(order_k,)`` array per
-            direction.
-
-    Returns:
-        npt.NDArray[np.float64]: Points of shape ``(prod(order_k), dim)`` in C-order.
-    """
-    mesh = np.meshgrid(*per_dir_points, indexing="ij")
-    return np.stack([m.ravel() for m in mesh], axis=-1).astype(np.float64, copy=False)
-
-
-def _contract_weights(
-    weights: list[npt.NDArray[np.float64]],
-    values: npt.NDArray[np.float64],
-) -> npt.NDArray[np.float64]:
-    """Contract a local value tensor with per-direction weight vectors.
-
-    Args:
-        weights (list[npt.NDArray[np.float64]]): One ``(order_k,)`` weight vector per
-            direction.
-        values (npt.NDArray[np.float64]): Local values of shape
-            ``(order_0, ..., order_{d-1}, rank)``.
-
-    Returns:
-        npt.NDArray[np.float64]: The coefficient of shape ``(rank,)``.
-    """
-    result = np.asarray(values, dtype=np.float64)
-    for w in weights:
-        result = np.tensordot(w, result, axes=([0], [0]))
-    return result
 
 
 # ---------------------------------------------------------------------------

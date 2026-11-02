@@ -5,7 +5,8 @@ This module provides :class:`THBSpline`, the hierarchical analogue of
 ``f(u) = Σ_i c_i φ_i(u)`` where ``φ_i`` are the active (truncated) hierarchical
 basis functions of a :class:`~pantr.bspline.THBSplineSpace` and ``c_i`` the control
 points (one per active dof).  Evaluation locates each point's active leaf cell and
-combines the cell's active-basis values with the matching control points.
+combines the cell's active-basis values with the matching control points, in the C++
+library (``pantr::thb::THBSpline``, ``include/pantr/thb/spline.hpp``).
 
 Main exports:
 
@@ -14,15 +15,22 @@ Main exports:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import copy
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from numpy import typing as npt
 
-from ._thb_spline_space import THBSplineSpace
+from .._ext import ext
+from ._thb_spline_space import THBSplineSpace, _derivative_orders
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+_cpp: Any = ext.bspline
+"""The compiled THB splines (private; untyped: one class per dtype)."""
+
+_F32 = np.dtype(np.float32)
 
 
 class THBSpline:
@@ -36,13 +44,16 @@ class THBSpline:
     ``(*num_basis, rank)`` grid of :class:`~pantr.bspline.Bspline`.
 
     Attributes:
+        _h (Any): The compiled spline (``THBSplineF64`` or ``THBSplineF32``).
         _space (THBSplineSpace): The hierarchical space.
         _control_points (npt.NDArray[np.float64]): Control points reshaped to
-            ``(num_total_basis, rank)`` (read-only).
+            ``(num_total_basis, rank)`` (read-only view of ``_h``'s).
         _scalar (bool): Whether the field is scalar (``control_points`` was 1-D).
     """
 
-    __slots__ = ("_control_points", "_scalar", "_space")
+    __slots__ = ("_control_points", "_h", "_scalar", "_space")
+
+    _control_points: npt.NDArray[np.float64]
 
     def __init__(self, space: THBSplineSpace, control_points: npt.ArrayLike) -> None:
         """Create a THB spline function.
@@ -75,14 +86,70 @@ class THBSpline:
                 )
         else:
             raise ValueError(f"control_points must be 1-D or 2-D; got {arr.ndim}-D.")
+        cls = _cpp.THBSplineF32 if space._root_space.dtype == _F32 else _cpp.THBSplineF64
+        self._adopt(cls(space._h, np.ascontiguousarray(arr)), space, scalar)
+
+    def _adopt(self, h: Any, space: THBSplineSpace, scalar: bool) -> None:  # noqa: ANN401
+        """Hold a compiled spline and cache its read-only control points.
+
+        Args:
+            h (Any): The compiled spline.
+            space (THBSplineSpace): The space object it is a function of.
+            scalar (bool): Whether the field is scalar.
+        """
+        self._h = h
         self._space = space
-        self._control_points = np.ascontiguousarray(arr, dtype=np.float64)
-        # Ensure we own the data before marking read-only; ascontiguousarray may
-        # return a view of the input when it is already C-contiguous float64.
-        if not self._control_points.flags.owndata:
-            self._control_points = self._control_points.copy()
-        self._control_points.flags.writeable = False
+        self._control_points = h.control_points
         self._scalar = scalar
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        """Pickle through the space and the control points, with a subclass's attributes as state.
+
+        Returns:
+            tuple[Any, ...]: The rebuilding function, its arguments and the extra attributes.
+        """
+        return (
+            _rebuild_thb_spline,
+            (type(self), self._space, self.control_points),
+            dict(self.__dict__) if hasattr(self, "__dict__") else None,
+        )
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Restore a subclass's attributes.
+
+        Args:
+            state (dict[str, Any]): The pickled extra attributes.
+        """
+        self.__dict__.update(state)
+
+    def __copy__(self) -> THBSpline:
+        """Copy: the new object shares the compiled value and the space.
+
+        Returns:
+            THBSpline: The copy, of the same class, with the same attributes.
+        """
+        new = object.__new__(type(self))
+        new._adopt(self._h, self._space, self._scalar)
+        if hasattr(self, "__dict__"):
+            new.__dict__.update(self.__dict__)
+        return new
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> THBSpline:
+        """Deep copy: shares the compiled value (immutable) and deep-copies the space.
+
+        Args:
+            memo (dict[int, Any]): The deep-copy memo.
+
+        Returns:
+            THBSpline: The copy.
+        """
+        new = object.__new__(type(self))
+        memo[id(self)] = new
+        new._adopt(self._h, copy.deepcopy(self._space, memo), self._scalar)
+        if hasattr(self, "__dict__"):
+            for key, value in self.__dict__.items():
+                new.__dict__[key] = copy.deepcopy(value, memo)
+        return new
 
     @property
     def space(self) -> THBSplineSpace:
@@ -238,40 +305,13 @@ class THBSpline:
                 f"pts must have trailing dimension {self.dim}; got shape {arr.shape!r}."
             )
         batch_shape = arr.shape[:-1]
-        flat = arr.reshape(-1, self.dim)
-        n_pts = flat.shape[0]
+        flat = np.ascontiguousarray(arr.reshape(-1, self.dim))
         rank = self.rank
-        grid = self._space.grid
 
-        cids = grid.locate_many(flat)
-        if n_pts > 0 and int(cids.min()) < 0:
-            i = int(np.argmax(cids < 0))
-            raise ValueError(f"point {flat[i].tolist()!r} lies outside the grid domain.")
-
-        # Group points by cell via a stable argsort: order[starts[g]:ends[g]]
-        # holds the point indices of the g-th occupied cell. Avoids the
-        # O(num_cells * num_pts) per-cell boolean masks.
-        order = np.argsort(cids, kind="stable")
-        sorted_cids = cids[order]
-        boundaries = np.flatnonzero(np.diff(sorted_cids)) + 1
-        if n_pts > 0:
-            starts = np.concatenate(([0], boundaries))
-            ends = np.concatenate((boundaries, [n_pts]))
-        else:
-            starts = np.empty(0, dtype=np.int64)
-            ends = np.empty(0, dtype=np.int64)
-
-        raw = np.empty((n_pts, rank), dtype=np.float64)
-        for s, e in zip(starts, ends, strict=True):
-            cid = int(sorted_cids[s])
-            idx = order[s:e]
-            values, dofs = self._space.tabulate_basis_derivatives(cid, flat[idx], orders)
-            if dofs.size == 0:
-                raise RuntimeError(
-                    f"cell {cid} has no active basis functions; "
-                    "the THBSplineSpace may be inconsistent."
-                )
-            raw[idx] = np.asarray(values, dtype=np.float64) @ self._control_points[dofs]
+        # The orders are looked at only once there is a point to evaluate, as the cells' own
+        # tabulation did.
+        orders_t = _derivative_orders(orders, self.dim) if flat.shape[0] > 0 else ()
+        raw: npt.NDArray[np.float64] = self._h.evaluate(flat, list(orders_t))
 
         result = raw[:, 0].reshape(batch_shape) if self._scalar else raw.reshape(*batch_shape, rank)
         if out is None:
@@ -359,8 +399,9 @@ class THBSpline:
         Returns:
             THBSpline: A new spline on ``fine`` equal to ``self`` as a function.
         """
-        prolongation = self._space.prolongation_to(fine)
-        return THBSpline(fine, prolongation @ self.control_points)
+        new = object.__new__(THBSpline)
+        new._adopt(self._h.prolong_to(fine._h), fine, self._scalar)
+        return new
 
     def __repr__(self) -> str:
         """Return a concise representation.
@@ -372,3 +413,25 @@ class THBSpline:
             f"THBSpline(dim={self.dim}, rank={self.rank}, num_total_basis="
             f"{self._space.num_total_basis})"
         )
+
+
+def _rebuild_thb_spline(
+    cls: type[THBSpline], space: THBSplineSpace, control_points: npt.NDArray[np.float64]
+) -> THBSpline:
+    """Rebuild a pickled THB spline of class ``cls``, bypassing ``cls.__init__``.
+
+    A subclass's constructor may take other arguments; the previous release's pickles did not
+    call it either.
+
+    Args:
+        cls (type[THBSpline]): The class of the pickled spline.
+        space (THBSplineSpace): Its space.
+        control_points (npt.NDArray[np.float64]): Its control points, scalar or vector-valued as
+            they were.
+
+    Returns:
+        THBSpline: The spline (its extra attributes are restored by ``__setstate__``).
+    """
+    spline = cls.__new__(cls)
+    THBSpline.__init__(spline, space, control_points)
+    return spline
