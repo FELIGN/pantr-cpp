@@ -105,6 +105,54 @@ def test_large_path_graph_single_cut() -> None:
     assert int(np.sum(owner[:-1] != owner[1:])) == 1
 
 
+def _grid_graph(dims: tuple[int, ...]) -> CouplingGraph:
+    """The unit-weight grid graph on ``dims`` cells, vertices in C order."""
+    adjacency = None
+    for axis, n in enumerate(dims):
+        ones = np.ones(n - 1, dtype=np.int64)
+        path = sparse.diags([ones, ones], [1, -1], format="csr", dtype=np.int64)
+        left = sparse.identity(int(np.prod(dims[:axis], dtype=np.int64)), dtype=np.int64)
+        right = sparse.identity(int(np.prod(dims[axis + 1 :], dtype=np.int64)), dtype=np.int64)
+        term = sparse.kron(sparse.kron(left, path), right)
+        adjacency = term if adjacency is None else adjacency + term
+    csr = sparse.csr_matrix(adjacency)
+    csr.sort_indices()
+    n_total = int(np.prod(dims))
+    return CouplingGraph(
+        n_total,
+        csr.indptr.astype(np.int64),
+        csr.indices.astype(np.int64),
+        csr.data.astype(np.int64),
+        np.ones(n_total),
+    )
+
+
+@pytest.mark.parametrize("dims", [(32, 27), (10, 8, 7)])
+def test_large_grid_bisection_follows_the_fiedler_vector(dims: tuple[int, ...]) -> None:
+    # Regression: above 512 vertices the bisection must order by the Fiedler vector, not by
+    # another eigenvector. Oracle (closed form): the grid graph's Laplacian has the eigenpairs
+    # prod_d cos(pi k_d (i_d + 1/2) / n_d), sum_d (2 - 2 cos(pi k_d / n_d)). For these shapes the
+    # second-smallest eigenvalue is simple, attained by k = (1, 0, ...) on the first (longest)
+    # axis, so the Fiedler vector is cos(pi (i_0 + 1/2) / n_0): positive for i_0 < n_0 / 2,
+    # negative after (n_0 is even, so no entry is zero), and the two halves are these.
+    lam = sorted(
+        float(sum(2.0 - 2.0 * np.cos(np.pi * k / n) for k, n in zip(ks, dims, strict=True)))
+        for ks in np.ndindex(*(min(n, 3) for n in dims))
+    )
+    lam_fiedler = 2.0 - 2.0 * np.cos(np.pi / dims[0])
+    assert lam[1] == pytest.approx(lam_fiedler, rel=1e-12)
+    assert lam[2] > lam[1] * (1.0 + 1e-3), "the oracle needs a simple second eigenvalue"
+
+    graph = _grid_graph(dims)
+    i0 = np.arange(graph.num_vertices) // int(np.prod(dims[1:]))
+    fiedler = np.cos(np.pi * (i0 + 0.5) / dims[0])
+    expected_left = fiedler > 0.0
+
+    owner = partition_graph(graph, 2).cell_owner
+    assert set(owner[expected_left].tolist()) == {int(owner[0])}
+    assert set(owner[~expected_left].tolist()) == {1 - int(owner[0])}
+
+
 def test_eigsh_failure_falls_back_to_dense(monkeypatch: pytest.MonkeyPatch) -> None:
     # Force the sparse eigensolver to fail; the dense fallback must still partition.
     def _boom(*args: object, **kwargs: object) -> object:
