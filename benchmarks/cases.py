@@ -1186,6 +1186,181 @@ def _s6_graph_cases() -> list[Case]:
     return cases
 
 
+def _thb_fixture(side: int) -> Any:  # noqa: ANN401
+    """Build a three-level biquadratic THB space on ``side x side`` root intervals.
+
+    The lower-left quarter of the root is refined once, and the lower-left quarter of that (in
+    level-1 cells) once more, both graded (the default admissibility class).
+
+    Args:
+        side (int): Root intervals per direction (a multiple of 4).
+
+    Returns:
+        Any: The ``THBSplineSpace``.
+    """
+    from pantr.bspline import create_thb_space, create_uniform_space  # noqa: PLC0415
+
+    thb = create_thb_space(create_uniform_space([2, 2], [side, side]))
+    thb = thb.refine_region(0, [0, 0], [side // 2, side // 2])
+    return thb.refine_region(1, [0, 0], [side // 2, side // 2])
+
+
+def _s6_thb_cases() -> list[Case]:  # noqa: PLR0915
+    """The THB, multilevel-extraction and local-space cases of the S6 stage (C6.3).
+
+    The THB space is :func:`_thb_fixture` on 4 x 4, 16 x 16 and 48 x 48 root intervals (``tiny``,
+    ``medium``, ``large``), built in the setup unless its construction is what is timed.
+
+    - ``thb_construct``: ``THBSplineSpace(root, grid)`` on the fixture's refined grid.
+    - ``thb_refine``: one graded ``refine`` of the first level-0 active cell of the fixture.
+    - ``thb_tabulate_basis``: ``tabulate_basis`` of every active cell at 4 points per cell.
+    - ``thb_prolongation_to_sparse``: from the fixture on 4 x 4, 8 x 8 and 16 x 16 root intervals
+      to its graded refinement of four finest-level cells (smaller than the others: ``main``
+      takes seconds per call at 16 x 16).
+    - ``quasi_interpolate_thb_spline``: a smooth scalar function onto the fixture.
+    - ``multilevel_extraction``: ``MultiLevelExtraction(space)`` and its ``operator`` on every
+      active cell.
+    - ``coupling_graph_thb``: ``coupling_graph`` of the fixture.
+    - ``build_local_thb``: ``build_local`` of rank 0 of a 4-part recursive-coordinate-bisection
+      partition of the fixture's cells.
+    - ``thb_spline_evaluate``: a scalar ``THBSpline`` on the 16 x 16 fixture at 1, 1e3 and 1e5
+      random points.
+    - ``compute_halo`` and ``dof_owner``: a biquadratic tensor space of 4 x 4, 32 x 32 and
+      256 x 256 intervals, the halo of its first quarter of cells and the owners under a 4-part
+      block partition.
+    """
+    from pantr.bspline import (  # noqa: PLC0415
+        MultiLevelExtraction,
+        THBSpline,
+        THBSplineSpace,
+        build_local,
+        compute_halo,
+        coupling_graph,
+        create_uniform_space,
+        dof_owner,
+        quasi_interpolate_thb_spline,
+    )
+    from pantr.grid import partition_grid, tensor_product_grid  # noqa: PLC0415
+
+    cases: list[Case] = []
+
+    def add(name: str, size: str, what: str, setup: Callable[[], Callable[[], Any]]) -> None:
+        cases.append(Case(f"S6.{name}.{size}", "S6", size, what, setup))
+
+    for size, side in {"tiny": 4, "medium": 16, "large": 48}.items():
+
+        def setup_construct(side: int = side) -> Callable[[], Any]:
+            thb = _thb_fixture(side)
+            root, grid = thb.root_space, thb.grid
+            return lambda: THBSplineSpace(root, grid)
+
+        add("thb_construct", size, f"THBSplineSpace, 3 levels, {side}^2 root", setup_construct)
+
+        def setup_refine(side: int = side) -> Callable[[], Any]:
+            thb = _thb_fixture(side)
+            cid = next(c for c in range(thb.grid.num_cells) if thb.grid.cell_level(c) == 0)
+            return lambda: thb.refine([cid])
+
+        add("thb_refine", size, f"THBSplineSpace.refine of one cell, {side}^2 root", setup_refine)
+
+        def setup_tabulate(side: int = side) -> Callable[[], Any]:
+            thb = _thb_fixture(side)
+            xi = np.array([[0.2, 0.3], [0.7, 0.1], [0.4, 0.9], [0.5, 0.5]])
+            cells = []
+            for cid in range(thb.grid.num_cells):
+                lo, hi = thb.grid.cell_bounds(cid)
+                cells.append((cid, lo + xi * (hi - lo)))
+
+            def run() -> None:
+                for cid, pts in cells:
+                    thb.tabulate_basis(cid, pts)
+
+            return run
+
+        add("thb_tabulate_basis", size, f"tabulate_basis, every cell, {side}^2", setup_tabulate)
+
+        def setup_qi(side: int = side) -> Callable[[], Any]:
+            thb = _thb_fixture(side)
+
+            def func(x: np.ndarray) -> np.ndarray:
+                return np.asarray(np.sin(3.0 * x[:, 0]) * np.cos(2.0 * x[:, 1]))
+
+            return lambda: quasi_interpolate_thb_spline(func, thb)
+
+        add("quasi_interpolate_thb_spline", size, f"THB QI, {side}^2 root", setup_qi)
+
+        def setup_mle(side: int = side) -> Callable[[], Any]:
+            thb = _thb_fixture(side)
+            n = thb.grid.num_cells
+
+            def run() -> None:
+                mle = MultiLevelExtraction(thb)
+                for cid in range(n):
+                    mle.operator(cid)
+
+            return run
+
+        add("multilevel_extraction", size, f"MultiLevelExtraction, every cell, {side}^2", setup_mle)
+
+        def setup_graph(side: int = side) -> Callable[[], Any]:
+            thb = _thb_fixture(side)
+            return lambda: coupling_graph(thb)
+
+        add("coupling_graph_thb", size, f"coupling_graph of the THB fixture, {side}^2", setup_graph)
+
+        def setup_local(side: int = side) -> Callable[[], Any]:
+            thb = _thb_fixture(side)
+            part = partition_grid(thb.grid, 4, backend="rcb")
+            return lambda: build_local(thb, part, 0)
+
+        add("build_local_thb", size, f"build_local, rank 0 of 4, {side}^2 root", setup_local)
+
+    for size, side in {"tiny": 4, "medium": 8, "large": 16}.items():
+
+        def setup_prolong(side: int = side) -> Callable[[], Any]:
+            thb = _thb_fixture(side)
+            finest = [
+                c for c in range(thb.grid.num_cells) if thb.grid.cell_level(c) == thb.grid.max_level
+            ]
+            finest = finest[:4]
+            fine = thb.refine(finest)
+            return lambda: thb.prolongation_to_sparse(fine)
+
+        add(
+            "thb_prolongation_to_sparse",
+            size,
+            f"prolongation_to_sparse to a refinement, {side}^2 root",
+            setup_prolong,
+        )
+
+    for size, n_eval in {"tiny": 1, "medium": 1_000, "large": 100_000}.items():
+
+        def setup_eval(n_eval: int = n_eval) -> Callable[[], Any]:
+            thb = _thb_fixture(16)
+            spline = THBSpline(thb, np.linspace(0.0, 1.0, thb.num_total_basis))
+            pts = np.random.default_rng(1234).random((n_eval, 2))
+            return lambda: spline.evaluate(pts)
+
+        add("thb_spline_evaluate", size, f"THBSpline.evaluate, {n_eval} points", setup_eval)
+
+    for size, side in {"tiny": 4, "medium": 32, "large": 256}.items():
+
+        def setup_halo(side: int = side) -> Callable[[], Any]:
+            space = create_uniform_space([2, 2], [side, side])
+            owned = np.arange(space.num_total_intervals // 4)
+            return lambda: compute_halo(space, owned)
+
+        add("compute_halo", size, f"compute_halo of a quarter, {side}^2", setup_halo)
+
+        def setup_owner(side: int = side) -> Callable[[], Any]:
+            space = create_uniform_space([2, 2], [side, side])
+            part = partition_grid(tensor_product_grid(space), 4, backend="block")
+            return lambda: dof_owner(space, part)
+
+        add("dof_owner", size, f"dof_owner, 4 parts, {side}^2", setup_owner)
+    return cases
+
+
 def all_cases() -> list[Case]:
     """Return every case this tree can run.
 
@@ -1203,5 +1378,6 @@ def all_cases() -> list[Case]:
         + _s5_fit_cases()
         + _s6_grid_cases()
         + _s6_graph_cases()
+        + _s6_thb_cases()
         + _r6_cases()
     )
