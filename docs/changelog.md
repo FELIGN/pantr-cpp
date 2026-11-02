@@ -10,6 +10,10 @@
   import); without it, `"berf"` when `pantr-berf` is installed, else `"builtin"`. Asking for
   `"berf"` without the package raises `ImportError`. This is the runtime switch for the
   certified finder the C++ port adds as an optional package.
+- **A METIS graph partitioner for C++ users** (`pantr::metis::Partitioner`, target `pantr::metis`,
+  CMake option `PANTR_WITH_METIS`, off by default), against a METIS the user installs. It does what
+  `partition_graph(backend="metis")` does through pymetis. The Python package does not use it:
+  `backend="metis"` still needs `pymetis` (`pip install 'pantr[metis]'`).
 
 ### Rejected where it used to be accepted
 - **`num_intervals=0` is refused by all three knot-vector factories.**
@@ -121,6 +125,16 @@
   axis** raises `OverflowError`; the previous release returned the count as a Python integer.
 - **A `TensorProductGrid` with 2**63 cells or more** raises `OverflowError`, from its constructor,
   `uniform_grid`, `tensor_product_grid` and `overlay` alike; the previous release built it.
+- **`partition_graph` refuses a `CouplingGraph` whose `vertex_weights` are negative or not
+  finite** (`ValueError`, "vertex_weights must be finite and non-negative."). The previous release
+  partitioned it: the bisection cuts where a running sum of the weights reaches half their total,
+  and with a negative or NaN weight that sum is not monotone or not a number, so the cut was
+  arbitrary.
+- **`partition_graph` checks the arrays of the `CouplingGraph` it is given** and raises
+  `ValueError` naming the array when `xadj` does not hold `num_vertices + 1` non-decreasing entries
+  from 0 to `len(adjncy)`, when `edge_weights` or `vertex_weights` has the wrong length, or when an
+  `adjncy` entry is outside `[0, num_vertices)`. The previous release raised scipy's `ValueError`
+  ("index pointer size 4 should be 5") or an `IndexError` for some of these.
 
 ### Changed
 - **pantr needs Python 3.12 or later.** pantr is becoming a C++ library with a compiled
@@ -932,7 +946,50 @@
   - **The `RuntimeWarning`s numpy emitted on overflow** (control points near `1e300`, weights near
     `1e-300`) are gone; the errors raised there are unchanged.
 
+- **`coupling_graph` and `partition_graph` run in pantr's C++ library.** Names, signatures and
+  defaults are unchanged, `CouplingGraph` is still the same named tuple (built by
+  `coupling_graph` with read-only `int64` and `float64` arrays, and constructible by hand), and
+  `backend="metis"` still calls pymetis. In a sweep of calls against the previous release, one
+  process each (tensor-product and THB graphs in one to three dimensions, `float32` spaces, reduced
+  continuity, cell weights given as masked, byte-swapped, `float16`, `longdouble`, integer and
+  boolean arrays, part counts and masks of several types, hand-built graphs, and the METIS backend),
+  every graph and every METIS partition was equal; the spectral partitions and the other
+  differences are the entries below and above.
+- **Spectral partitions can change, at any size, where the Fiedler vector is not determined by the
+  graph.** The eigenvector of the second-smallest Laplacian eigenvalue is now computed by Eigen up
+  to 512 vertices and by Spectra above, not by LAPACK and ARPACK. When that eigenvalue is repeated
+  (a square grid of cells, as in a uniform space with as many intervals in each direction), every
+  vector of its eigenspace is a Fiedler vector and the two releases use different ones, so the
+  parts differ and the cut weight can be larger or smaller (in the sweep, larger on the square
+  grids it tried); when the graph is symmetric under reversing the vertex order (a 1D space), the
+  vector's two largest entries tie in sign up to rounding and the parts can come out mirrored. The
+  part weights were equal in every spectral partition of the sweep. For the same reason, the
+  partition of such a graph can differ between the extension's builds for different processors
+  (it does not depend on the number of threads).
+- **`partition_graph` with integer-valued but non-`int` arguments.** `n_parts` is converted with
+  `int()` before the part count is compared with the active cells, so `partition_graph(graph, 4.5)`
+  on four cells now partitions into 4 parts (it raised `ValueError`), and an `n_parts` past the
+  64-bit range raises `TypeError` (it raised `ValueError`). A `CouplingGraph` whose arrays are
+  Python lists, or whose `num_vertices` is a float, is accepted (the previous release raised
+  `AttributeError` and `TypeError`).
+- **`coupling_graph` of a `BsplineSpace` with no directions** raises `ValueError` "a B-spline space
+  needs at least one direction" (it raised `ValueError` "multiple indices are not supported for 0d
+  arrays"), and for a periodic space with `cell_weights` that are not 1-D, the error about the
+  weights' shape is raised before the one about periodicity.
 ### Fixed
+- **`partition_graph` bisects graphs above 512 vertices along their Fiedler vector.** It asked
+  ARPACK for the two smallest eigenpairs of the Laplacian and took the second, assuming the first
+  was always the constant vector's (eigenvalue 0) because the start vector is orthogonal to it. In
+  floating point the constant direction appears on some graphs and not on others, so the vector
+  used was sometimes that of the third-smallest eigenvalue: the 32 x 27 grid graph was cut across
+  its short axis instead of its long one, a longer cut. The partitioner now solves for one
+  eigenpair of the Laplacian with the constant direction deflated (moved above the rest of the
+  spectrum), which is the Fiedler pair whatever the start vector holds. Partitions of graphs above
+  512 vertices can change: they now follow the true Fiedler vector. This is a fix, not a
+  consequence of the port.
+- **`partition_graph` no longer crashes the interpreter on a `CouplingGraph` with an `adjncy` entry
+  outside `[0, num_vertices)`**; the previous release ended the process with a segmentation fault
+  (scipy read outside the array). It raises `ValueError` now (see above).
 - **`Bspline.multiply` no longer returns values that depend on memory it never wrote.** The
   product groups the knots of every direction at the largest tolerance of any direction, so in a
   direction much shorter than another (in `float32`, one a few `1e-6` long beside one of length
