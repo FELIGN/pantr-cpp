@@ -50,6 +50,10 @@ module.
   :func:`bspline_find_roots_with_budget`, the public route with a budget small enough to exhaust.
 - The knot classes of a raw knot vector at an explicit tolerance
   (:func:`unique_knots_and_multiplicity`), which a space only reaches with its own tolerance.
+- The tolerances of the THB space (``cell_membership_tolerance``,
+  ``prolongation_residual_tolerance``), the cell support of every function of a 1D space
+  (:func:`func_support_1d`) and the hierarchical halo and owner kernels of a distributed space
+  (``thb_halo``, ``thb_dof_owner``), which no public function exposes on their own.
 - The pure block helpers of the hierarchical grid (``_block_size``, ``_in_block``,
   ``_rect_intersect``, ``_peel``, ``_try_merge``, ``_normalize_blocks``, ``_mark_region_cells``,
   ``_name_marked_cells`` and the two message limits), and the Cartesian factorization behind the
@@ -75,6 +79,8 @@ from .bezier._find_roots import _set_state as set_root_provider_state
 from .bspline._bspline import Bspline
 from .bspline._bspline_space_1d import BsplineSpace1D
 from .bspline._bspline_space_nd import BsplineSpace
+from .bspline._local_space import _thb_dof_owner as thb_dof_owner
+from .bspline._local_space import _thb_halo as thb_halo
 from .bspline.spanwise_element_extraction import (
     _OP_CODES,
     OpKind,
@@ -163,6 +169,8 @@ bspline_max_insertions = _t.bspline_max_insertions
 bspline_morken_reimers_roots = _t.bspline_morken_reimers_roots
 bspline_merge_roots = _t.bspline_merge_roots
 check_snapping_kept_an_interval = _t.check_snapping_kept_an_interval
+cell_membership_tolerance = _t.cell_membership_tolerance
+prolongation_residual_tolerance = _t.prolongation_residual_tolerance
 reduction_cache_size = _t.reduction_cache_size
 reduction_cache_clear = _t.reduction_cache_clear
 projected_quadrature_size = _t.projected_quadrature_size
@@ -191,6 +199,25 @@ def bspline_find_roots_with_budget(
     from pantr.bspline._bspline_roots import _find_roots_impl  # noqa: PLC0415
 
     return _find_roots_impl(bspline, tol=tol, max_insertions=max_insertions)
+
+
+def func_support_1d(
+    space: BsplineSpace1D,
+) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64], npt.NDArray[np.int64]]:
+    """Get the cell support of every function of a 1D space.
+
+    Args:
+        space (BsplineSpace1D): The 1D space (not periodic).
+
+    Returns:
+        tuple[npt.NDArray[np.int64], npt.NDArray[np.int64], npt.NDArray[np.int64]]:
+        ``(first_basis, first_cell, last_cell)``: the first function of each interval, and the
+        first and last interval (inclusive) of each function's support.
+    """
+    support: tuple[npt.NDArray[np.int64], npt.NDArray[np.int64], npt.NDArray[np.int64]] = (
+        _t.func_support_1d(space._h)
+    )
+    return support
 
 
 DENSE_FIEDLER_MAX: Final[int] = int(_t.dense_fiedler_max)
@@ -1199,6 +1226,7 @@ __all__ = [
     "bspline_morken_reimers_roots",
     "cardinal_extraction_1d",
     "cardinal_intervals_1d",
+    "cell_membership_tolerance",
     "change_basis_cache_clear",
     "change_basis_cache_size",
     "check_bincoeff_envelope",
@@ -1219,6 +1247,7 @@ __all__ = [
     "find_knot_index_and_multiplicity",
     "find_roots_detailed",
     "find_roots_detailed_f32",
+    "func_support_1d",
     "gram_projection",
     "gram_projection_f32",
     "have_opposite_signs",
@@ -1247,6 +1276,7 @@ __all__ = [
     "oslo_rows_f32",
     "projected_quadrature_size",
     "projected_relative_deviation",
+    "prolongation_residual_tolerance",
     "reduction_cache_clear",
     "reduction_cache_size",
     "required_scratch_size",
@@ -1263,6 +1293,8 @@ __all__ = [
     "tabulate_bernstein_derivatives_1d",
     "tabulate_bernstein_derivatives_1d_f32",
     "tensor_gauss_weights",
+    "thb_dof_owner",
+    "thb_halo",
     "unique_knots_and_multiplicity",
     "yuksel_roots",
 ]
