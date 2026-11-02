@@ -469,3 +469,46 @@ def test_metis_nonuniform_vertex_weights_valid() -> None:
     graph = _make_graph(adjacency, vertex_weights=vertex_weights)
     owner = partition_graph(graph, 2, backend="metis").cell_owner
     assert set(owner.tolist()).issubset({0, 1})
+
+
+# --------------------------------------------------------------------------- #
+# Masks, shapes and hooks (added after the test review)
+# --------------------------------------------------------------------------- #
+
+
+def _induced(graph: CouplingGraph, keep: npt.NDArray[np.bool_]) -> CouplingGraph:
+    """The subgraph on the vertices ``keep`` selects, renumbered in order, built densely."""
+    n = graph.num_vertices
+    dense = np.zeros((n, n), dtype=np.int64)
+    rows = np.repeat(np.arange(n), np.diff(graph.xadj))
+    dense[rows, graph.adjncy] = graph.edge_weights
+    idx = np.flatnonzero(keep)
+    return _make_graph(dense[np.ix_(idx, idx)], graph.vertex_weights[idx])
+
+
+@pytest.mark.parametrize(
+    "backend",
+    ["spectral", pytest.param("metis", marks=requires_pymetis)],
+)
+def test_interleaved_mask_partitions_the_induced_subgraph(backend: str) -> None:
+    # Oracle: the induced subgraph, built here densely, partitioned on its own; the masked call
+    # must give its owners at the active cells, in order, and -1 elsewhere.
+    graph = coupling_graph(create_uniform_space([2, 2], [6, 6]))
+    keep = np.ones(36, dtype=bool)
+    keep[1::4] = False
+    masked = partition_graph(graph, 3, backend=backend, cell_active=keep).cell_owner
+    direct = partition_graph(_induced(graph, keep), 3, backend=backend).cell_owner
+    assert np.all(masked[~keep] == -1)
+    np.testing.assert_array_equal(masked[keep], direct)
+
+
+def test_cell_active_not_1d_raises() -> None:
+    graph = coupling_graph(create_uniform_space(2, 6))
+    with pytest.raises(ValueError, match=r"cell_active must have shape \(6,\); got \(6, 1\)"):
+        partition_graph(graph, 2, cell_active=np.ones((6, 1), dtype=bool))
+
+
+def test_spectral_hook_refuses_a_non_positive_lanczos_limit() -> None:
+    graph = coupling_graph(create_uniform_space(2, 6))
+    with pytest.raises(ValueError, match="lanczos_max_iter must be >= 1"):
+        spectral_partition(graph, 2, lanczos_max_iter=0)

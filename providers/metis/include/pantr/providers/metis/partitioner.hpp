@@ -48,6 +48,26 @@ namespace detail {
   return static_cast<idx_t>(v);
 }
 
+/// Refuse weights whose total does not fit METIS's index type, which METIS accumulates them in.
+///
+/// Args:
+///     weights (const std::vector<idx_t>&): Positive weights.
+///     what (const char*): `"vertex"` or `"edge"`, for the message.
+///
+/// Raises:
+///     capacity_error: The sum exceeds the largest `idx_t`.
+inline void check_sum_fits(const std::vector<idx_t>& weights, const char* what) {
+  constexpr idx_t top = (std::numeric_limits<idx_t>::max)();
+  idx_t sum = 0;
+  for (const idx_t w : weights) {
+    if (w > top - sum) {
+      throw capacity_error(std::string("the total ") + what + " weight does not fit METIS's " +
+                           std::to_string(8 * sizeof(idx_t)) + "-bit index type.");
+    }
+    sum += w;
+  }
+}
+
 }  // namespace detail
 
 /// A graph partitioner backed by METIS (multilevel recursive bisection or k-way partitioning).
@@ -65,7 +85,7 @@ struct Partitioner {
   ///
   /// Raises:
   ///     value_error: As `partition_graph`, or an active edge weight is not positive.
-  ///     capacity_error: The graph does not fit METIS's index type.
+  ///     capacity_error: The graph, a weight or a weight total does not fit METIS's index type.
   ///     std::runtime_error: METIS reports an error.
   [[nodiscard]] partition::GraphPartition partition(
       const partition::CouplingGraph& graph, std::int64_t n_parts,
@@ -105,6 +125,9 @@ struct Partitioner {
         }
         vwgt[v] = r < 1.0 ? idx_t{1} : static_cast<idx_t>(r);
       }
+      // METIS sums the vertex weights (part loads) and the edge weights (the cut) in idx_t.
+      detail::check_sum_fits(vwgt, "vertex");
+      detail::check_sum_fits(adjwgt, "edge");
       idx_t nvtxs = detail::to_idx(static_cast<std::int64_t>(n));
       idx_t ncon = 1;
       idx_t nparts = detail::to_idx(n_parts);

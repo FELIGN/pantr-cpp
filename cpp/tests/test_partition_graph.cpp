@@ -723,3 +723,293 @@ TEST_CASE("dense_fiedler: agrees with the full symmetric eigensolver's second ei
     CHECK(distance <= 10.0 * static_cast<double>(m) * eps * norm / gap);
   }
 }
+
+// Tests added after the test review: each kills a mutant the suite above let through.
+namespace {
+
+pp::detail::Laplacian laplacian_of(const pp::CouplingGraph& g) {
+  const auto n = static_cast<std::size_t>(g.num_vertices());
+  pp::detail::Laplacian lap;
+  lap.ptr.assign(n + 1, 0);
+  lap.diag.assign(n, 0.0);
+  for (std::size_t i = 0; i < n; ++i) {
+    for (auto k = static_cast<std::size_t>(g.xadj()[i]);
+         k < static_cast<std::size_t>(g.xadj()[i + 1]); ++k) {
+      const auto j = static_cast<std::size_t>(g.adjncy()[k]);
+      const double w = static_cast<double>(g.edge_weights()[k]);
+      lap.col.push_back(j);
+      lap.val.push_back(-w);
+      lap.diag[j] += w;
+    }
+    lap.ptr[i + 1] = lap.col.size();
+  }
+  return lap;
+}
+
+std::vector<std::int32_t> owners(const pp::GraphPartition& r) {
+  return {r.partition.cell_owner().begin(), r.partition.cell_owner().end()};
+}
+
+}  // namespace
+
+TEST_CASE(
+    "Spectral probes: sign rule: largest-magnitude Fiedler entry positive (weighted 3-path)") {
+  // w01 = 1, w12 = 2: lambda_2 = 3 - sqrt(3), v = (1, sqrt(3)-2, 1-sqrt(3)) up to scale. Largest
+  // magnitude at vertex 0 -> positive -> order 2, 1, 0 -> first half {2, 1}.
+  Dense a(3, std::vector<std::int64_t>(3, 0));
+  a[0][1] = a[1][0] = 1;
+  a[1][2] = a[2][1] = 2;
+  const pp::CouplingGraph g = graph_from_dense(a);
+  CHECK(owners(pp::partition_graph(g, 2)) == std::vector<std::int32_t>{1, 0, 0});
+  const pp::Spectral lanczos{2, std::nullopt};  // m = 3 > dense_max: the Lanczos route
+  const auto r = lanczos.partition(g, 2);
+  CHECK(r.info.lanczos_solves == 1);
+  CHECK(owners(r) == std::vector<std::int32_t>{1, 0, 0});
+}
+
+TEST_CASE(
+    "Spectral probes: component order: smallest-vertex labels, order kept inside, split "
+    "mid-component") {
+  Dense a(7, std::vector<std::int64_t>(7, 0));
+  for (const auto [i, j] : {std::pair{0, 4}, std::pair{1, 2}, std::pair{2, 5}, std::pair{3, 6}}) {
+    a[static_cast<std::size_t>(i)][static_cast<std::size_t>(j)] = 3;
+    a[static_cast<std::size_t>(j)][static_cast<std::size_t>(i)] = 3;
+  }
+  const auto r = pp::partition_graph(graph_from_dense(a), 2);
+  CHECK(r.info.component_orders == 1);
+  CHECK(owners(r) == std::vector<std::int32_t>{0, 0, 0, 1, 0, 1, 1});
+}
+
+TEST_CASE("Spectral probes: mask that disconnects the graph: components of the active subgraph") {
+  const pp::CouplingGraph g = grid_graph({7});
+  const std::vector<std::uint8_t> active{1, 1, 1, 0, 1, 1, 1};
+  const auto r = pp::partition_graph(g, 2, std::span<const std::uint8_t>(active));
+  CHECK(r.info.component_orders == 1);
+  CHECK(owners(r) == std::vector<std::int32_t>{0, 0, 0, -1, 1, 1, 1});
+}
+
+TEST_CASE(
+    "Spectral probes: interleaved mask equals the partition of the densely induced subgraph") {
+  const pp::CouplingGraph g = grid_graph({5, 6});
+  const std::vector<std::uint8_t> active{1, 0, 1, 1, 0, 1, 1, 1, 0, 1, 1, 0, 1, 1, 1,
+                                         0, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 1};
+  const Dense full = dense_of(g);
+  std::vector<std::size_t> keep;
+  for (std::size_t v = 0; v < active.size(); ++v) {
+    if (active[v] != 0) {
+      keep.push_back(v);
+    }
+  }
+  Dense sub(keep.size(), std::vector<std::int64_t>(keep.size(), 0));
+  for (std::size_t i = 0; i < keep.size(); ++i) {
+    for (std::size_t j = 0; j < keep.size(); ++j) {
+      sub[i][j] = full[keep[i]][keep[j]];
+    }
+  }
+  for (const std::int64_t parts : {2, 3, 5}) {
+    const auto masked =
+        owners(pp::partition_graph(g, parts, std::span<const std::uint8_t>(active)));
+    const auto direct = owners(pp::partition_graph(graph_from_dense(sub), parts));
+    std::vector<std::int32_t> expect(active.size(), -1);
+    for (std::size_t i = 0; i < keep.size(); ++i) {
+      expect[keep[i]] = direct[i];
+    }
+    CAPTURE(parts);
+    CHECK(masked == expect);
+  }
+}
+
+TEST_CASE("Spectral probes: k-way sizes with unit weights are floor(n/k) or ceil(n/k)") {
+  for (const std::vector<std::int64_t>& dims :
+       {std::vector<std::int64_t>{30, 25}, std::vector<std::int64_t>{20, 13}}) {
+    const pp::CouplingGraph g = grid_graph(dims);
+    const std::int64_t n = g.num_vertices();
+    for (const std::int64_t k : {3, 5, 6, 7, 9, 16}) {
+      const auto o = owners(pp::partition_graph(g, k));
+      std::vector<std::int64_t> size(static_cast<std::size_t>(k), 0);
+      for (const auto v : o) {
+        ++size[static_cast<std::size_t>(v)];
+      }
+      CAPTURE(n);
+      CAPTURE(k);
+      for (const auto s : size) {
+        CHECK((s == n / k || s == (n + k - 1) / k));
+      }
+    }
+  }
+}
+
+TEST_CASE("Spectral probes: from_incidence: cell weights pass through and are checked") {
+  const std::vector<std::int64_t> ptr{0, 2, 3, 5};
+  const std::vector<std::int64_t> dofs{0, 1, 1, 1, 2};
+  const std::vector<double> w{2.0, 0.0, 3.5};
+  const auto g = pp::coupling_graph_from_incidence(3, 3, ptr, dofs, std::span<const double>(w));
+  CHECK(std::vector<double>(g.vertex_weights().begin(), g.vertex_weights().end()) == w);
+  const std::vector<double> bad{1.0, 2.0};
+  CHECK(message_of([&] {
+          static_cast<void>(
+              pp::coupling_graph_from_incidence(3, 3, ptr, dofs, std::span<const double>(bad)));
+        }) == "cell_weights must have shape (3,); got (2,).");
+  const std::vector<double> nan{1.0, std::numeric_limits<double>::quiet_NaN(), 1.0};
+  CHECK(message_of([&] {
+          static_cast<void>(
+              pp::coupling_graph_from_incidence(3, 3, ptr, dofs, std::span<const double>(nan)));
+        }) == "cell_weights must be finite and non-negative.");
+}
+
+TEST_CASE(
+    "Spectral probes: from_incidence: each malformed-pointer / id condition alone is refused") {
+  const std::vector<std::int64_t> dofs3{0, 1, 1};
+  // Non-monotone, but starts at 0 and ends at dofs.size(): only the monotone check refuses it.
+  const std::vector<std::int64_t> nonmono{0, 2, 1, 3};
+  CHECK(message_of([&] {
+          static_cast<void>(pp::coupling_graph_from_incidence(3, 2, nonmono, dofs3));
+        }).find("cell_ptr must have") != std::string::npos);
+  // Sorted, ends at dofs.size(), but starts at 1: only the front check refuses it.
+  const std::vector<std::int64_t> front{1, 2, 3};
+  CHECK(message_of([&] {
+          static_cast<void>(pp::coupling_graph_from_incidence(2, 2, front, dofs3));
+        }).find("cell_ptr must have") != std::string::npos);
+  // Sorted, starts at 0, ends short of dofs.size(): only the back check refuses it.
+  const std::vector<std::int64_t> back{0, 1, 2};
+  CHECK(message_of([&] {
+          static_cast<void>(pp::coupling_graph_from_incidence(2, 2, back, dofs3));
+        }).find("cell_ptr must have") != std::string::npos);
+  const std::vector<std::int64_t> ok{0, 1, 3};
+  const std::vector<std::int64_t> neg{0, -1, 1};
+  CHECK(message_of([&] { static_cast<void>(pp::coupling_graph_from_incidence(2, 2, ok, neg)); }) ==
+        "dof ids must lie in [0, 2).");
+  CHECK(message_of([&] {
+          static_cast<void>(pp::coupling_graph_from_incidence(2, -1, ok, dofs3));
+        }).find("must be >= 0") != std::string::npos);
+}
+
+TEST_CASE("Spectral probes: zero-cell graph") {
+  const std::vector<std::int64_t> ptr{0};
+  const auto g = pp::coupling_graph_from_incidence(0, 0, ptr, {});
+  CHECK(g.num_vertices() == 0);
+  CHECK(message_of([&] { static_cast<void>(pp::partition_graph(g, 1)); }) ==
+        "n_parts=1 exceeds the number of active cells (0); cannot assign every rank a cell.");
+}
+
+TEST_CASE(
+    "Spectral probes: dense_fiedler on repeated lambda_2: residual, orthogonality, unit norm") {
+  struct Case {
+    const char* name;
+    pp::CouplingGraph g;
+    double lambda2;
+  };
+  Dense star(7, std::vector<std::int64_t>(7, 0));
+  for (std::size_t i = 1; i < 7; ++i) {
+    star[0][i] = star[i][0] = 1;
+  }
+  Dense k8(8, std::vector<std::int64_t>(8, 0));
+  for (std::size_t i = 0; i < 8; ++i) {
+    for (std::size_t j = 0; j < 8; ++j) {
+      k8[i][j] = i == j ? 0 : 1;
+    }
+  }
+  const double pi = std::acos(-1.0);
+  std::vector<Case> cases;
+  cases.push_back({"star7 (lambda2=1, mult 5)", graph_from_dense(star), 1.0});
+  cases.push_back({"K8 (lambda2=8, mult 7)", graph_from_dense(k8), 8.0});
+  cases.push_back({"grid 8x8 (mult 2)", grid_graph({8, 8}), 2.0 - 2.0 * std::cos(pi / 8.0)});
+  cases.push_back({"grid 20x20 (mult 2)", grid_graph({20, 20}), 2.0 - 2.0 * std::cos(pi / 20.0)});
+  for (const auto& c : cases) {
+    const pp::detail::Laplacian lap = laplacian_of(c.g);
+    const Eigen::VectorXd v = pp::detail::dense_fiedler(lap);
+    const Eigen::MatrixXd dense = lap.dense();
+    const double m = static_cast<double>(v.size());
+    const double eps = std::numeric_limits<double>::epsilon();
+    const double norm = 2.0 * dense.diagonal().maxCoeff();  // Gershgorin bound on ||L||
+    CAPTURE(c.name);
+    CHECK(std::abs(v.norm() - 1.0) <= 8.0 * m * eps);
+    CHECK(std::abs(v.sum()) <= 10.0 * m * eps * std::sqrt(m));
+    CHECK((dense * v - c.lambda2 * v).norm() <= 10.0 * m * eps * norm);
+  }
+}
+
+TEST_CASE("Spectral probes: shifted_tridiagonal_solve against a known solution") {
+  struct Sys {
+    const char* name;
+    std::vector<double> diag, off;
+    double sigma;
+  };
+  const std::vector<Sys> systems = {
+      {"swap everywhere", {0.1, 0.2, 0.1, 0.3, 0.2, 0.1}, {1.0, 2.0, 1.5, 1.0, 2.5}, 0.05},
+      {"no swap (dominant)", {5.0, 6.0, 7.0, 8.0, 9.0}, {1.0, 1.0, 1.0, 1.0}, 0.5},
+      {"swap only on the last row", {5.0, 1.0, 0.1}, {1.0, 3.0}, 0.0},
+      {"swap on the first row only", {0.1, 5.0, 5.0}, {3.0, 1.0}, 0.0},
+      {"n = 2 with a swap", {0.1, 0.2}, {1.0}, 0.0},
+      {"n = 2 no swap", {3.0, 0.2}, {1.0}, 0.0},
+  };
+  for (const auto& s : systems) {
+    const auto n = static_cast<Eigen::Index>(s.diag.size());
+    Eigen::VectorXd d = Eigen::Map<const Eigen::VectorXd>(s.diag.data(), n);
+    Eigen::VectorXd o = Eigen::Map<const Eigen::VectorXd>(s.off.data(), n - 1);
+    Eigen::MatrixXd t = Eigen::MatrixXd::Zero(n, n);
+    for (Eigen::Index i = 0; i < n; ++i) {
+      t(i, i) = d(i) - s.sigma;
+    }
+    for (Eigen::Index i = 0; i + 1 < n; ++i) {
+      t(i, i + 1) = t(i + 1, i) = o(i);
+    }
+    Eigen::VectorXd y(n);
+    for (Eigen::Index i = 0; i < n; ++i) {
+      y(i) = (i % 2 == 0 ? 1.0 : -1.0) * (1.0 + 0.5 * static_cast<double>(i));
+    }
+    Eigen::VectorXd x = t * y;
+    pp::detail::shifted_tridiagonal_solve(d, o, s.sigma, 1e-300, x);
+    const Eigen::JacobiSVD<Eigen::MatrixXd> svd(t);
+    const double kappa = svd.singularValues()(0) / svd.singularValues()(n - 1);
+    const double eps = std::numeric_limits<double>::epsilon();
+    CAPTURE(s.name);
+    CHECK((x - y).norm() <= 10.0 * static_cast<double>(n) * eps * kappa * y.norm());
+  }
+}
+
+TEST_CASE("Spectral probes: dense_fiedler on a zero Laplacian is finite and unit") {
+  pp::detail::Laplacian lap;
+  lap.ptr = {0, 1, 3, 4};
+  lap.col = {1, 0, 2, 1};
+  lap.val = {0.0, 0.0, 0.0, 0.0};
+  lap.diag = {0.0, 0.0, 0.0};
+  const Eigen::VectorXd v = pp::detail::dense_fiedler(lap);
+  CHECK(v.allFinite());
+  CHECK(std::abs(v.norm() - 1.0) <= 1e-14);
+}
+
+TEST_CASE(
+    "Spectral probes: tensor graph: no stored zero weight, brute force on discontinuous/one-cell "
+    "spaces") {
+  std::vector<bs::BsplineSpace<double>> spaces;
+  spaces.push_back(bs::BsplineSpace<double>({open_space<double>(3, 2, -1)}));
+  spaces.push_back(
+      bs::BsplineSpace<double>({open_space<double>(1, 2, 1), open_space<double>(3, 1, 0)}));
+  spaces.push_back(
+      bs::BsplineSpace<double>({open_space<double>(2, 2, -1), open_space<double>(3, 2, 1)}));
+  spaces.push_back(bs::BsplineSpace<double>(
+      {open_space<double>(6, 2, 1), open_space<double>(5, 3, 2), open_space<double>(1, 1, 0)}));
+  const std::vector<double> k1{0, 0, 0, 0.3, 0.3, 0.3, 1, 1, 1};
+  spaces.push_back(bs::BsplineSpace<double>({bs::BsplineSpace1D<double>(k1, 2)}));
+  const std::vector<double> k2{0, 0, 0, 0, 0.5, 0.5, 0.5, 0.5, 1, 1, 1, 1};
+  spaces.push_back(bs::BsplineSpace<double>({bs::BsplineSpace1D<double>(k2, 3)}));
+  std::size_t idx = 0;
+  for (const auto& space : spaces) {
+    const pp::CouplingGraph g = bs::coupling_graph(space);
+    CAPTURE(idx++);
+    CHECK(dense_of(g) == brute_force(space));
+    for (const auto w : g.edge_weights()) {
+      CHECK(w >= 1);
+    }
+  }
+}
+
+TEST_CASE("Spectral probes: incidence: an empty cell between two coupled cells") {
+  const std::vector<std::int64_t> ptr{0, 1, 1, 2};
+  const std::vector<std::int64_t> dofs{0, 0};
+  const auto g = pp::coupling_graph_from_incidence(3, 1, ptr, dofs);
+  CHECK(dense_of(g) == Dense{{0, 0, 1}, {0, 0, 0}, {1, 0, 0}});
+  CHECK(std::vector<std::int64_t>(g.xadj().begin(), g.xadj().end()) ==
+        std::vector<std::int64_t>{0, 1, 1, 2});
+}
