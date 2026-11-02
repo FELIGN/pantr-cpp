@@ -53,7 +53,11 @@ class ThreadsGuard {
 
 template <class T>
 bs::BsplineSpace1D<T> space1d(const std::vector<double>& knots, int degree, bool periodic = false) {
-  const std::vector<T> k(knots.begin(), knots.end());
+  std::vector<T> k;
+  k.reserve(knots.size());
+  for (const double v : knots) {
+    k.push_back(static_cast<T>(v));
+  }
   return bs::BsplineSpace1D<T>(std::span<const T>(k), degree, periodic);
 }
 
@@ -340,7 +344,11 @@ TEST_CASE("locate validates its spline and arguments") {
 TEST_CASE("locate on a float spline answers to the float tier") {
   const std::vector<double> t{0.5, 0.5, 0.5, 1.0, 1.5, 2.0, 2.0, 2.0};
   const std::vector<double> cpd = power_cps(t, 2);
-  const std::vector<float> cpf(cpd.begin(), cpd.end());
+  std::vector<float> cpf;
+  cpf.reserve(cpd.size());
+  for (const double v : cpd) {
+    cpf.push_back(static_cast<float>(v));
+  }
   const bs::Bspline<float> b(bs::BsplineSpace<float>({space1d<float>(t, 2)}),
                              std::span<const float>(cpf), false);
   const bs::LocateContext ctx(b);
