@@ -709,6 +709,36 @@ TEST_CASE("restrict: over interior cells the windowed space equals the global on
   CHECK(interior > 0);
 }
 
+TEST_CASE("restrict: every single-cell window builds and maps into the global dofs") {
+  // The map has one failure it can raise, a local function beyond the global level's range, which
+  // no window should reach; the sweep is the check that none does, on a clamped 2D root, a 1D root
+  // of degree 3 with regularity 0 and an unclamped one.
+  const std::vector<double> unclamped = {-0.5, -0.25, 0.0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5};
+  const auto sweep = [](const Space& s) {
+    for (I64 cid = 0; cid < s.grid().num_cells(); ++cid) {
+      const auto r = s.restrict(Ivec{cid});
+      CHECK(r.local_to_global_dof.size() == static_cast<std::size_t>(r.space.num_total_basis()));
+      for (const I64 g : r.local_to_global_dof) {
+        CHECK(-1 <= g);
+        CHECK(g < s.num_total_basis());
+      }
+      CHECK(std::count(r.local_to_global_cell.begin(), r.local_to_global_cell.end(), cid) == 1);
+    }
+  };
+  SUBCASE("2D") {
+    sweep(base_2d()
+              .refine_region(0, Ivec{1, 1}, Ivec{3, 3}, 2)
+              .refine_region(1, Ivec{2, 2}, Ivec{4, 4}, 2));
+  }
+  SUBCASE("1D degree 3, regularity 0") {
+    sweep(base_1d().refine_region(0, Ivec{1}, Ivec{3}, 2).refine_region(1, Ivec{2}, Ivec{4}, 2));
+  }
+  SUBCASE("1D unclamped") {
+    const Space s = make_space({unclamped}, {2}, {2}, {std::nullopt}, true);
+    sweep(s.refine_region(0, Ivec{0}, Ivec{2}, 2));
+  }
+}
+
 // ---- Determinism -----------------------------------------------------------------------------
 
 TEST_CASE("prolongation_csr: the matrix does not depend on the thread count") {
