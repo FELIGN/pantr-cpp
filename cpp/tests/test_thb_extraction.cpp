@@ -23,6 +23,7 @@
 #include <pantr/thb/space.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -31,6 +32,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -402,6 +404,60 @@ TEST_CASE("MultiLevelExtraction: a caller's output array is written in full") {
         cid, mdview<double, 2>(buffer.data(), reference.shape()[0], reference.shape()[1]));
     CHECK(std::memcmp(buffer.data(), reference.data(), buffer.size() * sizeof(double)) == 0);
   }
+}
+
+TEST_CASE("MultiLevelExtraction: threads racing on the first operator agree with a serial build") {
+  // A TSan target: the refined boxes are one lazy block, computed once under the block's lock (in
+  // parallel over functions inside it), and every thread then reads the same block. The reference
+  // is built with one thread, so the comparison also covers the thread count.
+  constexpr int n_threads = 8;
+  const Space space = thb_test::refined_2d(true);
+  const auto n_cells = static_cast<std::size_t>(space.grid().num_cells());
+  std::vector<NdArray<double>> expected;
+  {
+    const thb_test::ThreadsGuard serial(1);
+    const MultiLevelExtraction<double> reference(space, Target::bezier);
+    for (std::size_t c = 0; c < n_cells; ++c) {
+      expected.push_back(reference.multilevel_operator(static_cast<I64>(c)));
+    }
+  }
+  for (int round = 0; round < 10; ++round) {
+    const MultiLevelExtraction<double> mle(space, Target::bezier);
+    std::atomic<int> ready{0};
+    std::vector<std::size_t> mismatches(n_threads, 0);
+    std::vector<std::thread> threads;
+    for (int t = 0; t < n_threads; ++t) {
+      threads.emplace_back([&, t] {
+        ready.fetch_add(1);
+        while (ready.load() < n_threads) {
+        }
+        for (std::size_t c = 0; c < n_cells; ++c) {
+          const std::size_t j = (c + static_cast<std::size_t>(t) * 5) % n_cells;
+          const NdArray<double> got = mle.multilevel_operator(static_cast<I64>(j));
+          if (got.size() != expected[j].size() ||
+              std::memcmp(got.data(), expected[j].data(), got.size() * sizeof(double)) != 0) {
+            ++mismatches[static_cast<std::size_t>(t)];
+          }
+        }
+      });
+    }
+    for (auto& th : threads) {
+      th.join();
+    }
+    for (int t = 0; t < n_threads; ++t) {
+      CHECK(mismatches[static_cast<std::size_t>(t)] == 0);
+    }
+  }
+}
+
+TEST_CASE("MultiLevelExtraction: a copy shares the computed boxes and agrees") {
+  const Space space = thb_test::refined_2d(true);
+  const MultiLevelExtraction<double> a(space, Target::bezier);
+  const NdArray<double> first = a.multilevel_operator(0);
+  const MultiLevelExtraction<double> b = a;  // NOLINT(performance-unnecessary-copy-initialization)
+  const NdArray<double> second = b.multilevel_operator(0);
+  REQUIRE(first.size() == second.size());
+  CHECK(std::memcmp(first.data(), second.data(), first.size() * sizeof(double)) == 0);
 }
 
 }  // namespace

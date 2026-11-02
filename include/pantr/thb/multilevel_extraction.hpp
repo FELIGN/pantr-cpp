@@ -16,17 +16,21 @@
 #include "pantr/bspline/spanwise_extraction.hpp"
 #include "pantr/config.hpp"
 #include "pantr/core/errors.hpp"
+#include "pantr/core/lazy.hpp"
 #include "pantr/core/mdspan.hpp"
 #include "pantr/core/ndarray.hpp"
 #include "pantr/core/scalar.hpp"
 #include "pantr/grid/detail/py_text.hpp"
+#include "pantr/parallel/parallel_for.hpp"
 #include "pantr/thb/detail/truncation.hpp"
 #include "pantr/thb/space.hpp"
 #include "pantr/thb/types.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <string>
 #include <utility>
@@ -84,16 +88,20 @@ inline void multiply_rows(const double* m, const double* e, double* out, std::si
 ///
 /// An immutable value (design section 2.2): the per-level single-level extractions are built once,
 /// eagerly, in the constructor, so a failure of theirs (a degree beyond the target's table)
-/// surfaces there and not at the first operator; the Python class builds them lazily. There is no
-/// memo of the refined coefficient boxes (Python's `_coeffs_cache`): a cached entry would be
-/// mutable state of a value, and a function's box is recomputed per cell row by at most `levels -
-/// 1` refinements.
+/// surfaces there and not at the first operator; the Python class builds them lazily. The refined
+/// coefficient boxes (Python's `_coeffs_cache`) are one lazy block, computed for every function at
+/// the first `multilevel_operator` and read-only after: each function that meets a cell has its
+/// box at every level from its own up to the deepest level of a cell it meets, each built from the
+/// previous one, so a function is refined once however many cell rows read it. Copies share the
+/// block.
 ///
 /// Attributes:
 ///     space_ (THBSplineSpace<T>): The space.
 ///     target_ (bspline::ExtractionTarget): The single-level reference basis.
 ///     levels_ (std::vector<bspline::SpanwiseElementExtraction<T>>): The extraction of each
 ///         level's space.
+///     boxes_ (std::shared_ptr<pantr::detail::Lazy<FunctionBoxes>>): The lazy refined boxes, per
+///         global dof, `boxes_[dof][j]` being the box at level `origin(dof) + j`.
 template <StorageFloat T>
 class MultiLevelExtraction {
  public:
@@ -143,7 +151,8 @@ class MultiLevelExtraction {
   /// are its level-`origin` B-spline refined to the cell's level `L` one level at a time, each step
   /// followed by the truncation against the next level's active functions when the space truncates
   /// (`refine_box`, `truncate_box`), restricted to the cell's window. The refinement and the
-  /// copy are exact arithmetic of a fixed order, so the result does not depend on a thread count.
+  /// copy are arithmetic of a fixed order, so the result does not depend on a thread count. The
+  /// first call computes the boxes of every function, in parallel over functions.
   ///
   /// Args:
   ///     cid (std::int64_t): Active cell id in `[0, num_elements())`.
@@ -171,12 +180,15 @@ class MultiLevelExtraction {
     }
     basis::detail::check_out<double, 2>(out, {k, n_single});
     std::fill(out.data_handle(), out.data_handle() + k * n_single, 0.0);
+    const FunctionBoxes& boxes = boxes_->get([this] { return build_boxes(); });
 
     std::vector<std::size_t> at(d);
     for (std::size_t row = 0; row < k; ++row) {
       const std::int64_t origin = cell.levels[row];
       const std::span<const std::int64_t> multi = cell.multi_index(row);
-      const detail::CoeffBox box = element_coeffs(origin, multi, level);
+      // The cell table lists the functions of levels `0..L` only, so `level >= origin`.
+      const detail::CoeffBox& box =
+          boxes[static_cast<std::size_t>(cell.dofs[row])][static_cast<std::size_t>(level - origin)];
       // The overlap of the box with the cell's window `[first_basis, first_basis + n_per)`, per
       // direction: window indices `[j0, j1)` read the box at `offset + j`.
       std::vector<std::int64_t> j0(d);
@@ -294,26 +306,99 @@ class MultiLevelExtraction {
   }
 
  private:
-  // The function with multi-index `multi` of level `origin` in the level-`target_level` basis: the
-  // box of coefficients after the refinement from `origin` to `target_level`, truncated at each
-  // level when the space truncates.
-  [[nodiscard]] detail::CoeffBox element_coeffs(std::int64_t origin,
-                                                std::span<const std::int64_t> multi,
-                                                std::int64_t target_level) const {
+  // Per global dof, the box of the function's coefficients at each level from its own up to the
+  // deepest level of a cell it meets (empty for a dof no cell meets): entry `j` is the box at level
+  // `origin + j`, the unit box at `j = 0`.
+  using FunctionBoxes = std::vector<std::vector<detail::CoeffBox>>;
+
+  // Build every function's chain of boxes: each box is the previous one refined to the next level
+  // and, when the space truncates, truncated against that level's active functions.
+  //
+  // Work per function: step `j` yields at most `prod_k w_k(j)` entries, where `w_k(0) = 1` and
+  // `w_k(j + 1) = f_k (w_k(j) + p_k) - p_k` (the fine functions inside the `w_k + p_k` coarse
+  // spans that `w_k` functions cover, for factor `f_k` and degree `p_k`). Per entry a step costs
+  // `2 (p_k + 1)` multiply-adds in each direction's contraction and, when truncating, a flat index
+  // (`dim` multiply-adds) and a binary search of the level's active list. The estimate sizes the
+  // chunks of `parallel_for` only; it changes no result.
+  [[nodiscard]] FunctionBoxes build_boxes() const {
     const std::size_t d = dim();
-    detail::CoeffBox box;
-    box.lo.assign(multi.begin(), multi.end());
-    box.shape.assign(d, 1);
-    box.coeffs.assign(1, 1.0);
+    const grid::HierarchicalGrid grid = space_.grid();
     const Rep& rep = *space_.rep();
-    for (std::int64_t l = origin; l < target_level; ++l) {
-      const auto lv = static_cast<std::size_t>(l);
-      box = detail::refine_box(box, rep.two_scale[lv]);
-      if (rep.truncate) {
-        detail::truncate_box(box, rep.active[lv + 1], rep.num_basis[lv + 1]);
+    const auto n_dofs = static_cast<std::size_t>(space_.num_total_basis());
+    std::vector<std::int64_t> top(n_dofs, -1);
+    std::vector<std::int64_t> origin(n_dofs, 0);
+    std::vector<std::int64_t> multi(n_dofs * d, 0);
+    for (std::int64_t cid = 0; cid < grid.num_cells(); ++cid) {
+      const CellContributions cell = space_.contributions(cid);
+      const std::int64_t level = grid.cell_level(cid);
+      for (std::size_t row = 0; row < cell.size(); ++row) {
+        const auto dof = static_cast<std::size_t>(cell.dofs[row]);
+        if (top[dof] < 0) {
+          origin[dof] = cell.levels[row];
+          const std::span<const std::int64_t> mi = cell.multi_index(row);
+          std::copy(mi.begin(), mi.end(), multi.begin() + static_cast<std::ptrdiff_t>(dof * d));
+        }
+        top[dof] = (std::max)(top[dof], level);
       }
     }
-    return box;
+    std::vector<std::size_t> items;
+    for (std::size_t dof = 0; dof < n_dofs; ++dof) {
+      if (top[dof] >= 0) {
+        items.push_back(dof);
+      }
+    }
+
+    // `cumulative[s]`: operations of the first `s` steps of a chain.
+    const auto n_levels = static_cast<std::size_t>(space_.num_levels());
+    std::size_t most_active = 0;
+    for (const auto& per_level : rep.active) {
+      most_active = (std::max)(most_active, per_level.size());
+    }
+    double per_entry = static_cast<double>(d) + std::log2(static_cast<double>(most_active) + 1.0);
+    std::vector<double> width(d, 1.0);
+    for (std::size_t k = 0; k < d; ++k) {
+      per_entry += 2.0 * (static_cast<double>(space_.degrees()[k]) + 1.0);
+    }
+    std::vector<double> cumulative(n_levels, 0.0);
+    for (std::size_t s = 1; s < n_levels; ++s) {
+      double entries = 1.0;
+      for (std::size_t k = 0; k < d; ++k) {
+        const double p = static_cast<double>(space_.degrees()[k]);
+        width[k] = static_cast<double>(grid.factor()[k]) * (width[k] + p) - p;
+        entries *= width[k];
+      }
+      cumulative[s] = cumulative[s - 1] + entries * per_entry;
+    }
+    double total = 0.0;
+    for (const std::size_t dof : items) {
+      total += cumulative[static_cast<std::size_t>(top[dof] - origin[dof])];
+    }
+    const double mean = items.empty() ? 1.0 : total / static_cast<double>(items.size());
+
+    FunctionBoxes boxes(n_dofs);
+    parallel::parallel_for(
+        items.size(), parallel::WorkEstimate{(std::max)(1.0, mean)},
+        [&](std::size_t begin, std::size_t end) {
+          for (std::size_t i = begin; i < end; ++i) {
+            const std::size_t dof = items[i];
+            std::vector<detail::CoeffBox>& chain = boxes[dof];
+            detail::CoeffBox unit;
+            unit.lo.assign(multi.begin() + static_cast<std::ptrdiff_t>(dof * d),
+                           multi.begin() + static_cast<std::ptrdiff_t>((dof + 1) * d));
+            unit.shape.assign(d, 1);
+            unit.coeffs.assign(1, 1.0);
+            chain.push_back(std::move(unit));
+            for (std::int64_t l = origin[dof]; l < top[dof]; ++l) {
+              const auto lv = static_cast<std::size_t>(l);
+              detail::CoeffBox next = detail::refine_box(chain.back(), rep.two_scale[lv]);
+              if (rep.truncate) {
+                detail::truncate_box(next, rep.active[lv + 1], rep.num_basis[lv + 1]);
+              }
+              chain.push_back(std::move(next));
+            }
+          }
+        });
+    return boxes;
   }
 
   using Rep = typename THBSplineSpace<T>::Rep;
@@ -321,6 +406,8 @@ class MultiLevelExtraction {
   THBSplineSpace<T> space_;
   bspline::ExtractionTarget target_;
   std::vector<bspline::SpanwiseElementExtraction<T>> levels_;
+  std::shared_ptr<pantr::detail::Lazy<FunctionBoxes>> boxes_ =
+      std::make_shared<pantr::detail::Lazy<FunctionBoxes>>();
 };
 
 }  // namespace pantr::thb
