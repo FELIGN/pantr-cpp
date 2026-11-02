@@ -434,7 +434,7 @@ TEST_CASE("Spectral: weak bridges between cliques are the cuts") {
       }
     }
   }
-  for (const auto [i, j] : {std::pair{2, 3}, std::pair{5, 6}, std::pair{8, 9}}) {
+  for (const auto& [i, j] : {std::pair{2, 3}, std::pair{5, 6}, std::pair{8, 9}}) {
     a[static_cast<std::size_t>(i)][static_cast<std::size_t>(j)] = 1;
     a[static_cast<std::size_t>(j)][static_cast<std::size_t>(i)] = 1;
   }
@@ -771,7 +771,7 @@ TEST_CASE(
     "Spectral probes: component order: smallest-vertex labels, order kept inside, split "
     "mid-component") {
   Dense a(7, std::vector<std::int64_t>(7, 0));
-  for (const auto [i, j] : {std::pair{0, 4}, std::pair{1, 2}, std::pair{2, 5}, std::pair{3, 6}}) {
+  for (const auto& [i, j] : {std::pair{0, 4}, std::pair{1, 2}, std::pair{2, 5}, std::pair{3, 6}}) {
     a[static_cast<std::size_t>(i)][static_cast<std::size_t>(j)] = 3;
     a[static_cast<std::size_t>(j)][static_cast<std::size_t>(i)] = 3;
   }
