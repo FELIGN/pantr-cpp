@@ -13,6 +13,7 @@
 ///     general use, call `pantr::thb::THBSplineSpace::prolongation_csr`.
 #pragma once
 
+#include "pantr/bspline/detail/support_1d.hpp"
 #include "pantr/config.hpp"
 #include "pantr/core/errors.hpp"
 #include "pantr/core/format.hpp"
@@ -168,7 +169,7 @@ template <StorageFloat T>
         rest /= nb[k];
       }
       for (std::size_t k = 0; k < dim; ++k) {
-        const Support1D& s = space.support[level][k];
+        const bspline::detail::Support1D& s = space.support[level][k];
         out.lo[dof * dim + k] = s.first_cell[static_cast<std::size_t>(multi[k])] / scale[k];
         out.hi[dof * dim + k] = s.last_cell[static_cast<std::size_t>(multi[k])] / scale[k];
       }

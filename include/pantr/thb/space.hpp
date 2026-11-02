@@ -8,6 +8,7 @@
 /// (HB).
 #pragma once
 
+#include "pantr/bspline/detail/support_1d.hpp"
 #include "pantr/bspline/space.hpp"
 #include "pantr/config.hpp"
 #include "pantr/core/errors.hpp"
@@ -22,7 +23,6 @@
 #include "pantr/thb/detail/refine.hpp"
 #include "pantr/thb/detail/rep.hpp"
 #include "pantr/thb/detail/restrict.hpp"
-#include "pantr/thb/detail/support.hpp"
 #include "pantr/thb/detail/truncation.hpp"
 #include "pantr/thb/tolerances.hpp"
 #include "pantr/thb/types.hpp"
@@ -294,12 +294,13 @@ class THBSplineSpace {
   ///     axis (std::size_t): Direction in `[0, dim())`.
   ///
   /// Returns:
-  ///     const detail::Support1D&: The support arrays, valid while the space lives.
+  ///     const bspline::detail::Support1D&: The support arrays, valid while the space lives.
   ///
   /// Raises:
   ///     value_error: `level` is out of range.
   ///     index_error: `axis` is out of range.
-  [[nodiscard]] const detail::Support1D& support(std::int64_t level, std::size_t axis) const {
+  [[nodiscard]] const bspline::detail::Support1D& support(std::int64_t level,
+                                                          std::size_t axis) const {
     const std::size_t lv = check_level(level);
     if (axis >= dim()) {
       throw index_error("axis " + std::to_string(axis) + " is out of range [0, " +

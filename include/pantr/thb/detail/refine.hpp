@@ -13,6 +13,7 @@
 ///     general use, call `pantr::thb::THBSplineSpace`.
 #pragma once
 
+#include "pantr/bspline/detail/support_1d.hpp"
 #include "pantr/config.hpp"
 #include "pantr/core/errors.hpp"
 #include "pantr/core/scalar.hpp"
@@ -237,7 +238,7 @@ template <StorageFloat T>
   for (std::size_t d = 0; d < dim; ++d) {
     // The ancestor of the cell at level `k_ext`.
     const std::int64_t q = midx[d] / grid::detail::checked_pow(factor[d], level - k_ext);
-    const detail::Support1D& s = support[d];
+    const bspline::detail::Support1D& s = support[d];
     const std::int64_t fb = s.first_basis[static_cast<std::size_t>(q)];
     const std::int64_t s_lo = s.first_cell[static_cast<std::size_t>(fb)];
     const std::int64_t s_hi = s.last_cell[static_cast<std::size_t>(fb + rep.degrees[d])] + 1;
@@ -357,7 +358,7 @@ template <StorageFloat T>
   std::vector<std::int64_t> ext_lo(dim);
   std::vector<std::int64_t> ext_hi(dim);
   for (std::size_t d = 0; d < dim; ++d) {
-    const detail::Support1D& s = support[d];
+    const bspline::detail::Support1D& s = support[d];
     const std::int64_t c_lo = pmidx[d] * factor[d];
     const std::int64_t c_hi = (pmidx[d] + 1) * factor[d];
     const std::int64_t fmin = s.first_basis[static_cast<std::size_t>(c_lo)];

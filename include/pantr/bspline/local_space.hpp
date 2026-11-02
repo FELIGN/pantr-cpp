@@ -10,12 +10,12 @@
 /// the first active cell met is the smallest.
 #pragma once
 
+#include "pantr/bspline/detail/support_1d.hpp"
 #include "pantr/bspline/space.hpp"
 #include "pantr/config.hpp"
 #include "pantr/core/errors.hpp"
 #include "pantr/core/scalar.hpp"
 #include "pantr/parallel/parallel_for.hpp"
-#include "pantr/thb/detail/support.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -81,7 +81,7 @@ template <StorageFloat T>
   out.cell_stride.assign(dim, 1);
   for (std::size_t k = 0; k < dim; ++k) {
     const auto& sp = spaces[k];
-    const thb::detail::Support1D sup = thb::detail::func_support_1d(sp);
+    const detail::Support1D sup = detail::func_support_1d(sp);
     out.num_intervals.push_back(sp.num_intervals());
     out.num_basis.push_back(sp.num_basis());
     out.n_cells *= sp.num_intervals();  // the space's constructor refuses an overflowing product

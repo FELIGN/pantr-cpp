@@ -1,4 +1,4 @@
-/// @file support.hpp
+/// @file support_1d.hpp
 /// @brief The cell support of every function of a 1D B-spline space.
 #pragma once
 
@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-namespace pantr::thb::detail {
+namespace pantr::bspline::detail {
 
 /// Per-direction function support at one level.
 ///
@@ -36,7 +36,7 @@ struct Support1D {
 /// `[first_cell, last_cell]`.
 ///
 /// Args:
-///     space (const bspline::BsplineSpace1D<T>&): The 1D space.
+///     space (const BsplineSpace1D<T>&): The 1D space.
 ///
 /// Returns:
 ///     Support1D: The three arrays.
@@ -45,7 +45,7 @@ struct Support1D {
 ///     value_error: The space is periodic.
 ///     state_error: A function has no supported interval (an invalid space).
 template <StorageFloat T>
-[[nodiscard]] Support1D func_support_1d(const bspline::BsplineSpace1D<T>& space) {
+[[nodiscard]] Support1D func_support_1d(const BsplineSpace1D<T>& space) {
   const std::span<const std::int64_t> first = space.first_basis_per_interval();
   const auto degree = static_cast<std::int64_t>(space.degree());
   const auto n_basis = static_cast<std::size_t>(space.num_basis());
@@ -75,4 +75,4 @@ template <StorageFloat T>
   return out;
 }
 
-}  // namespace pantr::thb::detail
+}  // namespace pantr::bspline::detail

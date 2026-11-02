@@ -8,6 +8,7 @@
 ///     `pantr::thb::THBSplineSpace`.
 #pragma once
 
+#include "pantr/bspline/detail/support_1d.hpp"
 #include "pantr/bspline/knot_insertion.hpp"
 #include "pantr/bspline/space.hpp"
 #include "pantr/bspline/space_1d.hpp"
@@ -20,7 +21,6 @@
 #include "pantr/parallel/parallel_for.hpp"
 #include "pantr/parallel/work_model.hpp"
 #include "pantr/thb/detail/summed_area.hpp"
-#include "pantr/thb/detail/support.hpp"
 #include "pantr/thb/detail/truncation.hpp"
 #include "pantr/thb/types.hpp"
 
@@ -68,8 +68,9 @@ struct CellBlock {
 ///     degrees (std::vector<int>): Per-direction degrees.
 ///     level_spaces (std::vector<bspline::BsplineSpace<T>>): Per-level tensor-product spaces.
 ///     num_basis (std::vector<std::vector<std::int64_t>>): `[level][direction]` function count.
-///     support (std::vector<std::vector<Support1D>>): `[level][direction]` function supports.
-///     active (std::vector<std::vector<std::int64_t>>): Per-level sorted flat (row-major) indices
+///     support (std::vector<std::vector<bspline::detail::Support1D>>): `[level][direction]`
+///     function supports. active (std::vector<std::vector<std::int64_t>>): Per-level sorted flat
+///     (row-major) indices
 ///         of the active tensor-product functions.
 ///     func_offset (std::vector<std::int64_t>): Per-level global dof base, `num_levels + 1`
 ///         cumulative active counts.
@@ -95,7 +96,7 @@ struct THBSpaceRep {
   std::vector<int> degrees;
   std::vector<bspline::BsplineSpace<T>> level_spaces;
   std::vector<std::vector<std::int64_t>> num_basis;
-  std::vector<std::vector<Support1D>> support;
+  std::vector<std::vector<bspline::detail::Support1D>> support;
   std::vector<std::vector<std::int64_t>> active;
   std::vector<std::int64_t> func_offset;
   std::vector<std::vector<TwoScale1D>> two_scale;
@@ -221,7 +222,7 @@ template <StorageFloat T>
 
     std::vector<std::vector<std::int64_t>> candidates(dim);
     for (std::size_t k = 0; k < dim; ++k) {
-      const Support1D& s = rep.support[lv][k];
+      const bspline::detail::Support1D& s = rep.support[lv][k];
       for (std::size_t i = 0; i < s.first_cell.size(); ++i) {
         if (s.last_cell[i] >= bbox_lo[k] && s.first_cell[i] < bbox_hi[k]) {
           candidates[k].push_back(static_cast<std::int64_t>(i));
@@ -242,7 +243,7 @@ template <StorageFloat T>
       std::int64_t flat = 0;
       for (std::size_t k = 0; k < dim; ++k) {
         const std::int64_t fn = candidates[k][pos[k]];
-        const Support1D& s = rep.support[lv][k];
+        const bspline::detail::Support1D& s = rep.support[lv][k];
         box_lo[k] = s.first_cell[static_cast<std::size_t>(fn)];
         box_hi[k] = s.last_cell[static_cast<std::size_t>(fn)] + 1;
         flat = flat * rep.num_basis[lv][k] + fn;
@@ -305,7 +306,7 @@ void compute_truncated_coeffs(THBSpaceRep<T>& rep,
       for (std::int64_t m = level; m + 1 < num_levels; ++m) {
         const auto mv = static_cast<std::size_t>(m);
         for (std::size_t k = 0; k < dim; ++k) {
-          const Support1D& s = rep.support[mv][k];
+          const bspline::detail::Support1D& s = rep.support[mv][k];
           cell_lo[k] = s.first_cell[static_cast<std::size_t>(box.lo[k])];
           cell_hi[k] = s.last_cell[static_cast<std::size_t>(box.lo[k]) + box.shape[k] - 1] + 1;
         }
@@ -352,9 +353,9 @@ template <StorageFloat T>
   }
   build_level_spaces(*rep);
   for (const auto& level_space : rep->level_spaces) {
-    std::vector<Support1D>& per_dir = rep->support.emplace_back();
+    std::vector<bspline::detail::Support1D>& per_dir = rep->support.emplace_back();
     for (const auto& sp1d : level_space.spaces()) {
-      per_dir.push_back(func_support_1d<T>(sp1d));
+      per_dir.push_back(bspline::detail::func_support_1d<T>(sp1d));
     }
   }
   const std::vector<FalseCountTable> refined_tables = select_active_functions(*rep);
