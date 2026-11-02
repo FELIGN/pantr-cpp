@@ -88,7 +88,7 @@ partition = partition_graph(graph, comm.size)       # backend="spectral" (defaul
 
 | `backend` | dependency | notes |
 |---|---|---|
-| `"spectral"` (default) | scipy only | recursive Fiedler bisection; never leaves a rank empty |
+| `"spectral"` (default) | none (compiled) | recursive Fiedler bisection; never leaves a rank empty |
 | `"metis"` | `pymetis` (`pip install 'pantr[metis]'`) | higher-quality k-way min-cut; raises a clear error if `pymetis` is absent |
 
 ## Consuming an external partition (dolfinx)
