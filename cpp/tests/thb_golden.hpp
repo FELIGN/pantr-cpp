@@ -1,6 +1,7 @@
 // Recorded from the Python THBSplineSpace (src/pantr/bspline/_thb_spline_space.py, Numba build, at
-// main commit 11ab436) by a throwaway script (probe_thb_case.py, not kept in the repository),
-// one fresh process per case, and merged into this header by a second one; do not edit by hand.
+// main commit 11ab436) by cpp/tests/golden/probe_thb_case.py, one fresh process per
+// case, and merged into this header by cpp/tests/golden/gen_thb_golden.py; do not edit by hand
+// (the scripts' own headers say how to regenerate).
 // Each case is a space built from a root B-spline space, a hierarchical grid refined as the case's
 // comment says, and a regularity; the data are the per-level active functions, the truncated
 // coefficient boxes, the level spaces' knots, the tolerance, and the values or mixed partial
