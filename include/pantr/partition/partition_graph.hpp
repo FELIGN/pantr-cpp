@@ -487,13 +487,13 @@ inline void shifted_tridiagonal_solve(const Eigen::VectorXd& diag, const Eigen::
 /// Compute the Fiedler vector of a connected subgraph's Laplacian by the dense route.
 ///
 /// The Laplacian is reduced to tridiagonal form `T = Q^T L Q` (Householder, the lower triangle),
-/// `T`'s eigenvalues are computed (implicit QR, values only), and the eigenvector of the second
-/// smallest, `lambda_2`, by inverse iteration on `T - lambda_2 I` with the constant vector's image
-/// `Q^T 1 / sqrt(m)` (the `lambda_1 = 0` eigenvector) projected out after every solve, then mapped
-/// back by `Q`. This is the second column `SelfAdjointEigenSolver` would return, up to sign and,
-/// when `lambda_2` is repeated, up to the choice within its eigenspace, at a fraction of the cost:
-/// accumulating every eigenvector is cubic with a large constant, this is one reduction and
-/// quadratic work after it.
+/// `T`'s eigenvalues are computed (implicit QR on `T` scaled to unit magnitude, values only), and
+/// the eigenvector of the second smallest, `lambda_2`, by inverse iteration on `T - lambda_2 I`
+/// with the constant vector's image `Q^T 1 / sqrt(m)` (the `lambda_1 = 0` eigenvector) projected
+/// out after every solve, then mapped back by `Q`. This is the second column
+/// `SelfAdjointEigenSolver` would return, up to sign and, when `lambda_2` is repeated, up to the
+/// choice within its eigenspace, at a fraction of the cost: accumulating every eigenvector is cubic
+/// with a large constant, this is one reduction and quadratic work after it.
 ///
 /// Three solves: the first from a generic start leaves the other eigencomponents at
 /// `|lambda_2 - sigma| / gap`, about `eps ||L|| / gap` relative, since the computed `sigma` is
@@ -507,6 +507,10 @@ inline void shifted_tridiagonal_solve(const Eigen::VectorXd& diag, const Eigen::
 /// Returns:
 ///     Eigen::VectorXd: A unit Fiedler vector.
 ///
+/// Raises:
+///     state_error: The tridiagonal QR iteration does not converge within Eigen's limit (30
+///         sweeps per eigenvalue), which a converged run of Eigen's dense solver also needs.
+///
 /// Note:
 ///     Inputs are assumed to be correct (no validation performed).
 ///     For general use, call `Spectral::partition` instead.
@@ -516,11 +520,23 @@ inline void shifted_tridiagonal_solve(const Eigen::VectorXd& diag, const Eigen::
   const Eigen::Tridiagonalization<Eigen::MatrixXd> tri(a);
   const Eigen::VectorXd diag = tri.diagonal();
   const Eigen::VectorXd off = tri.subDiagonal();
-  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> values;
-  values.computeFromTridiagonal(diag, off, Eigen::EigenvaluesOnly);
-  const double sigma = values.eigenvalues()(1);
   const double norm =
       (std::max)(diag.cwiseAbs().maxCoeff(), off.size() > 0 ? off.cwiseAbs().maxCoeff() : 0.0);
+  // Eigen's tridiagonal QR deflates an off-diagonal entry once `(e / eps)^2 <= |d_i| + |d_i+1|`,
+  // a test that is not scale invariant and assumes entries of order one: `compute()` divides the
+  // matrix by its largest entry first, and `computeFromTridiagonal` does not. Unscaled, a cluster
+  // of equal eigenvalues (the clique Laplacian's 30, three times) keeps off-diagonal entries at
+  // rounding level above that threshold, and whether the iteration converges depends on the last
+  // bits (it did not in a build without FMA). Scaled as `compute()` scales, the test is the one
+  // Eigen's dense solver runs.
+  const double scale = norm > 0.0 ? norm : 1.0;
+  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> values;
+  values.computeFromTridiagonal(diag / scale, off / scale, Eigen::EigenvaluesOnly);
+  if (values.info() != Eigen::Success) {
+    throw state_error("partition_graph: the dense eigensolver did not converge on a subgraph of " +
+                      std::to_string(m) + " vertices.");
+  }
+  const double sigma = values.eigenvalues()(1) * scale;
   // `eps ||T||`, LAPACK's perturbation of a small pivot in inverse iteration; a zero matrix (all
   // weights zero) takes 1, since any vector is then an eigenvector.
   const double tiny = std::numeric_limits<double>::epsilon() * (norm > 0.0 ? norm : 1.0);
@@ -582,6 +598,7 @@ struct Spectral {
   ///
   /// Raises:
   ///     value_error: As `partition_graph`, or `lanczos_max_iter < 1`.
+  ///     state_error: The dense eigensolver does not converge (see `detail::dense_fiedler`).
   [[nodiscard]] GraphPartition partition(
       const CouplingGraph& graph, std::int64_t n_parts,
       std::optional<std::span<const std::uint8_t>> active = std::nullopt) const {
