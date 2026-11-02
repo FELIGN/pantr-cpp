@@ -7,6 +7,7 @@ import numpy
 from numpy.typing import NDArray
 
 import pantr._pantr.bspline
+import pantr._pantr.grid
 
 def empty_views() -> tuple[
     Annotated[NDArray[numpy.float64], dict(writable=False)],
@@ -757,3 +758,29 @@ def locate_nearest_corner_starts(
     ],
 ) -> NDArray[numpy.float64]:
     """The corner of each cell whose image is nearest its target, `(n, dim)`."""
+
+dense_fiedler_max: int = ...
+
+def spectral_partition(
+    num_vertices: int,
+    xadj: Annotated[
+        NDArray[numpy.int64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    adjncy: Annotated[
+        NDArray[numpy.int64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    edge_weights: Annotated[
+        NDArray[numpy.int64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    vertex_weights: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    n_parts: int,
+    active: Annotated[
+        NDArray[numpy.bool_], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ]
+    | None,
+    dense_max: int,
+    lanczos_max_iter: int | None,
+) -> tuple[pantr._pantr.grid.Partition, tuple[int, int, int, int]]:
+    """Spectral partition with its solver options: (Partition, (dense_solves, lanczos_solves, dense_fallbacks, component_orders))."""

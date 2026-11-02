@@ -7,6 +7,7 @@ import numpy
 from numpy.typing import NDArray
 
 import pantr._pantr.bezier
+import pantr._pantr.grid
 import pantr._pantr.quad
 
 class BsplineSpace1DF64:
@@ -1800,3 +1801,105 @@ def locate(
     max_iter: int,
 ) -> tuple[NDArray[numpy.int64], NDArray[numpy.float64]]:
     """Invert the mapping at `(n, rank)` points: `(cell_ids, ref_coords)`."""
+
+@overload
+def coupling_graph(
+    space: BsplineSpaceF64,
+    cell_weights: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ]
+    | None,
+) -> tuple[
+    int,
+    Annotated[NDArray[numpy.int64], dict(writable=False)],
+    Annotated[NDArray[numpy.int64], dict(writable=False)],
+    Annotated[NDArray[numpy.int64], dict(writable=False)],
+    Annotated[NDArray[numpy.float64], dict(writable=False)],
+]: ...
+@overload
+def coupling_graph(
+    space: BsplineSpaceF32,
+    cell_weights: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ]
+    | None,
+) -> tuple[
+    int,
+    Annotated[NDArray[numpy.int64], dict(writable=False)],
+    Annotated[NDArray[numpy.int64], dict(writable=False)],
+    Annotated[NDArray[numpy.int64], dict(writable=False)],
+    Annotated[NDArray[numpy.float64], dict(writable=False)],
+]:
+    """The coupling graph of a tensor-product space: (n, xadj, adjncy, edge_weights, vertex_weights), read-only."""
+
+def coupling_graph_from_incidence(
+    n_cells: int,
+    n_dofs: int,
+    cell_ptr: Annotated[
+        NDArray[numpy.int64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    dofs: Annotated[
+        NDArray[numpy.int64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    cell_weights: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ]
+    | None,
+) -> tuple[
+    int,
+    Annotated[NDArray[numpy.int64], dict(writable=False)],
+    Annotated[NDArray[numpy.int64], dict(writable=False)],
+    Annotated[NDArray[numpy.int64], dict(writable=False)],
+    Annotated[NDArray[numpy.float64], dict(writable=False)],
+]:
+    """The coupling graph of a cell -> DOF incidence in CSR form, as coupling_graph returns it."""
+
+def partition_graph_spectral(
+    num_vertices: int,
+    xadj: Annotated[
+        NDArray[numpy.int64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    adjncy: Annotated[
+        NDArray[numpy.int64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    edge_weights: Annotated[
+        NDArray[numpy.int64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    vertex_weights: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    n_parts: int,
+    active: Annotated[
+        NDArray[numpy.bool_], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ]
+    | None,
+) -> pantr._pantr.grid.Partition:
+    """Partition a coupling graph by recursive spectral bisection (a grid Partition)."""
+
+def graph_active_subgraph(
+    num_vertices: int,
+    xadj: Annotated[
+        NDArray[numpy.int64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    adjncy: Annotated[
+        NDArray[numpy.int64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    edge_weights: Annotated[
+        NDArray[numpy.int64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    vertex_weights: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    n_parts: int,
+    active: Annotated[
+        NDArray[numpy.bool_], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ]
+    | None,
+) -> tuple[
+    NDArray[numpy.int64],
+    NDArray[numpy.int64],
+    NDArray[numpy.int64],
+    NDArray[numpy.int64],
+    NDArray[numpy.float64],
+]:
+    """Check a partition request and return the active subgraph: (active_idx, xadj, adjncy, edge_weights, vertex_weights), each row's neighbors ascending."""

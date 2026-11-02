@@ -362,6 +362,32 @@ namespace detail {
   return owner;
 }
 
+/// Get the size of the first half of a weighted bisection into `k / 2` and `k - k / 2` parts.
+///
+/// The cut follows the first item whose running weight reaches `total * (k / 2) / k`, as
+/// `np.searchsorted(cumw, target, side="left") + 1`, clamped so that each half keeps at least as
+/// many items as it has parts (no part is left empty).
+///
+/// Args:
+///     cumw (std::span<const double>): Running weights of the items in bisection order, summed
+///         sequentially (as `np.cumsum`), non-decreasing, at least `k` entries.
+///     k (std::int64_t): The number of parts to split into, at least 2.
+///
+/// Returns:
+///     std::int64_t: The number of items in the first half, in `[k / 2, size - (k - k / 2)]`.
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed).
+[[nodiscard]] inline std::int64_t bisection_split(std::span<const double> cumw, std::int64_t k) {
+  const std::int64_t k_left = k / 2;
+  // (total * k_left) / k, evaluated in this order as Python evaluates `total * k_left / k`.
+  const double target = cumw.back() * static_cast<double>(k_left) / static_cast<double>(k);
+  const auto at = std::lower_bound(cumw.begin(), cumw.end(), target) - cumw.begin();
+  const std::int64_t split = static_cast<std::int64_t>(at) + 1;
+  const auto count = static_cast<std::int64_t>(cumw.size());
+  return (std::max)(k_left, (std::min)(split, count - (k - k_left)));
+}
+
 /// Partition a grid by recursive coordinate bisection of its active cells.
 ///
 /// Operates on the centroids of the active cells (the midpoints of `collect_cell_bounds`). It is
@@ -477,13 +503,7 @@ template <GridLike G>
       cumw[i - first] = running;
     }
     const std::int64_t k_left = k / 2;
-    // (total * k_left) / k, evaluated in this order as Python evaluates `total * k_left / k`.
-    const double target = cumw.back() * static_cast<double>(k_left) / static_cast<double>(k);
-    const auto at = std::lower_bound(cumw.begin(), cumw.end(), target) - cumw.begin();
-    std::int64_t split = static_cast<std::int64_t>(at) + 1;
-    const auto count = static_cast<std::int64_t>(last - first);
-    split = (std::max)(k_left, (std::min)(split, count - (k - k_left)));
-    const auto mid = first + static_cast<std::size_t>(split);
+    const auto mid = first + static_cast<std::size_t>(bisection_split(cumw, k));
     self(self, first, mid, part_lo, part_lo + k_left);
     self(self, mid, last, part_lo + k_left, part_hi);
   };

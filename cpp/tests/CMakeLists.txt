@@ -34,6 +34,7 @@ set(_pantr_test_sources
     test_grid_tensor_product.cpp
     test_grid_hierarchical.cpp
     test_grid_partition.cpp
+    test_partition_graph.cpp
     test_grid_overlay_quadrature.cpp
     test_bspline_knots.cpp
     test_bspline_basis_1d.cpp

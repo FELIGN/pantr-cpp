@@ -36,6 +36,7 @@
 
 #include "pantr/bspline/blossom.hpp"
 #include "pantr/bspline/bspline.hpp"
+#include "pantr/bspline/coupling_graph.hpp"
 #include "pantr/bspline/degree.hpp"
 #include "pantr/bspline/derivative.hpp"
 #include "pantr/bspline/derivative_rational.hpp"
@@ -66,3 +67,5 @@
 #include "pantr/grid/partition.hpp"
 #include "pantr/grid/tags.hpp"
 #include "pantr/grid/tensor_product_grid.hpp"
+#include "pantr/partition/coupling_graph.hpp"
+#include "pantr/partition/partition_graph.hpp"
