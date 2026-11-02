@@ -57,6 +57,7 @@ set(_pantr_test_sources
     test_thb_space.cpp
     test_thb_refine.cpp
     test_local_space.cpp
+    test_thb_spline.cpp
     test_kron_apply.cpp
     test_spanwise_extraction.cpp
     test_spanwise_extraction_batch.cpp
