@@ -1,6 +1,6 @@
 /// @file types.hpp
 /// @brief The value types `THBSplineSpace` hands out: a truncated function, a cell's active
-/// functions, the cell-to-dof incidence and a tabulation.
+/// functions, the cell-to-dof incidence, a prolongation matrix and a tabulation.
 #pragma once
 
 #include "pantr/config.hpp"
@@ -64,6 +64,26 @@ struct CellContributions {
 struct CellIncidence {
   std::span<const std::int64_t> cell_ptr;
   std::span<const std::int64_t> dofs;
+};
+
+/// A prolongation matrix in compressed sparse row form.
+///
+/// Row `r` holds `data[indptr[r] .. indptr[r + 1])` at the columns `indices[...]`, which increase
+/// within a row. The entries are the solved two-scale coefficients as they came out, explicit zeros
+/// and negative zeros included.
+///
+/// Attributes:
+///     rows (std::int64_t): Row count, the fine space's dof count.
+///     cols (std::int64_t): Column count, the coarse space's dof count.
+///     indptr (std::vector<std::int64_t>): `rows + 1` row offsets.
+///     indices (std::vector<std::int64_t>): Column of each stored entry.
+///     data (std::vector<double>): Value of each stored entry.
+struct [[nodiscard]] ProlongationCsr {
+  std::int64_t rows = 0;
+  std::int64_t cols = 0;
+  std::vector<std::int64_t> indptr;
+  std::vector<std::int64_t> indices;
+  std::vector<double> data;
 };
 
 /// A tabulation of the active functions on a cell.

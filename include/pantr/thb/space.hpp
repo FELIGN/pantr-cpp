@@ -18,7 +18,10 @@
 #include "pantr/grid/detail/py_text.hpp"
 #include "pantr/grid/hierarchical_grid.hpp"
 #include "pantr/thb/detail/evaluate.hpp"
+#include "pantr/thb/detail/prolongation.hpp"
+#include "pantr/thb/detail/refine.hpp"
 #include "pantr/thb/detail/rep.hpp"
+#include "pantr/thb/detail/restrict.hpp"
 #include "pantr/thb/detail/support.hpp"
 #include "pantr/thb/detail/truncation.hpp"
 #include "pantr/thb/tolerances.hpp"
@@ -36,6 +39,10 @@
 #include <vector>
 
 namespace pantr::thb {
+
+// Defined after the space, which it holds by value.
+template <StorageFloat T>
+struct THBSplineSpaceRestriction;
 
 /// A hierarchical B-spline space on a `HierarchicalGrid`, truncated or not.
 ///
@@ -398,6 +405,177 @@ class THBSplineSpace {
     return tabulate_basis(cid, pts, zeros);
   }
 
+  /// Get the windowed sub-space over a subset of the active cells.
+  ///
+  /// The grid is restricted (`HierarchicalGrid::restrict`) to the root-cell-aligned bounding box of
+  /// `cell_ids`, the root space is windowed to the same root cells (`BsplineSpace1D::restrict` per
+  /// direction), and a space is rebuilt on the sub-grid, re-running the Kraft selection and the
+  /// truncation. The windowed basis equals the global one only over the interior cells, those whose
+  /// cross-level function-support closure lies inside the window, because the selection and the
+  /// truncation depend on the subdomain near the window boundary; pad `cell_ids` with a support
+  /// halo to make the cells of interest interior.
+  ///
+  /// Args:
+  ///     cell_ids (std::span<const std::int64_t>): Active cell ids to span; repeats are ignored.
+  ///
+  /// Returns:
+  ///     THBSplineSpaceRestriction<T>: The windowed space and the maps of its dofs and cells to
+  ///     the global ones.
+  ///
+  /// Raises:
+  ///     value_error: `cell_ids` is empty.
+  ///     index_error: An id is outside `[0, grid().num_cells())`.
+  ///     state_error: A windowed function falls outside the global level's function range (an
+  ///         invariant; see `detail::restriction_dof_map`).
+  [[nodiscard]] THBSplineSpaceRestriction<T> restrict(
+      std::span<const std::int64_t> cell_ids) const {
+    grid::HierarchicalGridRestriction grid_restr = rep_->hier.restrict(cell_ids);
+    const grid::HierarchicalGrid& sub_grid = grid_restr.grid;
+    const std::size_t d = dim();
+    // The sub-grid's root is a pure slice of this one's breakpoints, so the first slice breakpoint
+    // is found among them exactly.
+    std::vector<std::int64_t> r_lo(d);
+    std::vector<bspline::BsplineSpace1D<T>> windowed;
+    windowed.reserve(d);
+    for (std::size_t k = 0; k < d; ++k) {
+      const std::vector<double>& bp = rep_->hier.root().breakpoints()[k];
+      const double first = sub_grid.root().breakpoints()[k][0];
+      r_lo[k] = std::lower_bound(bp.begin(), bp.end(), first) - bp.begin();
+      const std::int64_t r_hi = r_lo[k] + sub_grid.root().cells_per_axis()[k];
+      const auto window = rep_->root_space.spaces()[k].restrict(static_cast<long long>(r_lo[k]),
+                                                                static_cast<long long>(r_hi));
+      windowed.push_back(window.first);
+    }
+    THBSplineSpace sub(bspline::BsplineSpace<T>(std::move(windowed)), sub_grid, rep_->truncate,
+                       rep_->regularity);
+    std::vector<std::int64_t> dof_map = detail::restriction_dof_map(*rep_, *sub.rep_, r_lo);
+    return THBSplineSpaceRestriction<T>{std::move(sub), std::move(dof_map),
+                                        std::move(grid_restr.local_to_global)};
+  }
+
+  /// Get a new space with the named cells refined.
+  ///
+  /// With a class `m` the refinement is graded so that the mesh stays admissible of class `m` (the
+  /// truncated functions acting on any cell span at most `m` successive levels), by the recursive
+  /// refinement-neighborhood algorithm of Carraturo et al. (2019); the current mesh is assumed
+  /// admissible of that class already, as the root and any mesh built by graded refinement are.
+  /// Without a class exactly the named cells that are active leaves are refined. This space and its
+  /// grid are not changed.
+  ///
+  /// Args:
+  ///     cell_ids (std::span<const std::int64_t>): Active cell ids to refine; repeats are ignored.
+  ///     admissible_class (std::optional<std::int64_t>): The class `m >= 2` to maintain, or no
+  ///     value
+  ///         for ungraded refinement.
+  ///
+  /// Returns:
+  ///     THBSplineSpace: A space on the refined grid with the same root, truncation and
+  ///     regularity.
+  ///
+  /// Raises:
+  ///     value_error: `admissible_class` is below 2.
+  ///     index_error: An id is outside `[0, grid().num_cells())`; the message lists every one.
+  ///     std::overflow_error: A level would have more cells along an axis than `int64` holds.
+  ///     value_error, state_error: As the constructor, for the refined grid.
+  [[nodiscard]] THBSplineSpace refine(std::span<const std::int64_t> cell_ids,
+                                      std::optional<std::int64_t> admissible_class) const {
+    detail::check_admissible_class(admissible_class);
+    const std::vector<std::int64_t> ids =
+        detail::sorted_valid_ids(cell_ids, rep_->hier.num_cells());
+    return on_grid(
+        detail::refine_marked(*rep_, detail::named_cells(rep_->hier, ids), admissible_class));
+  }
+
+  /// Get a new space with the active cells of a rectangular region refined.
+  ///
+  /// The region is the cell-index box `[lo, hi)` at `level`, in level coordinates, as
+  /// `HierarchicalGrid::refined` takes it. Only the active leaves inside the box are refined; a box
+  /// with none gives a space equivalent to this one. See `refine` for the grading.
+  ///
+  /// Args:
+  ///     level (std::int64_t): Level the box lives at, in `[0, grid().max_level()]`.
+  ///     lo (std::span<const std::int64_t>): Per-direction start (inclusive).
+  ///     hi (std::span<const std::int64_t>): Per-direction end (exclusive).
+  ///     admissible_class (std::optional<std::int64_t>): The class `m >= 2` to maintain, or no
+  ///     value
+  ///         for ungraded refinement.
+  ///
+  /// Returns:
+  ///     THBSplineSpace: A space on the refined grid with the same root, truncation and
+  ///     regularity.
+  ///
+  /// Raises:
+  ///     value_error: `admissible_class` is below 2, `level` is out of range, `lo` or `hi` has the
+  ///         wrong length, some `lo[k] >= hi[k]`, or part of the box lies outside the level.
+  ///     std::overflow_error, value_error, state_error: As `refine`.
+  [[nodiscard]] THBSplineSpace refine_region(std::int64_t level, std::span<const std::int64_t> lo,
+                                             std::span<const std::int64_t> hi,
+                                             std::optional<std::int64_t> admissible_class) const {
+    detail::check_admissible_class(admissible_class);
+    detail::validate_region(rep_->hier, level, lo, hi);
+    return on_grid(detail::refine_marked(
+        *rep_, detail::active_leaves_in_box(rep_->hier, level, lo, hi), admissible_class));
+  }
+
+  /// Get a new space with the named cells coarsened away.
+  ///
+  /// A parent is reactivated, its children removed, only when all its children are named active
+  /// leaves (Algorithm 5 of Carraturo et al.), taking the deepest parents first. With a class `m` a
+  /// parent is reactivated only when its coarsening neighborhood (Definition 3.5) is empty, so the
+  /// mesh stays admissible of class `m`; without one that guard is skipped and, for the cells an
+  /// ungraded `refine` created, this inverts it. An empty `cell_ids` gives a copy of this space.
+  ///
+  /// Args:
+  ///     cell_ids (std::span<const std::int64_t>): Active leaf ids to coarsen away; repeats are
+  ///         ignored.
+  ///     admissible_class (std::optional<std::int64_t>): The class `m >= 2` to guard, or no value
+  ///         to skip the guard.
+  ///
+  /// Returns:
+  ///     THBSplineSpace: A space on the coarsened grid with the same root, truncation and
+  ///     regularity.
+  ///
+  /// Raises:
+  ///     value_error: `admissible_class` is below 2.
+  ///     index_error: An id is outside `[0, grid().num_cells())`; the message lists every one.
+  ///     value_error, state_error: As the constructor, for the coarsened grid.
+  [[nodiscard]] THBSplineSpace coarsen(std::span<const std::int64_t> cell_ids,
+                                       std::optional<std::int64_t> admissible_class) const {
+    detail::check_admissible_class(admissible_class);
+    const std::vector<std::int64_t> ids =
+        detail::sorted_valid_ids(cell_ids, rep_->hier.num_cells());
+    return on_grid(detail::coarsen_marked(*rep_, ids, admissible_class));
+  }
+
+  /// Get the prolongation from this space to a refinement of it, in CSR form.
+  ///
+  /// The spaces are nested, so every function of this (coarse) space lies in `fine`; the matrix `P`
+  /// maps coefficients in this basis to the coefficients of the same function in `fine`'s basis.
+  /// It is built column by column by the local two-scale construction (Garau and Vazquez 2018;
+  /// D'Angella et al. 2018): each coarse function is matched against the fine functions over its
+  /// support, expressed in the deepest level present there, and reproduced by a small
+  /// least-squares solve. A column is the fine functions' coefficients; away from the refinement it
+  /// is one entry of value 1. The entries are stored as solved, including exact zeros and negative
+  /// zeros. The columns are solved in parallel and gathered in order, so the matrix does not depend
+  /// on the thread count.
+  ///
+  /// Args:
+  ///     fine (const THBSplineSpace&): A refinement of this space: same root knots, factor,
+  ///         regularity and truncation, and at least as many levels.
+  ///
+  /// Returns:
+  ///     ProlongationCsr: The matrix of shape `(fine.num_total_basis(), num_total_basis())`, column
+  ///     indices increasing within a row.
+  ///
+  /// Raises:
+  ///     value_error: `fine` is not a refinement of this space: a structural mismatch (the message
+  ///         lists every one), or a prolongation residual above
+  ///         `prolongation_residual_tolerance`; also a zero two-scale slice (see `refine_box`).
+  [[nodiscard]] ProlongationCsr prolongation_csr(const THBSplineSpace& fine) const {
+    detail::check_is_refinement(*rep_, *fine.rep_);
+    return detail::assemble_prolongation(*rep_, *fine.rep_);
+  }
+
   /// The shared representation (for a binding's read-only views and for the operations that
   /// rebuild a space).
   [[nodiscard]] const std::shared_ptr<const Rep>& rep() const noexcept { return rep_; }
@@ -463,6 +641,11 @@ class THBSplineSpace {
                           "]-1=" + std::to_string(degree - 1) + "]; got " + r + ".");
       }
     }
+  }
+
+  // A space of the same root, truncation and regularity on another grid.
+  [[nodiscard]] THBSplineSpace on_grid(grid::HierarchicalGrid hierarchy) const {
+    return THBSplineSpace(rep_->root_space, std::move(hierarchy), rep_->truncate, rep_->regularity);
   }
 
   [[nodiscard]] std::size_t check_level(std::int64_t level) const {
@@ -618,6 +801,23 @@ class THBSplineSpace {
   }
 
   std::shared_ptr<const Rep> rep_;
+};
+
+/// The windowed sub-space `THBSplineSpace::restrict` returns, with its index maps.
+///
+/// Attributes:
+///     space (THBSplineSpace<T>): The space rebuilt on the restricted grid; its basis equals the
+///         global one pointwise over the interior cells (those whose cross-level function-support
+///         closure lies inside the window).
+///     local_to_global_dof (std::vector<std::int64_t>): Per local dof, the global dof of the
+///         function of the same level and multi-index when the global space has it active, else
+///         -1 (near the window boundary the Kraft selection can differ). Exact over interior cells.
+///     local_to_global_cell (std::vector<std::int64_t>): Per local cell, its id in the global grid.
+template <StorageFloat T>
+struct THBSplineSpaceRestriction {
+  THBSplineSpace<T> space;
+  std::vector<std::int64_t> local_to_global_dof;
+  std::vector<std::int64_t> local_to_global_cell;
 };
 
 }  // namespace pantr::thb
