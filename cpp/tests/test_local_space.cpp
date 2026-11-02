@@ -370,6 +370,13 @@ Ivec brute_thb_halo(const Space& space, const Ivec& owned) {
   for (const I64 c : owned) {
     is_owned[static_cast<std::size_t>(c)] = 1;
   }
+  // The owned cells once each, in increasing id: the pairs are tested against these only.
+  Ivec owned_list;
+  for (I64 c = 0; c < n; ++c) {
+    if (is_owned[static_cast<std::size_t>(c)] != 0) {
+      owned_list.push_back(c);
+    }
+  }
   Ivec halo;
   for (I64 other = 0; other < n; ++other) {
     if (is_owned[static_cast<std::size_t>(other)] != 0) {
@@ -377,11 +384,8 @@ Ivec brute_thb_halo(const Space& space, const Ivec& owned) {
     }
     const auto theirs = space.active_basis(other);
     bool shares = false;
-    for (I64 c = 0; c < n && !shares; ++c) {
-      if (is_owned[static_cast<std::size_t>(c)] == 0) {
-        continue;
-      }
-      for (const I64 d : space.active_basis(c)) {
+    for (std::size_t at = 0; at < owned_list.size() && !shares; ++at) {
+      for (const I64 d : space.active_basis(owned_list[at])) {
         shares = shares || std::find(theirs.begin(), theirs.end(), d) != theirs.end();
       }
     }
@@ -495,9 +499,10 @@ TEST_CASE("thb dof_owner: the cell-count message") {
 
 TEST_CASE("thb local space: one thread and several give identical results") {
   check_many_threads_are_used();
-  // 110 x 110 root cells with a refined corner: about 1.2 x 10^4 cells of mean incidence above 9,
-  // above the parallel threshold of the halo scan.
-  const auto knots = thb_test::uniform_knots(110);
+  // 130 x 130 root cells with a refined corner: about 1.7 x 10^4 cells, each holding at least the
+  // 9 functions of its level, so the halo scan costs at least 1.5 x 10^5 operations, above the
+  // 131072 below which it stays serial.
+  const auto knots = thb_test::uniform_knots(130);
   const auto base =
       thb_test::make_thb_space({knots, knots}, {2, 2}, {2, 2}, {std::nullopt, std::nullopt}, true);
   const Space space = base.refine_region(0, Ivec{0, 0}, Ivec{6, 6}, std::nullopt);

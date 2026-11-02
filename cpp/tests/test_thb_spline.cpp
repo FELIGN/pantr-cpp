@@ -449,18 +449,45 @@ TEST_CASE("THBSpline: one thread and several give bit-identical values") {
 
 TEST_CASE("THBSpline: the prolongation of control points does not depend on the thread count") {
   check_many_threads_are_used();
-  const Space base = thb_test::refined_2d(true);
+  // 80 x 80 root cells: about 6.7 x 10^3 functions of 16 components, so a row costs at least 32
+  // operations (one stored entry), and the product at least 2 x 10^5, above the 131072 operations
+  // below which the loop stays serial.
+  const auto knots = thb_test::uniform_knots(80);
+  const Space base =
+      thb_test::make_thb_space({knots, knots}, {2, 2}, {2, 2}, {std::nullopt, std::nullopt}, true);
+  const std::size_t rank = 16;
   const Spline s(base,
-                 random_control_points(static_cast<std::size_t>(base.num_total_basis()), 2, 67));
+                 random_control_points(static_cast<std::size_t>(base.num_total_basis()), rank, 67));
   std::vector<Spline> fine;
   for (const std::size_t threads : {std::size_t{1}, eight_threads()}) {
     const ThreadsGuard guard(threads);
-    fine.push_back(s.refine_region(0, Ivec{2, 2}, Ivec{4, 4}, std::nullopt));
+    fine.push_back(s.refine_region(0, Ivec{0, 0}, Ivec{4, 4}, std::nullopt));
   }
   const auto& a = fine[0].control_points();
   const auto& b = fine[1].control_points();
   REQUIRE(a.size() == b.size());
   CHECK(std::memcmp(a.data(), b.data(), a.size() * sizeof(double)) == 0);
+
+  // The product against a plain loop over the same entries: each fine control point is a sum of at
+  // most `nnz` terms, so it differs by at most `nnz eps sum |terms|` (times the build slack) from a
+  // sum taken without contraction.
+  const th::ProlongationCsr p = base.prolongation_csr(fine[0].space());
+  REQUIRE(a.shape()[0] == static_cast<std::size_t>(p.rows));
+  const auto cp = s.control_points().view<2>();
+  for (std::size_t r = 0; r < static_cast<std::size_t>(p.rows); ++r) {
+    const auto entries = static_cast<double>(p.indptr[r + 1] - p.indptr[r]);
+    for (std::size_t c = 0; c < rank; ++c) {
+      double sum = 0.0;
+      double abs_terms = 0.0;
+      for (auto e = static_cast<std::size_t>(p.indptr[r]);
+           e < static_cast<std::size_t>(p.indptr[r + 1]); ++e) {
+        const double term = p.data[e] * cp(static_cast<std::size_t>(p.indices[e]), c);
+        sum += term;
+        abs_terms += std::abs(term);
+      }
+      CHECK(std::abs(a.data()[r * rank + c] - sum) <= build_slack * entries * eps * abs_terms);
+    }
+  }
 }
 
 }  // namespace
