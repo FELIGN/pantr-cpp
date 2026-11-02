@@ -1013,3 +1013,69 @@ TEST_CASE("Spectral probes: incidence: an empty cell between two coupled cells")
   CHECK(std::vector<std::int64_t>(g.xadj().begin(), g.xadj().end()) ==
         std::vector<std::int64_t>{0, 1, 1, 2});
 }
+
+TEST_CASE("dense_fiedler: a chain of three cliques, whose tridiagonal form has a repeated block") {
+  // Regression: three 3-cliques (weight 10) joined by weight-1 bridges 2-3 and 5-6. The Laplacian
+  // has the eigenvalue 30 three times, so its tridiagonal form ends in a block whose off-diagonal
+  // entries are at rounding level; the tridiagonal QR then failed to converge on the unscaled
+  // matrix in a build without FMA, and the unconverged, unsorted values gave a shift that is not
+  // lambda_2 (the vector found belonged to lambda_3). Oracle: Eigen's full symmetric solver on the
+  // same matrix. The Rayleigh quotient of a unit vector within distance delta of the eigenvector
+  // is within ||L|| delta^2 + O(eps ||L||) of lambda_2; the bound takes 10 m eps ||L|| (the factor
+  // an admitted margin), and the distance bound is the one of the test above.
+  const std::size_t m = 9;
+  pp::detail::Laplacian lap;
+  std::vector<std::vector<double>> w(m, std::vector<double>(m, 0.0));
+  for (std::size_t c = 0; c < 3; ++c) {
+    for (std::size_t i = 3 * c; i < 3 * c + 3; ++i) {
+      for (std::size_t j = 3 * c; j < 3 * c + 3; ++j) {
+        w[i][j] = i == j ? 0.0 : 10.0;
+      }
+    }
+  }
+  w[2][3] = w[3][2] = 1.0;
+  w[5][6] = w[6][5] = 1.0;
+  lap.ptr.assign(m + 1, 0);
+  lap.diag.assign(m, 0.0);
+  for (std::size_t i = 0; i < m; ++i) {
+    for (std::size_t j = 0; j < m; ++j) {
+      if (i != j && w[i][j] != 0.0) {
+        lap.col.push_back(j);
+        lap.val.push_back(-w[i][j]);
+        lap.diag[j] += w[i][j];
+      }
+    }
+    lap.ptr[i + 1] = lap.col.size();
+  }
+  const Eigen::MatrixXd dense = lap.dense();
+  const Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> full(dense);
+  REQUIRE(full.info() == Eigen::Success);
+  const double lambda2 = full.eigenvalues()(1);
+  const double gap = (std::min)(lambda2 - full.eigenvalues()(0), full.eigenvalues()(2) - lambda2);
+  const double norm = full.eigenvalues().cwiseAbs().maxCoeff();
+  const double eps = std::numeric_limits<double>::epsilon();
+  const Eigen::VectorXd fast = pp::detail::dense_fiedler(lap);
+  const double rayleigh = fast.dot(dense * fast);
+  const Eigen::VectorXd v = full.eigenvectors().col(1);
+  const double distance = (std::min)((fast - v).norm(), (fast + v).norm());
+  CHECK(std::abs(rayleigh - lambda2) <= 10.0 * static_cast<double>(m) * eps * norm);
+  CHECK(distance <= 10.0 * static_cast<double>(m) * eps * norm / gap);
+  // And the partition the Python suite checks: each clique is one part.
+  const pp::GraphPartition r =
+      pp::partition_graph(graph_from_dense(Dense{{0, 10, 10, 0, 0, 0, 0, 0, 0},
+                                                 {10, 0, 10, 0, 0, 0, 0, 0, 0},
+                                                 {10, 10, 0, 1, 0, 0, 0, 0, 0},
+                                                 {0, 0, 1, 0, 10, 10, 0, 0, 0},
+                                                 {0, 0, 0, 10, 0, 10, 0, 0, 0},
+                                                 {0, 0, 0, 10, 10, 0, 1, 0, 0},
+                                                 {0, 0, 0, 0, 0, 1, 0, 10, 10},
+                                                 {0, 0, 0, 0, 0, 0, 10, 0, 10},
+                                                 {0, 0, 0, 0, 0, 0, 10, 10, 0}}),
+                          3);
+  const auto owner = r.partition.cell_owner();
+  for (std::size_t c = 0; c < 3; ++c) {
+    CHECK(owner[3 * c] == owner[3 * c + 1]);
+    CHECK(owner[3 * c + 1] == owner[3 * c + 2]);
+  }
+  CHECK(std::set<std::int32_t>(owner.begin(), owner.end()) == std::set<std::int32_t>{0, 1, 2});
+}
