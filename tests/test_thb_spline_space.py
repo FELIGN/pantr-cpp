@@ -1572,12 +1572,17 @@ class TestCellMembershipTolerance:
         deliver; the ``|lo|``/``|hi|`` terms are what prevent that.
         """
         eps = float(np.finfo(np.float64).eps)
-        narrow_far = cell_membership_tolerance(1.0e6, 1.0e6 + 1.0e-6)
-        assert narrow_far == pytest.approx(8.0 * eps * 1.0e6, rel=1.0e-12)
+        # ``pytest.approx`` keeps its default absolute tolerance of 1e-12 unless ``abs`` is given,
+        # which is five orders above these slacks (of order 1e-9 or less); ``abs=0.0`` makes the
+        # relative bound the only one. Each side is one product of 8 eps, an exact power of two,
+        # with a double, so they differ by at most one rounding: 4 eps relative covers it.
+        hi = 1.0e6 + 1.0e-6
+        narrow_far = cell_membership_tolerance(1.0e6, hi)
+        assert narrow_far == pytest.approx(8.0 * eps * hi, rel=4.0 * eps, abs=0.0)
         # And it stays proportional under a change of scale.
         unit = cell_membership_tolerance(0.0, 1.0)
         scaled = cell_membership_tolerance(0.0, 1.0e6)
-        assert scaled == pytest.approx(1.0e6 * unit, rel=1.0e-12)
+        assert scaled == pytest.approx(1.0e6 * unit, rel=4.0 * eps, abs=0.0)
 
 
 def _assert_same_field(
