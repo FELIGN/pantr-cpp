@@ -388,7 +388,9 @@ template <StorageFloat T>
 /// function's. All are expressed in the deepest representation level among them and the coarse
 /// function's own; the unknowns are the candidates' coefficients, the right-hand side the coarse
 /// function's coefficients, and the system is solved in the least-squares sense by
-/// `linalg::lstsq_min_norm`.
+/// `linalg::lstsq_min_norm_jacobi`: the residual gate that follows assumes a backward error of
+/// `gelsd`'s class, which the divide-and-conquer SVD of `lstsq_min_norm` does not give on every
+/// local system.
 ///
 /// Args:
 ///     coarse (const THBSpaceRep<T>&): The coarse space.
@@ -401,7 +403,7 @@ template <StorageFloat T>
 ///
 /// Raises:
 ///     value_error: A refinement step meets a zero two-scale slice, or the solver refuses (see
-///         `linalg::lstsq_min_norm`).
+///         `linalg::lstsq_min_norm_jacobi`).
 template <StorageFloat T>
 [[nodiscard]] ProlongationColumn solve_prolongation_column(const THBSpaceRep<T>& coarse,
                                                            const THBSpaceRep<T>& fine,
@@ -465,7 +467,7 @@ template <StorageFloat T>
       amat(row_of(c.flats[t]), cj) = c.coeffs[t];
     }
   }
-  const NdArray<double> sol = linalg::lstsq_min_norm<double>(amat, rhs);
+  const NdArray<double> sol = linalg::lstsq_min_norm_jacobi<double>(amat, rhs);
   col.values.assign(sol.data(), sol.data() + n_cols);
   for (Eigen::Index r = 0; r < n_rows; ++r) {
     double acc = 0.0;

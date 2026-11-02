@@ -83,6 +83,49 @@ template <StorageFloat T>
   return std::numeric_limits<double>::epsilon() * static_cast<double>((std::max)(rows, cols));
 }
 
+namespace detail {
+
+/// The message numpy raises when `gelsd` does not converge, which `lstsq_min_norm` and
+/// `lstsq_min_norm_jacobi` raise for a non-finite input or a failed SVD.
+inline constexpr const char* lstsq_failure = "SVD did not converge in Linear Least Squares";
+
+/// Solve `A X = B` over the singular values above numpy's cutoff, given the thin SVD of `A`.
+///
+/// Args:
+///     svd (const Svd&): A converged thin SVD of `A` (`Eigen::BDCSVD` or `Eigen::JacobiSVD` of a
+///         `double` matrix), singular values in decreasing order.
+///     b (const RowMatrix<T>&): Extents `(m, k)`.
+///     rows (Eigen::Index): `m`, the rows of `A`.
+///     cols (Eigen::Index): `n`, the columns of `A`.
+///
+/// Returns:
+///     NdArray<T>: Extents `(n, k)`: `V diag(1 / s_i) U^T B` over the kept values, `s_i > rcond *
+///     s_max` with `rcond = lstsq_rcond(m, n)`, rounded to `T`.
+template <StorageFloat T, class Svd>
+[[nodiscard]] NdArray<T> lstsq_from_svd(const Svd& svd, const RowMatrix<T>& b, Eigen::Index rows,
+                                        Eigen::Index cols) {
+  using MatD = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic>;
+  const auto& s = svd.singularValues();
+  // numpy's default rcond, then gelsd's comparison against the largest singular value.
+  const double rcond = lstsq_rcond(rows, cols);
+  const double cutoff = s.size() > 0 ? rcond * s(0) : 0.0;
+  Eigen::Index rank = 0;
+  while (rank < s.size() && s(rank) > cutoff) {
+    ++rank;
+  }
+  MatD coeffs = svd.matrixU().leftCols(rank).transpose() * b.template cast<double>();
+  for (Eigen::Index i = 0; i < rank; ++i) {
+    coeffs.row(i) /= s(i);
+  }
+  const MatD x = svd.matrixV().leftCols(rank) * coeffs;
+  NdArray<T> out({static_cast<std::size_t>(cols), static_cast<std::size_t>(b.cols())},
+                 for_overwrite);
+  Eigen::Map<RowMatrix<T>>(out.data(), cols, b.cols()) = x.template cast<T>();
+  return out;
+}
+
+}  // namespace detail
+
 /// Solve `A X = B` in the least-squares sense with the minimum-norm solution, as
 /// `numpy.linalg.lstsq(a, b, rcond=None)` does (LAPACK `gelsd`).
 ///
@@ -106,37 +149,60 @@ template <StorageFloat T>
 ///         that the cutoff would then drop, a silent wrong answer.
 ///
 /// Note:
-///     `a` and `b` are assumed to have the same number of rows (no validation performed).
+///     `a` and `b` are assumed to have the same number of rows (no validation performed). Use
+///     `lstsq_min_norm_jacobi` where the caller's check assumes a `gelsd`-class backward error.
 template <StorageFloat T>
 [[nodiscard]] NdArray<T> lstsq_min_norm(const RowMatrix<T>& a, const RowMatrix<T>& b) {
   using MatD = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic>;
-  constexpr const char* failure = "SVD did not converge in Linear Least Squares";
   if (!a.allFinite()) {
-    throw value_error(failure);
+    throw value_error(detail::lstsq_failure);
   }
   const Eigen::BDCSVD<MatD, Eigen::ComputeThinU | Eigen::ComputeThinV> svd(
       a.template cast<double>());
   if (svd.info() != Eigen::Success) {
-    throw value_error(failure);
+    throw value_error(detail::lstsq_failure);
   }
-  const auto& s = svd.singularValues();
-  const Eigen::Index cols = a.cols();
-  // numpy's default rcond, then gelsd's comparison against the largest singular value.
-  const double rcond = lstsq_rcond(a.rows(), cols);
-  const double cutoff = s.size() > 0 ? rcond * s(0) : 0.0;
-  Eigen::Index rank = 0;
-  while (rank < s.size() && s(rank) > cutoff) {
-    ++rank;
+  return detail::lstsq_from_svd<T>(svd, b, a.rows(), a.cols());
+}
+
+/// Solve `A X = B` as `lstsq_min_norm` does, with a one-sided Jacobi SVD in place of the
+/// divide-and-conquer one.
+///
+/// It exists for a caller that checks the residual of the solve against a bound derived for a
+/// `gelsd`-class backward error (a few `eps` times the size of the data). `BDCSVD`'s
+/// divide-and-conquer path, used above its switch to the plain bidiagonal SVD for small matrices,
+/// does not give that on every well-conditioned system: its reconstruction `A - U S V^T` can be
+/// orders of magnitude above `eps`, so a solution `gelsd` computes to rounding is refused by such a
+/// gate. `JacobiSVD` gives it on those systems. It is slower on large matrices (a QR
+/// preconditioner, then sweeps of rotations), so `lstsq_min_norm` stays the default.
+///
+/// The cutoff, the error contract and the message are `lstsq_min_norm`'s; the code is shared
+/// (`detail::lstsq_from_svd`).
+///
+/// Args:
+///     a (const RowMatrix<T>&): Extents `(m, n)`.
+///     b (const RowMatrix<T>&): Extents `(m, k)`.
+///
+/// Returns:
+///     NdArray<T>: Extents `(n, k)`.
+///
+/// Raises:
+///     value_error: As `lstsq_min_norm`.
+///
+/// Note:
+///     `a` and `b` are assumed to have the same number of rows (no validation performed).
+template <StorageFloat T>
+[[nodiscard]] NdArray<T> lstsq_min_norm_jacobi(const RowMatrix<T>& a, const RowMatrix<T>& b) {
+  using MatD = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic>;
+  if (!a.allFinite()) {
+    throw value_error(detail::lstsq_failure);
   }
-  MatD coeffs = svd.matrixU().leftCols(rank).transpose() * b.template cast<double>();
-  for (Eigen::Index i = 0; i < rank; ++i) {
-    coeffs.row(i) /= s(i);
+  const Eigen::JacobiSVD<MatD, Eigen::ComputeThinU | Eigen::ComputeThinV> svd(
+      a.template cast<double>());
+  if (svd.info() != Eigen::Success) {
+    throw value_error(detail::lstsq_failure);
   }
-  const MatD x = svd.matrixV().leftCols(rank) * coeffs;
-  NdArray<T> out({static_cast<std::size_t>(cols), static_cast<std::size_t>(b.cols())},
-                 for_overwrite);
-  Eigen::Map<RowMatrix<T>>(out.data(), cols, b.cols()) = x.template cast<T>();
-  return out;
+  return detail::lstsq_from_svd<T>(svd, b, a.rows(), a.cols());
 }
 
 }  // namespace pantr::linalg

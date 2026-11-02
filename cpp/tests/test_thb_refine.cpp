@@ -192,6 +192,9 @@ void check_summary(const Space& s, const gold::Summary& g) {
 /// A reproducible stream of numbers in `[0, 1)`.
 class Lcg {
  public:
+  Lcg() = default;
+  explicit Lcg(std::uint64_t seed) : state_(seed) {}
+
   double next() {
     state_ = state_ * 6364136223846793005ULL + 1442695040888963407ULL;
     return static_cast<double>(state_ >> 11) / 9007199254740992.0;
@@ -532,15 +535,52 @@ TEST_CASE("prolongation_csr: the refinement relation holds at points of every fi
 }
 
 TEST_CASE("prolongation_csr: a refinement whose local solve needs an accurate SVD is accepted") {
-  // 3D HB, degree 2, factor (2, 2, 1): the local system of one column is full rank with a
-  // condition number near 4, yet a divide-and-conquer SVD reconstructs it with an error of about
-  // 4e-11, which the residual gate (4096 eps of one plus the size) refuses; an LAPACK `gelsd`
-  // solve (the Python implementation) leaves a residual near 2e-15.
+  // 3D HB, degree 2, factor (2, 2, 1): the local system of one column is full rank and well
+  // conditioned, yet a divide-and-conquer SVD reconstructs it with an error far above eps, which
+  // the residual gate (4096 eps of one plus the size) refuses; an LAPACK `gelsd` solve (the Python
+  // implementation) passes it.
   const Space root = make_space({k2, k2, k2}, {2, 2, 2}, {2, 2, 1},
                                 {std::nullopt, std::nullopt, std::nullopt}, false);
   const Space prev = root.refine(Ivec{49, 56}, std::nullopt);
   const Space fine = prev.refine(Ivec{7, 51}, 2);
   check_refinement_relation(prev, fine);
+}
+
+TEST_CASE("prolongation_csr: random 3D refine chains give valid prolongations") {
+  // 20 chains on a 4 x 4 x 4 degree-2 root: the seed fixes two boxes of 2 or 3 cells per axis,
+  // refined at level 0 one after the other (the second may overlap or extend the first). THB and
+  // HB, graded (class 2) and ungraded, factor (2, 2, 2) and (2, 2, 1) all occur. Every step's
+  // prolongation has to be accepted by the residual gate and satisfy the refinement relation. The
+  // chains stay at two levels because the local solves of a 3D prolongation over three levels are
+  // costly (seconds each, under the sanitizers minutes).
+  constexpr std::uint64_t n_chains = 20;
+  for (std::uint64_t seed = 0; seed < n_chains; ++seed) {
+    const bool truncate = seed % 2 == 0;
+    const std::optional<I64> grade = (seed / 2) % 2 == 0 ? std::optional<I64>(2) : std::nullopt;
+    const Ivec factor = (seed / 4) % 2 == 0 ? Ivec{2, 2, 2} : Ivec{2, 2, 1};
+    CAPTURE(seed);
+    CAPTURE(truncate);
+    CAPTURE(factor);
+    Lcg rng(0x2545F4914F6CDD1DULL + seed);
+    // A uniform draw in `0 .. n - 1`.
+    const auto draw = [&rng](I64 n) {
+      return static_cast<I64>(rng.next() * static_cast<double>(n));
+    };
+    Space space = make_space({k2, k2, k2}, {2, 2, 2}, factor,
+                             {std::nullopt, std::nullopt, std::nullopt}, truncate);
+    for (int step = 0; step < 2; ++step) {
+      Ivec lo(3);
+      Ivec hi(3);
+      for (std::size_t k = 0; k < 3; ++k) {
+        const I64 width = 2 + draw(2);
+        lo[k] = draw(4 - width + 1);
+        hi[k] = lo[k] + width;
+      }
+      const Space next = space.refine_region(0, lo, hi, grade);
+      check_refinement_relation(space, next);
+      space = next;
+    }
+  }
 }
 
 TEST_CASE("prolongation_csr: the partition of unity is carried through, and HB does not carry it") {
