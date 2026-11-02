@@ -92,9 +92,18 @@ NdArray<double> random_matrix(std::size_t rows, std::size_t cols, std::uint64_t 
 ///     elimination carries a relative error of the order of `order_k^2 kappa eps`, and `kappa` of
 ///     a collocation block of non-negative rows summing to one is its inverse's norm, at least
 ///     the row norm `Lambda_k`. An admitted heuristic, not a derived bound: the inverse is not
-///     exposed.
-/// times `build_slack`.
-double coefficient_bound(const Space& space, const Qi& qi, I64 dof, double f_max) {
+///     exposed,
+///   - `extra_units`, the caller's own (the construction of a float root's truncated coefficients).
+/// Where the caller has shown the weights equal to those of a double root bit for bit
+/// (`weights_exact`), the weights' term is dropped. The sum is multiplied by `build_slack`. `eps`
+/// is that of the space's storage type `T`: a float root tabulates and builds its truncated
+/// functions in float, and bounding the stages done in double by the same `eps` only loosens the
+/// bound.
+template <class T>
+double coefficient_bound(const THBSplineSpace<T>& space, const THBQuasiInterpolation<T>& qi,
+                         I64 dof, double f_max, double extra_units = 0.0,
+                         bool weights_exact = false) {
+  const double unit = static_cast<double>(std::numeric_limits<T>::epsilon());
   const std::span<const double> w = qi.weights(dof);
   const std::vector<int> degrees(space.degrees().begin(), space.degrees().end());
   double lambda = 1.0;
@@ -110,9 +119,10 @@ double coefficient_bound(const Space& space, const Qi& qi, I64 dof, double f_max
     at += order;
     lambda *= lambda_k;
     orders += static_cast<double>(order);
-    weight_units += static_cast<double>(order * order) * lambda_k;
+    weight_units += weights_exact ? 0.0 : static_cast<double>(order * order) * lambda_k;
   }
-  return build_slack * eps * lambda * f_max * (value_error_units(space) + orders + weight_units);
+  return build_slack * unit * lambda * f_max *
+         (value_error_units(space) + orders + weight_units + extra_units);
 }
 
 TEST_CASE("THBQuasiInterpolation: the quasi-interpolant of a THB spline returns its coefficients") {
@@ -131,12 +141,69 @@ TEST_CASE("THBQuasiInterpolation: the quasi-interpolant of a THB spline returns 
     REQUIRE(back.shape()[1] == 2);
     for (std::size_t dof = 0; dof < n; ++dof) {
       const double bound = coefficient_bound(space, qi, static_cast<I64>(dof), 1.0);
-      CHECK(bound < 1e-6);  // not vacuous: the plain basis, below, is off by more than 1e-3
+      // Not vacuous: the bound is a modest multiple of `eps` and must stay far below the error of
+      // the plain basis (the control below, of the order of the coefficients); 1e-6 is both, by
+      // orders of magnitude on either side.
+      CHECK(bound < 1e-6);
       for (std::size_t r = 0; r < 2; ++r) {
         CHECK(std::abs(back.data()[dof * 2 + r] - c.data()[dof * 2 + r]) <= bound);
       }
     }
   }
+}
+
+/// The quasi-interpolant of a float root on dyadic knots equals the double root's, and returns the
+/// coefficients of the float root's own spline to float round-off.
+void check_float_root_reproduces(const THBSplineSpace<float>& sf, const Qi& qd) {
+  using QiF = THBQuasiInterpolation<float>;
+  const QiF qf(sf);
+  const auto n = static_cast<std::size_t>(sf.num_total_basis());
+  REQUIRE(qf.num_functions() == n);
+  REQUIRE(qd.num_functions() == n);
+  // The sample points come from the double grid's cell bounds, and the leaf cell from the Greville
+  // abscissae, a mean of two knots of a quadratic, exact in float on dyadic knots: both agree
+  // exactly. So do the weights: each is a row of the inverse, computed in double, of a collocation
+  // block of basis values at dyadic points on dyadic knots, which the float tabulation also
+  // produces exactly. (For a cubic the Greville abscissa is a mean of three knots, rounded in
+  // float, and a near-tie could pick another leaf; either gives a valid quasi-interpolant, see the
+  // class comment.)
+  for (std::size_t dof = 0; dof < n; ++dof) {
+    CHECK(qf.leaf_cell(static_cast<I64>(dof)) == qd.leaf_cell(static_cast<I64>(dof)));
+    const std::span<const double> wf = qf.weights(static_cast<I64>(dof));
+    const std::span<const double> wd = qd.weights(static_cast<I64>(dof));
+    CHECK(std::equal(wf.begin(), wf.end(), wd.begin(), wd.end()));
+  }
+  const NdArray<double> pf = qf.points();
+  const NdArray<double> pd = qd.points();
+  REQUIRE(pf.size() == pd.size());
+  CHECK(std::memcmp(pf.data(), pd.data(), pf.size() * sizeof(double)) == 0);
+  const NdArray<double> c = random_matrix(n, 2, 11);
+  const THBSpline<float> spline(sf, c);
+  const NdArray<double> pts = qf.points();
+  const NdArray<double> values = spline.evaluate(pts.view<2>());
+  const NdArray<double> back = qf.coefficients(values.view<2>());
+  // The float root's truncated coefficients are built in float: `levels - 1` refinements whose
+  // two-scale entries carry `6 p + 1` roundings per direction (the count the B-spline product test
+  // derives for an Oslo row entry).
+  double alpha_units = 0.0;
+  for (const int p : sf.degrees()) {
+    alpha_units += 6.0 * p + 1.0;
+  }
+  const double extra = static_cast<double>(sf.num_levels() - 1) * alpha_units;
+  for (std::size_t dof = 0; dof < n; ++dof) {
+    const double bound = coefficient_bound(sf, qf, static_cast<I64>(dof), 1.0, extra, true);
+    CHECK(bound < 0.05);  // not vacuous: the coefficients are of order one, the bound a few percent
+    for (std::size_t r = 0; r < 2; ++r) {
+      CHECK(std::abs(back.data()[dof * 2 + r] - c.data()[dof * 2 + r]) <= bound);
+    }
+  }
+}
+
+TEST_CASE("THBQuasiInterpolation: a float root on dyadic knots") {
+  // Oracle: the double root's quasi-interpolant of the same space (exact agreement of leaf cells,
+  // points and weights, where the data are dyadic), and the defining property on the float root.
+  const Qi qd(thb_test::refined_2d<double>(true));
+  check_float_root_reproduces(thb_test::refined_2d<float>(true), qd);
 }
 
 TEST_CASE("THBQuasiInterpolation: the plain hierarchical basis is not reproduced") {
@@ -151,6 +218,10 @@ TEST_CASE("THBQuasiInterpolation: the plain hierarchical basis is not reproduced
   for (std::size_t dof = 0; dof < n; ++dof) {
     worst = (std::max)(worst, std::abs(back.data()[dof] - c.data()[dof]));
   }
+  // A control threshold needs only to be far above the round-off level (a few `eps` times the
+  // weights' size) and far below the effect it detects (the weight of the truncated-away coarse
+  // components, of the order of the coefficients): 1e-3 is both, by orders of magnitude on either
+  // side.
   CHECK(worst > 1e-3);
 }
 
@@ -198,6 +269,8 @@ TEST_CASE("THBQuasiInterpolation: a polynomial of the space's degree is reproduc
     }
     const NdArray<double> got = spline.evaluate(mdview<const double, 2>(x.data(), 50, d));
     const double bound = c_bound + build_slack * eps * value_error_units(space) * f_max;
+    // Not vacuous: the values are of order one and the bound a modest multiple of `eps`; 1e-6 only
+    // refuses a bound too loose for the comparison below to be able to fail.
     CHECK(bound < 1e-6);
     for (std::size_t i = 0; i < 50; ++i) {
       CHECK(std::abs(got.data()[i] - polynomial(degrees, x.data() + i * d)) <= bound);

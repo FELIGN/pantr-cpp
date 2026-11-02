@@ -454,6 +454,55 @@ TEST_CASE("THBSpline: copies share the control points and a view outlives a hand
   CHECK(copy.control_points().data() == before);
 }
 
+TEST_CASE("THBSpline: a float root gives the double root's function up to float round-off") {
+  // The dyadic knots are exact in float, so both roots give the same cells and the same active
+  // functions, integers that must agree exactly. The values differ: the float root tabulates its
+  // 1D bases and builds the truncated coefficient boxes in float. Oracle: the double root's spline
+  // with the same control points. The difference is bounded, in units of the float `eps`, by the
+  // tabulation and the box sum (`value_error_units`) and by the construction of the box
+  // coefficients, `levels - 1` refinements whose two-scale entries carry `6 p + 1` roundings per
+  // direction (the count the B-spline product test derives for an Oslo row entry); the
+  // amplification is `sum |b_j|` of the cell's functions with `|c| <= 1`, as in `reference_value`.
+  const th::THBSplineSpace<float> sf = thb_test::refined_2d<float>(true);
+  const Space sd = thb_test::refined_2d<double>(true);
+  REQUIRE(sf.num_total_basis() == sd.num_total_basis());
+  REQUIRE(sf.grid().num_cells() == sd.grid().num_cells());
+  for (I64 cid = 0; cid < sd.grid().num_cells(); ++cid) {
+    const std::span<const I64> a = sf.active_basis(cid);
+    const std::span<const I64> b = sd.active_basis(cid);
+    CHECK(std::equal(a.begin(), a.end(), b.begin(), b.end()));
+  }
+  const auto n = static_cast<std::size_t>(sd.num_total_basis());
+  NdArray<double> cp = random_control_points(n, 2, 71);
+  const Spline spd(sd, cp);
+  const th::THBSpline<float> spf(sf, std::move(cp));
+  const std::vector<double> pts = random_points(200, 2, 3);
+  const NdArray<double> vf = spf.evaluate(view_of(pts, 2));
+  const NdArray<double> vd = spd.evaluate(view_of(pts, 2));
+  double alpha_units = 0.0;
+  for (const int p : sf.degrees()) {
+    alpha_units += 6.0 * p + 1.0;
+  }
+  const double units =
+      value_error_units(sf) + static_cast<double>(sf.num_levels() - 1) * alpha_units;
+  const double eps_f = static_cast<double>(std::numeric_limits<float>::epsilon());
+  const Ivec zeros(2, 0);
+  double worst = 0.0;
+  for (std::size_t i = 0; i < 200; ++i) {
+    const Reference ref = reference_value(spd, pts.data() + i * 2, zeros);
+    const double bound = ref.bound + build_slack * units * eps_f * ref.abs_basis_sum;
+    for (std::size_t r = 0; r < 2; ++r) {
+      const double diff = std::abs(vf.data()[i * 2 + r] - vd.data()[i * 2 + r]);
+      worst = (std::max)(worst, diff);
+      CHECK(diff <= bound);
+    }
+  }
+  // Not vacuous: the bound is orders of magnitude below the values (order one), and the float root
+  // does differ.
+  CHECK(build_slack * units * eps_f * 2.0 < 1e-3);
+  CHECK(worst > 0.0);
+}
+
 TEST_CASE("THBSpline: one thread and several give bit-identical values") {
   check_many_threads_are_used();
   const Space space = thb_test::refined_2d(true);

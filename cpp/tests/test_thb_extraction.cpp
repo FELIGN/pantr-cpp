@@ -265,6 +265,9 @@ TEST_CASE("MultiLevelExtraction: the plain hierarchical basis is not a partition
       worst = (std::max)(worst, std::abs(sum - 1.0));
     }
   }
+  // A control threshold needs only to be far above the round-off level (a few `eps`) and far below
+  // the effect it detects (the weight of the coarse functions that truncation would have removed,
+  // a sizeable fraction of one): 0.05 is both, by orders of magnitude on either side.
   CHECK(worst > 0.05);
 }
 
@@ -402,6 +405,77 @@ TEST_CASE("MultiLevelExtraction: a caller's output array is written in full") {
     mle.extraction_operator(
         cid, mdview<double, 2>(buffer.data(), reference.shape()[0], reference.shape()[1]));
     CHECK(std::memcmp(buffer.data(), reference.data(), buffer.size() * sizeof(double)) == 0);
+  }
+}
+
+TEST_CASE("MultiLevelExtraction: a float root on dyadic knots gives the double root's operators") {
+  // Oracle: the double root's extraction of the same space. The knots are exact in float, so the
+  // two spaces have the same cells and the same active functions (integers, exactly equal). Every
+  // two-scale entry and every single-level extraction entry of a degree-2 space on dyadic spans is
+  // a ratio of knot differences that are powers of two (the spans 1/4, 1/2 and, after refinement,
+  // 1/8, 1/16), so the float arithmetic is exact and `M` and `M E` agree bit for bit.
+  const THBSplineSpace<float> sf = thb_test::refined_2d<float>(true);
+  const Space sd = thb_test::refined_2d<double>(true);
+  REQUIRE(sf.grid().num_cells() == sd.grid().num_cells());
+  const MultiLevelExtraction<float> mf(sf, Target::bezier);
+  const MultiLevelExtraction<double> md(sd, Target::bezier);
+  for (I64 cid = 0; cid < sd.grid().num_cells(); ++cid) {
+    CAPTURE(cid);
+    const std::span<const I64> rows_f = mf.active_basis(cid);
+    const std::span<const I64> rows_d = md.active_basis(cid);
+    CHECK(std::equal(rows_f.begin(), rows_f.end(), rows_d.begin(), rows_d.end()));
+    const NdArray<double> m_f = mf.multilevel_operator(cid);
+    const NdArray<double> m_d = md.multilevel_operator(cid);
+    REQUIRE(m_f.size() == m_d.size());
+    CHECK(std::memcmp(m_f.data(), m_d.data(), m_f.size() * sizeof(double)) == 0);
+    const NdArray<double> e_f = mf.extraction_operator(cid);
+    const NdArray<double> e_d = md.extraction_operator(cid);
+    REQUIRE(e_f.size() == e_d.size());
+    CHECK(std::memcmp(e_f.data(), e_d.data(), e_f.size() * sizeof(double)) == 0);
+  }
+}
+
+TEST_CASE(
+    "MultiLevelExtraction: a float root with a ratio that is not dyadic agrees to float rounding") {
+  // A cubic on four spans: the knot differences of three spans (3/4) are not powers of two, so the
+  // float two-scale entries are rounded. Oracle: the double root's operators. An entry of `M` is a
+  // sum of non-negative products of `levels - 1` refinements, each direction contributing a
+  // two-scale entry of relative error `6 p + 1` roundings (the count the B-spline product test
+  // derives for an Oslo row entry); `M E` adds the single-level operator's entry, of the same
+  // count. All entries lie in `[0, 1]` (a column of `M E` is a partition of unity of non-negative
+  // terms), so the absolute error is bounded by the relative one, times `build_slack` and the unit
+  // roundoff of float.
+  const auto make = [](auto tag) {
+    using T = decltype(tag);
+    const auto root = thb_test::make_thb_space<T>({k3}, {3}, {2}, {0}, true);
+    return root.refine_region(0, Ivec{0}, Ivec{2}, std::nullopt)
+        .refine_region(1, Ivec{0}, Ivec{2}, std::nullopt);
+  };
+  const THBSplineSpace<float> sf = make(float{});
+  const Space sd = make(double{});
+  REQUIRE(sf.grid().num_cells() == sd.grid().num_cells());
+  const double u_f = static_cast<double>(std::numeric_limits<float>::epsilon()) / 2.0;
+  const double steps = static_cast<double>(sd.num_levels() - 1);
+  const double per_step = 6.0 * sd.degrees()[0] + 1.0;
+  const double bound_m = build_slack * steps * per_step * u_f;
+  const double bound_me = build_slack * (steps + 1.0) * per_step * u_f;
+  CHECK(bound_me < 1e-4);  // not vacuous: the entries are of order one
+  const MultiLevelExtraction<float> mf(sf, Target::bezier);
+  const MultiLevelExtraction<double> md(sd, Target::bezier);
+  for (I64 cid = 0; cid < sd.grid().num_cells(); ++cid) {
+    CAPTURE(cid);
+    const NdArray<double> m_f = mf.multilevel_operator(cid);
+    const NdArray<double> m_d = md.multilevel_operator(cid);
+    const NdArray<double> e_f = mf.extraction_operator(cid);
+    const NdArray<double> e_d = md.extraction_operator(cid);
+    REQUIRE(m_f.size() == m_d.size());
+    REQUIRE(e_f.size() == e_d.size());
+    for (std::size_t i = 0; i < m_f.size(); ++i) {
+      CHECK(std::abs(m_f.data()[i] - m_d.data()[i]) <= bound_m);
+    }
+    for (std::size_t i = 0; i < e_f.size(); ++i) {
+      CHECK(std::abs(e_f.data()[i] - e_d.data()[i]) <= bound_me);
+    }
   }
 }
 

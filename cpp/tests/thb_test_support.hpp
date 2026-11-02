@@ -69,30 +69,40 @@ inline std::vector<double> uniform_knots(int n) {
   return knots;
 }
 
-/// A space on the root whose knots and degrees are given, an unrefined grid whose cells are the
-/// root's knot spans, and the given factor.
-inline pantr::thb::THBSplineSpace<double> make_thb_space(
-    const std::vector<std::vector<double>>& knots, const std::vector<int>& degrees,
-    const Ivec& factor, const Reg& regularity, bool truncate) {
-  std::vector<pantr::bspline::BsplineSpace1D<double>> dirs;
+/// A space of storage type `T` on the root whose knots and degrees are given (the knots narrowed to
+/// `T`), an unrefined grid whose cells are the root's knot spans, and the given factor.
+template <class T = double>
+inline pantr::thb::THBSplineSpace<T> make_thb_space(const std::vector<std::vector<double>>& knots,
+                                                    const std::vector<int>& degrees,
+                                                    const Ivec& factor, const Reg& regularity,
+                                                    bool truncate) {
+  std::vector<pantr::bspline::BsplineSpace1D<T>> dirs;
   std::vector<std::vector<double>> breakpoints;
   for (std::size_t k = 0; k < knots.size(); ++k) {
-    dirs.emplace_back(std::span<const double>(knots[k]), degrees[k]);
-    const std::span<const double> unique = dirs.back().unique_knots_and_multiplicity(true).first;
-    breakpoints.emplace_back(unique.begin(), unique.end());
+    std::vector<T> narrowed;
+    for (const double v : knots[k]) {
+      narrowed.push_back(static_cast<T>(v));
+    }
+    dirs.emplace_back(std::span<const T>(narrowed), degrees[k]);
+    std::vector<double> bp;
+    for (const T v : dirs.back().unique_knots_and_multiplicity(true).first) {
+      bp.push_back(static_cast<double>(v));
+    }
+    breakpoints.push_back(std::move(bp));
   }
-  pantr::bspline::BsplineSpace<double> root(std::move(dirs));
+  pantr::bspline::BsplineSpace<T> root(std::move(dirs));
   pantr::grid::HierarchicalGrid grid(pantr::grid::TensorProductGrid(std::move(breakpoints)),
                                      factor);
-  return pantr::thb::THBSplineSpace<double>(std::move(root), std::move(grid), truncate, regularity);
+  return pantr::thb::THBSplineSpace<T>(std::move(root), std::move(grid), truncate, regularity);
 }
 
 /// The 4 x 4 root cells, degree (2, 2), factor (2, 2) space with its lower-left 2 x 2 root cells
 /// refined once and the lower-left 2 x 2 cells of that level refined again: three levels, cells of
 /// every level, truncated functions on both interfaces.
-inline pantr::thb::THBSplineSpace<double> refined_2d(bool truncate = true) {
+template <class T = double>
+inline pantr::thb::THBSplineSpace<T> refined_2d(bool truncate = true) {
   const auto base =
-      make_thb_space({k2, k2}, {2, 2}, {2, 2}, {std::nullopt, std::nullopt}, truncate);
+      make_thb_space<T>({k2, k2}, {2, 2}, {2, 2}, {std::nullopt, std::nullopt}, truncate);
   const auto once = base.refine_region(0, Ivec{0, 0}, Ivec{2, 2}, std::nullopt);
   return once.refine_region(1, Ivec{0, 0}, Ivec{2, 2}, std::nullopt);
 }
