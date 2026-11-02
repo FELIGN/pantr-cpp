@@ -450,8 +450,11 @@ template <StorageFloat T>
   for (std::size_t t = 0; t < target.flats.size(); ++t) {
     rhs(row_of(target.flats[t]), 0) = target.coeffs[t];
   }
+  // No fine function covers the coarse support: not possible on a valid tiling, but
+  // `HierarchicalGrid::from_blocks` takes its blocks as a valid tiling without checking it. The
+  // column is then empty and its whole right-hand side is residual.
   if (candidates.empty()) {
-    col.residual = rhs.size() > 0 ? rhs.cwiseAbs().maxCoeff() : 0.0;
+    col.residual = rhs.cwiseAbs().maxCoeff();
     return col;
   }
   const auto n_cols = static_cast<Eigen::Index>(candidates.size());
@@ -543,7 +546,7 @@ template <StorageFloat T>
                              static_cast<double>(index.cell_ptr[c + 1] - index.cell_ptr[c]);
                        });
   }
-  const double mean_candidates = n_cols == 0 ? 0.0 : candidate_bound / static_cast<double>(n_cols);
+  const double mean_candidates = candidate_bound / static_cast<double>(n_cols);
   const parallel::WorkEstimate work =
       prolongation_column_work(mean_candidates, dim, coarse.degrees);
 
