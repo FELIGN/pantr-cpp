@@ -1,0 +1,795 @@
+{
+ "protocol": {
+  "k": 10,
+  "repeats": 30,
+  "threads": [
+   1,
+   8
+  ],
+  "cpus": "0-7",
+  "reference": "main",
+  "argv": [
+   "benchmarks/compare.py",
+   "--out-dir",
+   "benchmarks/results/2026-11-02-s6-graph-ac6-final",
+   "--side",
+   "main=<main src>",
+   "--side",
+   "branch=<branch src>",
+   "--k",
+   "10",
+   "--threads",
+   "1",
+   "8",
+   "--cpus",
+   "0-7",
+   "--filter",
+   "^S6\\.(coupling_graph|partition_graph)"
+  ]
+ },
+ "sides": {
+  "main": {
+   "commit": "11ab436abd94edf8f414d1ec2d9ed0bf77e38e89",
+   "extension": "none"
+  },
+  "branch": {
+   "commit": "ef3a483fbf7304617dd73f68eb5db9be64281ac4-dirty",
+   "extension": "pantr._pantr_v4 (v4, _pantr_v4.abi3.so)"
+  }
+ },
+ "machine": {
+  "cpu": "Intel(R) Xeon(R) Gold 6148 CPU @ 2.40GHz",
+  "platform": "Linux-5.15.0-144-generic-x86_64-with-glibc2.35",
+  "affinity": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7
+  ],
+  "governor": "schedutil"
+ },
+ "cases": {
+  "S6.coupling_graph.tiny@t1": {
+   "what": {
+    "main": "coupling_graph, biquadratic, 2^2 intervals",
+    "branch": "coupling_graph, biquadratic, 2^2 intervals"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 309723.3214285715,
+     "range_ns": 14029.928571428522,
+     "process_medians_ns": [
+      307466.35714285716,
+      305319.0714285714,
+      313557.4285714286,
+      310909.4285714286,
+      305156.7857142857,
+      312959.14285714284,
+      314852.64285714284,
+      308537.2142857143,
+      313380.7857142857,
+      300822.7142857143
+     ]
+    },
+    "branch": {
+     "statistic_ns": 4588.744415237945,
+     "range_ns": 382.64714488351547,
+     "process_medians_ns": [
+      4512.582352941176,
+      4451.301608579089,
+      4673.674698795181,
+      4466.299479166667,
+      4775.30888030888,
+      4497.46125,
+      4833.948753462604,
+      4601.866295264624,
+      4575.622535211267,
+      4670.393139841688
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.coupling_graph.medium@t1": {
+   "what": {
+    "main": "coupling_graph, biquadratic, 32^2 intervals",
+    "branch": "coupling_graph, biquadratic, 32^2 intervals"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 1181999.0,
+     "range_ns": 66759.75,
+     "process_medians_ns": [
+      1217216.25,
+      1201374.25,
+      1185162.75,
+      1166321.5,
+      1170103.5,
+      1233081.25,
+      1231293.5,
+      1174031.75,
+      1178835.25,
+      1178244.25
+     ]
+    },
+    "branch": {
+     "statistic_ns": 154352.36538461538,
+     "range_ns": 11706.010989011003,
+     "process_medians_ns": [
+      151706.64285714284,
+      154355.61538461538,
+      155092.65384615384,
+      153978.11538461538,
+      154349.11538461538,
+      156650.1923076923,
+      153007.64285714284,
+      152459.88461538462,
+      162065.8076923077,
+      163412.65384615384
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.coupling_graph.large@t1": {
+   "what": {
+    "main": "coupling_graph, biquadratic, 256^2 intervals",
+    "branch": "coupling_graph, biquadratic, 256^2 intervals"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 83132156.0,
+     "range_ns": 2548465.0,
+     "process_medians_ns": [
+      82699610.5,
+      83161867.5,
+      82424895.0,
+      82442062.0,
+      83102444.5,
+      84973360.0,
+      84717232.0,
+      83095391.0,
+      83556366.0,
+      83458110.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 38688168.75,
+     "range_ns": 3589259.0,
+     "process_medians_ns": [
+      38311658.0,
+      41715791.0,
+      38551565.5,
+      38728276.5,
+      38648061.0,
+      38734217.5,
+      38126532.0,
+      38396983.0,
+      39981099.5,
+      41638827.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.partition_graph_spectral.tiny@t1": {
+   "what": {
+    "main": "partition_graph(spectral), biquadratic 2^2 intervals, 2 parts",
+    "branch": "partition_graph(spectral), biquadratic 2^2 intervals, 2 parts"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 451824.65,
+     "range_ns": 43551.95000000001,
+     "process_medians_ns": [
+      461920.5,
+      481783.25,
+      452074.4,
+      445677.3,
+      469040.875,
+      464267.7,
+      438231.3,
+      451574.9,
+      447895.9,
+      444050.3
+     ]
+    },
+    "branch": {
+     "statistic_ns": 6970.0418945831125,
+     "range_ns": 899.8679194389497,
+     "process_medians_ns": [
+      6734.444237918216,
+      7054.132841328414,
+      6717.2164179104475,
+      7256.653992395437,
+      7617.084337349397,
+      6812.746323529412,
+      7229.674603174603,
+      6944.996428571429,
+      6995.087360594796,
+      6778.59375
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.partition_graph_metis.tiny@t1": {
+   "what": {
+    "main": "partition_graph(metis), biquadratic 2^2 intervals, 2 parts",
+    "branch": "partition_graph(metis), biquadratic 2^2 intervals, 2 parts"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 91351.33638443935,
+     "range_ns": 8523.083850931682,
+     "process_medians_ns": [
+      93207.07142857142,
+      96958.71428571429,
+      90861.65217391305,
+      90138.4347826087,
+      92442.67391304349,
+      91092.30434782608,
+      88435.63043478261,
+      91610.36842105263,
+      90472.45652173914,
+      92102.26086956522
+     ]
+    },
+    "branch": {
+     "statistic_ns": 63278.58641098485,
+     "range_ns": 3725.493749999994,
+     "process_medians_ns": [
+      63431.703125,
+      64524.45161290323,
+      63125.469696969696,
+      62109.65625,
+      65237.328125,
+      62338.421875,
+      62121.78125,
+      65476.393939393936,
+      65835.15,
+      62466.109375
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.partition_graph_spectral.medium@t1": {
+   "what": {
+    "main": "partition_graph(spectral), biquadratic 16^2 intervals, 4 parts",
+    "branch": "partition_graph(spectral), biquadratic 16^2 intervals, 4 parts"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 9104367.5,
+     "range_ns": 713422.0,
+     "process_medians_ns": [
+      9153129.5,
+      9626578.5,
+      9168738.0,
+      8943434.5,
+      9147123.5,
+      8913156.5,
+      8969607.0,
+      8995133.5,
+      9322560.5,
+      9061611.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 4394755.75,
+     "range_ns": 308432.5,
+     "process_medians_ns": [
+      4453015.0,
+      4603750.5,
+      4295318.0,
+      4304222.5,
+      4378687.5,
+      4396056.0,
+      4357659.0,
+      4393455.5,
+      4596721.5,
+      4431904.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.partition_graph_metis.medium@t1": {
+   "what": {
+    "main": "partition_graph(metis), biquadratic 16^2 intervals, 4 parts",
+    "branch": "partition_graph(metis), biquadratic 16^2 intervals, 4 parts"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 575527.0625,
+     "range_ns": 53853.5,
+     "process_medians_ns": [
+      564251.375,
+      601163.625,
+      600076.625,
+      557624.5,
+      575430.625,
+      561333.5,
+      559850.625,
+      578462.875,
+      611478.0,
+      575623.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 544833.25,
+     "range_ns": 41554.541666666744,
+     "process_medians_ns": [
+      547588.375,
+      581255.6666666667,
+      547882.625,
+      541027.75,
+      545319.125,
+      541653.25,
+      544347.375,
+      540837.25,
+      580997.125,
+      539701.125
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.partition_graph_spectral.large@t1": {
+   "what": {
+    "main": "partition_graph(spectral), biquadratic 40^2 intervals, 8 parts",
+    "branch": "partition_graph(spectral), biquadratic 40^2 intervals, 8 parts"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 119998811.25,
+     "range_ns": 14243501.5,
+     "process_medians_ns": [
+      121084133.5,
+      128223127.0,
+      120234534.5,
+      117866682.5,
+      122063663.5,
+      119588093.5,
+      119432896.0,
+      119763088.0,
+      132110184.0,
+      118738193.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 55147997.0,
+     "range_ns": 3539301.5,
+     "process_medians_ns": [
+      54465389.0,
+      56508558.0,
+      53999198.5,
+      53958302.0,
+      57497603.5,
+      55248540.0,
+      54280019.0,
+      55103132.5,
+      56059940.5,
+      55192861.5
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.partition_graph_metis.large@t1": {
+   "what": {
+    "main": "partition_graph(metis), biquadratic 40^2 intervals, 8 parts",
+    "branch": "partition_graph(metis), biquadratic 40^2 intervals, 8 parts"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 2982502.0,
+     "range_ns": 127751.0,
+     "process_medians_ns": [
+      2910154.0,
+      3037905.0,
+      3005588.0,
+      2977904.0,
+      2981983.0,
+      2970542.5,
+      2910751.5,
+      2983021.0,
+      3031930.5,
+      2985662.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 3024886.75,
+     "range_ns": 228273.0,
+     "process_medians_ns": [
+      2987128.5,
+      3096395.0,
+      3010848.0,
+      3053225.5,
+      3207098.5,
+      3038925.5,
+      2984777.5,
+      2983960.0,
+      3132123.0,
+      2978825.5
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.coupling_graph.tiny@t8": {
+   "what": {
+    "main": "coupling_graph, biquadratic, 2^2 intervals",
+    "branch": "coupling_graph, biquadratic, 2^2 intervals"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 316815.7333333333,
+     "range_ns": 147305.09999999998,
+     "process_medians_ns": [
+      303966.0,
+      314468.64285714284,
+      444217.4,
+      316569.1666666666,
+      403115.2,
+      317062.3,
+      305673.14285714284,
+      316476.7857142857,
+      318719.2857142857,
+      451271.1
+     ]
+    },
+    "branch": {
+     "statistic_ns": 4621.8104059445595,
+     "range_ns": 2450.9212657232692,
+     "process_medians_ns": [
+      4447.464150943397,
+      4641.539660056657,
+      4592.8893129770995,
+      4774.39905362776,
+      4845.024561403508,
+      4602.081151832461,
+      4549.463730569948,
+      4778.81983805668,
+      4594.955384615385,
+      6898.385416666666
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.coupling_graph.medium@t8": {
+   "what": {
+    "main": "coupling_graph, biquadratic, 32^2 intervals",
+    "branch": "coupling_graph, biquadratic, 32^2 intervals"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 1195139.25,
+     "range_ns": 74879.5,
+     "process_medians_ns": [
+      1181685.0,
+      1227280.0,
+      1174194.0,
+      1239474.75,
+      1244740.25,
+      1189920.0,
+      1190841.25,
+      1169860.75,
+      1213126.5,
+      1199437.25
+     ]
+    },
+    "branch": {
+     "statistic_ns": 158462.97802197802,
+     "range_ns": 8435.544871794875,
+     "process_medians_ns": [
+      154997.53846153847,
+      161986.81818181818,
+      154140.5,
+      158841.15384615384,
+      162574.5833333333,
+      158632.38461538462,
+      155022.64285714284,
+      158929.8076923077,
+      158293.57142857142,
+      154139.03846153844
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.coupling_graph.large@t8": {
+   "what": {
+    "main": "coupling_graph, biquadratic, 256^2 intervals",
+    "branch": "coupling_graph, biquadratic, 256^2 intervals"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 84279717.25,
+     "range_ns": 3230687.0,
+     "process_medians_ns": [
+      82884786.0,
+      85523133.5,
+      84084921.0,
+      84720206.0,
+      84474513.5,
+      85128908.0,
+      82292446.5,
+      82826690.5,
+      84729196.0,
+      83096498.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 38577119.0,
+     "range_ns": 6374643.0,
+     "process_medians_ns": [
+      38661766.5,
+      42552029.5,
+      37999016.0,
+      44373659.0,
+      42420886.0,
+      38350006.5,
+      38229284.0,
+      38450609.5,
+      41219571.5,
+      38492471.5
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.partition_graph_spectral.tiny@t8": {
+   "what": {
+    "main": "partition_graph(spectral), biquadratic 2^2 intervals, 2 parts",
+    "branch": "partition_graph(spectral), biquadratic 2^2 intervals, 2 parts"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 458004.625,
+     "range_ns": 32336.675000000047,
+     "process_medians_ns": [
+      456706.25,
+      463163.69999999995,
+      466513.1,
+      459303.0,
+      455654.4,
+      464806.30000000005,
+      452663.19999999995,
+      439499.69999999995,
+      471836.375,
+      447550.1
+     ]
+    },
+    "branch": {
+     "statistic_ns": 6964.8849351175995,
+     "range_ns": 580.670643017841,
+     "process_medians_ns": [
+      6830.989130434783,
+      7105.998023715415,
+      6899.478174603175,
+      6866.633720930233,
+      7181.688492063492,
+      6618.097472924188,
+      7018.658759124088,
+      7198.768115942029,
+      7062.876494023904,
+      6911.111111111111
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.partition_graph_metis.tiny@t8": {
+   "what": {
+    "main": "partition_graph(metis), biquadratic 2^2 intervals, 2 parts",
+    "branch": "partition_graph(metis), biquadratic 2^2 intervals, 2 parts"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 92828.85622529645,
+     "range_ns": 8645.384387351776,
+     "process_medians_ns": [
+      89165.45652173914,
+      96383.18421052632,
+      96626.73913043478,
+      97810.84090909091,
+      90341.13043478261,
+      94889.90476190476,
+      90421.39130434782,
+      90842.82608695653,
+      94814.88636363637,
+      89908.13043478261
+     ]
+    },
+    "branch": {
+     "statistic_ns": 64486.678427419356,
+     "range_ns": 5402.641633064515,
+     "process_medians_ns": [
+      62203.393939393936,
+      64296.41935483871,
+      62990.359375,
+      67451.109375,
+      65287.416666666664,
+      62048.467741935485,
+      62247.671875,
+      65457.234375,
+      67202.3125,
+      64676.9375
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.partition_graph_spectral.medium@t8": {
+   "what": {
+    "main": "partition_graph(spectral), biquadratic 16^2 intervals, 4 parts",
+    "branch": "partition_graph(spectral), biquadratic 16^2 intervals, 4 parts"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 9236974.75,
+     "range_ns": 509230.5,
+     "process_medians_ns": [
+      9083799.5,
+      9367038.5,
+      9330730.5,
+      9184442.0,
+      9289507.5,
+      9333422.5,
+      8860036.5,
+      9095364.0,
+      9369267.0,
+      9062229.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 4524542.0,
+     "range_ns": 232931.0,
+     "process_medians_ns": [
+      4605738.5,
+      4626065.0,
+      4506445.5,
+      4596478.0,
+      4602158.0,
+      4436567.0,
+      4393134.0,
+      4486732.0,
+      4542638.5,
+      4486094.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.partition_graph_metis.medium@t8": {
+   "what": {
+    "main": "partition_graph(metis), biquadratic 16^2 intervals, 4 parts",
+    "branch": "partition_graph(metis), biquadratic 16^2 intervals, 4 parts"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 573518.3125,
+     "range_ns": 37891.625,
+     "process_medians_ns": [
+      556780.25,
+      589635.0,
+      562924.25,
+      585496.0,
+      581258.125,
+      594671.875,
+      561511.375,
+      565778.5,
+      594652.0,
+      560862.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 559864.5625,
+     "range_ns": 42782.125,
+     "process_medians_ns": [
+      560787.875,
+      566554.125,
+      558941.25,
+      574211.875,
+      584469.875,
+      555530.75,
+      551850.375,
+      549919.625,
+      562514.375,
+      541687.75
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.partition_graph_spectral.large@t8": {
+   "what": {
+    "main": "partition_graph(spectral), biquadratic 40^2 intervals, 8 parts",
+    "branch": "partition_graph(spectral), biquadratic 40^2 intervals, 8 parts"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 121602208.0,
+     "range_ns": 7789096.5,
+     "process_medians_ns": [
+      120230040.0,
+      124504498.5,
+      119428506.5,
+      120854524.5,
+      122349891.5,
+      125256281.0,
+      118741623.5,
+      123063830.5,
+      124764485.5,
+      117467184.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 54699989.75,
+     "range_ns": 2833756.5,
+     "process_medians_ns": [
+      54561132.5,
+      56247367.5,
+      54004432.5,
+      55588092.0,
+      54417295.5,
+      54848738.0,
+      54088861.5,
+      54393111.5,
+      56838189.0,
+      54838847.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.partition_graph_metis.large@t8": {
+   "what": {
+    "main": "partition_graph(metis), biquadratic 40^2 intervals, 8 parts",
+    "branch": "partition_graph(metis), biquadratic 40^2 intervals, 8 parts"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 2974240.0,
+     "range_ns": 129060.0,
+     "process_medians_ns": [
+      2971886.5,
+      3029039.0,
+      2913907.0,
+      2986534.5,
+      2976593.5,
+      2991691.0,
+      2915801.0,
+      2899979.0,
+      3007806.5,
+      2958836.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 3092995.25,
+     "range_ns": 179025.5,
+     "process_medians_ns": [
+      3089593.5,
+      3132752.0,
+      3000768.5,
+      3096397.0,
+      3068089.0,
+      3104565.0,
+      3108930.0,
+      3025861.0,
+      3087669.5,
+      3179794.0
+     ],
+     "flagged": false
+    }
+   }
+  }
+ }
+}

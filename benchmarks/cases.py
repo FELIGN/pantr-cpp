@@ -1142,6 +1142,50 @@ def _s6_grid_cases() -> list[Case]:
     return cases
 
 
+def _s6_graph_cases() -> list[Case]:
+    """The coupling-graph and graph-partition cases of the S6 stage (C6.3, C6.4).
+
+    - ``coupling_graph``: the graph of a biquadratic space of 2 x 2, 32 x 32 and 256 x 256
+      intervals.
+    - ``partition_graph_spectral``: 2, 4 and 8 parts of the coupling graph of a biquadratic space
+      of 2 x 2, 16 x 16 (256 vertices: the dense eigensolver) and 40 x 40 intervals (1600
+      vertices: the Lanczos solve on the first bisection, the dense one below 512).
+    - ``partition_graph_metis``: the same graphs and part counts through pymetis, which must be
+      installed.
+    """
+    from pantr.bspline import coupling_graph, create_uniform_space, partition_graph  # noqa: PLC0415
+
+    cases: list[Case] = []
+
+    def add(name: str, size: str, what: str, setup: Callable[[], Callable[[], Any]]) -> None:
+        cases.append(Case(f"S6.{name}.{size}", "S6", size, what, setup))
+
+    for size, side in {"tiny": 2, "medium": 32, "large": 256}.items():
+
+        def setup_graph(side: int = side) -> Callable[[], Any]:
+            space = create_uniform_space([2, 2], [side, side])
+            return lambda: coupling_graph(space)
+
+        add("coupling_graph", size, f"coupling_graph, biquadratic, {side}^2 intervals", setup_graph)
+
+    for size, (side, parts) in {"tiny": (2, 2), "medium": (16, 4), "large": (40, 8)}.items():
+        for backend in ("spectral", "metis"):
+
+            def setup_partition(
+                side: int = side, parts: int = parts, backend: str = backend
+            ) -> Callable[[], Any]:
+                graph = coupling_graph(create_uniform_space([2, 2], [side, side]))
+                return lambda: partition_graph(graph, parts, backend=backend)
+
+            add(
+                f"partition_graph_{backend}",
+                size,
+                f"partition_graph({backend}), biquadratic {side}^2 intervals, {parts} parts",
+                setup_partition,
+            )
+    return cases
+
+
 def all_cases() -> list[Case]:
     """Return every case this tree can run.
 
@@ -1158,5 +1202,6 @@ def all_cases() -> list[Case]:
         + _s4_extraction_cases()
         + _s5_fit_cases()
         + _s6_grid_cases()
+        + _s6_graph_cases()
         + _r6_cases()
     )

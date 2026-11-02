@@ -52,6 +52,8 @@ OpenMP run on one thread, and `NUMBA_NUM_THREADS` is the thread setting.
 | `results/2026-11-01-s6-ac6-final` | the same at 41a0fc0 with `--filter '^S6\.'`: every grid and point-location case, fresh, after the stage's review fixes; no case flagged (`summary.md` and `summary.json` only) |
 | `results/2026-11-01-s6-locate-ac6` | the same at 3801e98 with `--filter '^S6\.'`, after `Bspline.locate` moved to C++ and int64 arrays to `numpy.int64`: every grid and point-location case; no case flagged (`summary.md` and `summary.json` only) |
 | `results/2026-11-02-s6-locate-ac6-final` | the same at 5523ce6 with `--filter '^S6\.bspline_locate'`, after the loop review changed `locate`'s work estimate: no case flagged (`summary.md` and `summary.json` only) |
+| `results/2026-11-02-s6-graph-ac6` | `compare.py --side main=<scratch>/main-11ab436/src --side branch=<this tree at 35d8aa6>/src --k 10 --threads 1 8 --cpus 0-7 --filter '^S6\.(coupling_graph\|partition_graph)'`: the coupling-graph and graph-partition cases (C6.3, C6.4); `partition_graph_metis.large` is flagged at both thread counts, the extraction of the active subgraph sorting every row (`summary.md` and `summary.json` only) |
+| `results/2026-11-02-s6-graph-ac6-final` | the same at ef3a483, after rows are sorted only when out of order and the dense eigensolver route finds one eigenvector: every case of the previous run, fresh; no case flagged (`summary.md` and `summary.json` only) |
 
 Each holds `summary.md` (the statistic and range per side and case, and the flags), `summary.json`
 (the same with every process median, the protocol, the commits and the machine) and `raw/` (each
