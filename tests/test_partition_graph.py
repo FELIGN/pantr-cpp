@@ -519,6 +519,15 @@ def test_non_integer_edge_weights_raise() -> None:
     halves = graph._replace(edge_weights=np.full(graph.adjncy.size, 0.5))
     with pytest.raises(ValueError, match="edge_weights must be integers"):
         partition_graph(halves, 2)
+    for bad in (np.inf, -np.inf, np.nan, 1e30, -1e30, 2.0**63):
+        weights = graph.edge_weights.astype(np.float64)
+        weights[0] = bad
+        with pytest.raises(ValueError, match="edge_weights must be integers"):
+            partition_graph(graph._replace(edge_weights=weights), 2)  # type: ignore[arg-type]
+    wrapping = graph.edge_weights.astype(np.uint64)
+    wrapping[0] = np.uint64(2**63)
+    with pytest.raises(ValueError, match="edge_weights must be integers"):
+        partition_graph(graph._replace(edge_weights=wrapping), 2)  # type: ignore[arg-type]
     whole = graph._replace(edge_weights=graph.edge_weights.astype(np.float64))
     np.testing.assert_array_equal(
         partition_graph(whole, 2).cell_owner, partition_graph(graph, 2).cell_owner

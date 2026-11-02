@@ -115,20 +115,43 @@ def _graph_arrays(
         npt.NDArray[np.float64]]: ``xadj``, ``adjncy``, ``edge_weights``, ``vertex_weights``.
 
     Raises:
-        ValueError: If ``edge_weights`` holds a value that is not an integer.
+        ValueError: If ``edge_weights`` holds a value that is not an integer in the ``int64``
+            range.
     """
     edge_weights = np.asarray(coupling.edge_weights)
-    if not np.issubdtype(edge_weights.dtype, np.integer) and not bool(
-        np.all(edge_weights == np.rint(edge_weights))
-    ):
-        # A conversion to int64 would truncate them silently.
-        raise ValueError("edge_weights must be integers (numbers of shared functions).")
+    if not _int64_representable(edge_weights):
+        # A conversion to int64 would truncate, wrap or (for inf, NaN and floats past 2**63) be
+        # undefined, silently.
+        raise ValueError("edge_weights must be integers within the int64 range.")
     return (
         np.ascontiguousarray(coupling.xadj, dtype=np.int64),
         np.ascontiguousarray(coupling.adjncy, dtype=np.int64),
         np.ascontiguousarray(edge_weights, dtype=np.int64),
         np.ascontiguousarray(coupling.vertex_weights, dtype=np.float64),
     )
+
+
+def _int64_representable(values: npt.NDArray[Any]) -> bool:
+    """Tell whether every value converts to ``int64`` exactly.
+
+    Args:
+        values (npt.NDArray[Any]): An array of any real dtype.
+
+    Returns:
+        bool: ``True`` for integers in ``[-2**63, 2**63)``: any signed integer dtype of at most
+        64 bits, an unsigned one whose values stay below ``2**63``, or floats that are finite,
+        integral and in that range (``2.0**63`` is exact, so the comparisons are too).
+    """
+    if np.issubdtype(values.dtype, np.signedinteger):
+        return True
+    if np.issubdtype(values.dtype, np.unsignedinteger):
+        return values.size == 0 or int(values.max()) <= int(np.iinfo(np.int64).max)
+    with np.errstate(invalid="ignore"):
+        return bool(
+            np.all(np.isfinite(values))
+            and np.all(values == np.rint(values))
+            and np.all((values >= -(2.0**63)) & (values < 2.0**63))
+        )
 
 
 def _metis_partition(
