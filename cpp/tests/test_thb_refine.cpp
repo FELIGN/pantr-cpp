@@ -531,6 +531,18 @@ TEST_CASE("prolongation_csr: the refinement relation holds at points of every fi
   }
 }
 
+TEST_CASE("prolongation_csr: a refinement whose local solve needs an accurate SVD is accepted") {
+  // 3D HB, degree 2, factor (2, 2, 1): the local system of one column is full rank with a
+  // condition number near 4, yet a divide-and-conquer SVD reconstructs it with an error of about
+  // 4e-11, which the residual gate (4096 eps of one plus the size) refuses; an LAPACK `gelsd`
+  // solve (the Python implementation) leaves a residual near 2e-15.
+  const Space root = make_space({k2, k2, k2}, {2, 2, 2}, {2, 2, 1},
+                                {std::nullopt, std::nullopt, std::nullopt}, false);
+  const Space prev = root.refine(Ivec{49, 56}, std::nullopt);
+  const Space fine = prev.refine(Ivec{7, 51}, 2);
+  check_refinement_relation(prev, fine);
+}
+
 TEST_CASE("prolongation_csr: the partition of unity is carried through, and HB does not carry it") {
   const auto pairs = [](bool truncate) {
     const Space coarse = base_2d(truncate).refine_region(0, Ivec{0, 0}, Ivec{2, 2}, std::nullopt);
