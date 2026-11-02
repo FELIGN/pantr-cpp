@@ -138,13 +138,14 @@
   happened depended on the values and on memory: a `vertex_weights` longer than `num_vertices` and
   an `xadj` ending before `len(adjncy)` were accepted silently; a decreasing `xadj` or an `adjncy`
   entry outside `[0, num_vertices)` was sometimes partitioned silently, sometimes raised an
-  unrelated error (`RuntimeError` from METIS for a decreasing `xadj`), and sometimes ended the
-  process.
+  unrelated error (a `RuntimeError` from scipy for a decreasing `xadj` with `backend="metis"`), and
+  sometimes ended the process.
 - **`partition_graph` refuses a `CouplingGraph` whose `edge_weights` are not integers in the
-  64-bit range** (`ValueError`): a fraction, an infinity, NaN, a float at or past `2**63`, or an
-  unsigned integer past `2**63 - 1`. Integer values held in a float array are accepted. The
-  previous release used the float values in the spectral backend and rounded them in the METIS
-  backend.
+  64-bit range** (`ValueError`): a fraction, an infinity, NaN, a float outside
+  `[-2**63, 2**63)`, or an unsigned integer past `2**63 - 1`. Integer values held in a float array
+  are accepted. The previous release used the float values in the spectral backend and rounded
+  them in the METIS backend. An object array (of Python ints) now raises `TypeError`, where the
+  previous release accepted it.
 
 ### Changed
 - **pantr needs Python 3.12 or later.** pantr is becoming a C++ library with a compiled
@@ -971,9 +972,10 @@
   (a square grid of cells, as in a uniform space with as many intervals in each direction), every
   vector of its eigenspace is a Fiedler vector and the two releases use different ones, so the
   parts differ and the cut weight can be larger or smaller; when the graph is symmetric under
-  reversing the vertex order (a 1D space), the vector's two largest entries (in absolute value) tie
-  up to rounding, with opposite signs, so the sign chosen for it, and with it the order of the
-  vertices, depends on rounding, and the parts can come out mirrored. The part weights were equal
+  reversing the vertex order and its Fiedler vector is antisymmetric (a 1D space), the vector's
+  two largest entries (in absolute value) tie up to rounding, with opposite signs, so the sign
+  chosen for it, and with it the order of the vertices, depends on rounding, and the parts can
+  come out mirrored. The part weights were equal
   in every spectral partition of the sweep. For the same reason, the partition of such a graph can
   differ between the extension's builds for different processors (it does not depend on the
   number of threads).
@@ -997,8 +999,8 @@
   Fiedler pair only if the first is the constant vector's (eigenvalue 0). The start vector is
   orthogonal to the constant vector, so in exact arithmetic ARPACK never finds it; in floating
   point rounding brings it in on some graphs and not on others, so the vector used was sometimes
-  that of the third-smallest eigenvalue: the 32 x 27 grid graph was cut across
-  its short axis instead of its long one, a longer cut. The partitioner now solves for one
+  that of the third-smallest eigenvalue: the 32 x 27 grid graph was split along
+  its short axis (35 edges cut) instead of its long one (27). The partitioner now solves for one
   eigenpair of the Laplacian with the constant direction deflated (moved above the rest of the
   spectrum), which is the Fiedler pair whatever the start vector holds. Partitions of graphs above
   512 vertices can change: they now follow the true Fiedler vector. This is a fix, not a
