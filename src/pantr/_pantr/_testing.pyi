@@ -784,3 +784,19 @@ def spectral_partition(
     lanczos_max_iter: int | None,
 ) -> tuple[pantr._pantr.grid.Partition, tuple[int, int, int, int]]:
     """Spectral partition with its solver options: (Partition, (dense_solves, lanczos_solves, dense_fallbacks, component_orders))."""
+
+def cell_membership_tolerance(lo: float, hi: float) -> float:
+    """The slack allowed at the boundary of the cell `[lo, hi]` along one axis."""
+
+def prolongation_residual_tolerance(max_coarse_val: float) -> float:
+    """The residual above which a coarse column is not reproduced."""
+
+@overload
+def func_support_1d(
+    space: pantr._pantr.bspline.BsplineSpace1DF64,
+) -> tuple[NDArray[numpy.int64], NDArray[numpy.int64], NDArray[numpy.int64]]: ...
+@overload
+def func_support_1d(
+    space: pantr._pantr.bspline.BsplineSpace1DF32,
+) -> tuple[NDArray[numpy.int64], NDArray[numpy.int64], NDArray[numpy.int64]]:
+    """(first_basis, first_cell, last_cell) of a 1D space's functions."""

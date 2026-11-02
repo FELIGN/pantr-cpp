@@ -1903,3 +1903,437 @@ def graph_active_subgraph(
     NDArray[numpy.float64],
 ]:
     """Check a partition request and return the active subgraph: (active_idx, xadj, adjncy, edge_weights, vertex_weights), each row's neighbors ascending."""
+
+class THBSplineSpaceF64:
+    """An immutable truncated hierarchical B-spline space."""
+
+    def __init__(
+        self,
+        root: BsplineSpaceF64,
+        grid: pantr._pantr.grid.HierarchicalGrid,
+        truncate: bool,
+        regularity: Sequence[int | None],
+    ) -> None:
+        """Build the space on a root space and a grid; regularity has one entry per direction."""
+
+    @property
+    def grid(self) -> pantr._pantr.grid.HierarchicalGrid:
+        """The grid the space owns."""
+
+    @property
+    def num_levels(self) -> int: ...
+    @property
+    def num_total_basis(self) -> int: ...
+    @property
+    def num_basis_per_level(self) -> list[int]: ...
+    @property
+    def func_offset(self) -> Annotated[NDArray[numpy.int64], dict(writable=False)]:
+        """Read-only view of the first dof of each level."""
+
+    def level_space_1d(self, level: int) -> list[BsplineSpace1DF64]:
+        """The 1D spaces of the tensor-product space at a level."""
+
+    def active_function_indices(self, level: int) -> NDArray[numpy.int64]:
+        """A fresh array of the flat indices of the active functions of a level."""
+
+    def active_basis(self, cid: int) -> NDArray[numpy.int64]:
+        """A fresh array of the global dofs whose support meets a cell."""
+
+    def num_active_on(self, cid: int) -> int:
+        """The number of functions whose support meets a cell."""
+
+    def max_active_per_cell(self) -> int:
+        """The largest number of active functions on a cell."""
+
+    def tabulate_basis(
+        self,
+        cid: int,
+        pts: Annotated[
+            NDArray[numpy.float64],
+            dict(shape=(None, None), order="C", device="cpu", writable=False),
+        ],
+        orders: Sequence[int],
+    ) -> tuple[NDArray[numpy.float64], NDArray[numpy.int64]]:
+        """(values (n, K), dofs (K,)) of the mixed partial of the functions on a cell."""
+
+    def restrict(
+        self,
+        cell_ids: Annotated[
+            NDArray[numpy.int64], dict(shape=(None,), order="C", device="cpu", writable=False)
+        ],
+    ) -> tuple[THBSplineSpaceF64, NDArray[numpy.int64], NDArray[numpy.int64]]:
+        """(windowed space, local_to_global_dof, local_to_global_cell) of the cells' window."""
+
+    def refine(
+        self,
+        cell_ids: Annotated[
+            NDArray[numpy.int64], dict(shape=(None,), order="C", device="cpu", writable=False)
+        ],
+        admissible_class: int | None,
+    ) -> THBSplineSpaceF64:
+        """The space with the named cells refined."""
+
+    def refine_region(
+        self, level: int, lo: Sequence[int], hi: Sequence[int], admissible_class: int | None
+    ) -> THBSplineSpaceF64:
+        """The space with a region refined."""
+
+    def coarsen(
+        self,
+        cell_ids: Annotated[
+            NDArray[numpy.int64], dict(shape=(None,), order="C", device="cpu", writable=False)
+        ],
+        admissible_class: int | None,
+    ) -> THBSplineSpaceF64:
+        """The space with the named cells coarsened away."""
+
+    def prolongation_csr(
+        self, fine: THBSplineSpaceF64
+    ) -> tuple[int, int, NDArray[numpy.int64], NDArray[numpy.int64], NDArray[numpy.float64]]:
+        """(rows, cols, indptr, indices, data) of the prolongation to a refinement, in CSR form."""
+
+class THBSplineSpaceF32:
+    """An immutable truncated hierarchical B-spline space."""
+
+    def __init__(
+        self,
+        root: BsplineSpaceF32,
+        grid: pantr._pantr.grid.HierarchicalGrid,
+        truncate: bool,
+        regularity: Sequence[int | None],
+    ) -> None:
+        """Build the space on a root space and a grid; regularity has one entry per direction."""
+
+    @property
+    def grid(self) -> pantr._pantr.grid.HierarchicalGrid:
+        """The grid the space owns."""
+
+    @property
+    def num_levels(self) -> int: ...
+    @property
+    def num_total_basis(self) -> int: ...
+    @property
+    def num_basis_per_level(self) -> list[int]: ...
+    @property
+    def func_offset(self) -> Annotated[NDArray[numpy.int64], dict(writable=False)]:
+        """Read-only view of the first dof of each level."""
+
+    def level_space_1d(self, level: int) -> list[BsplineSpace1DF32]:
+        """The 1D spaces of the tensor-product space at a level."""
+
+    def active_function_indices(self, level: int) -> NDArray[numpy.int64]:
+        """A fresh array of the flat indices of the active functions of a level."""
+
+    def active_basis(self, cid: int) -> NDArray[numpy.int64]:
+        """A fresh array of the global dofs whose support meets a cell."""
+
+    def num_active_on(self, cid: int) -> int:
+        """The number of functions whose support meets a cell."""
+
+    def max_active_per_cell(self) -> int:
+        """The largest number of active functions on a cell."""
+
+    def tabulate_basis(
+        self,
+        cid: int,
+        pts: Annotated[
+            NDArray[numpy.float64],
+            dict(shape=(None, None), order="C", device="cpu", writable=False),
+        ],
+        orders: Sequence[int],
+    ) -> tuple[NDArray[numpy.float64], NDArray[numpy.int64]]:
+        """(values (n, K), dofs (K,)) of the mixed partial of the functions on a cell."""
+
+    def restrict(
+        self,
+        cell_ids: Annotated[
+            NDArray[numpy.int64], dict(shape=(None,), order="C", device="cpu", writable=False)
+        ],
+    ) -> tuple[THBSplineSpaceF32, NDArray[numpy.int64], NDArray[numpy.int64]]:
+        """(windowed space, local_to_global_dof, local_to_global_cell) of the cells' window."""
+
+    def refine(
+        self,
+        cell_ids: Annotated[
+            NDArray[numpy.int64], dict(shape=(None,), order="C", device="cpu", writable=False)
+        ],
+        admissible_class: int | None,
+    ) -> THBSplineSpaceF32:
+        """The space with the named cells refined."""
+
+    def refine_region(
+        self, level: int, lo: Sequence[int], hi: Sequence[int], admissible_class: int | None
+    ) -> THBSplineSpaceF32:
+        """The space with a region refined."""
+
+    def coarsen(
+        self,
+        cell_ids: Annotated[
+            NDArray[numpy.int64], dict(shape=(None,), order="C", device="cpu", writable=False)
+        ],
+        admissible_class: int | None,
+    ) -> THBSplineSpaceF32:
+        """The space with the named cells coarsened away."""
+
+    def prolongation_csr(
+        self, fine: THBSplineSpaceF32
+    ) -> tuple[int, int, NDArray[numpy.int64], NDArray[numpy.int64], NDArray[numpy.float64]]:
+        """(rows, cols, indptr, indices, data) of the prolongation to a refinement, in CSR form."""
+
+class THBSplineF64:
+    """An immutable THB spline function."""
+
+    def __init__(
+        self,
+        space: THBSplineSpaceF64,
+        control_points: Annotated[
+            NDArray[numpy.float64],
+            dict(shape=(None, None), order="C", device="cpu", writable=False),
+        ],
+    ) -> None:
+        """Copy `(num_total_basis, rank)` control points onto a space."""
+
+    @property
+    def control_points(self) -> Annotated[NDArray[numpy.float64], dict(writable=False)]:
+        """Read-only view of the control points."""
+
+    def evaluate(
+        self,
+        pts: Annotated[
+            NDArray[numpy.float64],
+            dict(shape=(None, None), order="C", device="cpu", writable=False),
+        ],
+        orders: Sequence[int],
+    ) -> NDArray[numpy.float64]:
+        """The mixed partial of the spline at the rows of `(m, dim)` points: `(m, rank)`."""
+
+    def prolong_to(self, fine: THBSplineSpaceF64) -> THBSplineF64:
+        """The same function on a refinement of the space."""
+
+class THBSplineF32:
+    """An immutable THB spline function."""
+
+    def __init__(
+        self,
+        space: THBSplineSpaceF32,
+        control_points: Annotated[
+            NDArray[numpy.float64],
+            dict(shape=(None, None), order="C", device="cpu", writable=False),
+        ],
+    ) -> None:
+        """Copy `(num_total_basis, rank)` control points onto a space."""
+
+    @property
+    def control_points(self) -> Annotated[NDArray[numpy.float64], dict(writable=False)]:
+        """Read-only view of the control points."""
+
+    def evaluate(
+        self,
+        pts: Annotated[
+            NDArray[numpy.float64],
+            dict(shape=(None, None), order="C", device="cpu", writable=False),
+        ],
+        orders: Sequence[int],
+    ) -> NDArray[numpy.float64]:
+        """The mixed partial of the spline at the rows of `(m, dim)` points: `(m, rank)`."""
+
+    def prolong_to(self, fine: THBSplineSpaceF32) -> THBSplineF32:
+        """The same function on a refinement of the space."""
+
+class MultiLevelExtractionF64:
+    """Per-element multi-level extraction operators of a THB space."""
+
+    def __init__(self, space: THBSplineSpaceF64, target: int) -> None:
+        """The extraction onto a target basis (0 Bezier, 1 Lagrange, 2 cardinal)."""
+
+    def num_active_on(self, cid: int) -> int:
+        """The rows of the operators on a cell."""
+
+    def multilevel_operator(
+        self,
+        cid: int,
+        out: Annotated[NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu")],
+    ) -> None:
+        """Write the multi-level extraction operator of a cell into `out`."""
+
+    def extraction_operator(
+        self,
+        cid: int,
+        out: Annotated[NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu")],
+    ) -> None:
+        """Write the multi-level Bezier (target) extraction operator of a cell into `out`."""
+
+class MultiLevelExtractionF32:
+    """Per-element multi-level extraction operators of a THB space."""
+
+    def __init__(self, space: THBSplineSpaceF32, target: int) -> None:
+        """The extraction onto a target basis (0 Bezier, 1 Lagrange, 2 cardinal)."""
+
+    def num_active_on(self, cid: int) -> int:
+        """The rows of the operators on a cell."""
+
+    def multilevel_operator(
+        self,
+        cid: int,
+        out: Annotated[NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu")],
+    ) -> None:
+        """Write the multi-level extraction operator of a cell into `out`."""
+
+    def extraction_operator(
+        self,
+        cid: int,
+        out: Annotated[NDArray[numpy.float64], dict(shape=(None, None), order="C", device="cpu")],
+    ) -> None:
+        """Write the multi-level Bezier (target) extraction operator of a cell into `out`."""
+
+class THBQuasiInterpolationF64:
+    """The staged quasi-interpolant onto a THB space."""
+
+    def __init__(self, space: THBSplineSpaceF64) -> None:
+        """Choose each function's leaf cell and build its points and weights."""
+
+    def points(self) -> NDArray[numpy.float64]:
+        """The sample points `(num_functions * block, dim)`."""
+
+    def coefficients(
+        self,
+        values: Annotated[
+            NDArray[numpy.float64],
+            dict(shape=(None, None), order="C", device="cpu", writable=False),
+        ],
+    ) -> NDArray[numpy.float64]:
+        """The coefficients `(num_functions, rank)` from the samples."""
+
+class THBQuasiInterpolationF32:
+    """The staged quasi-interpolant onto a THB space."""
+
+    def __init__(self, space: THBSplineSpaceF32) -> None:
+        """Choose each function's leaf cell and build its points and weights."""
+
+    def points(self) -> NDArray[numpy.float64]:
+        """The sample points `(num_functions * block, dim)`."""
+
+    def coefficients(
+        self,
+        values: Annotated[
+            NDArray[numpy.float64],
+            dict(shape=(None, None), order="C", device="cpu", writable=False),
+        ],
+    ) -> NDArray[numpy.float64]:
+        """The coefficients `(num_functions, rank)` from the samples."""
+
+@overload
+def compute_halo(
+    space: BsplineSpaceF64,
+    owned_cells: Annotated[
+        NDArray[numpy.int64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+) -> NDArray[numpy.int64]: ...
+@overload
+def compute_halo(
+    space: BsplineSpaceF32,
+    owned_cells: Annotated[
+        NDArray[numpy.int64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+) -> NDArray[numpy.int64]:
+    """The support-closure halo of owned cells of a tensor-product space, ascending."""
+
+@overload
+def dof_owner_windowed(
+    space: BsplineSpaceF64,
+    cell_owner: Annotated[
+        NDArray[numpy.int32], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    dofs: Annotated[
+        NDArray[numpy.int64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+) -> NDArray[numpy.int32]: ...
+@overload
+def dof_owner_windowed(
+    space: BsplineSpaceF32,
+    cell_owner: Annotated[
+        NDArray[numpy.int32], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    dofs: Annotated[
+        NDArray[numpy.int64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+) -> NDArray[numpy.int32]:
+    """The owner of the requested functions of a tensor-product space, in request order."""
+
+@overload
+def dof_owner(
+    space: BsplineSpaceF64,
+    cell_owner: Annotated[
+        NDArray[numpy.int32], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+) -> NDArray[numpy.int32]: ...
+@overload
+def dof_owner(
+    space: BsplineSpaceF32,
+    cell_owner: Annotated[
+        NDArray[numpy.int32], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+) -> NDArray[numpy.int32]:
+    """The owner of every function of a tensor-product space."""
+
+@overload
+def thb_compute_halo(
+    space: THBSplineSpaceF64,
+    owned_cells: Annotated[
+        NDArray[numpy.int64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+) -> NDArray[numpy.int64]: ...
+@overload
+def thb_compute_halo(
+    space: THBSplineSpaceF32,
+    owned_cells: Annotated[
+        NDArray[numpy.int64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+) -> NDArray[numpy.int64]:
+    """The cross-level support-closure halo of owned cells of a THB space, ascending."""
+
+@overload
+def thb_dof_owner(
+    space: THBSplineSpaceF64,
+    cell_owner: Annotated[
+        NDArray[numpy.int32], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+) -> NDArray[numpy.int32]: ...
+@overload
+def thb_dof_owner(
+    space: THBSplineSpaceF32,
+    cell_owner: Annotated[
+        NDArray[numpy.int32], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+) -> NDArray[numpy.int32]:
+    """The owner of every function of a THB space."""
+
+@overload
+def coupling_graph_thb(
+    space: THBSplineSpaceF64,
+    cell_weights: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ]
+    | None,
+) -> tuple[
+    int,
+    Annotated[NDArray[numpy.int64], dict(writable=False)],
+    Annotated[NDArray[numpy.int64], dict(writable=False)],
+    Annotated[NDArray[numpy.int64], dict(writable=False)],
+    Annotated[NDArray[numpy.float64], dict(writable=False)],
+]: ...
+@overload
+def coupling_graph_thb(
+    space: THBSplineSpaceF32,
+    cell_weights: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ]
+    | None,
+) -> tuple[
+    int,
+    Annotated[NDArray[numpy.int64], dict(writable=False)],
+    Annotated[NDArray[numpy.int64], dict(writable=False)],
+    Annotated[NDArray[numpy.int64], dict(writable=False)],
+    Annotated[NDArray[numpy.float64], dict(writable=False)],
+]:
+    """The coupling graph of a THB space: (n, xadj, adjncy, edge_weights, vertex_weights), read-only."""

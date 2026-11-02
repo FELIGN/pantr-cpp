@@ -68,6 +68,26 @@ NumpyArray<T> to_numpy(NdArray<T>&& a) {
   return NumpyArray<T>(buffer->get(), shape.size(), shape.data(), owner);
 }
 
+/// Hand a vector to NumPy without copying: the vector moves into a capsule that the NumPy array
+/// owns.
+///
+/// Args:
+///     v (std::vector<T>&&): The result; consumed.
+///
+/// Returns:
+///     NumpyArray<T>: A writable one-dimensional array over the vector's elements.
+template <class T>
+NumpyArray<T> vector_to_numpy(std::vector<T>&& v) {
+  if (v.empty()) {
+    // An empty vector's data may be null, which NumPy would not take as an owned buffer.
+    return to_numpy(NdArray<T>(std::vector<std::size_t>{std::size_t{0}}, for_overwrite));
+  }
+  auto* holder = new std::vector<T>(std::move(v));
+  nb::capsule owner(holder, [](void* p) noexcept { delete static_cast<std::vector<T>*>(p); });
+  const std::size_t shape[1] = {holder->size()};
+  return NumpyArray<T>(holder->data(), 1, shape, owner);
+}
+
 /// Expose `n` elements of shape `shape` at `data`, read-only, owned by a copy of `keep` (the
 /// shared representation the data lives in), so the view outlives every C++ handle on it.
 ///

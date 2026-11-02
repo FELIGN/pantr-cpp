@@ -2,6 +2,7 @@
 // partition_graph wrappers. Arguments arrive normalized (C-contiguous arrays of the exact dtype);
 // the C++ API validates their values.
 #include "arrays.hpp"
+#include "graph_views.hpp"
 #include "interface.hpp"
 
 #include "pantr/bspline/coupling_graph.hpp"
@@ -70,19 +71,6 @@ NumpyArray<T> copy_to_numpy(const std::vector<T>& v) {
   NdArray<T> a({v.size()}, for_overwrite);
   std::copy(v.begin(), v.end(), a.data());
   return to_numpy(std::move(a));
-}
-
-template <class T, class R>
-NumpyView<T> view_1d(std::span<const T> s, std::shared_ptr<const R> keep) {
-  const std::size_t shape[1] = {s.size()};
-  return view_of<T>(s.data(), shape, std::move(keep));
-}
-
-/// The graph's arrays as read-only views sharing its representation:
-/// (num_vertices, xadj, adjncy, edge_weights, vertex_weights).
-auto graph_views(const CouplingGraph& g) {
-  return std::make_tuple(g.num_vertices(), view_1d(g.xadj(), g.rep()), view_1d(g.adjncy(), g.rep()),
-                         view_1d(g.edge_weights(), g.rep()), view_1d(g.vertex_weights(), g.rep()));
 }
 
 CouplingGraph graph_of(std::int64_t num_vertices, const I64Vec& xadj, const I64Vec& adjncy,
