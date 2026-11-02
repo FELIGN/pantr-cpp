@@ -2043,3 +2043,21 @@ class TestThreadCount:
             _evaluate_at(spline, ref_1[:n][found]) - targets[:n][found], axis=1
         )
         assert residual.max() <= accept
+
+
+class TestTieRule:
+    """A point exactly on an interior knot line belongs to the lower-indexed cell."""
+
+    def test_an_interior_knot_line_reports_the_lower_cell(self) -> None:
+        """The identity map of ``[0, 2]`` with a knot at 1: ``x = 1`` is reached exactly.
+
+        Oracle: the identity's inverse is the query itself, and the cell of ``u = 1`` is the
+        lower one (``[0, 1]``) by the tie rule of :meth:`pantr.grid.TensorProductGrid.locate_many`;
+        the domain ends belong to their own boundary cells.
+        """
+        spline = Bspline(
+            BsplineSpace([BsplineSpace1D([0.0, 0.0, 1.0, 2.0, 2.0], 1)]), [0.0, 1.0, 2.0]
+        )
+        cell_ids, ref_coords = spline.locate([1.0, 0.0, 2.0])
+        assert cell_ids.tolist() == [0, 0, 1]
+        assert ref_coords[:, 0].tolist() == [1.0, 0.0, 2.0]

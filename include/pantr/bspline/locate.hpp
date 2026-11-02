@@ -283,15 +283,17 @@ class MapEvaluator {
 
   /// Evaluate the Jacobian `dF / dxi` into `jac` (`rank x dim`, row-major).
   ///
-  /// The first-derivative rows of the basis recurrence divide by the knot spans of the degree
-  /// `p - 1` functions non-zero on the point's span. Each of those contains that span, which is
-  /// never empty (the clamped span of an in-domain point: an empty in-domain span is skipped by
-  /// the search, and a space whose last knot repeats more than `degree + 1` times is refused), so
-  /// no divisor is zero and the recurrence's failure status cannot be returned here.
+  /// The first-derivative rows of the basis recurrence divide by knot differences, and one is
+  /// zero at the domain's upper end when the span search clamps to an empty last span: knots
+  /// `[0, 0, 0, 1, 2, 2, 2, 3]` at degree 2 put a knot of full multiplicity at the end `2` of the
+  /// domain, before a trailing knot. The iteration reaches that end by the clip, so the case is
+  /// reachable from `locate`; there the derivative is undefined (the previous implementation's
+  /// was NaN).
   ///
-  /// Raises:
-  ///     state_error: The recurrence reported a zero divisor, which the argument above excludes.
-  void jacobian(const double* xi, double* jac) {
+  /// Returns:
+  ///     bool: False when a direction's recurrence met a zero divisor; `jac` is then incomplete
+  ///     and the caller abandons the candidate, as for a Jacobian that is not finite.
+  [[nodiscard]] bool jacobian(const double* xi, double* jac) {
     const auto& spaces = b_->rep()->space.spaces();
     for (std::size_t d = 0; d < L_.dim; ++d) {
       const bool complete = spaces[d].template tabulate_basis_derivatives<double>(
@@ -299,9 +301,7 @@ class MapEvaluator {
           mdview<double, 3>(derivs_[d].data(), 1, 2, L_.order[d]),
           std::span<std::int64_t>(&first_[d], 1), false);
       if (!complete) {
-        throw state_error(
-            "locate: the basis derivative recurrence met a zero divisor on a "
-            "non-empty knot span, which should be impossible");
+        return false;
       }
     }
     const std::size_t dim = L_.dim;
@@ -328,6 +328,7 @@ class MapEvaluator {
         jac[c * dim + k] = v;
       }
     }
+    return true;
   }
 
  private:
@@ -503,7 +504,12 @@ struct Workspace {
   bool active = rn > th.stop;
   const double guard = static_cast<double>(dim) * jacobian_rank_rel_tol;
   for (std::int64_t it = 0; it < max_iter && active; ++it) {
-    ws.ev.jacobian(xi, ws.jac_rows.data());
+    // An undefined (zero-divisor) or non-finite Jacobian abandons the candidate, as a
+    // rank-deficient one does; the previous implementation raised numpy's "SVD did not
+    // converge" on the NaN Jacobian it formed there.
+    if (!ws.ev.jacobian(xi, ws.jac_rows.data())) {
+      break;
+    }
     for (std::size_t c = 0; c < rank; ++c) {
       for (std::size_t k = 0; k < dim; ++k) {
         ws.jac(static_cast<Eigen::Index>(c), static_cast<Eigen::Index>(k)) =

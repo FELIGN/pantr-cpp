@@ -436,3 +436,30 @@ TEST_CASE("locate refuses a default threshold that overflows") {
   CHECK(std::abs(r.ref_coords.data()[0] - 0.25) <= 1e-12);
   CHECK(run(ctx, {}).cell_ids.size() == 0);
 }
+
+TEST_CASE("locate abandons a candidate whose Jacobian is undefined at the domain end") {
+  // Knots [0,0,0,1,2,2,2,3], degree 2: the domain is [0, 2], and at its end 2 (a knot of full
+  // multiplicity before a trailing knot) the first-derivative recurrence divides by zero. A
+  // Newton step from cell 1 is clipped onto that end; the candidate is abandoned there instead
+  // of raising. Oracle: whatever comes back satisfies the residual contract, or is not found.
+  const std::vector<double> t{0.0, 0.0, 0.0, 1.0, 2.0, 2.0, 2.0, 3.0};
+  const std::vector<double> cp{0.0, 4.0, -4.0, 1.0, 2.0};
+  const bs::Bspline<double> b(bs::BsplineSpace<double>({space1d<double>(t, 2)}),
+                              std::span<const double>(cp), false);
+  const bs::LocateContext ctx(b);
+  const std::vector<double> x{3.5, 1.0, -1.0};
+  bs::LocateResult r{pantr::NdArray<std::int64_t>({0}), pantr::NdArray<double>({0, 1})};
+  CHECK_NOTHROW(r = run(ctx, x));
+  REQUIRE(r.cell_ids.size() == x.size());
+  const double accept = ctx.default_thresholds().accept;
+  for (std::size_t i = 0; i < x.size(); ++i) {
+    if (r.cell_ids.data()[i] < 0) {
+      CHECK(std::isnan(r.ref_coords.data()[i]));
+      continue;
+    }
+    const std::vector<double> xi{r.ref_coords.data()[i]};
+    const pantr::NdArray<double> f =
+        bs::evaluate(b, pantr::mdview<const double, 2>(xi.data(), 1, 1));
+    CHECK(std::abs(f.data()[0] - x[i]) <= accept);
+  }
+}
