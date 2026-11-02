@@ -7,8 +7,9 @@
 //     the owner as the first active cell of the support found by a scan over all cells in id order;
 //   - THB: the same two definitions over `active_basis(cid)` of every pair of cells and every
 //     cell, not the CSR incidence the kernels read;
-//   - the THB coupling graph against the graph `coupling_graph_from_incidence` builds from an
-//     incidence assembled by a loop over `active_basis`, and, on an unrefined space, against the
+//   - the THB coupling graph against the pairwise graph of the functions' supports, found from the
+//     geometry (each active function's level support against every leaf cell, in the cells of the
+//     deepest level), not from the space's per-cell table; and, on an unrefined space, against the
 //     tensor-product graph of the root;
 //   - the results at 1 and at up to 8 threads, which are exactly equal (each result entry is
 //     computed alone, and the halo marks only the value 1).
@@ -22,6 +23,7 @@
 #include <pantr/bspline/space.hpp>
 #include <pantr/bspline/space_1d.hpp>
 #include <pantr/core/errors.hpp>
+#include <pantr/grid/hierarchical_grid.hpp>
 #include <pantr/partition/coupling_graph.hpp>
 #include <pantr/thb/coupling_graph.hpp>
 #include <pantr/thb/local_space.hpp>
@@ -30,6 +32,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
 #include <optional>
 #include <span>
 #include <string>
@@ -526,15 +529,68 @@ TEST_CASE("thb local space: one thread and several give identical results") {
 
 // ---- THB coupling graph ----------------------------------------------------------------------
 
-/// The incidence of a THB space assembled by a loop over `active_basis`, as the Python route did.
-void brute_incidence(const Space& space, Ivec& ptr, Ivec& dofs) {
-  ptr.assign(1, 0);
-  dofs.clear();
-  for (I64 c = 0; c < space.grid().num_cells(); ++c) {
-    const auto basis = space.active_basis(c);
-    dofs.insert(dofs.end(), basis.begin(), basis.end());
-    ptr.push_back(static_cast<I64>(dofs.size()));
+/// The functions whose support meets each cell, from the geometry alone. Every active function is
+/// a level-`l` B-spline, listed by `active_function_indices(l)` (its global dof the level's offset
+/// plus its position there) with per-direction support `[first_cell, last_cell]` of the level's 1D
+/// space. Both it and a leaf cell are put in the cells of the deepest level, a level-`l` cell being
+/// `factor^(deepest - l)` of them per direction, and the support meets the cell iff the two index
+/// intervals overlap in every direction. Nothing here reads the per-cell table of the space
+/// (`contributions`, `active_basis`, `cell_dof_incidence`).
+std::vector<Ivec> brute_support_incidence(const Space& space) {
+  const pantr::grid::HierarchicalGrid hier = space.grid();
+  const std::size_t d = space.dim();
+  const std::int64_t deepest = hier.max_level();
+  const std::span<const I64> factor = hier.factor();
+  // `scale[l][k] = factor[k]^(deepest - l)`: the deepest-level cells in one level-`l` cell.
+  std::vector<Ivec> scale(static_cast<std::size_t>(deepest) + 1, Ivec(d, 1));
+  for (std::int64_t l = deepest - 1; l >= 0; --l) {
+    for (std::size_t k = 0; k < d; ++k) {
+      scale[static_cast<std::size_t>(l)][k] = scale[static_cast<std::size_t>(l) + 1][k] * factor[k];
+    }
   }
+  const I64 n_cells = hier.num_cells();
+  std::vector<Ivec> cell_lo(static_cast<std::size_t>(n_cells));
+  std::vector<Ivec> cell_hi(static_cast<std::size_t>(n_cells));
+  for (I64 c = 0; c < n_cells; ++c) {
+    const auto cu = static_cast<std::size_t>(c);
+    const Ivec midx = hier.cell_multi_index(c);
+    const Ivec& unit = scale[static_cast<std::size_t>(hier.cell_level(c))];
+    for (std::size_t k = 0; k < d; ++k) {
+      cell_lo[cu].push_back(midx[k] * unit[k]);
+      cell_hi[cu].push_back((midx[k] + 1) * unit[k]);
+    }
+  }
+  std::vector<Ivec> cells_of(static_cast<std::size_t>(n_cells));
+  for (std::int64_t l = 0; l < space.num_levels(); ++l) {
+    const bs::BsplineSpace<double> level_space = space.level_space(l);
+    const std::span<const I64> flat = space.active_function_indices(l);
+    for (std::size_t at = 0; at < flat.size(); ++at) {
+      // Unravel the row-major flat function index.
+      Ivec lo(d);
+      Ivec hi(d);
+      I64 rest = flat[at];
+      for (std::size_t k = d; k-- > 0;) {
+        const I64 n_basis = level_space.spaces()[k].num_basis();
+        const auto i = static_cast<std::size_t>(rest % n_basis);
+        rest /= n_basis;
+        const bs::detail::Support1D& sup = space.support(l, k);
+        lo[k] = sup.first_cell[i] * scale[static_cast<std::size_t>(l)][k];
+        hi[k] = (sup.last_cell[i] + 1) * scale[static_cast<std::size_t>(l)][k];
+      }
+      const I64 dof = space.func_offset()[static_cast<std::size_t>(l)] + static_cast<I64>(at);
+      for (I64 c = 0; c < n_cells; ++c) {
+        const auto cu = static_cast<std::size_t>(c);
+        bool meets = true;
+        for (std::size_t k = 0; k < d; ++k) {
+          meets = meets && lo[k] < cell_hi[cu][k] && cell_lo[cu][k] < hi[k];
+        }
+        if (meets) {
+          cells_of[cu].push_back(dof);
+        }
+      }
+    }
+  }
+  return cells_of;
 }
 
 void check_same_graph(const pp::CouplingGraph& a, const pp::CouplingGraph& b) {
@@ -547,27 +603,59 @@ void check_same_graph(const pp::CouplingGraph& a, const pp::CouplingGraph& b) {
                    b.vertex_weights().end()));
 }
 
-TEST_CASE("thb coupling_graph: equals the graph of the brute-force incidence") {
+TEST_CASE("thb coupling_graph: equals the pairwise graph of the function supports") {
+  // Oracle: two cells are adjacent with weight `w` iff exactly `w` active functions have a support
+  // meeting both, found for every pair of cells from `brute_support_incidence` (geometry, not the
+  // space's table). The incidence itself is compared with the space's table first, so a wrong
+  // oracle would show there.
   for (const Space& space : thb_spaces()) {
-    Ivec ptr;
-    Ivec dofs;
-    brute_incidence(space, ptr, dofs);
+    const std::vector<Ivec> cells_of = brute_support_incidence(space);
+    const th::CellIncidence inc = space.cell_dof_incidence();
     const auto n = static_cast<std::size_t>(space.grid().num_cells());
-    check_same_graph(th::coupling_graph(space),
-                     pp::coupling_graph_from_incidence(space.grid().num_cells(),
-                                                       space.num_total_basis(), ptr, dofs));
+    REQUIRE(cells_of.size() == n);
+    for (std::size_t c = 0; c < n; ++c) {
+      const std::span<const I64> table = std::span<const I64>(inc.dofs).subspan(
+          static_cast<std::size_t>(inc.cell_ptr[c]),
+          static_cast<std::size_t>(inc.cell_ptr[c + 1] - inc.cell_ptr[c]));
+      CHECK(std::equal(table.begin(), table.end(), cells_of[c].begin(), cells_of[c].end()));
+    }
+    Ivec xadj(1, 0);
+    Ivec adjncy;
+    Ivec edge_weights;
+    for (std::size_t a = 0; a < n; ++a) {
+      for (std::size_t b = 0; b < n; ++b) {
+        Ivec shared;
+        std::set_intersection(cells_of[a].begin(), cells_of[a].end(), cells_of[b].begin(),
+                              cells_of[b].end(), std::back_inserter(shared));
+        if (a != b && !shared.empty()) {
+          adjncy.push_back(static_cast<I64>(b));
+          edge_weights.push_back(static_cast<I64>(shared.size()));
+        }
+      }
+      xadj.push_back(static_cast<I64>(adjncy.size()));
+    }
+    const pp::CouplingGraph got = th::coupling_graph(space);
+    CHECK(got.num_vertices() == static_cast<I64>(n));
+    CHECK(std::equal(got.xadj().begin(), got.xadj().end(), xadj.begin(), xadj.end()));
+    CHECK(std::equal(got.adjncy().begin(), got.adjncy().end(), adjncy.begin(), adjncy.end()));
+    CHECK(std::equal(got.edge_weights().begin(), got.edge_weights().end(), edge_weights.begin(),
+                     edge_weights.end()));
+    CHECK(std::all_of(got.vertex_weights().begin(), got.vertex_weights().end(),
+                      [](double w) { return w == 1.0; }));
+    // With cell weights: the vertices carry them, the edges are unchanged.
     Lcg rng(21);
     std::vector<double> weights(n);
     for (double& w : weights) {
       w = 0.5 + rng.next();
     }
-    check_same_graph(
-        th::coupling_graph(space, std::span<const double>(weights)),
-        pp::coupling_graph_from_incidence(space.grid().num_cells(), space.num_total_basis(), ptr,
-                                          dofs, std::span<const double>(weights)));
-    const pp::CouplingGraph g = th::coupling_graph(space, std::span<const double>(weights));
-    CHECK(std::equal(g.vertex_weights().begin(), g.vertex_weights().end(), weights.begin(),
-                     weights.end()));
+    const pp::CouplingGraph weighted = th::coupling_graph(space, std::span<const double>(weights));
+    CHECK(std::equal(weighted.vertex_weights().begin(), weighted.vertex_weights().end(),
+                     weights.begin(), weights.end()));
+    CHECK(std::equal(weighted.xadj().begin(), weighted.xadj().end(), xadj.begin(), xadj.end()));
+    CHECK(std::equal(weighted.adjncy().begin(), weighted.adjncy().end(), adjncy.begin(),
+                     adjncy.end()));
+    CHECK(std::equal(weighted.edge_weights().begin(), weighted.edge_weights().end(),
+                     edge_weights.begin(), edge_weights.end()));
   }
 }
 
