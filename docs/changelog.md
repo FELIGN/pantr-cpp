@@ -134,12 +134,17 @@
   `ValueError` naming the array when `xadj` does not hold `num_vertices + 1` non-decreasing entries
   from 0 to `len(adjncy)`, when `edge_weights` or `vertex_weights` has the wrong length, or when an
   `adjncy` entry is outside `[0, num_vertices)`. The previous release raised scipy's `ValueError`
-  ("index pointer size 4 should be 5") or an `IndexError` for some of these, and accepted others
-  silently (a decreasing `xadj`, a negative `adjncy` entry, a `vertex_weights` longer than
-  `num_vertices`).
-- **`partition_graph` refuses a `CouplingGraph` whose `edge_weights` are not integers**
-  (`ValueError`); integer values held in a float array are accepted. The previous release used
-  the float values in the spectral backend and rounded them in the METIS backend.
+  ("index pointer size 4 should be 5") or an `IndexError` for some of these. For others what
+  happened depended on the values and on memory: a `vertex_weights` longer than `num_vertices` and
+  an `xadj` ending before `len(adjncy)` were accepted silently; a decreasing `xadj` or an `adjncy`
+  entry outside `[0, num_vertices)` was sometimes partitioned silently, sometimes raised an
+  unrelated error (`RuntimeError` from METIS for a decreasing `xadj`), and sometimes ended the
+  process.
+- **`partition_graph` refuses a `CouplingGraph` whose `edge_weights` are not integers in the
+  64-bit range** (`ValueError`): a fraction, an infinity, NaN, a float at or past `2**63`, or an
+  unsigned integer past `2**63 - 1`. Integer values held in a float array are accepted. The
+  previous release used the float values in the spectral backend and rounded them in the METIS
+  backend.
 
 ### Changed
 - **pantr needs Python 3.12 or later.** pantr is becoming a C++ library with a compiled
@@ -965,18 +970,22 @@
   to 512 vertices and by Spectra above, not by LAPACK and ARPACK. When that eigenvalue is repeated
   (a square grid of cells, as in a uniform space with as many intervals in each direction), every
   vector of its eigenspace is a Fiedler vector and the two releases use different ones, so the
-  parts differ and the cut weight can be larger or smaller; when the graph is symmetric under reversing the vertex order (a 1D space), the
-  vector's two largest entries tie in sign up to rounding and the parts can come out mirrored. The
-  part weights were equal in every spectral partition of the sweep. For the same reason, the
-  partition of such a graph can differ between the extension's builds for different processors
-  (it does not depend on the number of threads).
-- **`partition_graph` with integer-valued but non-`int` arguments.** `n_parts` is converted with
-  `int()` before the part count is compared with the active cells, so `partition_graph(graph, 4.5)`
-  on four cells now partitions into 4 parts (it raised `ValueError`), and an `n_parts` past the
-  64-bit range raises `TypeError` and `float("inf")` raises `OverflowError` (both raised
-  `ValueError`). A `CouplingGraph` whose arrays are
-  Python lists, or whose `num_vertices` is a float, is accepted (the previous release raised
-  `AttributeError` and `TypeError`).
+  parts differ and the cut weight can be larger or smaller; when the graph is symmetric under
+  reversing the vertex order (a 1D space), the vector's two largest entries (in absolute value) tie
+  up to rounding, with opposite signs, so the sign chosen for it, and with it the order of the
+  vertices, depends on rounding, and the parts can come out mirrored. The part weights were equal
+  in every spectral partition of the sweep. For the same reason, the partition of such a graph can
+  differ between the extension's builds for different processors (it does not depend on the
+  number of threads).
+- **`partition_graph` with arguments that are not `int`.** `n_parts` and the graph's
+  `num_vertices` are converted with `int()` before the part count is compared with the active
+  cells, so a float is truncated (`partition_graph(graph, 4.5)` on four cells now partitions into 4
+  parts; it raised `ValueError`, and the message for a part count that exceeds the active cells now
+  prints the converted value) and a numeric string `num_vertices` (`"4"`) or a float one is
+  accepted (the previous release raised `TypeError`). An `n_parts` past the 64-bit range raises
+  `TypeError` and `float("inf")` raises `OverflowError` (both raised `ValueError`). A
+  `CouplingGraph` whose arrays are Python lists is accepted (the previous release raised
+  `AttributeError`).
 - **`coupling_graph` of a `BsplineSpace` with no directions** raises `ValueError` "a B-spline space
   needs at least one direction" (it raised `ValueError` "multiple indices are not supported for 0d
   arrays"), and for a periodic space with `cell_weights` that are not 1-D, the error about the
@@ -984,19 +993,21 @@
 
 ### Fixed
 - **`partition_graph` bisects graphs above 512 vertices along their Fiedler vector.** It asked
-  ARPACK for the two smallest eigenpairs of the Laplacian and took the second, assuming the first
-  was always the constant vector's (eigenvalue 0) because the start vector is orthogonal to it. In
-  floating point the constant direction appears on some graphs and not on others, so the vector
-  used was sometimes that of the third-smallest eigenvalue: the 32 x 27 grid graph was cut across
+  ARPACK for the two smallest eigenpairs of the Laplacian and took the second, which is the
+  Fiedler pair only if the first is the constant vector's (eigenvalue 0). The start vector is
+  orthogonal to the constant vector, so in exact arithmetic ARPACK never finds it; in floating
+  point rounding brings it in on some graphs and not on others, so the vector used was sometimes
+  that of the third-smallest eigenvalue: the 32 x 27 grid graph was cut across
   its short axis instead of its long one, a longer cut. The partitioner now solves for one
   eigenpair of the Laplacian with the constant direction deflated (moved above the rest of the
   spectrum), which is the Fiedler pair whatever the start vector holds. Partitions of graphs above
   512 vertices can change: they now follow the true Fiedler vector. This is a fix, not a
   consequence of the port.
-- **`partition_graph` no longer crashes the interpreter on a `CouplingGraph` with an `adjncy` entry
-  at or past `num_vertices`**; the previous release could end the process with a segmentation
-  fault (scipy read outside the array), and partitioned a negative entry silently. Both raise
-  `ValueError` now (see above).
+- **`partition_graph` no longer reads outside its arrays on a `CouplingGraph` with an `adjncy`
+  entry outside `[0, num_vertices)` or a decreasing `xadj`.** The previous release's outcome
+  depended on the values and memory: it partitioned silently, raised an unrelated error, or ended
+  the process (a segmentation fault, in scipy with the spectral backend or in pymetis with
+  `backend="metis"`, or an abort). All of these raise `ValueError` now (see above).
 - **`Bspline.multiply` no longer returns values that depend on memory it never wrote.** The
   product groups the knots of every direction at the largest tolerance of any direction, so in a
   direction much shorter than another (in `float32`, one a few `1e-6` long beside one of length
