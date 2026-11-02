@@ -528,7 +528,9 @@ def test_non_integer_edge_weights_raise() -> None:
     wrapping[0] = np.uint64(2**63)
     with pytest.raises(ValueError, match="edge_weights must be integers"):
         partition_graph(graph._replace(edge_weights=wrapping), 2)  # type: ignore[arg-type]
-    whole = graph._replace(edge_weights=graph.edge_weights.astype(np.float64))
-    np.testing.assert_array_equal(
-        partition_graph(whole, 2).cell_owner, partition_graph(graph, 2).cell_owner
-    )
+    for dtype in (np.float16, np.float32, np.float64):
+        # float16 cannot hold the 2**63 bound, so the range check must not compare in float16.
+        whole = graph._replace(edge_weights=graph.edge_weights.astype(dtype))
+        np.testing.assert_array_equal(
+            partition_graph(whole, 2).cell_owner, partition_graph(graph, 2).cell_owner
+        )
