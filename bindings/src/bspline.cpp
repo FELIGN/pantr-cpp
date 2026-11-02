@@ -106,8 +106,10 @@ void tabulate_derivs_1d(const bspline::BsplineSpace1D<T>& s, const In1D<P>& pts,
         p, n_deriv, o, std::span<std::int64_t>(first->data(), first->shape(0)), validate);
   }
   if (!complete) {
-    // A zero divisor in the derivative recurrence: the error Python's float division raises, as
-    // the previous implementation raised it (for fewer than 4096 points).
+    // A zero divisor in the derivative recurrence: the error Python's float division raises. The
+    // previous implementation raised it from tabulate_basis_derivatives and from a multi-direction
+    // evaluate_derivatives below 4096 points, and returned NaN from a one-direction
+    // evaluate_derivatives (the changelog lists the change).
     PyErr_SetString(PyExc_ZeroDivisionError, "division by zero");
     throw nb::python_error();
   }
