@@ -171,6 +171,16 @@ void check_summary(const Space& s, const gold::Summary& g) {
   CHECK(same_ints(cells_flat(s.grid()), g.cells));
 }
 
+/// The rows `(level, index...)` of a flat cell list (`cells_flat`), as a set.
+std::set<Ivec> cell_row_set(std::span<const I64> flat, std::size_t width) {
+  std::set<Ivec> rows;
+  for (std::size_t at = 0; at + width <= flat.size(); at += width) {
+    rows.emplace(flat.begin() + static_cast<std::ptrdiff_t>(at),
+                 flat.begin() + static_cast<std::ptrdiff_t>(at + width));
+  }
+  return rows;
+}
+
 /// A reproducible stream of numbers in `[0, 1)`.
 class Lcg {
  public:
@@ -364,13 +374,99 @@ TEST_CASE("coarsen: the guard and the family rule reproduce the Python implement
       ids.push_back(cid);
     }
   }
+  // The cells are compared as a set: the flat ids of a coarsened grid depend on the order the
+  // families are visited in, which Python leaves to set iteration (see the test below).
   const auto check = [&](const gold::Coarsening& g, std::optional<I64> m) {
     CHECK(same_ints(ids, g.ids));
-    check_summary(s.coarsen(ids, m), g.result);
+    const Space result = s.coarsen(ids, m);
+    const gold::Summary& want = g.result;
+    CHECK(result.num_levels() == want.num_levels);
+    CHECK(result.num_total_basis() == want.num_total);
+    CHECK(result.grid().num_cells() == want.num_cells);
+    CHECK(same_ints(result.num_basis_per_level(), want.per_level));
+    CHECK(cell_row_set(cells_flat(result.grid()), 3) == cell_row_set(want.cells, 3));
+    if (m.has_value()) {
+      CHECK(is_admissible(result, *m));
+    }
   };
   SUBCASE("class 2 vetoes every family") { check(gold::coa_2, 2); }
   SUBCASE("class 3 vetoes every family") { check(gold::coa_3, 3); }
   SUBCASE("no class coarsens every complete family") { check(gold::coa_n, std::nullopt); }
+}
+
+/// The cell ids in `space` of the children (level `level + 1`) of the cell `(level, pmidx)`.
+Ivec family_ids(const Space& space, I64 level, const Ivec& pmidx) {
+  const auto factor = space.grid().factor();
+  Ivec ids;
+  I64 count = 1;
+  for (const I64 f : factor) {
+    count *= f;
+  }
+  for (I64 flat = 0; flat < count; ++flat) {
+    Ivec child(pmidx.size());
+    I64 rest = flat;
+    for (std::size_t k = pmidx.size(); k-- > 0;) {
+      child[k] = pmidx[k] * factor[k] + rest % factor[k];
+      rest /= factor[k];
+    }
+    const std::optional<I64> id = space.grid().cell_id(level + 1, child);
+    REQUIRE(id.has_value());
+    ids.push_back(*id);
+  }
+  return ids;
+}
+
+TEST_CASE(
+    "coarsen: the cell set is the Python implementation's, the flat ids follow the "
+    "lexicographic order of the parents") {
+  // The Python implementation visits a level's parents in set-iteration order, which cannot be
+  // reproduced; the grid numbers its cells in an order-dependent way, so the flat ids of a result
+  // can differ from Python's, and only the cells (level and index), the levels' counts and the dof
+  // count are comparable with the golden. The lexicographic order this code takes is pinned by
+  // coarsening one family per call in that order, which has to number the cells the same way.
+  const Space s = corner_chain(base_2d(), 2, 4);
+  Ivec ids;
+  for (I64 cid = 0; cid < s.grid().num_cells(); ++cid) {
+    if (s.grid().cell_level(cid) == 2) {
+      ids.push_back(cid);
+    }
+  }
+  std::set<Ivec> parents;
+  for (const I64 cid : ids) {
+    const Ivec midx = s.grid().cell_multi_index(cid);
+    parents.insert({midx[0] / 2, midx[1] / 2});
+  }
+  REQUIRE(parents.size() > 1);
+  const Space once = s.coarsen(ids, std::nullopt);
+
+  SUBCASE("the cells, their levels and the dof count are the golden's") {
+    const gold::Summary& g = gold::coa_n.result;
+    const Ivec flat = cells_flat(once.grid());
+    CHECK(cell_row_set(flat, 3) == cell_row_set(g.cells, 3));
+    CHECK(once.grid().num_cells() == g.num_cells);
+    CHECK(once.num_total_basis() == g.num_total);
+    CHECK(same_ints(once.num_basis_per_level(), g.per_level));
+  }
+  SUBCASE("one family per call, parents in lexicographic order, numbers the cells alike") {
+    Space cur = s;
+    for (const Ivec& parent : parents) {
+      cur = cur.coarsen(family_ids(cur, 1, parent), std::nullopt);
+    }
+    CHECK(cells_flat(cur.grid()) == cells_flat(once.grid()));
+  }
+  SUBCASE("the order of the ids named does not matter") {
+    Ivec reversed(ids.rbegin(), ids.rend());
+    CHECK(cells_flat(s.coarsen(reversed, std::nullopt).grid()) == cells_flat(once.grid()));
+  }
+  SUBCASE("the reverse order gives the same cells numbered differently: the control") {
+    // The order is observable, so the pin above is not vacuous, and it is the flat ids only.
+    Space cur = s;
+    for (auto it = parents.rbegin(); it != parents.rend(); ++it) {
+      cur = cur.coarsen(family_ids(cur, 1, *it), std::nullopt);
+    }
+    CHECK(cell_bound_set(cur.grid()) == cell_bound_set(once.grid()));
+    CHECK(cells_flat(cur.grid()) != cells_flat(once.grid()));
+  }
 }
 
 TEST_CASE("restrict: the maps reproduce the Python implementation") {
@@ -638,6 +734,43 @@ TEST_CASE("coarsen: the children of an ungraded refinement coarsen back to the o
   SUBCASE("3D") { check(base_3d(), Ivec{1, 6}); }
 }
 
+TEST_CASE("coarsen: a graded coarsening is allowed when no block lies in the neighborhood") {
+  // The guard reads the active blocks at level `parent + m`; a mesh deeper than that, with its
+  // deep cells far from the family, makes the guard scan the blocks and find none in the
+  // extension, which is the one path the vetoing cases and the early return do not take.
+  Space s = base_2d();
+  s = s.refine_region(0, Ivec{0, 0}, Ivec{1, 1}, 2);  // the family: children of the cell (0, 0)
+  s = s.refine_region(0, Ivec{3, 3}, Ivec{4, 4}, 2);  // the far corner
+  s = s.refine_region(1, Ivec{7, 7}, Ivec{8, 8}, 2);  // and a level-2 block in it
+  REQUIRE(s.grid().max_level() >= 2);  // the parent's level 0 plus the class 2: the scan is reached
+  REQUIRE(is_admissible(s, 2));
+  const Ivec family = family_ids(s, 0, Ivec{0, 0});
+  const Space result = s.coarsen(family, 2);
+  CHECK(result.grid().cell_id(0, Ivec{0, 0}).has_value());
+  CHECK(result.grid().num_cells() == s.grid().num_cells() - 3);
+  CHECK(is_admissible(result, 2));
+  // The control: the family is complete, so without the guard it coarsens in the same way.
+  CHECK(cell_bound_set(s.coarsen(family, std::nullopt).grid()) == cell_bound_set(result.grid()));
+}
+
+TEST_CASE("coarsen: a graded coarsening is vetoed by a block in the neighborhood") {
+  // A level-2 block next to the family, inside its multilevel support extension: reactivating the
+  // parent would leave a mesh that is not admissible of class 2.
+  Space s = base_2d();
+  s = s.refine_region(0, Ivec{0, 0}, Ivec{2, 1}, 2);  // children of the cells (0, 0) and (1, 0)
+  s = s.refine_region(1, Ivec{2, 0}, Ivec{3, 1}, 2);  // a level-2 block beside the first family
+  REQUIRE(s.grid().max_level() >= 2);
+  REQUIRE(is_admissible(s, 2));
+  const Ivec family = family_ids(s, 0, Ivec{0, 0});
+  const Space result = s.coarsen(family, 2);
+  CHECK(cell_bound_set(result.grid()) == cell_bound_set(s.grid()));
+  CHECK(result.num_total_basis() == s.num_total_basis());
+  CHECK(is_admissible(result, 2));
+  // The control: without a class the same family coarsens, so the veto is what stopped it.
+  const Space ungraded = s.coarsen(family, std::nullopt);
+  CHECK(ungraded.grid().cell_id(0, Ivec{0, 0}).has_value());
+}
+
 TEST_CASE("coarsen: an incomplete family is left alone") {
   const Space s = base_2d().refine_region(0, Ivec{0, 0}, Ivec{1, 1}, std::nullopt);
   // The four children of cell (0, 0) are the first four cells at level 1; name three of them.
@@ -903,12 +1036,14 @@ TEST_CASE("unusual inputs: repeats, unsorted ids, a huge class, empty ids and an
         leaves.push_back(cid);
       }
     }
-    CHECK(cells_flat(s.coarsen(leaves, huge).grid()) ==
-          cells_flat(s.coarsen(leaves, std::nullopt).grid()));
+    const Space coarsened = s.coarsen(leaves, huge);
+    CHECK(cells_flat(coarsened.grid()) == cells_flat(s.coarsen(leaves, std::nullopt).grid()));
+    CHECK(is_admissible(coarsened, huge));
   }
   SUBCASE("empty ids give an unchanged copy") {
     const Space same = s.coarsen(std::span<const I64>(), 2);
     CHECK(cells_flat(same.grid()) == cells_flat(s.grid()));
+    CHECK(is_admissible(same, 2));
     const Space again = s.refine(std::span<const I64>(), 2);
     CHECK(cells_flat(again.grid()) == cells_flat(s.grid()));
   }

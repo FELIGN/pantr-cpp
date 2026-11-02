@@ -395,9 +395,17 @@ template <StorageFloat T>
 ///
 /// A parent is reactivated only when all its children are named active leaves of the grid under
 /// construction (an incomplete family is skipped), and, with a class, only when its coarsening
-/// neighborhood is empty (the veto). Parents are taken deepest level first and then in
-/// lexicographic order of their index; parents of one level are independent of each other, since a
-/// veto reads the blocks `m >= 2` levels below the parent's.
+/// neighborhood is empty (the veto). Parents are taken deepest level first and then, within a
+/// level, in lexicographic order of their index.
+///
+/// The order within a level decides which parents are reactivated in no way: a veto reads the
+/// blocks `m >= 2` levels below the parent's, which the parents of one level do not change, so the
+/// set of active cells (their levels and indices) and the dof count are the same for every order.
+/// It is not result-independent in the flat cell ids and the block partition: the grid normalizes
+/// its blocks in an order-dependent way, so another order can number the same cells differently.
+/// The Python implementation visits a level's parents in CPython set-iteration order, which cannot
+/// be reproduced, so its flat ids can differ from this function's; the lexicographic order is a
+/// deliberate, deterministic choice, not a match.
 ///
 /// Args:
 ///     rep (const THBSpaceRep<T>&): The space being coarsened.
