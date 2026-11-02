@@ -280,7 +280,8 @@ jobs:
       # The install tests put pantr in a fresh prefix and build cpp/tests/consumer against it with
       # every package-search shortcut off; the header tests compile each core header with a
       # poisoned mpi.h first on the include path; the METIS provider (PANTR_WITH_METIS, off by
-      # default) is built and tested here against the distribution's METIS.
+      # default) is built and its tests run here, in the build tree, against the distribution's
+      # METIS (the consumer project does not ask for the metis component).
       - name: Configure, build and run the install, header and METIS tests
         run: |
           cmake --preset gcc-release -DCMAKE_CXX_COMPILER=g++-14 -DPANTR_WITH_METIS=ON

@@ -8,12 +8,15 @@
 /// and Spectra; METIS is a provider (`pantr/providers/metis/partitioner.hpp`, built with
 /// `-DPANTR_WITH_METIS=ON`).
 ///
-/// Determinism: nothing here runs in parallel and every reduction is sequential, so a partition
-/// does not depend on the thread count. The Fiedler vector's sign is fixed by making its
-/// largest-magnitude entry (the first, on a tie) positive, ties in the ordering keep the
-/// vertices' current order (a stable sort), and the iterative solver starts from a fixed vector.
-/// A partition can still depend on the platform's last bits wherever the Fiedler vector is
-/// ill-determined: a near-degenerate second eigenvalue, or two entries equal up to rounding.
+/// Determinism: nothing here runs in parallel, so a partition does not depend on the thread count.
+/// The Fiedler vector's sign is fixed by making its largest-magnitude entry (the first, on a tie)
+/// positive, ties in the ordering keep the vertices' current order (a stable sort), and the
+/// iterative solver starts from a fixed vector. A partition is not reproducible across builds,
+/// though: the eigensolvers' last bits depend on the SIMD width they are compiled for (each ISA
+/// rung of the Python extension is one such build), and wherever the Fiedler vector is
+/// ill-determined that decides the partition: a repeated or near-repeated second eigenvalue, or
+/// two entries equal up to rounding (a graph symmetric under reversing its vertex order, whose
+/// parts can then come out mirrored).
 #pragma once
 
 #include "pantr/config.hpp"
@@ -34,13 +37,14 @@
 #include <numeric>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
 
 namespace pantr::partition {
 
-/// Subgraphs with at most this many vertices take the dense eigensolver (`_DENSE_FIEDLER_MAX`).
+/// Subgraphs with at most this many vertices take the dense eigensolver.
 inline constexpr std::int64_t dense_fiedler_max = 512;
 
 /// How a partitioner reached its result: one count per subgraph ordering.
@@ -154,23 +158,35 @@ struct ActiveSubgraph {
   const auto vw = graph.vertex_weights();
   sub.xadj.assign(n_active + 1, 0);
   sub.vertex_weights.resize(n_active);
+  sub.adjncy.reserve(adjncy.size());
+  sub.edge_weights.reserve(adjncy.size());
   std::vector<std::pair<std::int64_t, std::int64_t>> row;
   for (std::size_t a = 0; a < n_active; ++a) {
     const auto v = static_cast<std::size_t>(sub.active_idx[a]);
     sub.vertex_weights[a] = vw[v];
-    row.clear();
+    const std::size_t first = sub.adjncy.size();
     for (auto k = static_cast<std::size_t>(xadj[v]); k < static_cast<std::size_t>(xadj[v + 1]);
          ++k) {
       const std::int64_t col = local_of[static_cast<std::size_t>(adjncy[k])];
       if (col >= 0) {
-        row.emplace_back(col, ew[k]);
+        sub.adjncy.push_back(col);
+        sub.edge_weights.push_back(ew[k]);
       }
     }
-    std::stable_sort(row.begin(), row.end(),
-                     [](const auto& x, const auto& y) { return x.first < y.first; });
-    for (const auto& [col, w] : row) {
-      sub.adjncy.push_back(col);
-      sub.edge_weights.push_back(w);
+    // Renumbering keeps the order, so a row given ascending (as `coupling_graph` builds it) stays
+    // ascending; only a row given out of order is sorted.
+    const auto row_begin = sub.adjncy.begin() + static_cast<std::ptrdiff_t>(first);
+    if (!std::is_sorted(row_begin, sub.adjncy.end())) {
+      row.clear();
+      for (std::size_t k = first; k < sub.adjncy.size(); ++k) {
+        row.emplace_back(sub.adjncy[k], sub.edge_weights[k]);
+      }
+      std::stable_sort(row.begin(), row.end(),
+                       [](const auto& x, const auto& y) { return x.first < y.first; });
+      for (std::size_t k = first; k < sub.adjncy.size(); ++k) {
+        sub.adjncy[k] = row[k - first].first;
+        sub.edge_weights[k] = row[k - first].second;
+      }
     }
     sub.xadj[a + 1] = static_cast<std::int64_t>(sub.adjncy.size());
   }
@@ -190,6 +206,10 @@ struct ActiveSubgraph {
 ///
 /// Raises:
 ///     value_error: An owner is outside `[-1, n_parts)`.
+///
+/// Note:
+///     The ids in `active_idx` are assumed to lie in `[0, num_vertices)` and `owner_active` to be
+///     as long as `active_idx` (no validation performed); `select_active` returns such ids.
 [[nodiscard]] inline grid::Partition scatter_owners(std::int64_t num_vertices,
                                                     std::span<const std::int64_t> active_idx,
                                                     std::span<const std::int32_t> owner_active,
@@ -212,6 +232,10 @@ struct ActiveSubgraph {
 ///     col (std::vector<std::size_t>): Columns of the off-diagonal entries.
 ///     val (std::vector<double>): Off-diagonal values (`-w`).
 ///     diag (std::vector<double>): The diagonal `D`.
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed).
+///     For general use, call `Spectral::partition` instead.
 struct Laplacian {
   std::vector<std::size_t> ptr;
   std::vector<std::size_t> col;
@@ -266,11 +290,17 @@ struct Laplacian {
 /// `lambda_2 <= m / (m - 1) * d_min` (the Rayleigh quotient of `e_i - 1/m`, which is orthogonal to
 /// the constant vector, is `d_i / (1 - 1/m)`), while the row sum of vertex `i` is `2 d_i` for
 /// non-negative weights, so `s >= 2 d_max > m / (m - 1) * d_min >= lambda_2` for `m > 2` and
-/// `d_min > 0`, which a connected graph with positive weights has.
+/// `d_min > 0`, which a connected graph with positive weights has. A connected graph whose stored
+/// weights are all zero gives `s = 0` and a zero operator, on which Spectra throws; the caller then
+/// takes the dense route.
 ///
 /// Attributes:
 ///     lap (const Laplacian*): The Laplacian.
 ///     shift (double): The shift `s`.
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed).
+///     For general use, call `Spectral::partition` instead.
 class DeflatedLaplacianOp {
  public:
   using Scalar = double;
@@ -361,6 +391,10 @@ class DeflatedLaplacianOp {
 ///
 /// Returns:
 ///     Eigen::VectorXd: The vector.
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed).
+///     For general use, call `Spectral::partition` instead.
 [[nodiscard]] inline Eigen::VectorXd lanczos_start(std::size_t m) {
   Eigen::VectorXd v(static_cast<Eigen::Index>(m));
   std::uint64_t state = 0x9E3779B97F4A7C15ULL;
@@ -376,6 +410,135 @@ class DeflatedLaplacianOp {
   return v;
 }
 
+/// Solve `(T - sigma I) y = x` in place for a symmetric tridiagonal `T`, by Gaussian elimination
+/// with partial pivoting (LAPACK `dgttrf` / `dgttrs`).
+///
+/// A pivot smaller in magnitude than `tiny` is replaced by `tiny` with its sign (`+tiny` for an
+/// exact zero), as inverse iteration does (LAPACK `dlagtf`): `sigma` is an eigenvalue, so the
+/// shifted matrix is singular to rounding, and the large solution is the point.
+///
+/// Args:
+///     diag (const Eigen::VectorXd&): `T`'s diagonal, `n >= 2` entries.
+///     off (const Eigen::VectorXd&): `T`'s off-diagonal, `n - 1` entries.
+///     sigma (double): The shift.
+///     tiny (double): The smallest pivot magnitude allowed, positive.
+///     x (Eigen::VectorXd&): The right-hand side on entry, the solution on return.
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed).
+///     For general use, call `Spectral::partition` instead.
+inline void shifted_tridiagonal_solve(const Eigen::VectorXd& diag, const Eigen::VectorXd& off,
+                                      double sigma, double tiny, Eigen::VectorXd& x) {
+  const Eigen::Index n = diag.size();
+  Eigen::VectorXd d = diag.array() - sigma;
+  Eigen::VectorXd du = off;                        // first superdiagonal of U
+  Eigen::VectorXd dl = off;                        // multipliers
+  Eigen::VectorXd du2 = Eigen::VectorXd::Zero(n);  // second superdiagonal of U
+  std::vector<bool> swapped(static_cast<std::size_t>(n), false);
+  auto guard = [tiny](double p) {
+    if (std::abs(p) >= tiny) {
+      return p;
+    }
+    return p < 0.0 ? -tiny : tiny;
+  };
+  for (Eigen::Index i = 0; i + 1 < n; ++i) {
+    const double below = dl(i);
+    if (std::abs(d(i)) >= std::abs(below)) {
+      d(i) = guard(d(i));
+      const double l = below / d(i);
+      dl(i) = l;
+      d(i + 1) -= l * du(i);
+    } else {
+      // Swap rows i and i + 1.
+      swapped[static_cast<std::size_t>(i)] = true;
+      const double l = d(i) / below;
+      d(i) = below;
+      const double t = d(i + 1);
+      d(i + 1) = du(i) - l * t;
+      if (i + 2 < n) {
+        du2(i) = du(i + 1);
+        du(i + 1) = -l * du(i + 1);
+      }
+      du(i) = t;
+      dl(i) = l;
+    }
+  }
+  d(n - 1) = guard(d(n - 1));
+  // Forward: apply the row swaps and L^-1.
+  for (Eigen::Index i = 0; i + 1 < n; ++i) {
+    if (swapped[static_cast<std::size_t>(i)]) {
+      const double t = x(i);
+      x(i) = x(i + 1);
+      x(i + 1) = t - dl(i) * x(i);
+    } else {
+      x(i + 1) -= dl(i) * x(i);
+    }
+  }
+  // Backward: U, with two superdiagonals.
+  x(n - 1) /= d(n - 1);
+  if (n > 1) {
+    x(n - 2) = (x(n - 2) - du(n - 2) * x(n - 1)) / d(n - 2);
+  }
+  for (Eigen::Index i = n - 3; i >= 0; --i) {
+    x(i) = (x(i) - du(i) * x(i + 1) - du2(i) * x(i + 2)) / d(i);
+  }
+}
+
+/// Compute the Fiedler vector of a connected subgraph's Laplacian by the dense route.
+///
+/// The Laplacian is reduced to tridiagonal form `T = Q^T L Q` (Householder, the lower triangle),
+/// `T`'s eigenvalues are computed (implicit QR, values only), and the eigenvector of the second
+/// smallest, `lambda_2`, by inverse iteration on `T - lambda_2 I` with the constant vector's image
+/// `Q^T 1 / sqrt(m)` (the `lambda_1 = 0` eigenvector) projected out after every solve, then mapped
+/// back by `Q`. This is the second column `SelfAdjointEigenSolver` would return, up to sign and,
+/// when `lambda_2` is repeated, up to the choice within its eigenspace, at a fraction of the cost:
+/// accumulating every eigenvector is cubic with a large constant, this is one reduction and
+/// quadratic work after it.
+///
+/// Three solves: the first from a generic start leaves the other eigencomponents at
+/// `|lambda_2 - sigma| / gap`, about `eps ||L|| / gap` relative, since the computed `sigma` is
+/// within a few `eps ||L||` of `lambda_2`; the next two only refine. With the gap to `lambda_3`
+/// at rounding level the vector is a mixture of the two, which is as determined as the problem
+/// is (any vector of a near-repeated eigenspace orders the vertices equally well).
+///
+/// Args:
+///     lap (const Laplacian&): The Laplacian, at least 2 vertices.
+///
+/// Returns:
+///     Eigen::VectorXd: A unit Fiedler vector.
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed).
+///     For general use, call `Spectral::partition` instead.
+[[nodiscard]] inline Eigen::VectorXd dense_fiedler(const Laplacian& lap) {
+  const Eigen::MatrixXd a = lap.dense();
+  const Eigen::Index m = a.rows();
+  const Eigen::Tridiagonalization<Eigen::MatrixXd> tri(a);
+  const Eigen::VectorXd diag = tri.diagonal();
+  const Eigen::VectorXd off = tri.subDiagonal();
+  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> values;
+  values.computeFromTridiagonal(diag, off, Eigen::EigenvaluesOnly);
+  const double sigma = values.eigenvalues()(1);
+  const double norm =
+      (std::max)(diag.cwiseAbs().maxCoeff(), off.size() > 0 ? off.cwiseAbs().maxCoeff() : 0.0);
+  // `eps ||T||`, LAPACK's perturbation of a small pivot in inverse iteration; a zero matrix (all
+  // weights zero) takes 1, since any vector is then an eigenvector.
+  const double tiny = std::numeric_limits<double>::epsilon() * (norm > 0.0 ? norm : 1.0);
+
+  const Eigen::VectorXd ones =
+      Eigen::VectorXd::Constant(m, 1.0 / std::sqrt(static_cast<double>(m)));
+  const Eigen::VectorXd null_t = tri.matrixQ().transpose() * ones;
+  Eigen::VectorXd x = lanczos_start(static_cast<std::size_t>(m));
+  for (int solve = 0; solve < 3; ++solve) {
+    x -= null_t.dot(x) * null_t;
+    x /= x.norm();
+    shifted_tridiagonal_solve(diag, off, sigma, tiny, x);
+  }
+  x -= null_t.dot(x) * null_t;
+  x /= x.norm();
+  return tri.matrixQ() * x;
+}
+
 }  // namespace detail
 
 /// Recursive spectral (Fiedler) bisection.
@@ -387,13 +550,17 @@ class DeflatedLaplacianOp {
 /// (components numbered by their smallest vertex, the subgraph's order kept within each), which
 /// keeps each component whole. Connectivity counts every stored entry, a zero weight included.
 ///
-/// A subgraph of at most `dense_max` vertices takes `Eigen::SelfAdjointEigenSolver` (the lower
-/// triangle of the Laplacian); a larger one a Spectra Lanczos solve for the one smallest
+/// A subgraph of at most `dense_max` vertices takes the dense route (`detail::dense_fiedler`, on
+/// the lower triangle of the Laplacian); a larger one a Spectra Lanczos solve for the one smallest
 /// eigenpair of the Laplacian deflated off the constant vector (`detail::DeflatedLaplacianOp`),
 /// with `ncv = min(m, 20)`, at most `lanczos_max_iter` restarts (`10 m` when unset) and Spectra's
-/// relative tolerance at machine epsilon (scipy's `eigsh` defaults, which the Python version
-/// used). A solve that does not converge falls back to the dense solver, counted in
+/// relative tolerance at machine epsilon (the defaults of scipy's `eigsh`). A solve that does not
+/// converge, or that Spectra abandons with an exception, falls back to the dense route, counted in
 /// `PartitionInfo::dense_fallbacks`.
+///
+/// The Laplacian is that of the stored weights, which the deflation argument assumes symmetric and
+/// non-negative, as `coupling_graph` builds them; a hand-built graph that is neither is
+/// partitioned without error, by an ordering with no Fiedler meaning.
 ///
 /// Attributes:
 ///     dense_max (std::int64_t): The largest subgraph the dense solver takes by size.
@@ -577,9 +744,18 @@ struct Spectral {
       eigs.init(start.data());
       const auto maxit =
           static_cast<Eigen::Index>(lanczos_max_iter.value_or(10 * static_cast<std::int64_t>(m)));
-      static_cast<void>(eigs.compute(Spectra::SortRule::SmallestAlge, maxit,
-                                     std::numeric_limits<double>::epsilon()));
-      if (eigs.info() == Spectra::CompInfo::Successful) {
+      bool converged = false;
+      try {
+        static_cast<void>(eigs.compute(Spectra::SortRule::SmallestAlge, maxit,
+                                       std::numeric_limits<double>::epsilon()));
+        converged = eigs.info() == Spectra::CompInfo::Successful;
+      } catch (const std::runtime_error&) {
+        // Spectra throws when its small eigenproblem fails, which a zero operator causes: a
+        // connected graph whose stored weights are all zero (ARPACK refuses that input as well).
+        // The dense route answers every input.
+        converged = false;
+      }
+      if (converged) {
         ++info.lanczos_solves;
         return eigs.eigenvectors().col(0);
       }
@@ -587,8 +763,7 @@ struct Spectral {
     } else {
       ++info.dense_solves;
     }
-    const Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eig(lap.dense());
-    return eig.eigenvectors().col(1);
+    return detail::dense_fiedler(lap);
   }
 };
 

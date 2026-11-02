@@ -92,7 +92,7 @@ def test_clique_chain_into_four_parts() -> None:
 
 
 def test_large_path_graph_single_cut() -> None:
-    # n > dense threshold exercises the sparse eigsh path; a path bisects with one cut.
+    # n > dense threshold exercises the Lanczos path; a path bisects with one cut.
     n = 600
     diag = np.ones(n - 1, dtype=np.int64)
     csr = sparse.diags([diag, diag], [1, -1], format="csr", dtype=np.int64)

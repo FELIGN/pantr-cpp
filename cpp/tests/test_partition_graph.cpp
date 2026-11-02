@@ -605,3 +605,121 @@ TEST_CASE("select_active: the subgraph keeps the active edges, renumbered and as
   CHECK(sub.edge_weights == V{4, 3, 4, 3});
   CHECK(sub.vertex_weights == std::vector<double>{1.0, 3.0, 4.0});
 }
+
+TEST_CASE("Spectral: a connected graph of zero weights above the dense limit falls back") {
+  // The deflation shift is the largest absolute row sum of the Laplacian, zero here, so the
+  // Lanczos operator is zero and Spectra gives up (it throws); the dense route answers instead.
+  pp::CouplingGraph path = grid_graph({700});
+  const pp::CouplingGraph flat(
+      700, std::vector<std::int64_t>(path.xadj().begin(), path.xadj().end()),
+      std::vector<std::int64_t>(path.adjncy().begin(), path.adjncy().end()),
+      std::vector<std::int64_t>(path.adjncy().size(), 0), std::vector<double>(700, 1.0));
+  const pp::GraphPartition r = pp::partition_graph(flat, 2);
+  CHECK(r.info.dense_fallbacks == 1);
+  CHECK(r.info.lanczos_solves == 0);
+  std::set<std::int32_t> parts(r.partition.cell_owner().begin(), r.partition.cell_owner().end());
+  CHECK(parts == std::set<std::int32_t>{0, 1});
+}
+
+TEST_CASE("Spectral: self loops are dropped and repeated entries summed, on both solver paths") {
+  // The Laplacian of a graph with each edge weight split into two stored entries and a self loop
+  // on every vertex equals the clean graph's (scipy's csgraph.laplacian ignores the diagonal and
+  // sums duplicates), so the partitions agree, below and above the dense limit.
+  for (const std::vector<std::int64_t>& dims :
+       {std::vector<std::int64_t>{20, 13}, std::vector<std::int64_t>{30, 21}}) {
+    const pp::CouplingGraph clean = grid_graph(dims);
+    const auto n = static_cast<std::size_t>(clean.num_vertices());
+    std::vector<std::int64_t> xadj{0};
+    std::vector<std::int64_t> adjncy;
+    std::vector<std::int64_t> ew;
+    for (std::size_t v = 0; v < n; ++v) {
+      adjncy.push_back(static_cast<std::int64_t>(v));
+      ew.push_back(5);
+      for (auto k = static_cast<std::size_t>(clean.xadj()[v]);
+           k < static_cast<std::size_t>(clean.xadj()[v + 1]); ++k) {
+        // Weight 3 split into 1 + 2 (the clean graph's weight is 1: scale it to 3 on both).
+        adjncy.push_back(clean.adjncy()[k]);
+        ew.push_back(1);
+        adjncy.push_back(clean.adjncy()[k]);
+        ew.push_back(2);
+      }
+      xadj.push_back(static_cast<std::int64_t>(adjncy.size()));
+    }
+    const pp::CouplingGraph messy(static_cast<std::int64_t>(n), xadj, adjncy, ew,
+                                  std::vector<double>(n, 1.0));
+    std::vector<std::int64_t> w3(clean.adjncy().size(), 3);
+    const pp::CouplingGraph scaled(
+        static_cast<std::int64_t>(n), {clean.xadj().begin(), clean.xadj().end()},
+        {clean.adjncy().begin(), clean.adjncy().end()}, w3, std::vector<double>(n, 1.0));
+    const pp::GraphPartition a = pp::partition_graph(messy, 2);
+    const pp::GraphPartition b = pp::partition_graph(scaled, 2);
+    CAPTURE(n);
+    // Equal Laplacians, rounded differently in the products: the halves agree, and on these grids
+    // (symmetric under reversing the vertex order, so the sign rule ties) maybe not their labels.
+    std::vector<std::int32_t> oa(a.partition.cell_owner().begin(), a.partition.cell_owner().end());
+    std::vector<std::int32_t> ob(b.partition.cell_owner().begin(), b.partition.cell_owner().end());
+    if (oa[0] != ob[0]) {
+      for (auto& o : ob) {
+        o = 1 - o;
+      }
+    }
+    CHECK(oa == ob);
+    CHECK(a.info.lanczos_solves == (n > 512 ? 1 : 0));
+  }
+}
+
+TEST_CASE("dense_fiedler: agrees with the full symmetric eigensolver's second eigenvector") {
+  // Weighted random connected graphs (a path plus random chords, weights 1 to 9). Oracle: the
+  // second column of Eigen::SelfAdjointEigenSolver on the same matrix. Both are backward stable,
+  // each eigenvector within O(m eps ||L|| / gap) of the exact one (Davis-Kahan); the bound below
+  // takes 10 m eps ||L|| / gap, the factor 10 an admitted heuristic margin on the constant.
+  std::uint64_t state = 12345;
+  auto next = [&state] {
+    state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+    return state >> 33;
+  };
+  for (const std::size_t m : {std::size_t{2}, std::size_t{7}, std::size_t{60}, std::size_t{300}}) {
+    pp::detail::Laplacian lap;
+    std::vector<std::vector<double>> w(m, std::vector<double>(m, 0.0));
+    for (std::size_t i = 0; i + 1 < m; ++i) {
+      w[i][i + 1] = w[i + 1][i] = static_cast<double>(1 + next() % 9);
+    }
+    for (std::size_t c = 0; c < m; ++c) {
+      const std::size_t i = next() % m;
+      const std::size_t j = next() % m;
+      if (i != j) {
+        w[i][j] = w[j][i] = static_cast<double>(1 + next() % 9);
+      }
+    }
+    lap.ptr.assign(m + 1, 0);
+    lap.diag.assign(m, 0.0);
+    for (std::size_t i = 0; i < m; ++i) {
+      for (std::size_t j = 0; j < m; ++j) {
+        if (i != j && w[i][j] != 0.0) {
+          lap.col.push_back(j);
+          lap.val.push_back(-w[i][j]);
+          lap.diag[j] += w[i][j];
+        }
+      }
+      lap.ptr[i + 1] = lap.col.size();
+    }
+    const Eigen::MatrixXd dense = lap.dense();
+    const Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> full(dense);
+    const double gap = (std::min)(full.eigenvalues()(1) - full.eigenvalues()(0),
+                                  m > 2 ? full.eigenvalues()(2) - full.eigenvalues()(1)
+                                        : std::numeric_limits<double>::infinity());
+    REQUIRE(gap > 0.0);
+    const double norm = full.eigenvalues().cwiseAbs().maxCoeff();
+    const Eigen::VectorXd fast = pp::detail::dense_fiedler(lap);
+    // The distance to the nearer of +-v is 2 sin(theta / 2) >= sin(theta) for the angle theta
+    // between them; it is measured directly, since sqrt(1 - cos^2) cannot resolve an angle below
+    // sqrt(eps).
+    const Eigen::VectorXd v = full.eigenvectors().col(1);
+    const double distance = (std::min)((fast - v).norm(), (fast + v).norm());
+    const double eps = std::numeric_limits<double>::epsilon();
+    CAPTURE(m);
+    // Normalized, then mapped by an orthogonal Q applied as m Householder reflections.
+    CHECK(std::abs(fast.norm() - 1.0) <= 8.0 * static_cast<double>(m) * eps);
+    CHECK(distance <= 10.0 * static_cast<double>(m) * eps * norm / gap);
+  }
+}
