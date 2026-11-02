@@ -69,8 +69,9 @@ def partition_graph(
     Raises:
         TypeError: If ``coupling`` is not a :class:`CouplingGraph`.
         ValueError: If ``backend`` is unknown; if ``n_parts < 1``; if ``cell_active`` has
-            the wrong shape or marks no cell active; or if ``n_parts`` exceeds the number
-            of active cells.
+            the wrong shape or marks no cell active; if ``n_parts`` exceeds the number
+            of active cells; or if the graph's arrays are inconsistent, its edge weights
+            not integers or its vertex weights negative or not finite.
         ImportError: If ``backend="metis"`` but ``pymetis`` is not installed.
     """
     if not isinstance(coupling, CouplingGraph):
@@ -112,11 +113,20 @@ def _graph_arrays(
     Returns:
         tuple[npt.NDArray[np.int64], npt.NDArray[np.int64], npt.NDArray[np.int64],
         npt.NDArray[np.float64]]: ``xadj``, ``adjncy``, ``edge_weights``, ``vertex_weights``.
+
+    Raises:
+        ValueError: If ``edge_weights`` holds a value that is not an integer.
     """
+    edge_weights = np.asarray(coupling.edge_weights)
+    if not np.issubdtype(edge_weights.dtype, np.integer) and not bool(
+        np.all(edge_weights == np.rint(edge_weights))
+    ):
+        # A conversion to int64 would truncate them silently.
+        raise ValueError("edge_weights must be integers (numbers of shared functions).")
     return (
         np.ascontiguousarray(coupling.xadj, dtype=np.int64),
         np.ascontiguousarray(coupling.adjncy, dtype=np.int64),
-        np.ascontiguousarray(coupling.edge_weights, dtype=np.int64),
+        np.ascontiguousarray(edge_weights, dtype=np.int64),
         np.ascontiguousarray(coupling.vertex_weights, dtype=np.float64),
     )
 

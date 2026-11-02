@@ -512,3 +512,14 @@ def test_spectral_hook_refuses_a_non_positive_lanczos_limit() -> None:
     graph = coupling_graph(create_uniform_space(2, 6))
     with pytest.raises(ValueError, match="lanczos_max_iter must be >= 1"):
         spectral_partition(graph, 2, lanczos_max_iter=0)
+
+
+def test_non_integer_edge_weights_raise() -> None:
+    graph = coupling_graph(create_uniform_space(2, 4))
+    halves = graph._replace(edge_weights=np.full(graph.adjncy.size, 0.5))
+    with pytest.raises(ValueError, match="edge_weights must be integers"):
+        partition_graph(halves, 2)
+    whole = graph._replace(edge_weights=graph.edge_weights.astype(np.float64))
+    np.testing.assert_array_equal(
+        partition_graph(whole, 2).cell_owner, partition_graph(graph, 2).cell_owner
+    )

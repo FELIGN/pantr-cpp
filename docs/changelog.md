@@ -134,7 +134,12 @@
   `ValueError` naming the array when `xadj` does not hold `num_vertices + 1` non-decreasing entries
   from 0 to `len(adjncy)`, when `edge_weights` or `vertex_weights` has the wrong length, or when an
   `adjncy` entry is outside `[0, num_vertices)`. The previous release raised scipy's `ValueError`
-  ("index pointer size 4 should be 5") or an `IndexError` for some of these.
+  ("index pointer size 4 should be 5") or an `IndexError` for some of these, and accepted others
+  silently (a decreasing `xadj`, a negative `adjncy` entry, a `vertex_weights` longer than
+  `num_vertices`).
+- **`partition_graph` refuses a `CouplingGraph` whose `edge_weights` are not integers**
+  (`ValueError`); integer values held in a float array are accepted. The previous release used
+  the float values in the spectral backend and rounded them in the METIS backend.
 
 ### Changed
 - **pantr needs Python 3.12 or later.** pantr is becoming a C++ library with a compiled
@@ -960,8 +965,7 @@
   to 512 vertices and by Spectra above, not by LAPACK and ARPACK. When that eigenvalue is repeated
   (a square grid of cells, as in a uniform space with as many intervals in each direction), every
   vector of its eigenspace is a Fiedler vector and the two releases use different ones, so the
-  parts differ and the cut weight can be larger or smaller (in the sweep, larger on the square
-  grids it tried); when the graph is symmetric under reversing the vertex order (a 1D space), the
+  parts differ and the cut weight can be larger or smaller; when the graph is symmetric under reversing the vertex order (a 1D space), the
   vector's two largest entries tie in sign up to rounding and the parts can come out mirrored. The
   part weights were equal in every spectral partition of the sweep. For the same reason, the
   partition of such a graph can differ between the extension's builds for different processors
@@ -969,13 +973,15 @@
 - **`partition_graph` with integer-valued but non-`int` arguments.** `n_parts` is converted with
   `int()` before the part count is compared with the active cells, so `partition_graph(graph, 4.5)`
   on four cells now partitions into 4 parts (it raised `ValueError`), and an `n_parts` past the
-  64-bit range raises `TypeError` (it raised `ValueError`). A `CouplingGraph` whose arrays are
+  64-bit range raises `TypeError` and `float("inf")` raises `OverflowError` (both raised
+  `ValueError`). A `CouplingGraph` whose arrays are
   Python lists, or whose `num_vertices` is a float, is accepted (the previous release raised
   `AttributeError` and `TypeError`).
 - **`coupling_graph` of a `BsplineSpace` with no directions** raises `ValueError` "a B-spline space
   needs at least one direction" (it raised `ValueError` "multiple indices are not supported for 0d
   arrays"), and for a periodic space with `cell_weights` that are not 1-D, the error about the
   weights' shape is raised before the one about periodicity.
+
 ### Fixed
 - **`partition_graph` bisects graphs above 512 vertices along their Fiedler vector.** It asked
   ARPACK for the two smallest eigenpairs of the Laplacian and took the second, assuming the first
@@ -988,8 +994,9 @@
   512 vertices can change: they now follow the true Fiedler vector. This is a fix, not a
   consequence of the port.
 - **`partition_graph` no longer crashes the interpreter on a `CouplingGraph` with an `adjncy` entry
-  outside `[0, num_vertices)`**; the previous release ended the process with a segmentation fault
-  (scipy read outside the array). It raises `ValueError` now (see above).
+  at or past `num_vertices`**; the previous release could end the process with a segmentation
+  fault (scipy read outside the array), and partitioned a negative entry silently. Both raise
+  `ValueError` now (see above).
 - **`Bspline.multiply` no longer returns values that depend on memory it never wrote.** The
   product groups the knots of every direction at the largest tolerance of any direction, so in a
   direction much shorter than another (in `float32`, one a few `1e-6` long beside one of length
