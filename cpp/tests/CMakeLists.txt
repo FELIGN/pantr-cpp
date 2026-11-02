@@ -96,6 +96,15 @@ add_test(NAME env.num_threads_malformed COMMAND pantr_tests_env)
 set_tests_properties(env.num_threads_malformed PROPERTIES
                      ENVIRONMENT "PANTR_NUM_THREADS=two;PANTR_TEST_EXPECT=malformed")
 
+# The METIS provider, against the user's METIS (PANTR_WITH_METIS=ON only).
+if(TARGET pantr_metis)
+  add_executable(pantr_tests_metis test_main.cpp
+                                   "${PROJECT_SOURCE_DIR}/providers/metis/tests/test_metis.cpp")
+  target_link_libraries(pantr_tests_metis PRIVATE pantr::metis pantr_native_arch pantr_doctest
+                                                  pantr_cxx_warnings)
+  doctest_discover_tests(pantr_tests_metis)
+endif()
+
 # --- Header rules ---------------------------------------------------------------------------------
 # Every public header compiles on its own (self-contained) with a poisoned mpi.h first on the
 # include path, so a core header that reaches mpi.h, directly or through another header, fails the

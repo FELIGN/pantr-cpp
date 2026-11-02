@@ -97,6 +97,21 @@ else()
   message(STATUS "pantr: no MPI found, the pantr::mpi target (component mpi) is not built")
 endif()
 
+# --- pantr::metis (component metis) --------------------------------------------------------------
+# The METIS graph partitioner as a GraphPartitioner, for C++ users: OFF by default, and never part
+# of the core headers or of the Python extension (Python reaches METIS through pymetis).
+if(PANTR_WITH_METIS)
+  find_package(METIS REQUIRED)
+  add_library(pantr_metis INTERFACE)
+  add_library(pantr::metis ALIAS pantr_metis)
+  set_target_properties(pantr_metis PROPERTIES EXPORT_NAME metis)
+  target_include_directories(
+    pantr_metis INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/providers/metis/include>
+                          $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+  target_link_libraries(pantr_metis INTERFACE pantr METIS::metis)
+  message(STATUS "pantr: METIS found (${METIS_LIBRARY}), the pantr::metis target is built")
+endif()
+
 if(PANTR_INSTALL)
   include(PantrInstall)
 endif()

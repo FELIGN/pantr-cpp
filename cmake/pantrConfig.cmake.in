@@ -3,8 +3,8 @@
 #   find_package(pantr [<version>] [COMPONENTS mpi | mpi-capsule | berf | metis])
 #
 # Targets: pantr::pantr (always, unless only mpi-capsule is requested), pantr::mpi_capsule,
-# pantr::mpi (component mpi). Set PANTR_NATIVE_ARCH to OFF before find_package to build without
-# the native-ISA flag (default ON).
+# pantr::mpi (component mpi), pantr::metis (component metis, which needs the user's METIS). Set
+# PANTR_NATIVE_ARCH to OFF before find_package to build without the native-ISA flag (default ON).
 @PACKAGE_INIT@
 
 include(CMakeFindDependencyMacro)
@@ -46,7 +46,17 @@ foreach(_pantr_comp IN LISTS pantr_FIND_COMPONENTS)
       set(pantr_mpi_FOUND FALSE)
       set(pantr_NOT_FOUND_MESSAGE "pantr was installed without MPI, so component mpi is absent")
     endif()
-  elseif(_pantr_comp STREQUAL "berf" OR _pantr_comp STREQUAL "metis")
+  elseif(_pantr_comp STREQUAL "metis")
+    if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/pantrMetisTargets.cmake")
+      list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}")
+      find_dependency(METIS)
+      include("${CMAKE_CURRENT_LIST_DIR}/pantrMetisTargets.cmake")
+      set(pantr_metis_FOUND TRUE)
+    else()
+      set(pantr_metis_FOUND FALSE)
+      set(pantr_NOT_FOUND_MESSAGE "pantr was installed without METIS, so component metis is absent")
+    endif()
+  elseif(_pantr_comp STREQUAL "berf")
     set(pantr_${_pantr_comp}_FOUND FALSE)
     set(pantr_NOT_FOUND_MESSAGE "pantr component ${_pantr_comp} is not part of this version")
   else()

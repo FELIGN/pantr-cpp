@@ -37,6 +37,14 @@ if(TARGET pantr_mpi)
   install(EXPORT pantrMpiTargets NAMESPACE pantr:: DESTINATION "${PANTR_INSTALL_CMAKEDIR}")
 endif()
 
+if(TARGET pantr_metis)
+  install(DIRECTORY "${PROJECT_SOURCE_DIR}/providers/metis/include/pantr"
+          DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
+  install(TARGETS pantr_metis EXPORT pantrMetisTargets)
+  install(EXPORT pantrMetisTargets NAMESPACE pantr:: DESTINATION "${PANTR_INSTALL_CMAKEDIR}")
+  install(FILES "${PROJECT_SOURCE_DIR}/cmake/FindMETIS.cmake" DESTINATION "${PANTR_INSTALL_CMAKEDIR}")
+endif()
+
 configure_package_config_file("${PROJECT_SOURCE_DIR}/cmake/pantrConfig.cmake.in"
                               "${PROJECT_BINARY_DIR}/pantrConfig.cmake"
                               INSTALL_DESTINATION "${PANTR_INSTALL_CMAKEDIR}")

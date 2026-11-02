@@ -24,9 +24,9 @@ option(PANTR_BUILD_PYTHON_TEST_MODULES
 option(PANTR_WITH_BERF "Build the BeRF-FR root-finding provider (pantr::berf)" OFF)
 option(PANTR_WITH_METIS "Build the METIS partitioning provider (pantr::metis)" OFF)
 
-# The provider targets land in their own stages. An option that is ON but builds nothing would
+# A provider target lands in its own stage. An option that is ON but builds nothing would
 # report a provider that is not there, so say so and stop.
-foreach(_provider BERF METIS)
+foreach(_provider BERF)
   if(PANTR_WITH_${_provider})
     message(FATAL_ERROR "pantr: PANTR_WITH_${_provider}=ON is not available yet; "
                         "the provider is not part of this version")

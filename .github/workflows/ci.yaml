@@ -54,6 +54,7 @@ jobs:
       - name: clang-format check
         run: |
           git ls-files -- 'include/*.hpp' 'cpp/*.hpp' 'cpp/*.cpp' 'bindings/*.hpp' 'bindings/*.cpp' \
+            'providers/*.hpp' 'providers/*.cpp' \
             | xargs clang-format --dry-run --Werror
 
   # --- 2 ------------------------------------------------------------------------------------------
@@ -263,7 +264,7 @@ jobs:
 
   # --- 8 ------------------------------------------------------------------------------------------
   install-consumer:
-    name: "8 install-consumer (find_package with the mpi component, poisoned mpi.h)"
+    name: "8 install-consumer (find_package with the mpi component, poisoned mpi.h, METIS provider)"
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -272,18 +273,19 @@ jobs:
         with:
           path: build/_deps
           key: deps-${{ hashFiles('cmake/PantrDependencies.cmake') }}
-      - name: Install Ninja and an MPI (the consumer asks for the mpi component)
+      - name: Install Ninja, an MPI (the consumer asks for the mpi component) and METIS
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y ninja-build libopenmpi-dev openmpi-bin
+          sudo apt-get install -y ninja-build libopenmpi-dev openmpi-bin libmetis-dev
       # The install tests put pantr in a fresh prefix and build cpp/tests/consumer against it with
       # every package-search shortcut off; the header tests compile each core header with a
-      # poisoned mpi.h first on the include path.
-      - name: Configure, build and run the install and header tests
+      # poisoned mpi.h first on the include path; the METIS provider (PANTR_WITH_METIS, off by
+      # default) is built and tested here against the distribution's METIS.
+      - name: Configure, build and run the install, header and METIS tests
         run: |
-          cmake --preset gcc-release -DCMAKE_CXX_COMPILER=g++-14
+          cmake --preset gcc-release -DCMAKE_CXX_COMPILER=g++-14 -DPANTR_WITH_METIS=ON
           cmake --build --preset gcc-release
-          ctest --preset gcc-release -R "install|header|notices"
+          ctest --preset gcc-release -R "install|header|notices|metis"
 
   # --- 9 ------------------------------------------------------------------------------------------
   mpi:
