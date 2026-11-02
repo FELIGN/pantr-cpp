@@ -146,11 +146,13 @@ def _int64_representable(values: npt.NDArray[Any]) -> bool:
         return True
     if np.issubdtype(values.dtype, np.unsignedinteger):
         return values.size == 0 or int(values.max()) <= int(np.iinfo(np.int64).max)
+    # Typed bounds: a Python float would be cast to the array's dtype, and 2**63 overflows float16.
+    low, high = np.float64(-(2.0**63)), np.float64(2.0**63)
     with np.errstate(invalid="ignore"):
         return bool(
             np.all(np.isfinite(values))
             and np.all(values == np.rint(values))
-            and np.all((values >= -(2.0**63)) & (values < 2.0**63))
+            and np.all((values >= low) & (values < high))
         )
 
 
