@@ -29,6 +29,13 @@
   API has the same algorithms (`include/pantr/mpi/`, MPI-free except `mpi_table.hpp` and
   `mpi_communicator.hpp`, over a `Communicator` concept) and an `MpiCommunicator` (in
   `mpi_communicator.hpp`) on the `pantr::mpi` target.
+- **The pantr wheel ships pantr's C++ headers and a CMake package**, under `pantr/include` and
+  `pantr/share/cmake/pantr`, and **`pantr.cmake_dir()`** returns the package's directory, to pass to
+  CMake as `pantr_DIR` (it raises `FileNotFoundError` in a source checkout, which has none). The
+  wheel does not carry the third-party headers a CMake install of pantr bundles, so its package
+  provides `find_package(pantr COMPONENTS mpi-capsule)` only and refuses `pantr::pantr` with a
+  message saying so. This is what `pantr-mpi`'s source distribution builds against, so
+  `pip install --no-binary pantr-mpi pantr-mpi` builds it for a local MPI.
 
 ### Rejected where it used to be accepted
 - **`create_distributed_space` and `create_distributed_function` with a duck-typed communicator
@@ -215,6 +222,16 @@
 - **The basis tabulations run on pantr's own thread pool and release the GIL** while a
   large batch is computed, so several Python threads can tabulate at once. Results do not
   depend on the thread count. `pantr.set_num_threads` sets their parallelism.
+- **`PANTR_NUM_THREADS` caps pantr's C++ thread pool** (the previous release ignored it): unset
+  or empty, the pool may use every CPU the process may run on, and a larger count is lowered to
+  that. It is read on the pool's first use, not at import, and `pantr.get_num_threads` does not
+  report it. A value that is not a positive decimal integer (`abc`, `0`, `-1`, `+2`, `" 2"`,
+  `2.5`), or one above 18446744073709551609 on a 64-bit platform, makes each call that uses the
+  pool raise `ValueError` "PANTR_NUM_THREADS must be a positive integer, got '...'": among them a
+  basis tabulation or a B-spline or Bézier evaluation large enough to run on the pool,
+  `pantr.set_num_threads` and `pantr.num_threads`, and the distributed algorithms of `pantr.mpi`,
+  from `create_distributed_space` on when `pantr.mpi` applies its default thread policy (no
+  `NUMBA_NUM_THREADS` and no thread count set).
 - **`PointsLattice` stores coordinates of a dtype other than float32 and float64 as
   float64.** The lattice is a C++ value of one of those two types; an integer lattice used
   to keep its dtype, and no tabulation could use it.
@@ -1073,19 +1090,25 @@
   raise `TypeError`, `create_thb_space` with a factor past 64 bits raises `TypeError`, and
   `THBSpline.evaluate_derivatives` accepts `orders=True` and huge orders (zero derivatives), where
   the previous release raised.
-- **Spectral partitions can change, at any size, where the Fiedler vector is not determined by the
-  graph.** The eigenvector of the second-smallest Laplacian eigenvalue is now computed by Eigen up
-  to 512 vertices and by Spectra above, not by LAPACK and ARPACK. When that eigenvalue is repeated
+- **Spectral partitions can change, at any size, where a Fiedler vector the bisection uses is not
+  determined by the graph**: the whole graph's, or, with three parts or more, that of a part the
+  recursive bisection splits again. The eigenvector of the second-smallest Laplacian eigenvalue is
+  now computed by Eigen up to 512 vertices and by Spectra above, not by LAPACK and ARPACK.
+  When that eigenvalue is repeated
   (a square grid of cells, as in a uniform space with as many intervals in each direction), every
   vector of its eigenspace is a Fiedler vector and the two releases use different ones, so the
-  parts differ and the cut weight can be larger or smaller; when the graph is symmetric under
-  reversing the vertex order and its Fiedler vector is antisymmetric (a 1D space), the vector's
-  two largest entries (in absolute value) tie up to rounding, with opposite signs, so the sign
-  chosen for it, and with it the order of the vertices, depends on rounding, and the parts can
-  come out mirrored. The part weights were equal
-  in every spectral partition of the sweep. For the same reason, the partition of such a graph can
-  differ between the extension's builds for different processors (it does not depend on the
-  number of threads).
+  parts differ and the cut weight can be larger or smaller; when the graph or the part is
+  symmetric under reversing the vertex order and its Fiedler vector is antisymmetric (a 1D space,
+  or the first four of the six cells of a quadratic 1D space with a double knot after the second,
+  inside a graph that is not symmetric), the vector's two largest entries (in absolute value) tie
+  up to rounding, with opposite signs, so the sign chosen for it, and with it the order of the
+  vertices, depends on rounding, and the parts can come out mirrored; and where several vertices'
+  entries are equal up to rounding where the order is split, which of them falls on each side
+  depends on rounding. Without cell weights the parts' sizes are those of the previous release,
+  since the split balances the cell count. For the same reasons a partition can differ between the
+  extension's builds for different processors (it does not depend on the number of threads), in
+  the parts' labels or in the cut, with cell weights or without (they move where the order is
+  split, not the Fiedler vector).
 - **`partition_graph` with arguments that are not `int`.** `n_parts` and the graph's
   `num_vertices` are converted with `int()` before the part count is compared with the active
   cells, so a float is truncated (`partition_graph(graph, 4.5)` on four cells now partitions into 4
@@ -1194,22 +1217,27 @@
   every rank; any other error from computing the partition is raised on rank 0 as before, and
   every other rank raises `ValueError` "rank 0 could not compute the partition" instead of
   waiting in the collective. Which cut rank 0 computes with `method="graph"` is the one described
-  under the spectral partitions above, so on most tensor-product graphs (every one symmetric under
-  reversing the vertex order, which includes every uniform space) it can differ from the previous
-  release's, in the parts' labels or in the cut; `method="grid"` gives the previous release's
-  partitions.
+  under the spectral partitions above, so on most tensor-product graphs, symmetric or not (a few
+  small ones, such as a quadratic one-dimensional space of five cells, are unchanged), it can
+  differ from the previous release's, in the parts' labels or in the cut; `method="grid"` gives
+  the previous release's partitions.
 - **The message of `require_mpi`** no longer suggests `pip install mpi4py` alone, since an
   `mpi4py` communicator also needs `pantr-mpi`.
 - **The distributed fits run in the compiled extension; some of their error messages, checks
   and call pattern change.** `from_dolfinx`'s inconsistent-gather message says `comm.size` where
-  it said `mesh.comm.size`. In `interpolate_bspline_distributed` and `fit_bspline_distributed`,
-  value blocks that cover more grid points than there are raise the "do not tile" `ValueError`
-  (the previous release raised NumPy's broadcasting error, except for a surplus of exactly one
-  trailing row, which it also reported as "do not tile"), and a block with another number of
+  it said `mesh.comm.size`; it accepts a gather that returns a generator (the previous release
+  raised `TypeError`), and a gather that returns `None`, a float `n_cells` such as `8.0` and an
+  `n_cells` too large to allocate raise the same exception types with other messages. In
+  `interpolate_bspline_distributed` and `fit_bspline_distributed`, value blocks that cover more
+  grid points than there are raise the "do not tile" `ValueError`
+  (the previous release raised NumPy's broadcasting error, unless every row past the end of the
+  grid arrived in a block of one row lying wholly past it, in which case it also reported "do not
+  tile"), and a block with another number of
   components than the first raises `ValueError` naming the rank (the previous release raised
   NumPy's reshape or broadcasting error); a scalar first block followed by `(m, 1)` blocks, a 0-d
-  gathered entry and list blocks are accepted, and an own block of three or more dimensions is
-  refused (`ValueError`). Both build the collocation system before the gather, so too many
+  gathered entry and list blocks are accepted, and in `fit_bspline_distributed` an own `values`
+  block of three or more dimensions is refused (`ValueError`; the previous release accepted a
+  trailing axis of 1). Both build the collocation system before the gather, so too many
   `boundary_derivatives` or nodes outside the domain raise before any `allgather` (the previous
   release raised after it). The distributed collocation and quasi-interpolation functions, and
   `from_dolfinx`, refuse a gather that
@@ -1219,9 +1247,14 @@
   `ValueError` (the previous release kept the last duplicate, wrapped a negative index and raised
   NumPy's `IndexError` past the end), and their component-count mismatch message is "rank r sent
   k DOFs and c coefficients; expected n per DOF" (the previous release raised NumPy's reshape or
-  broadcasting error). None of these arises with a correct communicator. `l2_project_bspline_distributed` calls `func` once per boundary trace
-  for all components together, where the previous release called it once per trace and
-  component; the values are the same.
+  broadcasting error, except that the THB quasi-interpolant gave a 0-d coefficient entry's one
+  value to all of that rank's DOFs); DOF ids gathered as a `(k, 1)` array are accepted (the
+  previous release raised NumPy's broadcasting error). None of these arises with a correct
+  communicator. `l2_project_bspline_distributed` calls `func` once per boundary trace for all
+  components together, where the previous release called it once per trace and
+  component; the values are the same. Its `comm.allreduce` payload is C-contiguous, where the
+  previous release's was not for a space of two or more dimensions; dtype, shape and values are
+  unchanged except as under Fixed.
 
 ### Fixed
 - **`quasi_interpolate_bspline_distributed` leaves a coefficient that no rank owns at `0`.** Such
