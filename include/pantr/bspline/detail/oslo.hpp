@@ -213,18 +213,101 @@ template <StorageFloat T>
   return out;
 }
 
-/// `row[r] += weight * in[r]` for `r` in `[0, cols)`.
+/// The body of `apply_oslo_rows_along_axis` for a run-time `inner` (`Inner == 0`) or one fixed at
+/// compile time, so that a net of a few coordinates per point is not a loop of a few iterations.
 ///
-/// A `noexcept` function of its own so that GCC vectorises the loop: written inside a body that may
-/// throw (the allocation of the result), GCC 14 with `-ffp-contract=on` treats the contracted `fma`
-/// as a statement that can throw and leaves the loop scalar.
+/// Note:
+///     Inputs are assumed to be correct (no validation performed).
+template <std::size_t Inner, StorageFloat T>
+void apply_oslo_rows_impl(const OsloRows<T>& rows, const T* src, std::size_t outer, std::size_t n1,
+                          std::size_t inner_rt, T* dst) noexcept {
+  const std::size_t inner = Inner == 0 ? inner_rt : Inner;
+  const std::size_t m1 = rows.first_col.size();
+  const std::size_t width = m1 == 0 ? 0 : rows.alphas.size() / m1;
+  const T* alphas = rows.alphas.data();
+  const auto n_cols = static_cast<std::int64_t>(n1);
+  for (std::size_t o = 0; o < outer; ++o) {
+    const T* in = src + o * n1 * inner;
+    T* out = dst + o * m1 * inner;
+    for (std::size_t i = 0; i < m1; ++i) {
+      const T* a = alphas + i * width;
+      const std::int64_t base = rows.first_col[i];
+      T* row = out + i * inner;
+      bool written = false;
+      for (std::size_t l = 0; l < width; ++l) {
+        const std::int64_t col = base + static_cast<std::int64_t>(l);
+        if (col < 0 || col >= n_cols) {
+          continue;
+        }
+        const T* x = in + static_cast<std::size_t>(col) * inner;
+        const T w = a[l];
+        if (written) {
+          for (std::size_t r = 0; r < inner; ++r) {
+            row[r] += w * x[r];
+          }
+        } else {
+          // `0 + w * x` rounds as `w * x` does, so assigning the first term gives the bits the
+          // zero-initialised accumulation gave.
+          for (std::size_t r = 0; r < inner; ++r) {
+            row[r] = w * x[r];
+          }
+          written = true;
+        }
+      }
+      if (!written) {
+        for (std::size_t r = 0; r < inner; ++r) {
+          row[r] = static_cast<T>(0);
+        }
+      }
+    }
+  }
+}
+
+/// Apply banded Oslo rows along one axis of a row-major net, writing the refined net in place of
+/// the axis (no transposition).
+///
+/// The net is read as `(outer, n1, inner)` and written as `(outer, m1, inner)`: for every `o`,
+/// new row `i` is `sum_l alphas(i, l) * old_row(first_col[i] + l)`, the columns outside `[0, n1)`
+/// skipped, summed in increasing `l` (the first term assigned, the rest accumulated), so the
+/// result does not depend on `outer` or `inner`. Every entry of `dst` is written: a row with no
+/// column inside `[0, n1)` is set to zero.
+///
+/// Working along the axis instead of on a transposed copy saves two passes over the refined net
+/// and one allocation of its size, which dominates when the refined net is large and the axis is
+/// not the first. An `inner` of one to four (the coordinates of one control point, the last axis)
+/// runs a body with the extent fixed at compile time.
+///
+/// `noexcept` so that GCC vectorises the contracted loops (GCC 14 with `-ffp-contract=on` leaves a
+/// multiply-add that may throw scalar).
+///
+/// Args:
+///     rows (const OsloRows<T>&): The `m1` banded rows.
+///     src (const T*): The old net, `outer * n1 * inner` values.
+///     outer (std::size_t): Product of the extents before the axis.
+///     n1 (std::size_t): The old extent of the axis.
+///     inner (std::size_t): Product of the extents after the axis (the coordinates included).
+///     dst (T*): The new net, `outer * m1 * inner` values; must not overlap `src`.
 ///
 /// Note:
 ///     Inputs are assumed to be correct (no validation performed).
 template <StorageFloat T>
-void accumulate_scaled(T* row, const T* in, T weight, std::size_t cols) noexcept {
-  for (std::size_t r = 0; r < cols; ++r) {
-    row[r] += weight * in[r];
+void apply_oslo_rows_along_axis(const OsloRows<T>& rows, const T* src, std::size_t outer,
+                                std::size_t n1, std::size_t inner, T* dst) noexcept {
+  switch (inner) {
+    case 1:
+      apply_oslo_rows_impl<1, T>(rows, src, outer, n1, inner, dst);
+      return;
+    case 2:
+      apply_oslo_rows_impl<2, T>(rows, src, outer, n1, inner, dst);
+      return;
+    case 3:
+      apply_oslo_rows_impl<3, T>(rows, src, outer, n1, inner, dst);
+      return;
+    case 4:
+      apply_oslo_rows_impl<4, T>(rows, src, outer, n1, inner, dst);
+      return;
+    default:
+      apply_oslo_rows_impl<0, T>(rows, src, outer, n1, inner, dst);
   }
 }
 
@@ -249,32 +332,10 @@ void accumulate_scaled(T* row, const T* in, T weight, std::size_t cols) noexcept
 template <StorageFloat T>
 [[nodiscard]] NdArray<T> insert_knots_core(int degree, std::span<const T> old_knots,
                                            mdview<const T, 2> ctrl, std::span<const T> new_knots) {
-  const auto p = static_cast<std::ptrdiff_t>(degree);
-  const auto n = static_cast<std::ptrdiff_t>(old_knots.size()) - p - 2;
-  const auto m1 = new_knots.size() - static_cast<std::size_t>(degree) - 1;  // m + 1
-  const std::size_t cols = ctrl.extent(1);
-  const auto n1 = static_cast<std::int64_t>(ctrl.extent(0));
-  const auto width = static_cast<std::size_t>(degree) + 1;
-
-  NdArray<T> out({m1, cols});
-  T* dst = out.data();
-  const T* src = ctrl.data_handle();
-  std::vector<T> band(width);
-  SpanFinder<T> span_of(old_knots, n);
-  for (std::size_t i = 0; i < m1; ++i) {
-    // The band of this row, formed here and applied at once: it is not stored.
-    const std::ptrdiff_t mu = span_of(new_knots[i]);
-    std::fill(band.begin(), band.end(), static_cast<T>(0));
-    oslo_band<T>(degree, mu, old_knots, new_knots, i, band.data());
-    const std::int64_t base = mu - p;
-    T* row = dst + i * cols;
-    for (std::size_t l = 0; l < width; ++l) {
-      const std::int64_t col = base + static_cast<std::int64_t>(l);
-      if (0 <= col && col < n1) {
-        accumulate_scaled<T>(row, src + static_cast<std::size_t>(col) * cols, band[l], cols);
-      }
-    }
-  }
+  const OsloRows<T> rows = oslo_rows<T>(degree, old_knots, new_knots);
+  NdArray<T> out({rows.first_col.size(), ctrl.extent(1)}, for_overwrite);
+  apply_oslo_rows_along_axis<T>(rows, ctrl.data_handle(), 1, ctrl.extent(0), ctrl.extent(1),
+                                out.data());
   return out;
 }
 

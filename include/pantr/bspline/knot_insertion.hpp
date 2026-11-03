@@ -6,6 +6,7 @@
 /// form, refined and converted back, so that periodicity is preserved.
 #pragma once
 
+#include "pantr/bezier/detail/along_axis.hpp"
 #include "pantr/bspline/bspline.hpp"
 #include "pantr/bspline/detail/oslo.hpp"
 #include "pantr/bspline/detail/refine_common.hpp"
@@ -337,25 +338,50 @@ template <StorageFloat T>
   if (!any) {
     throw value_error("At least one direction must have a non-empty array of knots to insert.");
   }
-  return detail::map_directions<T>(
-      b, [&](std::size_t d) { return !new_knots[d].empty(); },
-      [&](std::size_t d, const BsplineSpace1D<T>& space,
-          mdview<const T, 2> flat) -> std::pair<BsplineSpace1D<T>, NdArray<T>> {
-        const int p = space.degree();
-        const double tol = space.tolerance();
-        if (space.periodic()) {
-          // Round-trip through open form to preserve periodicity.
-          const long long m_bdy = space.unique_knots_and_multiplicity(true).second[0];
-          KnotsAndCtrl<T> open = to_open_1d<T>(space.knots(), p, flat, true, tol);
-          KnotsAndCtrl<T> refined =
-              insert_knots_1d<T>(open.knots, p, open.ctrl.template view<2>(), new_knots[d], tol);
-          KnotsAndCtrl<T> per =
-              to_periodic_1d<T>(refined.knots, p, refined.ctrl.template view<2>(), m_bdy, tol);
-          return {BsplineSpace1D<T>(std::span<const T>(per.knots), p, true), std::move(per.ctrl)};
-        }
-        KnotsAndCtrl<T> refined = insert_knots_1d<T>(space.knots(), p, flat, new_knots[d], tol);
-        return {BsplineSpace1D<T>(std::span<const T>(refined.knots), p), std::move(refined.ctrl)};
-      });
+  // A non-periodic direction is refined along its axis, in place of the axis (no transposed copy
+  // of the net); a periodic one round-trips through open form on the net moved to the front.
+  std::vector<BsplineSpace1D<T>> spaces = b.space().spaces();
+  std::vector<std::size_t> shape(b.shape().begin(), b.shape().end());
+  NdArray<T> owned = detail::empty_net<T>();
+  std::span<const T> current = b.control_points();
+  for (std::size_t d = 0; d < spaces.size(); ++d) {
+    if (new_knots[d].empty()) {
+      continue;
+    }
+    const BsplineSpace1D<T>& space = spaces[d];
+    const int p = space.degree();
+    const double tol = space.tolerance();
+    const bezier::detail::AxisSplit around = bezier::detail::split_around(shape, d);
+    NdArray<T> next = detail::empty_net<T>();
+    BsplineSpace1D<T> refined_space = space;
+    if (space.periodic()) {
+      const NdArray<T> flat = bezier::detail::flatten_along_axis<T>(current, shape, d);
+      const long long m_bdy = space.unique_knots_and_multiplicity(true).second[0];
+      KnotsAndCtrl<T> open = to_open_1d<T>(space.knots(), p, flat.template view<2>(), true, tol);
+      KnotsAndCtrl<T> refined =
+          insert_knots_1d<T>(open.knots, p, open.ctrl.template view<2>(), new_knots[d], tol);
+      KnotsAndCtrl<T> per =
+          to_periodic_1d<T>(refined.knots, p, refined.ctrl.template view<2>(), m_bdy, tol);
+      refined_space = BsplineSpace1D<T>(std::span<const T>(per.knots), p, true);
+      next = bezier::detail::unflatten_along_axis<T>(per.ctrl.template view<2>(), shape, d);
+      shape[d] = per.ctrl.shape()[0];
+    } else {
+      detail::check_net_matches("insert_knots", shape[d], space.knots().size(), p);
+      std::vector<T> refined = compute_inserted_knot_vector<T>(space.knots(), p, new_knots[d], tol);
+      const detail::OsloRows<T> rows = detail::oslo_rows<T>(p, space.knots(), refined);
+      std::vector<std::size_t> next_shape = shape;
+      next_shape[d] = rows.first_col.size();
+      next = NdArray<T>(next_shape, for_overwrite);
+      detail::apply_oslo_rows_along_axis<T>(rows, current.data(), around.outer, shape[d],
+                                            around.inner, next.data());
+      refined_space = BsplineSpace1D<T>(std::span<const T>(refined), p);
+      shape = std::move(next_shape);
+    }
+    spaces[d] = std::move(refined_space);
+    owned = std::move(next);
+    current = owned.flat();
+  }
+  return Bspline<T>(BsplineSpace<T>(std::move(spaces)), std::move(owned), b.rational());
 }
 
 /// Convert every direction of a B-spline to open (clamped) non-periodic form.
