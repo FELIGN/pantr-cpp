@@ -81,6 +81,10 @@
 #include "pantr/thb/tolerances.hpp"
 #include "pantr/thb/types.hpp"
 
+#include "pantr/cad/compat.hpp"
+#include "pantr/cad/operations.hpp"
+#include "pantr/cad/primitives.hpp"
+
 #include "pantr/multipatch/detect.hpp"
 #include "pantr/multipatch/interface.hpp"
 #include "pantr/multipatch/match.hpp"
