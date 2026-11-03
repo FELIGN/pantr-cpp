@@ -376,3 +376,20 @@ class TestHandles:
         # the corner (1, 1, 1) is the control point itself: exact, no tolerance.
         corner = create_trilinear().evaluate(np.array([[1.0, 1.0, 1.0]]))
         assert_allclose(corner, [0.5, 0.5, 0.5], rtol=0, atol=0)
+
+
+def test_make_compat_returns_an_unchanged_input_as_the_same_object() -> None:
+    """An input the compatibility leaves as it is comes back as that object, as before the port.
+
+    Two lines are already compatible, so both come back as they were given; a line against a
+    circle is elevated, so the line is a new object and the circle is the one given. A single
+    B-spline is returned untouched.
+    """
+    line, other, circle = create_line(), create_line([0, 1, 0], [1, 1, 0]), create_circle()
+    assert make_compat(line)[0] is line
+    same = make_compat(line, other)
+    assert same[0] is line
+    assert same[1] is other
+    elevated = make_compat(line, circle)
+    assert elevated[0] is not line
+    assert elevated[1] is circle

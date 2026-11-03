@@ -60,4 +60,8 @@ def make_compat(
     else:
         axis_list = [_index(a) for a in axes]
     made = ext.cad.make_compat([b._h for b in bsplines], axis_list)
-    return [Bspline._from_handle(h) for h in made]
+    # An input the compatibility left as it was comes back as the same object, as before the port.
+    return [
+        b if type(h) is type(b._h) and h.same_rep(b._h) else Bspline._from_handle(h)
+        for b, h in zip(bsplines, made, strict=True)
+    ]
