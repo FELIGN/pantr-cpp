@@ -129,7 +129,9 @@ def create_circle(
         True
     """
     h = ext.cad.create_circle(
-        radius, None if center is None else _points(center), _sweep_pair(angle)
+        np.asarray(radius, dtype=np.float64).item(),
+        None if center is None else _points(center),
+        _sweep_pair(angle),
     )
     return Bspline._from_handle(h)
 

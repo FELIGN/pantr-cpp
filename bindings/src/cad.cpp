@@ -4,7 +4,7 @@
 //
 // B-splines arrive as the compiled handles of either dtype (a `std::variant`), since the Python API
 // accepts B-splines of different dtypes in these functions and each one has its own rule for the
-// mixture, reproduced here from the Python implementation this replaces (design/ S7 section 2):
+// mixture, reproduced here from the Python implementation this replaces:
 //
 //   make_compat   homogeneous lists run in their own type; a mixed list is widened to double, made
 //                 compatible there, and each result cast back to its own input's dtype.
@@ -21,9 +21,8 @@
 //                 float64 only; a float32 input is refused after the same checks, for the same
 //                 reason.
 //
-// The functions that reach the pool (the refinement and slicing kernels) run with the GIL released,
-// once the arguments are plain C++ values; the primitives do not reach it and do not release it.
-#include "arrays.hpp"
+// None of these functions reaches the thread pool, so none releases the GIL (design §2.8: it is
+// released around a call that reaches the pool, and only then).
 #include "interface.hpp"
 
 #include "pantr/bspline/bspline.hpp"
@@ -65,7 +64,7 @@ namespace {
 using F32 = bspline::Bspline<float>;
 using F64 = bspline::Bspline<double>;
 /// A B-spline of either dtype.
-using AnyB = std::variant<F32, F64>;
+using AnyB = cad::AnyBspline;
 using Sweep = std::optional<std::array<double, 2>>;
 
 /// The message of every refusal of a mixture the Python implementation refused.
@@ -83,7 +82,8 @@ bspline::Bspline<T> as(const AnyB& b) {
 /// coarsest dtype present (`cad::detail::conservative_tier`).
 double tier_of(std::span<const AnyB> all) {
   const bool any_f32 = std::any_of(all.begin(), all.end(), is_f32);
-  return any_f32 ? cad::detail::conservative_tier<float>() : cad::detail::conservative_tier<double>();
+  return any_f32 ? cad::detail::conservative_tier<float>()
+                 : cad::detail::conservative_tier<double>();
 }
 
 /// Run `fn` on B-splines of type `T`: each argument converted to the first one's dtype.
@@ -96,7 +96,6 @@ AnyB in_first_dtype(const AnyB& first, Fn&& fn) {
 }
 
 AnyB ruled_any(const AnyB& b1, const AnyB& b2) {
-  const nb::gil_scoped_release release;
   return in_first_dtype(b1, [&](auto tag) {
     using T = typename decltype(tag)::type;
     return cad::create_ruled<T>(as<T>(b1), as<T>(b2));
@@ -105,7 +104,6 @@ AnyB ruled_any(const AnyB& b1, const AnyB& b2) {
 
 std::vector<AnyB> make_compat_any(const std::vector<AnyB>& bsplines,
                                   const std::optional<std::vector<long long>>& axes) {
-  const nb::gil_scoped_release release;
   std::vector<F32> f32;
   std::vector<F64> f64;
   for (const AnyB& b : bsplines) {
@@ -131,7 +129,6 @@ std::vector<AnyB> make_compat_any(const std::vector<AnyB>& bsplines,
 }
 
 AnyB coons_surface_any(const AnyB& v0, const AnyB& v1, const AnyB& u0, const AnyB& u1) {
-  const nb::gil_scoped_release release;
   const std::array<AnyB, 4> all = {v0, v1, u0, u1};
   const double tier = tier_of(all);
   return in_first_dtype(v0, [&](auto tag) {
@@ -149,7 +146,6 @@ std::array<std::array<bspline::Bspline<T>, 2>, 3> faces_as(const std::array<AnyB
 }
 
 AnyB coons_volume_any(const std::array<AnyB, 6>& f) {
-  const nb::gil_scoped_release release;
   const double tier = tier_of(f);
   return in_first_dtype(f[0], [&](auto tag) {
     using T = typename decltype(tag)::type;
@@ -158,7 +154,6 @@ AnyB coons_volume_any(const std::array<AnyB, 6>& f) {
 }
 
 AnyB join_any(const AnyB& b1, const AnyB& b2, long long axis) {
-  const nb::gil_scoped_release release;
   if (is_f32(b1) == is_f32(b2)) {
     if (is_f32(b1)) {
       return AnyB(cad::join<float>(std::get<F32>(b1), std::get<F32>(b2), axis));
@@ -176,12 +171,10 @@ AnyB join_any(const AnyB& b1, const AnyB& b2, long long axis) {
   return AnyB(joined);
 }
 
-AnyB revolution_any(const AnyB& b, const std::vector<double>& point, const std::vector<double>& axis,
-                    const Sweep& sweep) {
-  const nb::gil_scoped_release release;
-  const F64 revolved =
-      cad::create_revolution(as<double>(b), std::span<const double>(point),
-                             std::span<const double>(axis), sweep);
+AnyB revolution_any(const AnyB& b, const std::vector<double>& point,
+                    const std::vector<double>& axis, const Sweep& sweep) {
+  const F64 revolved = cad::create_revolution(as<double>(b), std::span<const double>(point),
+                                              std::span<const double>(axis), sweep);
   if (is_f32(b)) {
     // The arc is built in double, and the Python implementation refused the mixed spaces of the
     // result, after every check above; so does this.
@@ -214,7 +207,8 @@ void register_cad(nb::module_& m) {
       [](const std::vector<double>& p0, const std::vector<double>& p1) {
         return cad::create_line(std::span<const double>(p0), std::span<const double>(p1));
       },
-      nb::arg("p0"), nb::arg("p1"), "A degree-1 curve between two points (up to three coordinates).");
+      nb::arg("p0"), nb::arg("p1"),
+      "A degree-1 curve between two points (up to three coordinates).");
   m.def(
       "create_circle",
       [](double radius, const std::optional<std::vector<double>>& center, const Sweep& sweep) {
@@ -226,8 +220,9 @@ void register_cad(nb::module_& m) {
       nb::arg("radius"), nb::arg("center").none(), nb::arg("sweep").none(),
       "A rational quadratic circle or arc; `sweep` is (start, end) in radians, none for the full "
       "circle.");
-  m.def("create_bilinear", []() { return cad::create_bilinear(); },
-        "The bilinear unit square [-0.5, 0.5]^2 in the xy-plane.");
+  m.def(
+      "create_bilinear", []() { return cad::create_bilinear(); },
+      "The bilinear unit square [-0.5, 0.5]^2 in the xy-plane.");
   m.def(
       "create_bilinear",
       [](const std::vector<double>& values, const std::vector<std::size_t>& shape) {
@@ -236,8 +231,9 @@ void register_cad(nb::module_& m) {
       },
       nb::arg("values"), nb::arg("shape"),
       "A bilinear surface from corner coordinates, row-major over `shape` = (2, 2, rank).");
-  m.def("create_trilinear", []() { return cad::create_trilinear(); },
-        "The trilinear unit cube [-0.5, 0.5]^3.");
+  m.def(
+      "create_trilinear", []() { return cad::create_trilinear(); },
+      "The trilinear unit cube [-0.5, 0.5]^3.");
   m.def(
       "create_trilinear",
       [](const std::vector<double>& values, const std::vector<std::size_t>& shape) {
