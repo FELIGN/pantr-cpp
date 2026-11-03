@@ -201,7 +201,7 @@ class TestJoinSharedBoundaryConsistency:
     The tolerance is the Coons path's: :func:`~pantr.tolerance.get_conservative` times the
     largest absolute coordinate over the two rows being compared, read at the coarser of
     the two inputs' precisions.  Its derivation is in
-    ``pantr.cad._coons._verify_corners_2d``; :class:`TestJoinPrecision` covers the
+    ``verify_corners_2d`` (``include/pantr/cad/coons.hpp``); :class:`TestJoinPrecision` covers the
     precision half.
     """
 
@@ -432,13 +432,13 @@ class TestJoinSharedBoundaryConsistency:
         elevation: list[int] | None,
         extra_knots: npt.NDArray[np.float64] | None,
     ) -> None:
-        """Whatever ``_prepare_for_join`` has to do to the inputs, an agreeing seam stays agreeing.
+        """Whatever ``prepare_for_join`` has to do to the inputs, an agreeing seam stays agreeing.
 
         The second patch is given a different representation of the same geometry, so
         ``make_compat`` and the join-axis elevation both have work to do before the rows
         are compared.  Each runs the same operation on coefficients that already agree, so
         whatever it rounds it rounds identically on both sides.  This is the evidence for
-        the "bitwise equal" claim in ``_verify_shared_boundary``'s docstring, and it has
+        the "bitwise equal" claim in ``verify_shared_boundary``'s docstring, and it has
         to cover the combinations, not only one change at a time: the four cases here are
         the four that claim measures.  The both-sides case, where the readings are *not*
         bitwise equal, is
@@ -657,11 +657,11 @@ class TestJoinPrecision:
 
     @pytest.mark.parametrize("increment", [1, 2, 3])
     def test_a_float32_join_needing_degree_elevation_keeps_float32(self, increment: int) -> None:
-        """The dtype has to survive the operations ``_prepare_for_join`` runs, not only the join.
+        """The dtype has to survive the operations ``prepare_for_join`` runs, not only the join.
 
         The knot-dtype fix reads the incoming knots' dtype, so it is only right if
         ``elevate_degree`` preserves float32 too.  At ``increment >= 1`` the joined degree
-        exceeds 1, which also puts the result through ``_try_remove_junction_knots``, a
+        exceeds 1, which also puts the result through ``try_remove_junction_knots``, a
         third path that had no float32 coverage.
         """
         c1 = self._line([0, 0, 0], [1, 0, 0], np.float32)
@@ -860,7 +860,7 @@ class TestJoinRationalBoundary:
 
         The rational curve ends at the same point of space the polynomial one starts
         from, but carries weight 2 there while promotion gives the polynomial side
-        weight 1.  Refusing is the same verdict ``_verify_edges_3d`` reaches on the same
+        weight 1.  Refusing is the same verdict ``verify_edges_3d`` reaches on the same
         input, and the message reports a coefficient gap rather than a distance.
         """
         c1 = _rational_curve(np.array([[0, 0, 0, 1], [2, 0, 0, 2]], dtype=np.float64), 1)
