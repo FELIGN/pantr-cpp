@@ -11,10 +11,13 @@
 #pragma once
 
 #include "pantr/config.hpp"
+#include "pantr/core/errors.hpp"
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <span>
+#include <string>
 #include <vector>
 
 namespace pantr::thb::detail {
@@ -34,9 +37,14 @@ class FalseCountTable {
   ///         false.
   ///     counts (std::span<const std::int64_t>): Cells per axis, each at least 1.
   ///
+  /// Raises:
+  ///     capacity_error: The table, `prod(counts[k] + 1)` entries, does not fit in `size_t`. Its
+  ///         extents exceed the mask's by one per axis, so a mask that fits can still overflow
+  ///         it: one cell on each of 64 axes needs `2^64` entries.
+  ///
   /// Note:
-  ///     Inputs are assumed to be correct (no validation performed): `mask.size()` is the product
-  ///     of `counts`.
+  ///     Inputs are otherwise assumed to be correct (no validation performed): `mask.size()` is
+  ///     the product of `counts`.
   FalseCountTable(std::span<const std::uint8_t> mask, std::span<const std::int64_t> counts)
       : stride_(counts.size()) {
     const std::size_t dim = counts.size();
@@ -45,6 +53,12 @@ class FalseCountTable {
     for (std::size_t k = dim; k-- > 0;) {
       extent[k] = static_cast<std::size_t>(counts[k]) + 1;
       stride_[k] = total;
+      if (total > (std::numeric_limits<std::size_t>::max)() / extent[k]) {
+        throw capacity_error(
+            "THBSplineSpace: a level's summed-area table needs more entries than fit in memory "
+            "addresses (" +
+            std::to_string(dim) + " directions).");
+      }
       total *= extent[k];
     }
     table_.assign(total, 0);

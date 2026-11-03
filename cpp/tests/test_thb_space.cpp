@@ -16,6 +16,7 @@
 
 #include <pantr/bspline/space.hpp>
 #include <pantr/bspline/space_1d.hpp>
+#include <pantr/core/errors.hpp>
 #include <pantr/core/ndarray.hpp>
 #include <pantr/grid/hierarchical_grid.hpp>
 #include <pantr/grid/tensor_product_grid.hpp>
@@ -1182,6 +1183,17 @@ TEST_CASE("THBSplineSpace: the prolongation residual tolerance is 4096 eps of on
 }
 
 // ---- Detail kernels ----------------------------------------------------------------------------
+
+TEST_CASE("FalseCountTable: a table whose entries overflow size_t is refused") {
+  // One cell on each of 64 axes is a one-cell mask, but its table has 2^64 entries: the extents
+  // are one more than the mask's on every axis. The refusal is the implementation limit, raised
+  // before any allocation (an unchecked product wraps and the table is built too small).
+  const std::vector<std::int64_t> counts(64, 1);
+  const std::vector<std::uint8_t> mask(1, 1);
+  CHECK_THROWS_AS(pantr::thb::detail::FalseCountTable(mask, counts), pantr::capacity_error);
+  // 63 axes fit the product (2^63 entries); the allocation itself is what would then fail, so
+  // the table is not built here.
+}
 
 TEST_CASE("FalseCountTable: box queries equal a count over the box") {
   // A 3 x 4 x 2 mask from a fixed pattern: every box checked against a direct count.
