@@ -208,7 +208,7 @@ TUs compiled for different ISAs (function multiversioning) cannot hit an ODR lay
 `pyproject.toml`: `build-backend = scikit_build_core.build`, `requires = ["scikit-build-core==<pin>", "nanobind==<pin>"]`,
 `wheel.py-api = "cp312"`, `install.strip = false`, and `NOMINSIZE NOSTRIP` on every module (the `-Os`-after-`-O3`
 trap, silent, lesson 2; nanobind also links release modules with `-s` unless `NOSTRIP`),
-`install.components = ["python"]` (the test-only modules are in `testing`), `build-dir = "build/skbuild/{wheel_tag}"`, `cmake.define.PANTR_NATIVE_ARCH = "OFF"`,
+`install.components = ["python", "development"]` (the headers and CMake package, 1.5; the test-only modules are in `testing`), `build-dir = "build/skbuild/{wheel_tag}"`, `cmake.define.PANTR_NATIVE_ARCH = "OFF"`,
 `requires-python >= 3.12`, `numpy` and `scipy` runtime, Numba and threadpoolctl removed in the last stage.
 
 Development uses **no editable install**: `make ext` configures `build/dev` and installs the modules into `src/pantr/`

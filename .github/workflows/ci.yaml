@@ -408,6 +408,24 @@ jobs:
         run: |
           for wheel in wheelhouse/*.whl; do python -m zipfile -l "$wheel"; done | tee wheel-contents.txt
           if grep -i berf wheel-contents.txt; then exit 1; fi
+      # What the pantr-mpi sdist builds against: the installed wheel's headers and CMake package.
+      # cpp/tests/consumer finds COMPONENTS mpi-capsule through pantr.cmake_dir(), the package
+      # refuses pantr::pantr (the wheel has no third-party headers), and no header but the two
+      # MPI ones includes mpi.h. tests/test_cmake_dir.py checks the files on every platform.
+      - name: The wheel's CMake package serves find_package(pantr COMPONENTS mpi-capsule)
+        if: matrix.label == 'linux-x86_64'
+        run: |
+          python3 -m venv wheel-env
+          wheel-env/bin/pip install wheelhouse/*.whl
+          pantr_dir="$(wheel-env/bin/python -c 'import pantr; print(pantr.cmake_dir())')"
+          include="$(wheel-env/bin/python -c 'import pantr, pathlib; print(pathlib.Path(pantr.__file__).parent / "include")')"
+          cmake -DINCLUDE_DIR="$include" "-DALLOWED=pantr/mpi/mpi_table.hpp|pantr/mpi/mpi_communicator.hpp" \
+            -P cpp/tests/header_rules/check_no_mpi.cmake
+          cmake -S cpp/tests/consumer -B build/wheel-capsule -Dpantr_DIR="$pantr_dir" -DCONSUMER_CAPSULE_ONLY=ON
+          if cmake -S cpp/tests/consumer -B build/wheel-core -Dpantr_DIR="$pantr_dir" > wheel-core.log 2>&1; then
+            echo "pantr::pantr was found in the wheel's package, which has no third-party headers"; exit 1
+          fi
+          grep -q "mpi-capsule" wheel-core.log || { cat wheel-core.log; exit 1; }
       - uses: actions/upload-artifact@v7
         with:
           name: wheel-${{ matrix.label }}

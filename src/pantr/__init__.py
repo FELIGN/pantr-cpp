@@ -16,6 +16,7 @@ The main modules are:
 - :mod:`pantr.bezier`: Bézier curves/surfaces and root finding for Bernstein polynomials.
 - :mod:`pantr.mpi`: Optional MPI-distributed B-spline / THB-spline spaces (``mpi`` extra).
 - :mod:`pantr.viz`: Optional PyVista/VTK visualization of geometries (``viz`` extra).
+- :func:`pantr.cmake_dir`: The installed CMake package, for building against pantr's C++ headers.
 """
 
 from typing import Final
@@ -35,6 +36,7 @@ from . import (
     tolerance,
     transform,
 )
+from ._cmake import cmake_dir
 from ._parallel import get_num_threads, num_threads, set_num_threads
 from .basis import _basis_utils  # noqa: F401
 
@@ -52,6 +54,7 @@ __all__ = [
     "bspline",
     "cad",
     "change_basis",
+    "cmake_dir",
     "geometry",
     "get_num_threads",
     "grid",

@@ -73,3 +73,31 @@ if(COMPONENTS STREQUAL "mpi")
            -DCMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY=OFF)
   run_step(build-mpi "${CMAKE_COMMAND}" --build "${WORK_DIR}/mpi")
 endif()
+
+# Component development alone, as the Python wheel installs it: pantr's headers and its package,
+# no bundled third-party headers. COMPONENTS mpi-capsule is found there (what the pantr-mpi sdist
+# asks for), and pantr::pantr is refused with the package's own message.
+set(dev_prefix "${WORK_DIR}/development")
+run_step(install-development "${CMAKE_COMMAND}" --install "${BUILD_DIR}" --prefix "${dev_prefix}"
+         --component development)
+file(GLOB_RECURSE dev_third_party RELATIVE "${dev_prefix}" "${dev_prefix}/*")
+list(FILTER dev_third_party INCLUDE REGEX "third_party/|THIRD_PARTY_NOTICES")
+if(dev_third_party)
+  message(FATAL_ERROR "component development installed third-party files: ${dev_third_party}")
+endif()
+set(common_dev -G "${GENERATOR}" -DCMAKE_MAKE_PROGRAM=${MAKE_PROGRAM}
+               -DCMAKE_CXX_COMPILER=${CXX_COMPILER} -DCMAKE_BUILD_TYPE=${BUILD_TYPE}
+               -DCMAKE_PREFIX_PATH=${dev_prefix})
+if(MT_PROGRAM)
+  list(APPEND common_dev -DCMAKE_MT=${MT_PROGRAM})
+endif()
+run_step(configure-development-capsule "${CMAKE_COMMAND}" -S "${CONSUMER_SOURCE}"
+         -B "${WORK_DIR}/development-capsule" ${common_dev} ${isolate} -DCONSUMER_CAPSULE_ONLY=ON)
+execute_process(COMMAND "${CMAKE_COMMAND}" -S "${CONSUMER_SOURCE}" -B "${WORK_DIR}/development-core"
+                        ${common_dev} ${isolate}
+                RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+if(rc EQUAL 0 OR NOT err MATCHES "provides COMPONENTS[ \t\r\n]+mpi-capsule[ \t\r\n]+only")
+  message(FATAL_ERROR "pantr::pantr from component development alone must be refused by the "
+                      "package (exit ${rc}):\n${out}${err}")
+endif()
+message(STATUS "[configure-development-core] refused, as it must be")

@@ -22,6 +22,7 @@ def test_package_all_exports() -> None:
         "bspline",
         "cad",
         "change_basis",
+        "cmake_dir",
         "geometry",
         "get_num_threads",
         "grid",

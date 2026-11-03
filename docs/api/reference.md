@@ -88,6 +88,12 @@ Thread-pool control for the Numba kernels (see {doc}`/guide/parallelism`):
 .. autofunction:: pantr.num_threads
 ```
 
+The C++ headers and CMake package that the wheel ships, for building against pantr:
+
+```{eval-rst}
+.. autofunction:: pantr.cmake_dir
+```
+
 ```{eval-rst}
 .. automodule:: pantr.mpi
    :members:

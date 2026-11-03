@@ -5,6 +5,8 @@
 # Targets: pantr::pantr (always, unless only mpi-capsule is requested), pantr::mpi_capsule,
 # pantr::mpi (component mpi), pantr::metis (component metis, which needs the user's METIS). Set
 # PANTR_NATIVE_ARCH to OFF before find_package to build without the native-ISA flag (default ON).
+# The Python wheel's copy of this package carries no third-party headers and offers mpi-capsule
+# only.
 @PACKAGE_INIT@
 
 include(CMakeFindDependencyMacro)
@@ -14,6 +16,19 @@ include(CMakeFindDependencyMacro)
 set(_pantr_capsule_only FALSE)
 if(pantr_FIND_COMPONENTS STREQUAL "mpi-capsule")
   set(_pantr_capsule_only TRUE)
+endif()
+
+# The Python wheel's package (pantr.cmake_dir()) has pantr's headers but not the bundled
+# third-party ones, so it offers mpi-capsule alone: refuse the rest here, by name, rather than
+# with a compile error in the consumer.
+if(NOT _pantr_capsule_only AND NOT EXISTS "@PACKAGE_PANTR_INSTALL_THIRD_PARTY_DIR@")
+  set(pantr_FOUND FALSE)
+  string(CONCAT pantr_NOT_FOUND_MESSAGE
+      "this pantr (${CMAKE_CURRENT_LIST_DIR}) has pantr's headers but not the third-party headers "
+      "pantr::pantr needs (Eigen, Spectra, Kokkos mdspan, Boost.Multiprecision and Boost.Config), "
+      "as in the Python wheel's package, which provides COMPONENTS mpi-capsule only. For "
+      "pantr::pantr, use a pantr installed with CMake (cmake --install), which bundles them.")
+  return()
 endif()
 
 if(NOT _pantr_capsule_only)

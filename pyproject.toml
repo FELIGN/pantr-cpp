@@ -121,9 +121,11 @@ metadata.version.regex = '^__version__[^=]*=\s*"(?P<value>[^"]+)"'
 # side asks for Python's SABIModule component when PANTR_STABLE_ABI is ON).
 wheel.py-api = "cp312"
 wheel.packages = ["src/pantr"]
-# Only the extension modules: pantr's headers and CMake package install from a CMake build, and the
-# test-only modules (component `testing`) never ship.
-install.components = ["python"]
+# The extension modules, and pantr's own headers and CMake package (component `development`, under
+# pantr/include and pantr/share/cmake/pantr, found by pantr.cmake_dir()) so that pantr-mpi builds
+# from its sdist against this wheel. Not the bundled third-party headers (component `third_party`),
+# which only a CMake install carries, nor the test-only modules (component `testing`).
+install.components = ["python", "development"]
 # scikit-build-core strips at install by default; keep the symbols, and with NOMINSIZE in the CMake
 # the -O3 the release build asks for (design/packaging.md).
 install.strip = false
@@ -137,7 +139,9 @@ version = ">=3.28"
 [tool.scikit-build.cmake.define]
 PANTR_BUILD_PYTHON = "ON"
 PANTR_BUILD_TESTS = "OFF"
-PANTR_INSTALL = "OFF"
+PANTR_INSTALL = "ON"
+CMAKE_INSTALL_INCLUDEDIR = "pantr/include"
+PANTR_INSTALL_CMAKEDIR = "pantr/share/cmake/pantr"
 PANTR_NATIVE_ARCH = "OFF"
 PANTR_STABLE_ABI = "ON"
 PANTR_MULTI_ISA = "ON"

@@ -12,6 +12,10 @@ option(PANTR_NATIVE_ARCH "Compile for the build machine's ISA (-march=native)" O
 option(PANTR_FORCE_SCALAR "Define PANTR_SIMD_FORCE_SCALAR (the scalar SIMD fallback)" OFF)
 option(PANTR_WARNINGS_AS_ERRORS "Add -Werror (/WX) to pantr's own warnings target" OFF)
 option(PANTR_INSTALL "Install pantr's headers, CMake package and bundled dependency headers" ON)
+# Relative to the install prefix. The wheel sets it to pantr/share/cmake/pantr (and
+# CMAKE_INSTALL_INCLUDEDIR to pantr/include), so the package sits inside the Python package.
+set(PANTR_INSTALL_CMAKEDIR "${CMAKE_INSTALL_LIBDIR}/cmake/pantr"
+    CACHE STRING "Where pantr's CMake package is installed, relative to the install prefix")
 option(PANTR_BUILD_TESTS "Build the C++ test suite" ${PROJECT_IS_TOP_LEVEL})
 option(PANTR_BUILD_PYTHON "Build the Python extension modules (_pantr, _pantr_cpu)" OFF)
 option(PANTR_STABLE_ABI "Build the Python extension modules for the stable ABI (abi3, CPython >= 3.12)"

@@ -27,9 +27,13 @@ of every contributor rest on it. Architecture: `design/port_design.md` §1.6 to 
   versioned C structs, never each other's C++ types, so their binaries need not agree on anything
   beyond those layouts and the nanobind pin.
 - **Headers in the wheel**, so that `pantr-mpi` and `pantr-berf` can be built from their sdists
-  against an installed `pantr` (§1.5). Not built yet: it lands with the first distribution that
-  needs it (the MPI stage), together with a CMake package whose bundled dependencies the wheel
-  does not carry.
+  against an installed `pantr` (§1.5): the wheel installs CMake component `development`, pantr's
+  headers under `pantr/include` and its CMake package under `pantr/share/cmake/pantr`
+  (`pantr.cmake_dir()`), and not component `third_party`, the bundled dependency headers. That
+  package therefore offers `find_package(pantr COMPONENTS mpi-capsule)` alone and refuses
+  `pantr::pantr` with a message naming what is missing. `pantr-mpi` lists `pantr` at the same
+  version among its build requirements, and scikit-build-core finds the package in the build
+  environment's site-packages.
 - **No editable install.** `make ext` builds into `build/dev` and installs the modules into
   `src/pantr`, where `pytest.ini`'s `pythonpath = src` finds them, so every worktree tests its own
   build. Two guards keep a stale module from passing as somebody else's regression: the module's
