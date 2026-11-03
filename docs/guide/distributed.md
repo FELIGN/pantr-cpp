@@ -6,8 +6,9 @@ assembly. The design keeps a clear separation:
 
 - a **serial windowing core** (in `pantr.grid` / `pantr.bspline`) that needs no MPI;
 - the **MPI layer** (`pantr.mpi`) that wraps it per rank — it ships with PaNTr and
-  becomes usable once `mpi4py` is installed (the `mpi` extra is just a convenience for
-  that; see the Installation section below).
+  becomes usable with an `mpi4py` communicator once `mpi4py` and `pantr-mpi` are
+  installed (the `mpi` extra installs both; see the Installation section below), and with a
+  duck-typed communicator without either.
 
 Every rank holds a **redundant, self-contained** local space covering the cells it
 owns plus their support halo, so basis evaluation and element assembly are purely
@@ -39,7 +40,7 @@ it identically.
 
 ```bash
 pip install pantr                  # serial-only, no mpi4py dependency
-pip install 'pantr[mpi]'           # + mpi4py, for distributed spaces (needs an MPI library)
+pip install 'pantr[mpi]'           # + mpi4py and pantr-mpi, for distributed spaces (needs an MPI library)
 pip install 'pantr[metis]'         # + pymetis, for partition_graph(backend="metis")
 ```
 
@@ -61,7 +62,7 @@ from pantr.grid import partition_grid, tensor_product_grid
 comm = MPI.COMM_WORLD
 space = create_uniform_space([2, 2], [64, 64])      # identical on every rank
 grid = tensor_product_grid(space)                   # the knot-span grid
-partition = partition_grid(grid, comm.size)         # deterministic -> same on all ranks
+partition = partition_grid(grid, comm.size)         # integer-only here -> same on all ranks
 ```
 
 | `backend` | dependency | balances | shape | good for |
@@ -70,8 +71,11 @@ partition = partition_grid(grid, comm.size)         # deterministic -> same on a
 | `"rcb"` | none | total weight | boxes | THB / immersed; arbitrary / prime `n_parts` |
 | `"auto"` (default) | none | — | — | `block` when tensor-product, unweighted, all-active and `n_parts` factors onto the axes; otherwise `rcb` |
 
-The partitioner is **deterministic**, so every rank computes the *same* partition
-with no communication.
+Called on every rank, a partitioner gives the same partition everywhere only where it
+works in integers (the `block` backend). One that works in floating point (`rcb`,
+the spectral graph partition) can round differently on two machines, so
+`create_distributed_space` computes the partition on rank 0 only and sends it to the other
+ranks (one `allgather`; nothing is sent with one rank).
 
 ## Coupling-graph partitioning
 
@@ -231,7 +235,7 @@ ds = DistributedSpace(space, partition, mesh.comm)
 ## Testing distributed code
 
 The distributed objects are duck-typed on the communicator (only `rank` / `size` /
-`allgather` are read), so most behavior is unit-testable serially with a fake
+`allgather` / `allreduce` are used), so most behavior is unit-testable serially with a fake
 comm. Genuine multi-rank tests live under `tests/mpi/`, are skipped unless
 `PANTR_RUN_MPI` is set, and run under a launcher:
 

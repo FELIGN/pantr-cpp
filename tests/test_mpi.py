@@ -239,3 +239,42 @@ def test_mpi_extra_pins_pantr_mpi_at_this_version() -> None:
     assert (root / "bindings/mpi" / version_input).resolve() == (
         root / "src/pantr/__init__.py"
     ).resolve()
+
+
+def test_mpi_below_funneled_is_refused() -> None:
+    """An mpi4py communicator of an MPI initialized at MPI_THREAD_SINGLE raises RuntimeError.
+
+    Run in a child process, since the thread level is fixed when MPI is initialized.
+    """
+    if importlib.util.find_spec("mpi4py") is None:
+        pytest.skip("mpi4py not installed")
+    try:
+        importlib.import_module("pantr_mpi._build_info")
+    except ImportError:
+        pytest.skip("pantr-mpi is not built here")
+    script = (
+        "import mpi4py\n"
+        "mpi4py.rc.thread_level = 'single'\n"
+        "from mpi4py import MPI\n"
+        "from pantr.bspline import create_uniform_space\n"
+        "import pantr.mpi\n"
+        "try:\n"
+        "    pantr.mpi.create_distributed_space(create_uniform_space([2], [4]), MPI.COMM_WORLD)\n"
+        "except RuntimeError as exc:\n"
+        "    print('refused:', exc)\n"
+        "else:\n"
+        "    print('accepted, level', MPI.Query_thread())\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=subprocess_env(),
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+    if "accepted" in result.stdout and "level 0" not in result.stdout:
+        pytest.skip(f"this MPI raised the requested thread level: {result.stdout.strip()}")
+    assert "refused:" in result.stdout, result.stdout
+    assert "MPI_THREAD_FUNNELED" in result.stdout

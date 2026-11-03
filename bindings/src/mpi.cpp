@@ -85,11 +85,20 @@ nb::object to_python(std::span<const T> data, const std::vector<std::size_t>& sh
   return nb::cast(to_numpy(std::move(a)));
 }
 
-/// Read one gathered entry as `numpy.ascontiguousarray(x, dtype)`, appending it to `out`.
+/// `int(x)`, as Python spells it.
+int as_int(nb::handle x) { return nb::cast<int>(nb::module_::import_("builtins").attr("int")(x)); }
+
+/// `numpy.asarray(x, dtype)` made C-contiguous, keeping its rank (a 0-d entry stays 0-d, as the
+/// previous Python's `numpy.asarray` kept it, so a consumer can refuse it).
+nb::object contiguous(const nb::module_& np, nb::handle x, const char* dtype) {
+  return np.attr("require")(np.attr("asarray")(x, nb::arg("dtype") = dtype),
+                            nb::arg("requirements") = "C");
+}
+
+/// Read one gathered entry as `contiguous(x, dtype)`, appending it to `out`.
 template <class T>
 void append_entry(const nb::module_& np, nb::handle x, Gathered<T>& out) {
-  nb::object arr = np.attr("ascontiguousarray")(x, nb::arg("dtype") = numpy_dtype<T>());
-  const auto a = nb::cast<Any<T>>(arr);
+  const auto a = nb::cast<Any<T>>(contiguous(np, x, numpy_dtype<T>()));
   out.shapes.push_back(shape_of(a));
   out.data.insert(out.data.end(), a.data(), a.data() + a.size());
 }
@@ -102,8 +111,10 @@ class PyCommunicator {
  public:
   explicit PyCommunicator(nb::object comm) : comm_(std::move(comm)) {}
 
-  [[nodiscard]] int rank() const { return nb::cast<int>(nb::int_(comm_.attr("rank"))); }
-  [[nodiscard]] int size() const { return nb::cast<int>(nb::int_(comm_.attr("size"))); }
+  // Read as the previous Python read them, `int(comm.rank)`: a float is truncated, `None` raises
+  // TypeError.
+  [[nodiscard]] int rank() const { return as_int(comm_.attr("rank")); }
+  [[nodiscard]] int size() const { return as_int(comm_.attr("size")); }
 
   template <class T>
   [[nodiscard]] Gathered<T> allgatherv(const Block<T>& b) const {
@@ -126,7 +137,8 @@ class PyCommunicator {
     const nb::module_ np = nb::module_::import_("numpy");
     std::pair<Gathered<std::int64_t>, Gathered<double>> out;
     for (nb::handle item : result) {
-      const auto pair = nb::cast<nb::tuple>(nb::borrow(item));
+      // Any pair, as the previous Python's tuple unpacking took it.
+      const nb::list pair = nb::list(nb::borrow(item));
       if (pair.size() != 2) {
         throw value_error("allgather of (dofs, coefficients) returned an entry of " +
                           std::to_string(pair.size()) + " items; expected 2.");
@@ -143,8 +155,7 @@ class PyCommunicator {
     nb::object result = comm_.attr("allreduce")(
         to_python(data, std::vector<std::size_t>(shape.begin(), shape.end())));
     const nb::module_ np = nb::module_::import_("numpy");
-    nb::object arr = np.attr("ascontiguousarray")(result, nb::arg("dtype") = numpy_dtype<T>());
-    const auto a = nb::cast<Any<T>>(arr);
+    const auto a = nb::cast<Any<T>>(contiguous(np, result, numpy_dtype<T>()));
     NdArray<T> out(shape_of(a), for_overwrite);
     std::copy(a.data(), a.data() + a.size(), out.data());
     return out;
@@ -197,23 +208,23 @@ void def_collocate(nb::module_& m) {
 
 template <class T, class Cm>
 void def_l2(nb::module_& m) {
-  m.def(
-      ("l2_project_" + tag<T>() + "_" + tag<Cm>()).c_str(),
-      [](nb::handle comm, const bspline::L2Projection<T>& proj, const Vec<std::int32_t>& cell_owner,
-         const Any<Cm>& values, std::size_t rank, const std::vector<Any<Cm>>& traces, double tol) {
-        const AnyCommunicator c = to_communicator(comm);
-        std::vector<std::span<const Cm>> spans;
-        spans.reserve(traces.size());
-        for (const Any<Cm>& t : traces) {
-          spans.push_back(flat_of(t));
-        }
-        return to_numpy(mpi::l2_project_values_distributed(
-            c, proj, std::span<const std::int32_t>(cell_owner.data(), cell_owner.shape(0)),
-            flat_of(values), rank, spans, tol));
-      },
-      nb::arg("comm"), nb::arg("projection"), nb::arg("cell_owner").noconvert(),
-      nb::arg("values").noconvert(), nb::arg("rank"), nb::arg("traces").noconvert(), nb::arg("tol"),
-      "Sum the owned-cell loads over the ranks and solve (space T, values Cm).");
+  m.def(("l2_project_" + tag<T>() + "_" + tag<Cm>()).c_str(),
+        [](nb::handle comm, const bspline::L2Projection<T>& proj,
+           const Vec<std::int32_t>& cell_owner, const Any<Cm>& values, std::size_t n_components,
+           const std::vector<Any<Cm>>& traces, double tol) {
+          const AnyCommunicator c = to_communicator(comm);
+          std::vector<std::span<const Cm>> spans;
+          spans.reserve(traces.size());
+          for (const Any<Cm>& t : traces) {
+            spans.push_back(flat_of(t));
+          }
+          return to_numpy(mpi::l2_project_values_distributed(
+              c, proj, std::span<const std::int32_t>(cell_owner.data(), cell_owner.shape(0)),
+              flat_of(values), n_components, spans, tol));
+        },
+        nb::arg("comm"), nb::arg("projection"), nb::arg("cell_owner").noconvert(),
+        nb::arg("values").noconvert(), nb::arg("n_components"), nb::arg("traces").noconvert(),
+        nb::arg("tol"), "Sum the owned-cell loads over the ranks and solve (space T, values Cm).");
 }
 
 }  // namespace
@@ -245,7 +256,6 @@ void register_mpi(nb::module_& m) {
   def_collocate<float, float>(m);
 
   def_l2<double, double>(m);
-  def_l2<double, float>(m);
   def_l2<float, double>(m);
   def_l2<float, float>(m);
 

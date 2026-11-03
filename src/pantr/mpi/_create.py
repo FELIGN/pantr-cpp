@@ -56,8 +56,8 @@ def create_distributed_space(  # noqa: PLR0913 -- public factory mirrors the par
         global_space (BsplineSpace | THBSplineSpace): The global space to distribute,
             identical on every rank.  A ``BsplineSpace`` must be non-periodic.
         comm (Any): An MPI communicator (e.g. ``mpi4py.MPI.COMM_WORLD``), or a duck-typed
-            one: its ``size`` is read, and with more than one rank its ``rank`` and its
-            ``allgather`` are used.
+            one: its ``rank`` and ``size`` are read, and with more than one rank its
+            ``allgather`` is used.
         method (str): Partitioning strategy.  ``"grid"`` (default) splits the cell grid
             geometrically via :func:`~pantr.grid.partition_grid`; ``"graph"`` partitions
             the cell-coupling graph (:func:`~pantr.bspline.coupling_graph` +

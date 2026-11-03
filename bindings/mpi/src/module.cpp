@@ -1,8 +1,9 @@
 // The _pantr_mpi extension module (package pantr_mpi, distribution pantr-mpi): the MPI glue and
 // nothing else (design §1.7). It turns an mpi4py communicator into a `comm_capsule.h` table over
-// MPI (`pantr::mpi::make_mpi_table`), handed to `_pantr` in a capsule, and reports the MPI it was
-// built against. No numerics, hence no ISA rungs and no pantr core header: it needs only
-// comm_capsule.h and mpi_table.hpp, the `mpi-capsule` component.
+// MPI (`pantr::mpi::make_mpi_table`), handed to `_pantr` in a capsule, and reports the MPI
+// implementation its mpi.h names (`compiled_implementation`, which CI checks against the family
+// pantr_mpi/_build_info.py records). No numerics, hence no ISA rungs and no pantr core header: it
+// needs only comm_capsule.h and mpi_table.hpp, the `mpi-capsule` component.
 #include "pantr/mpi/comm_capsule.h"
 #include "pantr/mpi/mpi_table.hpp"
 
@@ -15,7 +16,6 @@
 #include <mpi4py/mpi4py.h>
 
 #include <nanobind/nanobind.h>
-#include <nanobind/stl/string.h>
 
 #include <array>
 #include <cstddef>
@@ -53,8 +53,6 @@ NB_MODULE(_pantr_mpi, m) {
     throw nb::python_error();
   }
   m.attr("compiled_implementation") = kCompiledImplementation;
-  m.attr("comm_abi_version") = PANTR_MPI_COMM_ABI_VERSION;
-  m.attr("comm_capsule_name") = PANTR_MPI_COMM_CAPSULE_NAME;
 
   m.def(
       "comm_capsule",
@@ -76,29 +74,4 @@ NB_MODULE(_pantr_mpi, m) {
       },
       nb::arg("comm"),
       "A capsule holding the communicator table over an mpi4py communicator (keeps it alive).");
-
-  m.def(
-      "query_thread",
-      []() {
-        int provided = 0;
-        if (MPI_Query_thread(&provided) != MPI_SUCCESS) {
-          throw std::runtime_error("MPI_Query_thread failed");
-        }
-        return provided;
-      },
-      "The thread level MPI was initialized with.");
-
-  m.def(
-      "library_version",
-      []() {
-        std::array<char, MPI_MAX_LIBRARY_VERSION_STRING> text{};
-        int len = 0;
-        if (MPI_Get_library_version(text.data(), &len) != MPI_SUCCESS) {
-          throw std::runtime_error("MPI_Get_library_version failed");
-        }
-        return std::string(text.data(), static_cast<std::size_t>(len));
-      },
-      "The MPI library's version string, as the loaded library reports it.");
-
-  m.attr("THREAD_FUNNELED") = static_cast<int>(MPI_THREAD_FUNNELED);
 }

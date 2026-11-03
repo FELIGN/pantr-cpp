@@ -109,8 +109,8 @@ def _collocate(  # noqa: PLR0913 -- the solve, its nodes and constraints, the da
     The collocation system is built from the nodes before the collective, so an
     inconsistent node set raises on every rank before any rank enters it. The gathered
     blocks are concatenated in rank order (their component count read from the first
-    non-empty block), rounded to ``space.dtype``, and solved one component at a time, as the
-    serial :func:`~pantr.bspline.interpolate_bspline` solves them.
+    non-empty block), rounded to ``space.dtype``, and solved by the same compiled
+    tensor-product solve as the serial :func:`~pantr.bspline.interpolate_bspline`.
 
     Args:
         space (BsplineSpace): The global target space.

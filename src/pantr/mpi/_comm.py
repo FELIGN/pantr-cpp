@@ -78,8 +78,8 @@ def check_mpi_family(family: str, built_against: str, library_version: str) -> N
     expected = _FAMILY_NAMES.get(family, family)
     raise ImportError(
         f"pantr-mpi was built for {expected} ({built_against}), but mpi4py loaded "
-        f"{loaded_text}. Use an MPI of that family, or build pantr-mpi from source against "
-        f"this one: pip install --no-binary pantr-mpi pantr-mpi"
+        f"{loaded_text}. Use an MPI of that family, or build pantr-mpi from pantr's source "
+        f"tree against this one (bindings/mpi, with this MPI's compiler wrappers on PATH)"
     )
 
 
@@ -113,7 +113,7 @@ def _load_pantr_mpi() -> ModuleType:
             raise ImportError(
                 f"pantr-mpi's extension, built for {expected} ({info.BUILT_AGAINST}), failed "
                 f"to load against the MPI library mpi4py loaded "
-                f"({mpi.Get_library_version().splitlines()[0]}): {exc}"
+                f"({(mpi.Get_library_version().splitlines() or ['no MPI library'])[0]}): {exc}"
             ) from exc
         _loaded["module"] = module
         return module

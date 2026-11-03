@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <limits>
 #include <span>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -193,6 +194,29 @@ TEST_CASE("mpi distributed interpolation equals the serial interpolant") {
   for (std::size_t i = 0; i < a.size(); ++i) {
     CHECK(a[i] == b[i]);
   }
+}
+
+TEST_CASE("mpi a collective from another thread is refused under MPI_THREAD_FUNNELED") {
+  int provided = 0;
+  MPI_Query_thread(&provided);
+  // Above FUNNELED (an MPI that raised the level it was asked for) any thread may call MPI, and a
+  // call from one thread would be a collective the other ranks never enter: run only at FUNNELED,
+  // where the refusal comes before any MPI call.
+  if (provided != MPI_THREAD_FUNNELED) {
+    return;
+  }
+  const MpiCommunicator c = world();
+  bool refused = false;
+  std::thread other([&] {
+    const std::vector<double> v{1.0};
+    try {
+      static_cast<void>(c.allgatherv(pantr::mpi::block_1d<double>(v)));
+    } catch (const pantr::state_error&) {
+      refused = true;
+    }
+  });
+  other.join();
+  CHECK(refused);
 }
 
 int main(int argc, char** argv) {

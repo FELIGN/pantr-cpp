@@ -60,27 +60,12 @@ def l2_project_f64_f64(
         NDArray[numpy.int32], dict(shape=(None,), order="C", device="cpu", writable=False)
     ],
     values: Annotated[NDArray[numpy.float64], dict(order="C", device="cpu", writable=False)],
-    rank: int,
+    n_components: int,
     traces: Sequence[
         Annotated[NDArray[numpy.float64], dict(order="C", device="cpu", writable=False)]
     ],
     tol: float,
 ) -> NDArray[numpy.float64]:
-    """Sum the owned-cell loads over the ranks and solve (space T, values Cm)."""
-
-def l2_project_f64_f32(
-    comm: object,
-    projection: pantr._pantr.bspline.L2ProjectionF64,
-    cell_owner: Annotated[
-        NDArray[numpy.int32], dict(shape=(None,), order="C", device="cpu", writable=False)
-    ],
-    values: Annotated[NDArray[numpy.float32], dict(order="C", device="cpu", writable=False)],
-    rank: int,
-    traces: Sequence[
-        Annotated[NDArray[numpy.float32], dict(order="C", device="cpu", writable=False)]
-    ],
-    tol: float,
-) -> NDArray[numpy.float32]:
     """Sum the owned-cell loads over the ranks and solve (space T, values Cm)."""
 
 def l2_project_f32_f64(
@@ -90,7 +75,7 @@ def l2_project_f32_f64(
         NDArray[numpy.int32], dict(shape=(None,), order="C", device="cpu", writable=False)
     ],
     values: Annotated[NDArray[numpy.float64], dict(order="C", device="cpu", writable=False)],
-    rank: int,
+    n_components: int,
     traces: Sequence[
         Annotated[NDArray[numpy.float64], dict(order="C", device="cpu", writable=False)]
     ],
@@ -105,7 +90,7 @@ def l2_project_f32_f32(
         NDArray[numpy.int32], dict(shape=(None,), order="C", device="cpu", writable=False)
     ],
     values: Annotated[NDArray[numpy.float32], dict(order="C", device="cpu", writable=False)],
-    rank: int,
+    n_components: int,
     traces: Sequence[
         Annotated[NDArray[numpy.float32], dict(order="C", device="cpu", writable=False)]
     ],

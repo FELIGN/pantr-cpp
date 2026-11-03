@@ -84,7 +84,8 @@ template <class T>
 /// Attributes:
 ///     data (std::vector<T>): The blocks concatenated.
 ///     shapes (std::vector<std::vector<std::size_t>>): Each block's extents, as the sender gave
-///         them (a duck-typed communicator may return other ranks, `0` to `2` extents included).
+///         them; a duck-typed communicator may return any number of extents, `0` included, which
+///         the consumers check.
 template <class T>
 struct Gathered {
   std::vector<T> data;
@@ -520,6 +521,14 @@ void deliver(const Gathered<T>& g, pantr_mpi_sink* sink) {
   }
 }
 
+/// Raise unless a reduction returned as many elements as it was sent.
+inline void check_reduced(std::size_t got, std::size_t sent) {
+  if (got != sent) {
+    throw value_error("allreduce_sum returned " + std::to_string(got) + " elements for " +
+                      std::to_string(sent) + ".");
+  }
+}
+
 template <Communicator C>
 struct TableFns {
   static C& self(void* ctx) noexcept { return *static_cast<C*>(ctx); }
@@ -572,11 +581,13 @@ struct TableFns {
         const NdArray<double> r =
             self(ctx).allreduce_sum(std::span<const double>(static_cast<const double*>(send), n),
                                     std::span<const std::size_t>(shape));
+        check_reduced(r.size(), n);
         std::copy(r.data(), r.data() + n, static_cast<double*>(recv));
       } else if (dtype == PANTR_MPI_FLOAT32) {
         const NdArray<float> r =
             self(ctx).allreduce_sum(std::span<const float>(static_cast<const float*>(send), n),
                                     std::span<const std::size_t>(shape));
+        check_reduced(r.size(), n);
         std::copy(r.data(), r.data() + n, static_cast<float*>(recv));
       } else {
         throw value_error("allreduce_sum: unsupported element type " + std::to_string(dtype));

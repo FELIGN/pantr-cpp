@@ -1274,8 +1274,8 @@ TEST_CASE(
     return Outcome{"value_error", "cell_owner values must lie in [-1, " + std::to_string(n) +
                                       "); got range " + got + "."};
   };
-  constexpr std::int64_t kMax = std::numeric_limits<std::int32_t>::max();
-  constexpr std::int64_t kMin = std::numeric_limits<std::int32_t>::min();
+  constexpr std::int64_t kMax = (std::numeric_limits<std::int32_t>::max)();
+  constexpr std::int64_t kMin = (std::numeric_limits<std::int32_t>::min)();
   const Outcome ok{"none", ""};
   const std::vector<Row> rows{
       // accepted

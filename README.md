@@ -80,9 +80,10 @@ for a full walkthrough from this first curve to NURBS, CAD modeling, and refinem
 Every install of PaNTr includes **all** of its modules — `pantr.viz` and `pantr.mpi`
 among them. Those two stay dormant until their third-party backend is importable, and
 activate automatically once it is; until then, calling into them raises a clear,
-actionable error (nothing else is affected). The "extras" below add **no PaNTr code** —
-they are just a convenience that installs the backend for you, so `pip install
-"pantr[viz]"` and `pip install pyvista` are equivalent.
+actionable error (nothing else is affected). The "extras" below are a convenience that
+installs the backend for you, so `pip install "pantr[viz]"` and `pip install pyvista` are
+equivalent. The `mpi` extra is the exception: besides `mpi4py` it installs `pantr-mpi`,
+pantr's own MPI glue, built for one MPI family, which an `mpi4py` communicator needs.
 
 | Capability | Module | Backend it needs | Install (extra or direct) |
 |---|---|---|---|

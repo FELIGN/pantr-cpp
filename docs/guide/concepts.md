@@ -138,11 +138,12 @@ then, using them raises a clear error). They are never imported by the core:
 
 - {mod}`pantr.viz` — PyVista/VTK rendering and export; needs `pyvista`
   ({doc}`/guide/visualization`).
-- {mod}`pantr.mpi` — MPI-distributed spaces; needs `mpi4py`
+- {mod}`pantr.mpi` — MPI-distributed spaces; needs `mpi4py` and `pantr-mpi`
   ({doc}`/guide/distributed`).
 
-The `viz` / `mpi` / `metis` install extras are just a convenience that pulls those
-backends in; installing the backend directly (e.g. `pip install pyvista`) is equivalent.
+The `viz` / `mpi` / `metis` install extras are a convenience that pulls those backends in;
+installing the backend directly (e.g. `pip install pyvista`) is equivalent, except that the
+`mpi` extra also installs `pantr-mpi`, pantr's MPI glue, which an `mpi4py` communicator needs.
 
 Geometric predicates that need a floating-point tolerance (knot-multiplicity tests,
 endpoint detection) draw it from {mod}`pantr.tolerance`, so the whole library shares one

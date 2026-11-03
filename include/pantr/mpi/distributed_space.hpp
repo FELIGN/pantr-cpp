@@ -117,7 +117,7 @@ template <Communicator C, class F>
   std::vector<std::int32_t> owner;
   owner.reserve(root.size() - 2);
   for (std::size_t i = 2; i < root.size(); ++i) {
-    if (root[i] < std::numeric_limits<std::int32_t>::min() ||
+    if (root[i] < (std::numeric_limits<std::int32_t>::min)() ||
         root[i] > (std::numeric_limits<std::int32_t>::max)()) {
       throw value_error("rank 0's partition payload holds an owner outside int32.");
     }

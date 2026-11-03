@@ -17,8 +17,9 @@ needs a third-party *backend* library, and activates automatically as soon as th
 library is importable. Until then, calling into the module raises a clear error; nothing
 else is affected.
 
-The extras below install **no extra PaNTr code** — they are a convenience that pulls in
-the backend for you. Installing the backend yourself is exactly equivalent:
+The extras below are a convenience that pulls in the backend for you, and installing the
+backend yourself is equivalent, except for `mpi`: it also installs `pantr-mpi`, pantr's own
+MPI glue, which an `mpi4py` communicator needs:
 
 | Capability | Module | Backend | Install (extra *or* direct) |
 |---|---|---|---|

@@ -85,7 +85,8 @@ target_include_directories(
                               $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 
 # --- pantr::mpi (component mpi) ------------------------------------------------------------------
-# Built only where an MPI implementation is found; the distributed headers themselves land later.
+# Built only where an MPI implementation is found: the headers that include mpi.h
+# (pantr/mpi/mpi_table.hpp and mpi_communicator.hpp) need it; the rest of pantr/mpi/ is MPI-free.
 find_package(MPI COMPONENTS CXX QUIET)
 if(MPI_CXX_FOUND)
   add_library(pantr_mpi INTERFACE)

@@ -76,7 +76,7 @@ endif()
 # mpi.h the module compiles against (Open MPI defines OMPI_MAJOR_VERSION; MPICH and the
 # implementations of its ABI, Intel MPI and MVAPICH, define MPICH_VERSION).
 set(PANTR_MPI_FAMILY "auto" CACHE STRING "MPI family recorded for the import check: auto, openmpi, mpich or custom")
-find_file(_pantr_mpi_h mpi.h PATHS ${MPI_CXX_INCLUDE_DIRS} NO_DEFAULT_PATH)
+find_file(_pantr_mpi_h mpi.h PATHS ${MPI_CXX_INCLUDE_DIRS} NO_DEFAULT_PATH NO_CACHE)
 set(_pantr_mpi_version_line "unknown MPI")
 set(_pantr_mpi_detected custom)
 if(_pantr_mpi_h)
@@ -103,6 +103,11 @@ if(_pantr_mpi_h)
 endif()
 if(PANTR_MPI_FAMILY STREQUAL "auto")
   set(_pantr_mpi_family ${_pantr_mpi_detected})
+  if(_pantr_mpi_family STREQUAL "custom")
+    message(WARNING "pantr-mpi: the MPI family of ${_pantr_mpi_h} is not Open MPI or the MPICH ABI; "
+                    "recording 'custom', which turns the import-time family check off. Set "
+                    "PANTR_MPI_FAMILY=custom to say so explicitly.")
+  endif()
 else()
   set(_pantr_mpi_family "${PANTR_MPI_FAMILY}")
 endif()
