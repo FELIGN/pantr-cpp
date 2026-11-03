@@ -588,14 +588,16 @@ void verify_corners_3d(const std::vector<EdgeReadings<T>>& edges, double tier) {
       const std::string& corner = edge.corners[static_cast<std::size_t>(end)];
       const std::array<std::pair<const std::string*, const bspline::Bspline<T>*>, 2> carriers = {
           {{&edge.face_a, &edge.curve_a}, {&edge.face_b, &edge.curve_b}}};
-      for (const auto& [face, curve] : carriers) {
+      for (const auto& carrier : carriers) {
+        const std::string& face = *carrier.first;
+        const bspline::Bspline<T>& curve = *carrier.second;
         const bool seen = std::any_of(readings.begin(), readings.end(), [&](const Reading& r) {
-          return r.corner == corner && r.face == *face;
+          return r.corner == corner && r.face == face;
         });
         if (!seen) {
-          const NdArray<T> point = bspline::boundary_point<T>(*curve, 0, end);
+          const NdArray<T> point = bspline::boundary_point<T>(curve, 0, end);
           readings.push_back(
-              Reading{corner, *face, std::vector<T>(point.flat().begin(), point.flat().end())});
+              Reading{corner, face, std::vector<T>(point.flat().begin(), point.flat().end())});
         }
       }
     }
