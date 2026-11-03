@@ -1073,8 +1073,61 @@
   needs at least one direction" (it raised `ValueError` "multiple indices are not supported for 0d
   arrays"), and for a periodic space with `cell_weights` that are not 1-D, the error about the
   weights' shape is raised before the one about periodicity.
+- **`make_compat`, `create_line`, `create_circle`, `create_bilinear`, `create_trilinear`,
+  `create_ruled`, `create_revolution`, `create_coons_surface`, `create_coons_volume` and `join`
+  (`pantr.cad`), and `Interface`'s checks, `match_face_cps`, `detect_interfaces` and `MultiPatch`
+  (`pantr.multipatch`), run in pantr's C++ library.** Names, signatures, defaults and the types
+  returned are unchanged; `create_extrusion`, `create_sweep`, `create_rectangle`, `create_disk` and
+  `create_cylinder` are the same Python code as before, over the compiled calls. In a sweep against
+  the previous release (952 calls of the CAD functions on random and edge inputs, in `float32`,
+  `float64` and mixed precision, rational and not; 3000 random multipatch inputs in one to three
+  dimensions), the interfaces found, the accepted and refused inputs and the exception types were
+  the same, and control points agreed to rounding, except in the entries below.
+- **A NumPy array quoted in a CAD mismatch message is printed as a list:** `join` reports "the
+  first B-spline gives [1.0, 0.0, 0.0]" where the previous release printed "[1. 0. 0.]". The gap,
+  tolerance and scale the messages report are unchanged.
+- **Where the previous release failed inside NumPy, the CAD and multipatch functions raise a
+  `ValueError` of their own** (it was a `ValueError` from NumPy before): `create_ruled` of two
+  B-splines whose control points have different widths (a second B-spline of width one is still
+  broadcast and accepted), `join` and the Coons constructions of pieces of different ranks,
+  `create_revolution` with an axis of more than three coordinates ("Rotation axis must have at
+  most 3 coordinates, got 4."), and `detect_interfaces` of a patch with fewer coordinates than the
+  rank of an earlier one.
+- **Inputs of mixed precision are converted to the precision of the result before the operation.**
+  `create_ruled` (the first B-spline's precision), the Coons constructions (the first curve's or
+  face's) and `join` (`float64`) used to compute each `float32` input in `float32` and convert
+  afterwards, so their control points can differ from the previous release by `float32` rounding.
+  The tolerance of their checks is still read at the coarsest precision supplied. One consequence
+  is a newly accepted input: a mixed-precision Coons patch or join whose `float32` and `float64`
+  knots differ by the rounding to `float32` was refused with a multiplicity error, because the two
+  readings of one knot counted as two; it is built now. `make_compat` of mixed precisions computes in
+  `float64` and returns each B-spline in its own precision, so a `float32` knot and a `float64`
+  knot one `float32` rounding apart give both B-splines the same number of basis functions, where
+  the previous release could give them different numbers.
+- **A `float64` value beyond the `float32` range, converted to `float32` by a mixed-precision
+  `create_ruled` or Coons construction, raises `ValueError`** ("The value 1e+300 is outside the
+  range of the target floating-point type."), where the previous release stored `inf` and warned
+  with `RuntimeWarning: overflow encountered in cast`.
+- **An `Interface` patch id, face id or axis, or a `match_face_cps` face id or axis, past the
+  signed 64-bit range raises `TypeError`.** The previous release built `Interface(2**70, 1,
+  2**70 + 1, 0, (1,), (False,))` and refused an out-of-range face with `ValueError`.
+- **Inputs outside the annotated types, and calls with two invalid arguments,** in `pantr.cad` and
+  `pantr.multipatch`, may be refused with another exception or message: a float id in `Interface`
+  raises `TypeError` (it was accepted), `MultiPatch` reports a patch of another dtype before a patch
+  of another dimension, rank or rationality further down the list, and `create_revolution` with an
+  out-of-range integer `axis` raises its `IndexError` before the checks of the B-spline.
+- The private helpers of `pantr.cad` and `pantr.multipatch` (`_validation._ColumnGroup`,
+  `_column_groups`, `_coarsest_dtype`; the private functions and constants of `_primitives`,
+  `_compat`, `_operations`, `_join` and `_coons`; `_interface.face_axis_side` and
+  `tangential_axes`; `_match.face_index_grids`; `_detect.verify_interface` and the private
+  functions of `_detect`) are gone with the Python code they held. What the tests reach of them
+  is in `pantr._testing` (`coons_edge_pairs`).
 
 ### Fixed
+- **`detect_interfaces` and `MultiPatch` of patches with coordinates near `1e154` or beyond** find
+  the interfaces there are. The previous release took the length of the patches' joint bounding
+  box with `numpy.linalg.norm`, whose sum of squares overflowed to `inf`, so the tolerance became
+  infinite and every face was matched with every face.
 - **`partition_graph` bisects graphs above 512 vertices along their Fiedler vector.** It asked
   ARPACK for the two smallest eigenpairs of the Laplacian and took the second, which is the
   Fiedler pair only if the first is the constant vector's (eigenvalue 0). The start vector is
