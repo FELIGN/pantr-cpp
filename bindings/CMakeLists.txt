@@ -79,7 +79,7 @@ set(_pantr_ext_sources src/module.cpp src/parallel.cpp src/testing.cpp src/quad.
                        src/bspline_ops.cpp src/bspline_refine.cpp src/bspline_modify.cpp
                        src/bspline_extract.cpp src/bspline_spanwise.cpp src/bspline_product.cpp
                        src/bspline_fit.cpp src/bspline_locate.cpp src/grid.cpp
-                       src/partition.cpp src/thb.cpp src/multipatch.cpp)
+                       src/partition.cpp src/thb.cpp src/multipatch.cpp src/cad.cpp)
 
 # Build one copy of the extension: module name <name>, rung <isa>, extra compile options in ARGN.
 function(pantr_add_extension name isa)

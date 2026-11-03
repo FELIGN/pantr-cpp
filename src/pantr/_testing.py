@@ -54,6 +54,8 @@ module.
   ``prolongation_residual_tolerance``), the cell support of every function of a 1D space
   (:func:`func_support_1d`) and the hierarchical halo and owner kernels of a distributed space
   (``thb_halo``, ``thb_dof_owner``), which no public function exposes on their own.
+- The edge readings of a Coons volume (:func:`coons_edge_pairs`): each of the twelve edges read
+  from both faces that carry it, which ``create_coons_volume`` builds and checks internally.
 - The pure block helpers of the hierarchical grid (``_block_size``, ``_in_block``,
   ``_rect_intersect``, ``_peel``, ``_try_merge``, ``_normalize_blocks``, ``_mark_region_cells``,
   ``_name_marked_cells`` and the two message limits), and the Cartesian factorization behind the
@@ -277,6 +279,68 @@ def spectral_partition(
         lanczos_max_iter,
     )
     return Partition._from_handle(h), SpectralInfo(*info)
+
+
+class EdgeReadings(NamedTuple):
+    """One edge of a Coons volume, as read off each of the two faces that carry it.
+
+    Two faces share a whole edge, so each of the twelve edges can be read twice, and the
+    two readings must agree for the volume to interpolate both faces.
+
+    Attributes:
+        label (str): Edge name, ``{free}_{fixed}{side}_{fixed}{side}`` (e.g. ``w_u0_v1``).
+        face_a (str): Name of the first face carrying the edge (e.g. ``face_u0``).
+        curve_a (Bspline): The edge as ``face_a`` sees it.
+        face_b (str): Name of the second face carrying the edge.
+        curve_b (Bspline): The edge as ``face_b`` sees it.
+        corners (tuple[str, str]): Labels of the volume corners at the low and high ends of the
+            edge, in the ``(i,j,k)`` form.
+    """
+
+    label: str
+    face_a: str
+    curve_a: Bspline
+    face_b: str
+    curve_b: Bspline
+    corners: tuple[str, str]
+
+
+def coons_edge_pairs(
+    u_faces: tuple[Bspline, Bspline],
+    v_faces: tuple[Bspline, Bspline],
+    w_faces: tuple[Bspline, Bspline],
+) -> tuple[EdgeReadings, ...]:
+    """Read the 12 edges of a Coons volume, each from both faces that carry it.
+
+    The faces are converted to the first one's dtype, as ``create_coons_volume`` does.
+
+    Args:
+        u_faces (tuple[Bspline, Bspline]): The faces at ``u = 0`` and ``u = 1`` (surfaces over
+            ``(v, w)``).
+        v_faces (tuple[Bspline, Bspline]): The faces at ``v = 0`` and ``v = 1`` (over ``(u, w)``).
+        w_faces (tuple[Bspline, Bspline]): The faces at ``w = 0`` and ``w = 1`` (over ``(u, v)``).
+
+    Returns:
+        tuple[EdgeReadings, ...]: The 12 edges, ordered by free direction ``w``, then ``v``, then
+        ``u`` (and within one, by the side of the first fixed direction, then of the second).
+
+    Raises:
+        ValueError: If a face is not a surface.
+    """
+    raw = _t.coons_edge_pairs(
+        u_faces[0]._h, u_faces[1]._h, v_faces[0]._h, v_faces[1]._h, w_faces[0]._h, w_faces[1]._h
+    )
+    return tuple(
+        EdgeReadings(
+            label,
+            face_a,
+            Bspline._from_handle(curve_a),
+            face_b,
+            Bspline._from_handle(curve_b),
+            (low, high),
+        )
+        for label, face_a, curve_a, face_b, curve_b, low, high in raw
+    )
 
 
 def unique_knots_and_multiplicity(
@@ -1189,6 +1253,7 @@ __all__ = [
     "_CARDINAL_TO_LEGENDRE_MAX_DEGREE",
     "_MAX_DIAGNOSED_CELLS",
     "_MAX_NAMED_CELLS",
+    "EdgeReadings",
     "LocateContext",
     "LocateThresholds",
     "SpectralInfo",
@@ -1234,6 +1299,7 @@ __all__ = [
     "clip_hull_to_zero",
     "clip_roots_core",
     "control_point_scale",
+    "coons_edge_pairs",
     "count_sign_changes",
     "de_casteljau_eval_and_deriv_scalar",
     "de_casteljau_eval_scalar",

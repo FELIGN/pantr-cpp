@@ -74,6 +74,8 @@ NB_MODULE(PANTR_EXT_MODULE_NAME, m) {
   pantr::bindings::register_thb(bspline);
   nb::module_ multipatch = m.def_submodule("multipatch", "Patch interfaces (private).");
   pantr::bindings::register_multipatch(multipatch);
+  nb::module_ cad = m.def_submodule("cad", "Constructive geometry (private).");
+  pantr::bindings::register_cad(cad);
   nb::module_ grid =
       m.def_submodule("grid", "Structured grids, BVH, tags and partitions (private).");
   pantr::bindings::register_grid(grid);
@@ -97,4 +99,5 @@ NB_MODULE(PANTR_EXT_MODULE_NAME, m) {
   pantr::bindings::register_bspline_locate_testing(testing);
   pantr::bindings::register_partition_graph_testing(testing);
   pantr::bindings::register_thb_testing(testing);
+  pantr::bindings::register_cad_testing(testing);
 }

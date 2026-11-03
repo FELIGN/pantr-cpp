@@ -800,3 +800,13 @@ def func_support_1d(
     space: pantr._pantr.bspline.BsplineSpace1DF32,
 ) -> tuple[NDArray[numpy.int64], NDArray[numpy.int64], NDArray[numpy.int64]]:
     """(first_basis, first_cell, last_cell) of a 1D space's functions."""
+
+def coons_edge_pairs(
+    face_u0: pantr._pantr.bspline.BsplineF32 | pantr._pantr.bspline.BsplineF64,
+    face_u1: pantr._pantr.bspline.BsplineF32 | pantr._pantr.bspline.BsplineF64,
+    face_v0: pantr._pantr.bspline.BsplineF32 | pantr._pantr.bspline.BsplineF64,
+    face_v1: pantr._pantr.bspline.BsplineF32 | pantr._pantr.bspline.BsplineF64,
+    face_w0: pantr._pantr.bspline.BsplineF32 | pantr._pantr.bspline.BsplineF64,
+    face_w1: pantr._pantr.bspline.BsplineF32 | pantr._pantr.bspline.BsplineF64,
+) -> list[tuple[str, str, object, str, object, str, str]]:
+    """The 12 edges of a Coons volume, each read from both faces that carry it, as (label, face_a, curve_a, face_b, curve_b, corner_low, corner_high) tuples."""

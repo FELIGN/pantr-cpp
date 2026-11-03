@@ -9,6 +9,7 @@ import pytest
 from numpy import typing as npt
 from numpy.testing import assert_allclose
 
+from pantr._testing import coons_edge_pairs as _extract_edge_pairs
 from pantr.bspline import Bspline, BsplineSpace, BsplineSpace1D
 from pantr.cad import (
     create_bilinear,
@@ -19,7 +20,6 @@ from pantr.cad import (
     create_line,
     create_ruled,
 )
-from pantr.cad._coons import _extract_edge_pairs
 from pantr.tolerance import get_conservative, get_machine_epsilon
 
 _RANK_3D = 3

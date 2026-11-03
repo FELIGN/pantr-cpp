@@ -330,6 +330,31 @@ class Bspline:
         """
         self._set_handle(other._h, other._space)
 
+    @classmethod
+    def _from_handle(
+        cls,
+        h: Any,  # noqa: ANN401
+    ) -> Bspline:
+        """Wrap a compiled B-spline that no Python B-spline stands behind.
+
+        Used by the functions of :mod:`pantr.cad`, whose results are built in the compiled
+        library: every direction gets a new Python space, built from the handle's direction.
+
+        Args:
+            h (Any): The compiled B-spline (``BsplineF64`` or ``BsplineF32``).
+
+        Returns:
+            Bspline: A plain ``Bspline`` over the value, whose space is built from the handle's
+            directions.
+        """
+        from ._bspline_space_1d import BsplineSpace1D  # noqa: PLC0415
+        from ._bspline_space_nd import BsplineSpace  # noqa: PLC0415
+
+        spaces = [BsplineSpace1D._from_handle(n) for n in h.directions]
+        result = object.__new__(cls)
+        result._set_handle(h, BsplineSpace(spaces))
+        return result
+
     def _from_result(
         self,
         h: Any,  # noqa: ANN401

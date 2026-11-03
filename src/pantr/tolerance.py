@@ -137,7 +137,7 @@ constant has no closed form
 (``pantr::thb::prolongation_residual_tolerance``); the
 robustness one grades a Coons patch's corner match, where the caller's chain to
 the corner is unbounded and a false rejection costs more than a false accept
-(``pantr.cad._coons``).
+(``include/pantr/cad/coons.hpp``).
 
 The ``1e3`` is this tier's boundary and not a statement about the library. pantr
 does contain a step past it -- ``pantr.change_basis`` documents a cardinal-to-

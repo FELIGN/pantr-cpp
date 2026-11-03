@@ -13,14 +13,8 @@ from __future__ import annotations
 import numpy as np
 from numpy import typing as npt
 
-from ..bspline import Bspline, BsplineSpace, BsplineSpace1D
-from ..transform import AffineTransform
-from ._validation import _PHYSICAL_DIM, _pad_to_3d
-
-_DEGREE_CIRCLE = 2
-_QUADRANT_BOUNDS = (0.0, np.pi / 2, np.pi, 3 * np.pi / 2)
-_BILINEAR_SHAPE = (2, 2)
-_TRILINEAR_SHAPE = (2, 2, 2)
+from .._ext import ext
+from ..bspline import Bspline, BsplineSpace1D
 
 
 def _linear_space_1d(dtype: npt.DTypeLike = np.float64) -> BsplineSpace1D:
@@ -34,6 +28,36 @@ def _linear_space_1d(dtype: npt.DTypeLike = np.float64) -> BsplineSpace1D:
     """
     knots = np.array([0.0, 0.0, 1.0, 1.0], dtype=dtype)
     return BsplineSpace1D(knots, degree=1)
+
+
+def _points(point: npt.ArrayLike) -> list[float]:
+    """Flatten a point to the list of coordinates the compiled functions take.
+
+    Args:
+        point (npt.ArrayLike): Array-like of coordinates.
+
+    Returns:
+        list[float]: The coordinates; the compiled function zero-pads and checks their number.
+    """
+    return np.asarray(point, dtype=np.float64).ravel().tolist()
+
+
+def _sweep_pair(angle: float | tuple[float, float] | None) -> tuple[float, float] | None:
+    """Read a sweep specification as the ``(start, end)`` pair the compiled functions take.
+
+    Args:
+        angle (float | tuple[float, float] | None): ``None`` (the full turn), an end angle (the
+            start is 0), or a ``(start, end)`` pair, in radians.
+
+    Returns:
+        tuple[float, float] | None: ``(start, end)``, or ``None`` for the full turn.
+    """
+    if angle is None:
+        return None
+    if isinstance(angle, tuple | list):
+        start, end = angle
+        return (float(start), float(end))
+    return (0.0, float(angle))
 
 
 def create_line(
@@ -60,35 +84,8 @@ def create_line(
         >>> crv.rank
         3
     """
-    pt0 = _pad_to_3d(p0)
-    pt1 = _pad_to_3d(p1)
-    control_points = np.stack([pt0, pt1])  # shape (2, 3)
-    space = BsplineSpace([_linear_space_1d()])
-    return Bspline(space, control_points)
-
-
-def _rotate_weighted(
-    cw: npt.NDArray[np.float64],
-    angle: float,
-    axis: int = 2,
-) -> npt.NDArray[np.float64]:
-    """Rotate weighted homogeneous control points around a coordinate axis.
-
-    For a point ``(w*x, w*y, w*z, w)``, the rotation is applied to the
-    spatial part ``(w*x, w*y, w*z)`` while the weight ``w`` is preserved.
-
-    Args:
-        cw: Control points of shape ``(..., 4)`` in weighted homogeneous form.
-        angle: Rotation angle in radians.
-        axis: Coordinate axis (0, 1, or 2).
-
-    Returns:
-        npt.NDArray[np.float64]: Rotated control points, same shape as *cw*.
-    """
-    R = AffineTransform.rotation_3d(angle, axis=axis)
-    out = np.array(cw)
-    out[..., :_PHYSICAL_DIM] = cw[..., :_PHYSICAL_DIM] @ R.matrix.T
-    return out
+    h = ext.cad.create_line(_points(p0), _points(p1))
+    return Bspline._from_handle(h)
 
 
 def create_circle(
@@ -131,115 +128,10 @@ def create_circle(
         >>> crv.is_rational
         True
     """
-    if angle is None:
-        cw = _build_full_circle(radius)
-        spans = 4
-    else:
-        if isinstance(angle, tuple | list):
-            start, end = angle
-        else:
-            start, end = 0.0, float(angle)
-        sweep = end - start
-        spans = int(np.searchsorted(_QUADRANT_BOUNDS, abs(sweep)))
-        spans = max(spans, 1)
-        cw = _build_arc(radius, start, sweep, spans)
-
-    # Translate to center
-    if center is not None:
-        c = _pad_to_3d(center)
-        # For weighted homogeneous: (w*x, w*y, w*z, w) -> (w*x + w*cx, ...)
-        cw[:, :_PHYSICAL_DIM] += cw[:, _PHYSICAL_DIM : _PHYSICAL_DIM + 1] * c
-
-    # Build knot vector: [0,0,0, u1,u1, u2,u2, ..., 1,1,1]
-    knots = np.empty(2 * (spans + 1) + 2, dtype=np.float64)
-    knots[0] = 0.0
-    knots[-1] = 1.0
-    knots[1:-1] = np.linspace(0.0, 1.0, spans + 1).repeat(2)
-
-    space = BsplineSpace([BsplineSpace1D(knots, degree=_DEGREE_CIRCLE)])
-    return Bspline(space, cw, is_rational=True)
-
-
-def _build_full_circle(radius: float) -> npt.NDArray[np.float64]:
-    """Build weighted homogeneous control points for a full circle.
-
-    Args:
-        radius: Circle radius.
-
-    Returns:
-        npt.NDArray[np.float64]: Array of shape ``(9, 4)``.
-    """
-    wm = np.sqrt(2.0) / 2.0
-    cw = np.zeros((9, _PHYSICAL_DIM + 1), dtype=np.float64)
-    cw[:, :2] = [
-        [1, 0],
-        [1, 1],
-        [0, 1],
-        [-1, 1],
-        [-1, 0],
-        [-1, -1],
-        [0, -1],
-        [1, -1],
-        [1, 0],
-    ]
-    cw[:, :2] *= radius
-    cw[:, _PHYSICAL_DIM] = 1.0
-    cw[1::2, :] *= wm
-    return cw
-
-
-def _build_arc(
-    radius: float,
-    start: float,
-    sweep: float,
-    spans: int,
-) -> npt.NDArray[np.float64]:
-    """Build weighted homogeneous control points for a circular arc.
-
-    Constructs a template arc bisected by the +X axis, then rotates it
-    to the correct starting angle.  Subsequent spans are obtained by
-    successive rotation of the previous span's last two control points.
-
-    Args:
-        radius: Circle radius.
-        start: Start angle in radians.
-        sweep: Sweep angle in radians (may be negative).
-        spans: Number of quadratic arc spans.
-
-    Returns:
-        npt.NDArray[np.float64]: Array of shape ``(2*spans+1, 4)``.
-    """
-    alpha = sweep / (2 * spans)
-    sin_a = np.sin(alpha)
-    cos_a = np.cos(alpha)
-    tan_a = np.tan(alpha)
-    x = radius * cos_a
-    y = radius * sin_a
-    wm = cos_a
-    xm = x + y * tan_a
-
-    # Template arc: 3 control points bisected by +X axis
-    template = np.array(
-        [
-            [x, -y, 0.0, 1.0],
-            [wm * xm, 0.0, 0.0, wm],
-            [x, y, 0.0, 1.0],
-        ],
-        dtype=np.float64,
+    h = ext.cad.create_circle(
+        radius, None if center is None else _points(center), _sweep_pair(angle)
     )
-
-    # Rotate template to the correct starting position
-    cw = np.empty((2 * spans + 1, _PHYSICAL_DIM + 1), dtype=np.float64)
-    cw[0:3] = _rotate_weighted(template, alpha + start)
-
-    # Each subsequent span is a rotation of the previous one
-    if spans > 1:
-        two_alpha = 2.0 * alpha
-        for i in range(1, spans):
-            n = 2 * i + 1
-            cw[n : n + 2] = _rotate_weighted(cw[n - 2 : n], two_alpha)
-
-    return cw
+    return Bspline._from_handle(h)
 
 
 def create_bilinear(corners: npt.ArrayLike | None = None) -> Bspline:
@@ -279,26 +171,10 @@ def create_bilinear(corners: npt.ArrayLike | None = None) -> Bspline:
         >>> srf.dim
         2
     """
-    ndim_expected = len(_BILINEAR_SHAPE) + 1
     if corners is None:
-        cp = np.zeros((*_BILINEAR_SHAPE, _PHYSICAL_DIM), dtype=np.float64)
-        cp[0, 0] = [-0.5, -0.5, 0.0]
-        cp[1, 0] = [+0.5, -0.5, 0.0]
-        cp[0, 1] = [-0.5, +0.5, 0.0]
-        cp[1, 1] = [+0.5, +0.5, 0.0]
-    else:
-        arr = np.asarray(corners, dtype=np.float64)
-        if arr.ndim != ndim_expected or arr.shape[:-1] != _BILINEAR_SHAPE:
-            raise ValueError(f"corners must have shape (2, 2, rank), got {arr.shape}.")
-        rank = arr.shape[-1]
-        if rank > _PHYSICAL_DIM:
-            raise ValueError(f"corners rank must be at most {_PHYSICAL_DIM}, got {rank}.")
-        cp = np.zeros((*_BILINEAR_SHAPE, _PHYSICAL_DIM), dtype=np.float64)
-        cp[..., :rank] = arr
-
-    sp = _linear_space_1d()
-    space = BsplineSpace([sp, BsplineSpace1D(sp.knots.copy(), degree=1)])
-    return Bspline(space, cp)
+        return Bspline._from_handle(ext.cad.create_bilinear())
+    arr = np.asarray(corners, dtype=np.float64)
+    return Bspline._from_handle(ext.cad.create_bilinear(arr.ravel().tolist(), list(arr.shape)))
 
 
 def create_trilinear(corners: npt.ArrayLike | None = None) -> Bspline:
@@ -342,25 +218,7 @@ def create_trilinear(corners: npt.ArrayLike | None = None) -> Bspline:
         >>> vol.dim
         3
     """
-    ndim_expected = len(_TRILINEAR_SHAPE) + 1
     if corners is None:
-        cp = np.zeros((*_TRILINEAR_SHAPE, _PHYSICAL_DIM), dtype=np.float64)
-        for i in range(2):
-            for j in range(2):
-                for k in range(2):
-                    cp[i, j, k] = [i - 0.5, j - 0.5, k - 0.5]
-    else:
-        arr = np.asarray(corners, dtype=np.float64)
-        if arr.ndim != ndim_expected or arr.shape[:-1] != _TRILINEAR_SHAPE:
-            raise ValueError(f"corners must have shape (2, 2, 2, rank), got {arr.shape}.")
-        rank = arr.shape[-1]
-        if rank > _PHYSICAL_DIM:
-            raise ValueError(f"corners rank must be at most {_PHYSICAL_DIM}, got {rank}.")
-        cp = np.zeros((*_TRILINEAR_SHAPE, _PHYSICAL_DIM), dtype=np.float64)
-        cp[..., :rank] = arr
-
-    sp0 = _linear_space_1d()
-    sp1 = BsplineSpace1D(sp0.knots.copy(), degree=1)
-    sp2 = BsplineSpace1D(sp0.knots.copy(), degree=1)
-    space = BsplineSpace([sp0, sp1, sp2])
-    return Bspline(space, cp)
+        return Bspline._from_handle(ext.cad.create_trilinear())
+    arr = np.asarray(corners, dtype=np.float64)
+    return Bspline._from_handle(ext.cad.create_trilinear(arr.ravel().tolist(), list(arr.shape)))
