@@ -1,14 +1,17 @@
 /// @file local_space.hpp
 /// @brief Serial windowing kernels for distributing a THB space: the cross-level support closure of
-/// a set of owned cells (the halo) and the owner rank of every function.
+/// a set of owned cells (the halo) and the owner rank of every function, and their composition into
+/// a rank's local space (`build_local`).
 ///
 /// Both read the space's cell-to-function incidence (`THBSplineSpace::cell_dof_incidence`) rather
 /// than walking supports, since the supports of a hierarchical function span several levels.
 #pragma once
 
+#include "pantr/bspline/local_space.hpp"
 #include "pantr/config.hpp"
 #include "pantr/core/errors.hpp"
 #include "pantr/core/scalar.hpp"
+#include "pantr/grid/partition.hpp"
 #include "pantr/parallel/parallel_for.hpp"
 #include "pantr/thb/space.hpp"
 #include "pantr/thb/types.hpp"
@@ -122,6 +125,102 @@ template <StorageFloat T>
     }
   }
   return owners;
+}
+
+/// Build the rank-local windowed space of a distributed THB space.
+///
+/// Windows `space` to the cells `rank` owns together with their cross-level support-closure halo
+/// (`compute_halo`), with `THBSplineSpace::restrict`, which also gives the maps of the local cells
+/// and functions to the global ones. The halo makes the owned cells interior, so the local basis
+/// equals the global basis pointwise over them. A cell is owned iff `partition` says so; a function
+/// iff `dof_owner` says so, a local function with no global counterpart (-1 in the map) never.
+///
+/// Args:
+///     space (const THBSplineSpace<T>&): The global hierarchical space.
+///     partition (const grid::Partition&): Owner of every cell of `space.grid()`;
+///         `grid().num_cells()` cells.
+///     rank (std::int64_t): The rank whose local space is built, in `[0, partition.n_parts())`.
+///
+/// Returns:
+///     bspline::LocalSpace<THBSplineSpace<T>>: The windowed space, its maps to the global cells and
+///     functions, and the ownership masks.
+///
+/// Raises:
+///     value_error: `rank` is out of range; `partition` has another cell count than the grid;
+///         `rank` owns no cell.
+///     state_error: `THBSplineSpace::restrict` returned inconsistent maps (a cell count other than
+///         its grid's, a cell id outside `[0, grid().num_cells())`, or a function id at or above
+///         `num_total_basis()`), an invariant of `restrict`.
+template <StorageFloat T>
+[[nodiscard]] bspline::LocalSpace<THBSplineSpace<T>> build_local(const THBSplineSpace<T>& space,
+                                                                 const grid::Partition& partition,
+                                                                 std::int64_t rank) {
+  bspline::detail::check_rank_in_partition(partition, rank);
+  const std::int64_t n_global_cells = space.grid().num_cells();
+  if (partition.n_cells() != n_global_cells) {
+    throw value_error("partition has " + std::to_string(partition.n_cells()) + " cells; expected " +
+                      std::to_string(n_global_cells) + " (grid.num_cells).");
+  }
+  const std::vector<std::int64_t> owned = bspline::detail::owned_cells_or_throw(partition, rank);
+  const std::vector<std::int64_t> halo = compute_halo(space, owned);
+  const std::vector<std::int64_t> window = bspline::detail::sorted_union(owned, halo);
+
+  THBSplineSpaceRestriction<T> restr = space.restrict(window);
+  const std::int64_t n_local_cells = restr.space.grid().num_cells();
+  if (static_cast<std::int64_t>(restr.local_to_global_cell.size()) != n_local_cells) {
+    throw state_error("THBSplineSpace.restrict returned " +
+                      std::to_string(restr.local_to_global_cell.size()) +
+                      " cells in local_to_global_cell but " + std::to_string(n_local_cells) +
+                      " cells in space.grid for a window of " + std::to_string(window.size()) +
+                      " cells. This is a bug in restrict().");
+  }
+  if (std::any_of(restr.local_to_global_cell.begin(), restr.local_to_global_cell.end(),
+                  [](std::int64_t c) { return c < 0; })) {
+    throw state_error(
+        "THBSplineSpace.restrict returned a negative value in local_to_global_cell. "
+        "This is a bug in restrict().");
+  }
+  // Python's numpy indexing raises on an id past the end; here it would be an out-of-bounds read.
+  if (std::any_of(restr.local_to_global_cell.begin(), restr.local_to_global_cell.end(),
+                  [&](std::int64_t c) { return c >= n_global_cells; })) {
+    throw state_error(
+        "THBSplineSpace.restrict returned a value >= grid.num_cells in local_to_global_cell. "
+        "This is a bug in restrict().");
+  }
+  const std::int64_t n_global_dofs = space.num_total_basis();
+  std::int64_t largest_dof = -1;
+  for (const std::int64_t d : restr.local_to_global_dof) {
+    largest_dof = (std::max)(largest_dof, d);
+  }
+  if (largest_dof >= n_global_dofs) {
+    throw state_error("THBSplineSpace.restrict returned a local_to_global_dof value " +
+                      std::to_string(largest_dof) + " >= num_total_basis " +
+                      std::to_string(n_global_dofs) + ". This is a bug in restrict().");
+  }
+
+  const std::span<const std::int32_t> cell_owner = partition.cell_owner();
+  std::vector<std::uint8_t> owned_cell_mask(restr.local_to_global_cell.size());
+  for (std::size_t i = 0; i < owned_cell_mask.size(); ++i) {
+    const auto owner = static_cast<std::int64_t>(
+        cell_owner[static_cast<std::size_t>(restr.local_to_global_cell[i])]);
+    owned_cell_mask[i] = owner == rank ? 1 : 0;
+  }
+  const std::vector<std::int32_t> global_dof_owner = dof_owner(space, cell_owner);
+  std::vector<std::uint8_t> owned_dof_mask(restr.local_to_global_dof.size(), 0);
+  for (std::size_t i = 0; i < owned_dof_mask.size(); ++i) {
+    const std::int64_t g = restr.local_to_global_dof[i];
+    if (g >= 0) {
+      owned_dof_mask[i] =
+          static_cast<std::int64_t>(global_dof_owner[static_cast<std::size_t>(g)]) == rank ? 1 : 0;
+    }
+  }
+  return bspline::LocalSpace<THBSplineSpace<T>>{std::move(restr.space),
+                                                std::move(restr.local_to_global_cell),
+                                                std::move(restr.local_to_global_dof),
+                                                std::move(owned_cell_mask),
+                                                std::move(owned_dof_mask),
+                                                n_global_cells,
+                                                n_global_dofs};
 }
 
 }  // namespace pantr::thb

@@ -1,6 +1,7 @@
 /// @file local_space.hpp
 /// @brief Serial windowing kernels for distributing a tensor-product B-spline space: the support
-/// closure of a set of owned cells (the halo) and the owner rank of each function.
+/// closure of a set of owned cells (the halo) and the owner rank of each function, and their
+/// composition into a rank's local space (`build_local`).
 ///
 /// Cells are flat-indexed in C order over the per-direction interval counts and functions in C
 /// order over the per-direction function counts, as `coupling_graph` and the spanwise extraction
@@ -12,15 +13,18 @@
 
 #include "pantr/bspline/detail/support_1d.hpp"
 #include "pantr/bspline/space.hpp"
+#include "pantr/bspline/space_1d.hpp"
 #include "pantr/config.hpp"
 #include "pantr/core/errors.hpp"
 #include "pantr/core/scalar.hpp"
+#include "pantr/grid/partition.hpp"
 #include "pantr/parallel/parallel_for.hpp"
 
 #include <algorithm>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
 #include <numeric>
 #include <span>
 #include <string>
@@ -333,6 +337,235 @@ template <StorageFloat T>
   std::vector<std::int64_t> all(static_cast<std::size_t>(n_dofs));
   std::iota(all.begin(), all.end(), std::int64_t{0});
   return dof_owner_windowed(space, cell_owner, all);
+}
+
+/// The rank-local windowed view of a distributed B-spline or THB space.
+///
+/// Produced by `build_local`. Bundles a windowed space with the maps and masks relating it to the
+/// global space.
+///
+/// Attributes:
+///     space (Space): The windowed space over the bounding box of the rank's owned cells and their
+///         support-closure halo; its basis equals the global basis pointwise over the rank's owned
+///         cells.
+///     local_to_global_cell (std::vector<std::int64_t>): One entry per local cell: its global cell
+///         id.
+///     local_to_global_dof (std::vector<std::int64_t>): One entry per local function (the space's
+///         total basis count): its global function id, -1 for a THB function with no global
+///         counterpart.
+///     owned_cell_mask (std::vector<std::uint8_t>): One entry per local cell; 1 for the cells this
+///         rank owns (the rest are halo or bounding-box fill).
+///     owned_dof_mask (std::vector<std::uint8_t>): One entry per local function; 1 for the
+///         functions this rank owns.
+///     n_global_cells (std::int64_t): Total cells of the global space's grid.
+///     n_global_dofs (std::int64_t): Total basis functions of the global space.
+template <class Space>
+struct LocalSpace {
+  Space space;
+  std::vector<std::int64_t> local_to_global_cell;
+  std::vector<std::int64_t> local_to_global_dof;
+  std::vector<std::uint8_t> owned_cell_mask;
+  std::vector<std::uint8_t> owned_dof_mask;
+  std::int64_t n_global_cells;
+  std::int64_t n_global_dofs;
+};
+
+namespace detail {
+
+/// Check that `rank` is a part of `partition`.
+///
+/// Args:
+///     partition (const grid::Partition&): The partition.
+///     rank (std::int64_t): The rank asked for.
+///
+/// Raises:
+///     value_error: `rank` is outside `[0, partition.n_parts())`.
+inline void check_rank_in_partition(const grid::Partition& partition, std::int64_t rank) {
+  if (!(0 <= rank && rank < partition.n_parts())) {
+    throw value_error("rank must be in [0, " + std::to_string(partition.n_parts()) + "); got " +
+                      std::to_string(rank) + ".");
+  }
+}
+
+/// Get the cells a rank owns, refusing a rank that owns none.
+///
+/// Args:
+///     partition (const grid::Partition&): The partition; `rank` must be one of its parts.
+///     rank (std::int64_t): The rank.
+///
+/// Returns:
+///     std::vector<std::int64_t>: The owned cell ids, ascending, not empty.
+///
+/// Raises:
+///     value_error: `rank` owns no cell.
+[[nodiscard]] inline std::vector<std::int64_t> owned_cells_or_throw(
+    const grid::Partition& partition, std::int64_t rank) {
+  std::vector<std::int64_t> owned = partition.owned_cells(rank);
+  if (owned.empty()) {
+    throw value_error("rank " + std::to_string(rank) +
+                      " owns no cells; cannot build a local space.");
+  }
+  return owned;
+}
+
+/// Get the sorted union of two sorted, disjoint id lists.
+///
+/// Args:
+///     a (std::span<const std::int64_t>): Ascending ids.
+///     b (std::span<const std::int64_t>): Ascending ids, none in `a`.
+///
+/// Returns:
+///     std::vector<std::int64_t>: The ids of both, ascending.
+[[nodiscard]] inline std::vector<std::int64_t> sorted_union(std::span<const std::int64_t> a,
+                                                            std::span<const std::int64_t> b) {
+  std::vector<std::int64_t> out;
+  out.reserve(a.size() + b.size());
+  std::set_union(a.begin(), a.end(), b.begin(), b.end(), std::back_inserter(out));
+  return out;
+}
+
+/// Get the C-order ravel of a product of per-axis index lists.
+///
+/// Entry `(i_0, ..., i_{d-1})`, the last axis fastest, is `sum_k axes[k][i_k] * stride_k` with
+/// `stride_k` the C-order stride of `extents`.
+///
+/// Args:
+///     axes (const std::vector<std::vector<std::int64_t>>&): Per axis, the ids along it, each in
+///         `[0, extents[k])`; none empty.
+///     extents (std::span<const std::int64_t>): The size of the global index space per axis.
+///
+/// Returns:
+///     std::vector<std::int64_t>: `prod_k axes[k].size()` flat ids.
+[[nodiscard]] inline std::vector<std::int64_t> ravel_axes(
+    const std::vector<std::vector<std::int64_t>>& axes, std::span<const std::int64_t> extents) {
+  const std::size_t dim = axes.size();
+  std::vector<std::int64_t> stride(dim, 1);
+  for (std::size_t k = dim; k-- > 1;) {
+    stride[k - 1] = stride[k] * extents[k];
+  }
+  std::size_t total = 1;
+  for (const auto& axis : axes) {
+    total *= axis.size();
+  }
+  std::vector<std::int64_t> out;
+  out.reserve(total);
+  std::vector<std::size_t> counter(dim, 0);
+  for (std::size_t step = 0; step < total; ++step) {
+    std::int64_t flat = 0;
+    for (std::size_t k = 0; k < dim; ++k) {
+      flat += axes[k][counter[k]] * stride[k];
+    }
+    out.push_back(flat);
+    for (std::size_t k = dim; k-- > 0;) {
+      if (++counter[k] < axes[k].size()) {
+        break;
+      }
+      counter[k] = 0;
+    }
+  }
+  return out;
+}
+
+}  // namespace detail
+
+/// Build the rank-local windowed space of a distributed tensor-product B-spline space.
+///
+/// Windows `space` to the cells `rank` owns together with their support-closure halo
+/// (`compute_halo`), so the local basis equals the global basis pointwise over the rank's owned
+/// cells. Each direction is restricted (`BsplineSpace1D::restrict`) to the window's per-direction
+/// bounding box of intervals, so the local cells are that box in C order and the local functions
+/// the product of the per-direction function ranges, in C order; cells of the box outside the
+/// window are fill, not owned by `rank`. A function is owned by `rank` iff `dof_owner` says so.
+///
+/// Args:
+///     space (const BsplineSpace<T>&): The global space; no direction may be periodic.
+///     partition (const grid::Partition&): Owner of every cell of the space's knot-span grid;
+///         `num_total_intervals` cells.
+///     rank (std::int64_t): The rank whose local space is built, in `[0, partition.n_parts())`.
+///
+/// Returns:
+///     LocalSpace<BsplineSpace<T>>: The windowed space, its maps to the global cells and
+///     functions, and the ownership masks.
+///
+/// Raises:
+///     value_error: A direction is periodic; `rank` is out of range; `partition` has another cell
+///         count than the space; `rank` owns no cell.
+///     state_error: The restricted directions and the window's bounding box disagree on the cell
+///         count (an invariant of `BsplineSpace1D::restrict`).
+template <StorageFloat T>
+[[nodiscard]] LocalSpace<BsplineSpace<T>> build_local(const BsplineSpace<T>& space,
+                                                      const grid::Partition& partition,
+                                                      std::int64_t rank) {
+  const detail::LocalSpaceAxes ax = detail::local_space_axes(space);
+  detail::check_rank_in_partition(partition, rank);
+  if (partition.n_cells() != ax.n_cells) {
+    throw value_error("partition has " + std::to_string(partition.n_cells()) + " cells; expected " +
+                      std::to_string(ax.n_cells) + " (space.num_total_intervals).");
+  }
+  const std::vector<std::int64_t> owned = detail::owned_cells_or_throw(partition, rank);
+  const std::vector<std::int64_t> halo = compute_halo(space, owned);
+  const std::vector<std::int64_t> window = detail::sorted_union(owned, halo);
+
+  // The per-direction bounding box of the window's intervals; the window is not empty and every
+  // interval index is below its direction's count, so these initial values are always replaced.
+  const std::size_t dim = ax.num_intervals.size();
+  std::vector<std::int64_t> box_lo = ax.num_intervals;
+  std::vector<std::int64_t> box_hi(dim, -1);
+  for (const std::int64_t id : window) {
+    std::int64_t rest = id;
+    for (std::size_t k = dim; k-- > 0;) {
+      const std::int64_t index = rest % ax.num_intervals[k];
+      rest /= ax.num_intervals[k];
+      box_lo[k] = (std::min)(box_lo[k], index);
+      box_hi[k] = (std::max)(box_hi[k], index);
+    }
+  }
+
+  std::vector<BsplineSpace1D<T>> windowed;
+  windowed.reserve(dim);
+  std::vector<std::vector<std::int64_t>> dof_axes;
+  std::vector<std::vector<std::int64_t>> cell_axes;
+  std::int64_t local_intervals = 1;
+  for (std::size_t k = 0; k < dim; ++k) {
+    auto restricted = space.spaces()[k].restrict(static_cast<long long>(box_lo[k]),
+                                                 static_cast<long long>(box_hi[k] + 1));
+    local_intervals *= restricted.first.num_intervals();
+    windowed.push_back(std::move(restricted.first));
+    dof_axes.push_back(std::move(restricted.second));
+    std::vector<std::int64_t> cells(static_cast<std::size_t>(box_hi[k] - box_lo[k] + 1));
+    std::iota(cells.begin(), cells.end(), box_lo[k]);
+    cell_axes.push_back(std::move(cells));
+  }
+  std::vector<std::int64_t> local_to_global_cell = detail::ravel_axes(cell_axes, ax.num_intervals);
+  std::vector<std::int64_t> local_to_global_dof = detail::ravel_axes(dof_axes, ax.num_basis);
+  if (static_cast<std::int64_t>(local_to_global_cell.size()) != local_intervals) {
+    throw state_error("Grid restriction (" + std::to_string(local_to_global_cell.size()) +
+                      " cells) and space restriction (" + std::to_string(local_intervals) +
+                      " cells) disagree after restricting to the same window of " +
+                      std::to_string(window.size()) + " cells. This is a bug in restrict().");
+  }
+
+  const std::span<const std::int32_t> cell_owner = partition.cell_owner();
+  std::vector<std::uint8_t> owned_cell_mask(local_to_global_cell.size());
+  for (std::size_t i = 0; i < owned_cell_mask.size(); ++i) {
+    const auto owner =
+        static_cast<std::int64_t>(cell_owner[static_cast<std::size_t>(local_to_global_cell[i])]);
+    owned_cell_mask[i] = owner == rank ? 1 : 0;
+  }
+  // The subset counterpart of `dof_owner`: the same rule, resolved only for the local functions.
+  const std::vector<std::int32_t> dof_owners =
+      dof_owner_windowed(space, cell_owner, local_to_global_dof);
+  std::vector<std::uint8_t> owned_dof_mask(dof_owners.size());
+  for (std::size_t i = 0; i < owned_dof_mask.size(); ++i) {
+    owned_dof_mask[i] = static_cast<std::int64_t>(dof_owners[i]) == rank ? 1 : 0;
+  }
+  return LocalSpace<BsplineSpace<T>>{BsplineSpace<T>(std::move(windowed)),
+                                     std::move(local_to_global_cell),
+                                     std::move(local_to_global_dof),
+                                     std::move(owned_cell_mask),
+                                     std::move(owned_dof_mask),
+                                     ax.n_cells,
+                                     ax.n_dofs};
 }
 
 }  // namespace pantr::bspline
