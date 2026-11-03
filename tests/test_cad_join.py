@@ -845,7 +845,8 @@ class TestJoinRationalBoundary:
         """Promotion gives the polynomial side unit weights, which the rational side has.
 
         This is the ordinary mixed join, and it must keep working: the check runs after
-        ``_promote_to_rational``, so both rows are homogeneous by the time they meet.
+        ``promote_to_rational`` (``include/pantr/cad/detail/validation.hpp``), so both rows are
+        homogeneous by the time they meet.
         """
         c1 = _rational_curve(np.array([[0, 0, 0, 1], [1, 0, 0, 1]], dtype=np.float64), 1)
         c2 = create_line([1, 0, 0], [2, 0, 0])

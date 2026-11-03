@@ -1079,8 +1079,8 @@
   (`pantr.multipatch`), run in pantr's C++ library.** Names, signatures, defaults and the types
   returned are unchanged; `create_extrusion`, `create_sweep`, `create_rectangle`, `create_disk` and
   `create_cylinder` are the same Python code as before, over the compiled calls. In a sweep against
-  the previous release (952 calls of the CAD functions on random and edge inputs, in `float32`,
-  `float64` and mixed precision, rational and not; 3000 random multipatch inputs in one to three
+  the previous release (calls of the CAD functions on random and edge inputs, in `float32`,
+  `float64` and mixed precision, rational and not; random multipatch inputs in one to three
   dimensions), the interfaces found, the accepted and refused inputs and the exception types were
   the same, and control points agreed to rounding, except in the entries below.
 - **A NumPy array quoted in a CAD mismatch message is printed as a list:** `join` reports "the
@@ -1099,8 +1099,9 @@
   afterwards, so their control points can differ from the previous release by `float32` rounding.
   The tolerance of their checks is still read at the coarsest precision supplied. One consequence
   is a newly accepted input: a mixed-precision Coons patch or join whose `float32` and `float64`
-  knots differ by the rounding to `float32` was refused with a multiplicity error, because the two
-  readings of one knot counted as two; it is built now. `make_compat` of mixed precisions computes in
+  knots differ by the rounding to `float32` could be refused (with a multiplicity error, or with a
+  `ValueError` from NumPy when the two curves of an opposite pair came out with different numbers
+  of control points), because the two readings of one knot counted as two; it is built now. `make_compat` of mixed precisions computes in
   `float64` and returns each B-spline in its own precision, so a `float32` knot and a `float64`
   knot one `float32` rounding apart give both B-splines the same number of basis functions, where
   the previous release could give them different numbers.
@@ -1115,7 +1116,14 @@
   `pantr.multipatch`, may be refused with another exception or message: a float id in `Interface`
   raises `TypeError` (it was accepted), `MultiPatch` reports a patch of another dtype before a patch
   of another dimension, rank or rationality further down the list, and `create_revolution` with an
-  out-of-range integer `axis` raises its `IndexError` before the checks of the B-spline.
+  out-of-range integer `axis` raises its `IndexError` before the checks of the B-spline and of
+  `point`.
+- **A `bool` `axis` of `join` is taken as the integer it equals:** `join(c1, c2, axis=False)` joins
+  two curves along their only axis, where the previous release raised `TypeError` "an integer is
+  required for the axis", and a refused `True` is printed as `1` ("axis must be in [0, 1), got
+  1."). An axis past the signed 64-bit range in `join` or `make_compat` is printed as
+  `9223372036854775807` (`-9223372036854775808` below the range) in the refusal, rather than as
+  given.
 - The private helpers of `pantr.cad` and `pantr.multipatch` (`_validation._ColumnGroup`,
   `_column_groups`, `_coarsest_dtype`; the private functions and constants of `_primitives`,
   `_compat`, `_operations`, `_join` and `_coons`; `_interface.face_axis_side` and
