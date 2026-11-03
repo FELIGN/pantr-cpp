@@ -2865,3 +2865,14 @@ class TestTHBSplineRefine:
         f = self._field(np.random.default_rng(8))
         with pytest.raises(ValueError, match="level must be in"):
             f.refine_region(9, [0, 0], [1, 1])
+
+
+@pytest.mark.parametrize("regularity", [1.5, [1.5, 1.5], [np.float64(1.0), 1]])
+def test_a_regularity_that_is_not_an_integer_is_refused(regularity: object) -> None:
+    """A float regularity is a ``TypeError``, never truncated into another space.
+
+    Truncating ``1.5`` to ``1`` would build a space of another continuity without a word.
+    """
+    root = create_uniform_space([3, 3], [4, 4])
+    with pytest.raises(TypeError):
+        create_thb_space(root, 2, regularity=regularity)  # type: ignore[arg-type]
