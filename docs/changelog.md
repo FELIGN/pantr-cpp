@@ -15,7 +15,31 @@
   `partition_graph(backend="metis")` does through pymetis. The Python package does not use it:
   `backend="metis"` still needs `pymetis` (`pip install 'pantr[metis]'`).
 
+- **`pantr-mpi`, the MPI part of `pantr.mpi`, is a separate distribution.** `pantr.mpi`'s
+  distributed algorithms are compiled into pantr's extension, which links no MPI; an
+  `mpi4py` communicator reaches them through `pantr-mpi`, which is built for one MPI family
+  (Open MPI, or the MPICH ABI: MPICH, Intel MPI, MVAPICH). `pip install "pantr[mpi]"` installs
+  `mpi4py` 4.0 or later and `pantr-mpi` at pantr's own version (the previous extra installed
+  `mpi4py` 3.1 or later alone). The first time an `mpi4py` communicator is used, the family
+  `pantr-mpi` was built for is compared with the library `mpi4py` loaded
+  (`MPI.Get_library_version()`): a mismatch, or an extension that fails to load, raises
+  `ImportError` naming the family built for and the library loaded, and a missing `pantr-mpi`
+  raises `ImportError` asking for `pantr[mpi]`. A duck-typed communicator (any object with
+  `rank`, `size`, `allgather` and `allreduce`) needs neither `mpi4py` nor `pantr-mpi`. The C++
+  API has the same algorithms (`include/pantr/mpi/`, MPI-free, over a `Communicator` concept) and
+  an `MpiCommunicator` on the `pantr::mpi` target.
+
 ### Rejected where it used to be accepted
+- **`create_distributed_space` and `create_distributed_function` with a duck-typed communicator
+  of more than one rank that has no `allgather`** raise `AttributeError`: the partition is now
+  sent from rank 0 (see under Changed). The previous release read only `rank` and `size`.
+- **`pantr.mpi.configure_threads` has no `limit_blas` argument**: passing it raises `TypeError`.
+  It limited BLAS threads through `threadpoolctl`, which the port drops; pantr's own dense linear
+  algebra is compiled Eigen, which starts no thread of its own.
+- **An `mpi4py` communicator of an MPI initialized below `MPI_THREAD_FUNNELED`** is refused with
+  `RuntimeError` (`mpi4py` asks for `MPI_THREAD_MULTIPLE` by default). pantr calls MPI only from
+  the thread that initialized it, outside its thread pool; at `MPI_THREAD_FUNNELED` exactly, a call
+  from another thread is refused too.
 - **`num_intervals=0` is refused by all three knot-vector factories.**
   `create_uniform_open_knots` and `create_uniform_periodic_knots` documented
   `num_intervals` as *"must be non-negative"* and their shared validator enforced exactly
@@ -1156,7 +1180,40 @@
   function and class of `_detect`. What the tests reach of them
   is in `pantr._testing` (`coons_edge_pairs`).
 
+- **`create_distributed_space` and `create_distributed_function` compute the partition on rank 0
+  only and send it to the other ranks**, whenever the communicator has more than one rank. Before,
+  every rank computed it and the docstrings stated that this needed no communication, but a
+  partition computed in floating point (the spectral graph partition, a weighted recursive
+  bisection) can differ between two ranks' machines, for instance between two builds of the
+  extension for different processors, and the ranks must agree on it. The partition is sent with
+  one `comm.allgather` (see under Rejected for a communicator without one). With one rank nothing
+  is sent, as before. `method`, and for `method="grid"` the type of `global_space`, are checked on
+  every rank; any other error from computing the partition is raised on rank 0 as before, and
+  every other rank raises `ValueError` "rank 0 could not compute the partition" instead of
+  waiting in the collective. Which cut rank 0 computes is the one
+  described under the spectral partitions above, so on a degenerate graph it can differ from the
+  previous release's.
+- **The message of `require_mpi`** no longer suggests `pip install mpi4py` alone, since an
+  `mpi4py` communicator also needs `pantr-mpi`.
+- **The distributed fits run in the compiled extension; three of their error messages and their
+  call pattern change.** `from_dolfinx`'s inconsistent-gather message says `comm.size` where it
+  said `mesh.comm.size`. In `interpolate_bspline_distributed` and `fit_bspline_distributed`, value
+  blocks that cover more grid points than there are raise the "do not tile" `ValueError` (the
+  previous release raised NumPy's broadcasting error), and a block with another number of
+  components than the first raises `ValueError` naming the rank (the previous release raised
+  NumPy's reshape error). `l2_project_bspline_distributed` calls `func` once per boundary trace
+  for all components together, where the previous release called it once per trace and
+  component; the values are the same.
+
 ### Fixed
+- **`quasi_interpolate_bspline_distributed` leaves a coefficient that no rank owns at `0`.** Such
+  a DOF exists when `cell_active` excludes every cell of its support; the previous release
+  assembled the global field with `numpy.empty` and left that coefficient uninitialized.
+  `quasi_interpolate_thb_spline_distributed` assembles its field the same way now.
+- **`l2_project_bspline_distributed` on a `float64` space with a `float32` function** sums the
+  ranks' loads in `float64`, the precision the serial `l2_project_bspline` computes in; the
+  previous release reduced them in `float32`, so on one rank its coefficients differed from the
+  serial ones by `float32` rounding, and now they are equal.
 - **`detect_interfaces` and `MultiPatch` of patches whose joint bounding box has a diagonal
   from about `1.34e154` (the square root of the largest double) up to the largest double** find
   the interfaces there are; beyond that the tolerance is infinite, as before. The previous release
