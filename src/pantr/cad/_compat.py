@@ -10,6 +10,7 @@ different B-splines.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Any
 
 from .._ext import ext
 from ..bspline import Bspline
@@ -59,9 +60,10 @@ def make_compat(
         axis_list = [_index(axes)]
     else:
         axis_list = [_index(a) for a in axes]
-    made = ext.cad.make_compat([b._h for b in bsplines], axis_list)
+    handles: list[Any] = [b._h for b in bsplines]
+    made: list[Any] = ext.cad.make_compat(handles, axis_list)
     # An input the compatibility left as it was comes back as the same object, as before the port.
     return [
-        b if type(h) is type(b._h) and h.same_rep(b._h) else Bspline._from_handle(h)
-        for b, h in zip(bsplines, made, strict=True)
+        b if type(h) is type(src) and h.same_rep(src) else Bspline._from_handle(h)
+        for b, src, h in zip(bsplines, handles, made, strict=True)
     ]

@@ -9,6 +9,7 @@
 #include "pantr/bspline/bspline.hpp"
 #include "pantr/bspline/convert.hpp"
 #include "pantr/bspline/degree.hpp"
+#include "pantr/bspline/detail/refine_common.hpp"
 #include "pantr/bspline/knot_insertion.hpp"
 #include "pantr/bspline/knots.hpp"
 #include "pantr/bspline/space.hpp"
@@ -415,12 +416,40 @@ template <StorageFloat T>
 
 namespace detail {
 
+/// Refuse a `float` B-spline whose knots, rounded down from `double`, repeat a value more than
+/// `degree + 1` times in some direction.
+///
+/// Two distinct `double` knots of the merged vector can round to one `float`; the cast space would
+/// then carry a multiplicity no operation of the library accepts afterwards. The previous Python
+/// implementation inserted the merged knots in `float` and refused there, with this message.
+///
+/// Args:
+///     b (const bspline::Bspline<float>&): The B-spline cast down.
+///
+/// Raises:
+///     value_error: A knot value of some direction repeats more than `degree + 1` times (at the
+///         direction's tolerance).
+inline void check_narrowed_multiplicity(const bspline::Bspline<float>& b) {
+  const bspline::BsplineSpace<float> whole = b.space();
+  for (const auto& space : whole.spaces()) {
+    const long long max_allowed = static_cast<long long>(space.degree()) + 1;
+    const std::int64_t found =
+        bspline::detail::max_multiplicity<float>(space.knots(), space.tolerance());
+    if (found > max_allowed) {
+      throw value_error("Inserting these knots would exceed the maximum multiplicity of " +
+                        std::to_string(max_allowed) +
+                        ". Maximum multiplicity found: " + std::to_string(found) + ".");
+    }
+  }
+}
+
 /// Make B-splines of either storage type compatible, the way a mixed-precision binding needs it.
 ///
 /// Every input is converted to `double` (`bspline::astype`), made compatible there with
 /// `cad::make_compat<double>` (so the merge tolerance is the converted first B-spline's, a
 /// `double` tolerance, whatever type the first had), and each result is cast back to the storage
-/// type of the input at its position.
+/// type of the input at its position; an input the compatibility left unchanged is returned as
+/// itself.
 ///
 /// Widening to `double` can treat a `float` knot and a nearby `double` knot differently from the
 /// Python implementation, which kept them apart: for a `float` `0.3f` against a `double` `0.3` it
@@ -435,7 +464,8 @@ namespace detail {
 ///
 /// Raises:
 ///     value_error: As `make_compat`; a value is finite and beyond the range of `float` on the
-///         way down or the cast knots define no space (`astype`'s refusals).
+///         way down or the cast knots define no space (`astype`'s refusals); or two merged knots
+///         round to one `float` beyond the maximum multiplicity (`check_narrowed_multiplicity`).
 [[nodiscard]] inline std::vector<AnyBspline> make_compat(
     std::span<const AnyBspline> bsplines, const std::optional<std::vector<long long>>& axes) {
   if (bsplines.size() < 2) {
@@ -451,8 +481,13 @@ namespace detail {
   std::vector<AnyBspline> out;
   out.reserve(made.size());
   for (std::size_t i = 0; i < made.size(); ++i) {
-    if (std::holds_alternative<bspline::Bspline<float>>(bsplines[i])) {
-      out.emplace_back(bspline::astype<float>(made[i]));
+    if (made[i].same_rep(widened[i])) {
+      // Left as it was: the input itself, so that a caller sees the value it gave.
+      out.push_back(bsplines[i]);
+    } else if (std::holds_alternative<bspline::Bspline<float>>(bsplines[i])) {
+      bspline::Bspline<float> narrowed = bspline::astype<float>(made[i]);
+      check_narrowed_multiplicity(narrowed);
+      out.emplace_back(std::move(narrowed));
     } else {
       out.emplace_back(made[i]);
     }

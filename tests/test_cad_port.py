@@ -284,7 +284,7 @@ class TestMixedPrecision:
 
     def test_ruled_refuses_a_float64_value_beyond_float32(self) -> None:
         # new in the C++ port: the conversion to the first dtype is checked, where the Python
-        # implementation overflowed to infinity without a word.
+        # implementation stored infinity and warned (RuntimeWarning: overflow encountered in cast).
         a, _ = self._pair()
         huge = _curve(np.full((2, 3), 1e300), dtype=np.float64)
         with pytest.raises(ValueError, match="outside the range of the target floating-point type"):
@@ -393,3 +393,60 @@ def test_make_compat_returns_an_unchanged_input_as_the_same_object() -> None:
     elevated = make_compat(line, circle)
     assert elevated[0] is not line
     assert elevated[1] is circle
+
+
+def test_mixed_make_compat_returns_unchanged_inputs_as_the_same_objects() -> None:
+    """The float32 input of a mixed pair that needs no change is the object given, as before."""
+    a = create_line()
+    b = _f32(create_line([0, 1, 0], [1, 1, 0]))
+    out = make_compat(a, b)
+    assert out[0] is a
+    assert out[1] is b
+
+
+def test_mixed_make_compat_refuses_knots_that_round_to_one_float32() -> None:
+    """A double knot at ``0.3`` and its float32 rounding are two knots in float64.
+
+    Each side receives the other's two copies, and on the way back to float32 the four round to
+    one value of multiplicity 4 at degree 1. The previous release inserted in float32 and refused
+    with this message; the port refuses at the same call rather than return a space no later
+    operation accepts.
+    """
+    cp = [[0, 0, 0], [1, 0, 0], [2, 0, 0], [3, 0, 0]]
+    knots = [0.0, 0.0, 0.3, 0.3, 1.0, 1.0]
+    a = _curve(cp, knots=knots)
+    b = _curve(cp, knots=knots, dtype=np.float32)
+    with pytest.raises(ValueError, match="exceed the maximum multiplicity of 2"):
+        make_compat(a, b)
+
+
+def test_a_mixed_coons_patch_with_a_knot_rounded_to_float32_is_built() -> None:
+    """New in the port: a float32 reading of an interior knot no longer breaks the blend.
+
+    The two curves free in u carry an interior knot at ``0.3``, ``C_u0`` in float32 and ``C_u1``
+    in float64. The previous release made the pair compatible in their own precisions, so the
+    two readings of the knot counted as two on one side only, and the ruled term failed with a
+    NumPy broadcast error; the port converts every curve to the first curve's dtype first, so
+    both carry one knot and the patch interpolates its sides.
+    """
+    t = np.array([0.0, 0.15, 0.65, 1.0])
+    bottom = np.stack([t, np.zeros(4), np.zeros(4)], axis=1)
+    top = np.stack([t, np.ones(4), 0.2 * np.sin(np.pi * t)], axis=1)
+    knots = [0.0, 0.0, 0.0, 0.3, 1.0, 1.0, 1.0]
+    c_u0 = _curve(bottom, degree=2, knots=knots, dtype=np.float32)
+    c_u1 = _curve(top, degree=2, knots=knots)
+    c_v0 = create_line([0, 0, 0], [0, 1, 0])
+    c_v1 = create_line([1, 0, 0], [1, 1, float(top[-1, 2])])
+    patch = create_coons_surface(((c_v0, c_v1), (c_u0, c_u1)))
+    assert patch.dtype == np.float64
+    u = np.linspace(0.0, 1.0, 7)
+    on_top = patch.evaluate(np.stack([u, np.ones(7)], axis=1))
+    assert_allclose(on_top, c_u1.evaluate(u), atol=4 * float(np.finfo(np.float32).eps))
+
+
+def test_join_takes_a_bool_axis_as_the_integer_it_equals() -> None:
+    """Changed in the port: ``False`` is axis 0 (the previous release raised ``TypeError``)."""
+    c1, c2 = create_line([0, 0, 0], [1, 0, 0]), create_line([1, 0, 0], [2, 0, 0])
+    assert join(c1, c2, axis=False).dim == 1
+    with pytest.raises(ValueError, match=re.escape("axis must be in [0, 1), got 1.")):
+        join(c1, c2, axis=True)
