@@ -9,6 +9,7 @@ from pantr._pantr import cad as cad
 from pantr._pantr import change_basis as change_basis
 from pantr._pantr import geometry as geometry
 from pantr._pantr import grid as grid
+from pantr._pantr import mpi as mpi
 from pantr._pantr import multipatch as multipatch
 from pantr._pantr import quad as quad
 from pantr._pantr import roots as roots

@@ -23,7 +23,7 @@ the backend for you. Installing the backend yourself is exactly equivalent:
 | Capability | Module | Backend | Install (extra *or* direct) |
 |---|---|---|---|
 | Visualization & VTK export | {mod}`pantr.viz` | `pyvista` | `pip install "pantr[viz]"` · `pip install pyvista` |
-| Distributed (MPI) spaces | {mod}`pantr.mpi` | `mpi4py` (+ an MPI library) | `pip install "pantr[mpi]"` |
+| Distributed (MPI) spaces | {mod}`pantr.mpi` | `mpi4py` and `pantr-mpi` (+ an MPI library) | `pip install "pantr[mpi]"` |
 | METIS partitioning backend | {func}`pantr.bspline.partition_graph` | `pymetis` | `pip install "pantr[metis]"` |
 
 ```bash

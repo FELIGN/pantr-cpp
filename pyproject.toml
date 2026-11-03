@@ -48,8 +48,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# pantr-mpi is built from bindings/mpi at the same version (tests/test_mpi.py checks the pin);
+# tools/requirements.py leaves it out, since `make ext` builds it in the tree.
 mpi = [
-  "mpi4py>=3.1,<5",
+  "mpi4py>=4.0,<5",
+  "pantr-mpi==0.7.0",
 ]
 metis = [
   "pymetis>=2025.2",
@@ -138,6 +141,8 @@ PANTR_INSTALL = "OFF"
 PANTR_NATIVE_ARCH = "OFF"
 PANTR_STABLE_ABI = "ON"
 PANTR_MULTI_ISA = "ON"
+# _pantr_mpi ships in its own distribution (bindings/mpi/pyproject.toml), never in this wheel.
+PANTR_BUILD_MPI_MODULE = "OFF"
 
 [tool.cibuildwheel]
 # One cp312-abi3 wheel per platform (R8: Linux x86_64 and aarch64, macOS arm64, Windows amd64),

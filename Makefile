@@ -41,6 +41,8 @@ ext:
 	find src/pantr -maxdepth 1 -name '_pantr*.so' -delete
 	cmake --install $(EXT_BUILD_DIR) --component python --prefix "$(CURDIR)/src"
 	cmake --install $(EXT_BUILD_DIR) --component testing --prefix "$(CURDIR)/src"
+	find src -maxdepth 2 -path 'src/pantr_mpi/*' -name '_pantr_mpi*.so' -delete
+	cmake --install $(EXT_BUILD_DIR) --component mpi --prefix "$(CURDIR)/src"
 	find src/pantr -maxdepth 1 -name '_pantr*.so' -exec touch {} +
 
 # Regenerate the stubs mypy reads (committed; the CI tests job fails when they differ from the

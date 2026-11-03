@@ -79,7 +79,8 @@ set(_pantr_ext_sources src/module.cpp src/parallel.cpp src/testing.cpp src/quad.
                        src/bspline_ops.cpp src/bspline_refine.cpp src/bspline_modify.cpp
                        src/bspline_extract.cpp src/bspline_spanwise.cpp src/bspline_product.cpp
                        src/bspline_fit.cpp src/bspline_locate.cpp src/grid.cpp
-                       src/partition.cpp src/thb.cpp src/multipatch.cpp src/cad.cpp)
+                       src/partition.cpp src/thb.cpp src/multipatch.cpp src/cad.cpp
+                       src/mpi.cpp)
 
 # Build one copy of the extension: module name <name>, rung <isa>, extra compile options in ARGN.
 function(pantr_add_extension name isa)
@@ -145,4 +146,27 @@ if(PANTR_BUILD_PYTHON_TEST_MODULES)
   endforeach()
   target_compile_definitions(_pantr_twin PRIVATE PANTR_TWIN_ROUTED=1)
   target_compile_definitions(_pantr_twin_unrouted PRIVATE PANTR_TWIN_ROUTED=0)
+endif()
+
+# --- _pantr_mpi ---------------------------------------------------------------------------------
+# The MPI glue module of the pantr-mpi distribution (bindings/mpi). AUTO builds it where an MPI and
+# an mpi4py able to build it (4.0 or later: its stable-ABI C API) are found, which is what `make ext`
+# uses; it installs in the `mpi` component, into the `pantr_mpi` package, never into a pantr wheel.
+set(PANTR_BUILD_MPI_MODULE AUTO CACHE STRING "Build _pantr_mpi: ON, OFF or AUTO")
+set(_pantr_build_mpi_module OFF)
+if(PANTR_BUILD_MPI_MODULE STREQUAL "AUTO")
+  execute_process(
+    COMMAND "${Python_EXECUTABLE}" -c
+            "import mpi4py, sys; sys.exit(0 if int(mpi4py.__version__.split('.')[0]) >= 4 else 1)"
+    RESULT_VARIABLE _pantr_mpi4py_ok OUTPUT_QUIET ERROR_QUIET)
+  if(MPI_CXX_FOUND AND _pantr_mpi4py_ok EQUAL 0)
+    set(_pantr_build_mpi_module ON)
+  else()
+    message(STATUS "pantr: _pantr_mpi not built (needs an MPI and mpi4py >= 4.0)")
+  endif()
+elseif(PANTR_BUILD_MPI_MODULE)
+  set(_pantr_build_mpi_module ON)
+endif()
+if(_pantr_build_mpi_module)
+  add_subdirectory(mpi)
 endif()

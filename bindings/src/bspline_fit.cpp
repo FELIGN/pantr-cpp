@@ -143,24 +143,6 @@ void def_tensor_collocation_factory(nb::module_& m) {
         "Build the tensor-product collocation system of `space` at `nodes`.");
 }
 
-template <class P, class C>
-void def_solve_kronecker(nb::module_& m) {
-  m.def(("solve_kronecker_" + tag<P>() + "_" + tag<C>()).c_str(),
-        [](const std::vector<Mat<P>>& matrices, const Any<C>& rhs, double tol) {
-          std::vector<NdArray<P>> mats;
-          mats.reserve(matrices.size());
-          for (const Mat<P>& a : matrices) {
-            NdArray<P> c({a.shape(0), a.shape(1)}, for_overwrite);
-            std::copy(a.data(), a.data() + a.size(), c.data());
-            mats.push_back(std::move(c));
-          }
-          const std::vector<std::size_t> shape = shape_of(rhs);
-          return to_numpy(bspline::solve_kronecker<P, C>(mats, flat_of(rhs), shape, tol));
-        },
-        nb::arg("matrices").noconvert(), nb::arg("rhs").noconvert(), nb::arg("tol"),
-        "Solve a Kronecker system one direction at a time (the fitting solve rule).");
-}
-
 template <class T, class P, class C>
 void def_fit_scattered(nb::module_& m) {
   m.def(("fit_scattered_" + tag<P>() + "_" + tag<C>()).c_str(),
@@ -241,21 +223,6 @@ void def_l2(nb::module_& m, const char* name) {
            nb::arg("tol"));
 }
 
-template <class T, class C>
-void def_assemble_load(nb::module_& m) {
-  m.def(("assemble_load_1d_" + tag<C>()).c_str(),
-        [](const bspline::BsplineSpace1D<T>& space, const Any<C>& values, const Vec<T>& nodes,
-           const Vec<T>& weights, std::size_t axis) {
-          const std::vector<std::size_t> shape = shape_of(values);
-          return to_numpy(bspline::assemble_load_1d<T, C>(
-              space, flat_of(values), shape, std::span<const T>(nodes.data(), nodes.shape(0)),
-              std::span<const T>(weights.data(), weights.shape(0)), axis));
-        },
-        nb::arg("space"), nb::arg("values").noconvert(), nb::arg("nodes").noconvert(),
-        nb::arg("weights").noconvert(), nb::arg("axis"),
-        "Contract one axis of `values` with the weighted basis at quadrature nodes.");
-}
-
 template <class T>
 void def_qi(nb::module_& m, const char* name) {
   using QI = bspline::QuasiInterpolation<T>;
@@ -283,10 +250,6 @@ void register_bspline_fit(nb::module_& m) {
   def_tensor_collocation_factory<double, float>(m);
   def_tensor_collocation_factory<float, float>(m);
   def_tensor_collocation_factory<float, double>(m);
-  def_solve_kronecker<double, double>(m);
-  def_solve_kronecker<float, float>(m);
-  def_solve_kronecker<float, double>(m);
-  def_solve_kronecker<double, float>(m);
   def_fit_scattered<double, double, double>(m);
   def_fit_scattered<double, float, float>(m);
   def_fit_scattered<double, float, double>(m);
@@ -297,10 +260,6 @@ void register_bspline_fit(nb::module_& m) {
   def_fit_scattered<float, double, float>(m);
   def_l2<double>(m, "L2ProjectionF64");
   def_l2<float>(m, "L2ProjectionF32");
-  def_assemble_load<double, double>(m);
-  def_assemble_load<float, float>(m);
-  def_assemble_load<float, double>(m);
-  def_assemble_load<double, float>(m);
   def_qi<double>(m, "QuasiInterpolationF64");
   def_qi<float>(m, "QuasiInterpolationF32");
 }

@@ -27,16 +27,17 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
-from .._interpolation_utils import split_components
+from .._ext import ext
+from .._interpolation_utils import resolve_svd_tolerance
 from ..bspline import Bspline, BsplineSpace, fit_bspline
 from ..bspline._bspline_interpolate import (
-    _apply_boundary_deriv_rhs,
-    _build_collocation_matrices,
     _is_scattered_nodes,
     _resolve_nodes,
-    _solve_kronecker,
+    _tag,
+    _tensor_collocation,
 )
 from ..quad import PointsLattice
+from ._comm import as_communicator
 from ._distributed_function import DistributedFunction
 from ._distributed_space import DistributedSpace
 from ._thread_policy import _ensure_default_thread_policy
@@ -47,28 +48,8 @@ if TYPE_CHECKING:
     import numpy.typing as npt
 
 
-def _block_bounds(n_total: int, n_parts: int, rank: int) -> tuple[int, int]:
-    """Return this rank's half-open block ``[start, stop)`` of a contiguous range.
-
-    Splits ``range(n_total)`` into ``n_parts`` contiguous blocks as evenly as possible:
-    the first ``n_total % n_parts`` blocks get one extra element.  An empty range (or a
-    rank beyond the populated blocks) yields a degenerate ``[start, start)`` slice.
-
-    Args:
-        n_total (int): Length of the range being split.
-        n_parts (int): Number of blocks (ranks).
-        rank (int): The rank whose block is requested; assumed in ``[0, n_parts)``.
-
-    Returns:
-        tuple[int, int]: The ``(start, stop)`` half-open bounds of this rank's block.
-
-    Note:
-        No input validation is performed.
-    """
-    base, extra = divmod(n_total, n_parts)
-    start = rank * base + min(rank, extra)
-    stop = start + base + (1 if rank < extra else 0)
-    return start, stop
+_cpp: Any = ext.mpi
+"""The compiled distributed algorithms (private)."""
 
 
 def _evaluate_block(
@@ -115,116 +96,44 @@ def _evaluate_block(
     return np.ascontiguousarray(values)
 
 
-def _assemble_full_values(
-    blocks: list[npt.NDArray[np.float64]],
-    n_total: int,
-) -> npt.NDArray[np.float64]:
-    """Concatenate per-rank value blocks into the full flattened value field.
-
-    Args:
-        blocks (list[npt.NDArray[np.float64]]): Per-rank value blocks in rank order, each
-            shaped ``(block_len,)`` (scalar) or ``(block_len, rank)`` (vector); empty
-            blocks may be ``(0,)`` or ``(0, rank)``.
-        n_total (int): Expected total number of grid points (sum of block lengths).
-
-    Returns:
-        npt.NDArray[np.float64]: The full value field, shape ``(n_total,)`` (scalar) or
-        ``(n_total, rank)`` (vector).
-
-    Raises:
-        ValueError: If the per-rank blocks do not tile the flattened grid, i.e. their
-            lengths sum to fewer than ``n_total`` (over-coverage already errors via the
-            in-place assignment).  This happens when ``func`` returned the wrong number of
-            values for some block (interpolate path) or when user-supplied blocks do not
-            match the contiguous C-order split (fit path with ``values_distributed=True``).
-
-    Note:
-        The rank dimension is inferred from the first non-empty block; if every block is
-        empty the field is treated as scalar.  Empty blocks (``(0,)`` or ``(0, rank)``,
-        contributed by ranks with no assigned points) are skipped.
-    """
-    scalar = True
-    rank_dim = 1
-    for b in blocks:
-        if b.shape[0] == 0:
-            continue
-        scalar = b.ndim == 1
-        rank_dim = 1 if scalar else int(b.shape[1])
-        break
-
-    shape: tuple[int, ...] = (n_total,) if scalar else (n_total, rank_dim)
-    full = np.empty(shape, dtype=np.float64)
-    offset = 0
-    for b in blocks:
-        m = b.shape[0]
-        if m == 0:
-            continue
-        full[offset : offset + m] = b if scalar else b.reshape(m, rank_dim)
-        offset += m
-
-    if offset != n_total:
-        raise ValueError(
-            f"Per-rank value blocks do not tile the flattened grid: they cover {offset} of "
-            f"{n_total} points. On the interpolate path this means func returned the wrong "
-            f"number of values for a block; on the fit path (values_distributed=True) it "
-            f"means the supplied blocks do not match the contiguous C-order split of the "
-            f"grid (see fit_bspline_distributed's documented block layout)."
-        )
-    return full
-
-
-def _solve_replicated(
+def _collocate(  # noqa: PLR0913 -- the solve, its nodes and constraints, the data, the comm
     space: BsplineSpace,
     node_arrays: list[npt.NDArray[np.float32 | np.float64]],
-    full_values: npt.NDArray[np.float64],
     boundary_derivatives: Sequence[tuple[int, ...] | None] | None,
+    local_values: npt.NDArray[np.float64],
+    comm: Any,  # noqa: ANN401 -- an mpi4py.MPI.Comm or a duck-typed one
     tol: float | None,
 ) -> Bspline:
-    """Run the replicated tensor-product collocation solve from a full value field.
+    """Gather every rank's value block and run the replicated tensor-product solve.
 
-    Mirrors the serial :func:`~pantr.bspline.interpolate_bspline` solve: build the
-    per-direction collocation matrices, reshape the flattened values to the grid, apply
-    any boundary-derivative right-hand-side zeros, and solve each component via the
-    Kronecker structure.  Every rank runs this identically on the gathered value field.
+    The collocation system is built from the nodes before the collective, so an
+    inconsistent node set raises on every rank before any rank enters it. The gathered
+    blocks are concatenated in rank order (their component count read from the first
+    non-empty block), rounded to ``space.dtype``, and solved one component at a time, as the
+    serial :func:`~pantr.bspline.interpolate_bspline` solves them.
 
     Args:
         space (BsplineSpace): The global target space.
-        node_arrays (list[npt.NDArray]): Per-direction node arrays (the Greville or custom
-            tensor-product nodes).
-        full_values (npt.NDArray[np.float64]): The full flattened value field, shape
-            ``(n_total,)`` (scalar) or ``(n_total, rank)`` (vector), C-ordered to match the
-            grid (last grid index varies fastest).
+        node_arrays (list[npt.NDArray]): Per-direction tensor-product nodes.
         boundary_derivatives (Sequence[tuple[int, ...] | None] | None): Per-direction
             ``(n_left, n_right)`` boundary-derivative constraints, or ``None``.
-        tol (float | None): SVD truncation tolerance forwarded to the 1D solves.
+        local_values (npt.NDArray[np.float64]): This rank's block, ``(m,)`` or
+            ``(m, rank)``, C-contiguous.
+        comm (Any): The communicator.
+        tol (float | None): SVD truncation tolerance; ``None`` for ``100 * eps``.
 
     Returns:
-        Bspline: The fitted global B-spline (control points cast to ``space.dtype``).
+        Bspline: The global B-spline, control points in ``space.dtype``.
 
-    Note:
-        No input validation is performed.  ``full_values`` must already be shaped
-        consistently with ``node_arrays``.  The control points are coerced to
-        ``space.dtype`` (rather than raising on a value/space dtype mismatch); this matches
-        the distributed quasi-interpolation convention and keeps both
-        :func:`fit_bspline_distributed` value layouts consistent.
+    Raises:
+        ValueError: The nodes are inconsistent with the space, or the gathered blocks do not
+            tile the flattened grid.
     """
-    grid_shape = tuple(a.shape[0] for a in node_arrays)
-    if full_values.ndim == 1:
-        gridded: npt.NDArray[np.float64] = full_values.reshape(grid_shape)
-    else:
-        gridded = full_values.reshape(*grid_shape, full_values.shape[1])
-
-    components = split_components(gridded, grid_shape)
-    if boundary_derivatives is not None:
-        components = _apply_boundary_deriv_rhs(space, components, boundary_derivatives)
-
-    matrices = _build_collocation_matrices(space, node_arrays, boundary_derivatives)
-    out_dtype = space.dtype
-    ctrl_components = [
-        _solve_kronecker(matrices, comp.astype(out_dtype), tol) for comp in components
-    ]
-    ctrl = np.stack(ctrl_components, axis=-1)
-    return Bspline(space, ctrl)
+    system, mat_dtype = _tensor_collocation(space, node_arrays, boundary_derivatives)
+    resolved = float(resolve_svd_tolerance(mat_dtype, tol))
+    collocate = getattr(_cpp, f"collocate_{_tag(mat_dtype)}_{_tag(np.dtype(space.dtype))}")
+    ctrl = collocate(as_communicator(comm), system, local_values, resolved)
+    return Bspline(space, np.asarray(ctrl).astype(space.dtype, copy=False))
 
 
 def interpolate_bspline_distributed(
@@ -336,14 +245,11 @@ def interpolate_bspline_distributed(
 
     all_points = np.ascontiguousarray(lattice.get_all_points(order="C"), dtype=np.float64)
     n_total = all_points.shape[0]
-    start, stop = _block_bounds(n_total, n_parts, rank)
+    start, stop = _cpp.block_bounds(n_total, n_parts, rank)
     local_values = _evaluate_block(func, all_points, start, stop)
 
-    blocks: list[npt.NDArray[np.float64]] = list(comm.allgather(local_values))
-    full_values = _assemble_full_values(blocks, n_total)
-
-    global_bspline = _solve_replicated(
-        global_space, node_arrays, full_values, boundary_derivatives, tol
+    global_bspline = _collocate(
+        global_space, node_arrays, boundary_derivatives, local_values, comm, tol
     )
     return DistributedFunction(global_bspline, distributed_space)
 
@@ -451,15 +357,10 @@ def fit_bspline_distributed(
         )
 
     node_arrays = _resolve_nodes(global_space, nodes)
-    n_total = int(np.prod([a.shape[0] for a in node_arrays]))
-
-    local_block = np.asarray(values, dtype=np.float64)
-    blocks: list[npt.NDArray[np.float64]] = list(
-        distributed_space.comm.allgather(np.ascontiguousarray(local_block))
+    local_block = np.ascontiguousarray(values, dtype=np.float64)
+    global_bspline = _collocate(
+        global_space, node_arrays, None, local_block, distributed_space.comm, tol
     )
-    full_values = _assemble_full_values(blocks, n_total)
-
-    global_bspline = _solve_replicated(global_space, node_arrays, full_values, None, tol)
     return DistributedFunction(global_bspline, distributed_space)
 
 

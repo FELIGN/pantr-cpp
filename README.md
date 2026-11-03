@@ -87,7 +87,7 @@ they are just a convenience that installs the backend for you, so `pip install
 | Capability | Module | Backend it needs | Install (extra or direct) |
 |---|---|---|---|
 | Visualization & VTK export | `pantr.viz` | [`pyvista`](https://docs.pyvista.org) (+ [VTK](https://vtk.org)) | `pip install "pantr[viz]"` · or `pip install pyvista` |
-| Distributed (MPI) spaces | `pantr.mpi` | [`mpi4py`](https://github.com/mpi4py/mpi4py) (+ an MPI library) | `pip install "pantr[mpi]"` |
+| Distributed (MPI) spaces | `pantr.mpi` | [`mpi4py`](https://github.com/mpi4py/mpi4py) and `pantr-mpi` (+ an MPI library) | `pip install "pantr[mpi]"` |
 | METIS partitioning backend | `pantr.bspline.partition_graph` | [`pymetis`](https://github.com/inducer/pymetis) | `pip install "pantr[metis]"` |
 
 The serial core (`pantr.grid`, `pantr.bspline`, …) never imports `pantr.mpi`, so a plain

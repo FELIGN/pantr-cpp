@@ -9,7 +9,7 @@ namespace pantr::bindings {
 /// Version of the module's interface. pantr/_ext.py refuses a module whose version differs from
 /// its EXPECTED_INTERFACE, so a stale build fails at import instead of as a phantom regression.
 /// Bump both together with any change to what the module exposes.
-inline constexpr int kInterfaceVersion = 17;
+inline constexpr int kInterfaceVersion = 18;
 
 /// Register the translation of pantr's C++ exceptions to Python exceptions.
 void register_errors(nanobind::module_& m);
@@ -153,6 +153,11 @@ void register_cad(nanobind::module_& m);
 
 /// Register the Coons edge readings in the `_testing` submodule.
 void register_cad_testing(nanobind::module_& m);
+
+/// Register the `mpi` submodule (the distributed algorithms over a capsule or a duck-typed
+/// communicator). After `register_bspline_fit`, `register_thb` and `register_grid`: it takes their
+/// classes.
+void register_mpi(nanobind::module_& m);
 
 /// Register the block and factorization helpers of the grids in the `_testing` submodule.
 void register_grid_testing(nanobind::module_& m);

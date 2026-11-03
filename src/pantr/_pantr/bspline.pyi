@@ -1434,54 +1434,6 @@ def tensor_collocation_f32(
 ) -> TensorCollocationF32:
     """Build the tensor-product collocation system of `space` at `nodes`."""
 
-def solve_kronecker_f64_f64(
-    matrices: Sequence[
-        Annotated[
-            NDArray[numpy.float64],
-            dict(shape=(None, None), order="C", device="cpu", writable=False),
-        ]
-    ],
-    rhs: Annotated[NDArray[numpy.float64], dict(order="C", device="cpu", writable=False)],
-    tol: float,
-) -> NDArray[numpy.float64]:
-    """Solve a Kronecker system one direction at a time (the fitting solve rule)."""
-
-def solve_kronecker_f32_f32(
-    matrices: Sequence[
-        Annotated[
-            NDArray[numpy.float32],
-            dict(shape=(None, None), order="C", device="cpu", writable=False),
-        ]
-    ],
-    rhs: Annotated[NDArray[numpy.float32], dict(order="C", device="cpu", writable=False)],
-    tol: float,
-) -> NDArray[numpy.float32]:
-    """Solve a Kronecker system one direction at a time (the fitting solve rule)."""
-
-def solve_kronecker_f32_f64(
-    matrices: Sequence[
-        Annotated[
-            NDArray[numpy.float32],
-            dict(shape=(None, None), order="C", device="cpu", writable=False),
-        ]
-    ],
-    rhs: Annotated[NDArray[numpy.float64], dict(order="C", device="cpu", writable=False)],
-    tol: float,
-) -> NDArray[numpy.float64]:
-    """Solve a Kronecker system one direction at a time (the fitting solve rule)."""
-
-def solve_kronecker_f64_f32(
-    matrices: Sequence[
-        Annotated[
-            NDArray[numpy.float64],
-            dict(shape=(None, None), order="C", device="cpu", writable=False),
-        ]
-    ],
-    rhs: Annotated[NDArray[numpy.float32], dict(order="C", device="cpu", writable=False)],
-    tol: float,
-) -> NDArray[numpy.float32]:
-    """Solve a Kronecker system one direction at a time (the fitting solve rule)."""
-
 @overload
 def fit_scattered_f64_f64(
     space: BsplineSpaceF64,
@@ -1673,58 +1625,6 @@ class L2ProjectionF32:
         ],
         tol: float,
     ) -> NDArray[numpy.float32]: ...
-
-@overload
-def assemble_load_1d_f64(
-    space: BsplineSpace1DF64,
-    values: Annotated[NDArray[numpy.float64], dict(order="C", device="cpu", writable=False)],
-    nodes: Annotated[
-        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
-    ],
-    weights: Annotated[
-        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
-    ],
-    axis: int,
-) -> NDArray[numpy.float64]: ...
-@overload
-def assemble_load_1d_f64(
-    space: BsplineSpace1DF32,
-    values: Annotated[NDArray[numpy.float64], dict(order="C", device="cpu", writable=False)],
-    nodes: Annotated[
-        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
-    ],
-    weights: Annotated[
-        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
-    ],
-    axis: int,
-) -> NDArray[numpy.float64]:
-    """Contract one axis of `values` with the weighted basis at quadrature nodes."""
-
-@overload
-def assemble_load_1d_f32(
-    space: BsplineSpace1DF32,
-    values: Annotated[NDArray[numpy.float32], dict(order="C", device="cpu", writable=False)],
-    nodes: Annotated[
-        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
-    ],
-    weights: Annotated[
-        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
-    ],
-    axis: int,
-) -> NDArray[numpy.float32]: ...
-@overload
-def assemble_load_1d_f32(
-    space: BsplineSpace1DF64,
-    values: Annotated[NDArray[numpy.float32], dict(order="C", device="cpu", writable=False)],
-    nodes: Annotated[
-        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
-    ],
-    weights: Annotated[
-        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
-    ],
-    axis: int,
-) -> NDArray[numpy.float32]:
-    """Contract one axis of `values` with the weighted basis at quadrature nodes."""
 
 class QuasiInterpolationF64:
     """The staged Lee-Lyche-Mørken quasi-interpolant (points, then weights)."""

@@ -60,6 +60,9 @@ module.
   ``_rect_intersect``, ``_peel``, ``_try_merge``, ``_normalize_blocks``, ``_mark_region_cells``,
   ``_name_marked_cells`` and the two message limits), and the Cartesian factorization behind the
   ``"block"`` partition backend (``_factor_blocks``, ``_divisors``).
+- The contiguous block split of the distributed collocation (:func:`block_bounds`): which
+  C-order grid points each rank evaluates, the layout ``fit_bspline_distributed`` documents for
+  ``values_distributed=True``, which a test simulating several ranks in one process rebuilds.
 """
 
 from __future__ import annotations
@@ -1235,6 +1238,10 @@ def locate_newton_refine(
     return np.asarray(converged, dtype=np.bool_), np.asarray(xi, dtype=np.float64)
 
 
+block_bounds = ext.mpi.block_bounds
+"""``(start, stop)`` of ``rank``'s block when ``n_total`` items split into ``n_parts`` contiguous
+blocks, the first ``n_total % n_parts`` one longer: ``block_bounds(n_total, n_parts, rank)``."""
+
 __all__ = [
     "BERNSTEIN",
     "BERNSTEIN_MAX_UNMIRRORED_DEGREE_FLOAT32",
@@ -1283,6 +1290,7 @@ __all__ = [
     "bezier_extraction_1d",
     "bezier_identity_mask",
     "bincoeff",
+    "block_bounds",
     "blossom_span",
     "blossom_span_f32",
     "bspline_find_roots_with_budget",

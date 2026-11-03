@@ -1,32 +1,30 @@
 """Distributed L2 projection onto tensor-product B-spline spaces.
 
 Provides :func:`l2_project_bspline_distributed`, the MPI-parallel counterpart of
-:func:`~pantr.bspline.l2_project_bspline`.  L2 assembly is per-element, mapping directly
-onto the cell partition: each rank evaluates ``func`` only on the quadrature points of
-its *owned* cells and contracts them into a per-component load tensor, a single
-``allreduce`` sums the global load across ranks, and the (replicated) Kronecker solve
-recovers the global coefficients.  The per-direction mass matrices are
-partition-independent and built identically on every rank, so only the load is
-communicated.  The result is a :class:`~pantr.mpi.DistributedFunction` whose
-:attr:`~pantr.mpi.DistributedFunction.local` reproduces the serial L2 projection exactly
-over the rank's owned cells.
+:func:`~pantr.bspline.l2_project_bspline`.  The L2 load is a sum over cells, so it splits
+over the cell partition: every rank evaluates ``func`` on the whole global quadrature
+lattice, keeps the values at the quadrature points of the cells it owns (the others are set
+to zero) and contracts them into a per-component load tensor; a single ``allreduce`` sums
+the loads across ranks, and the (replicated) boundary rows and Kronecker solve recover the
+global coefficients.  The per-direction mass matrices are partition-independent and built
+identically on every rank, so only the load is communicated.  The result is a
+:class:`~pantr.mpi.DistributedFunction` whose global coefficients equal the serial L2
+projection's up to the order of summation.  Evaluating ``func`` only on the owned cells is a
+possible later speed-up; the computation itself runs in the compiled extension.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
+from .._ext import ext
+from .._interpolation_utils import resolve_svd_tolerance
 from ..bspline import Bspline, BsplineSpace
-from ..bspline._bspline_interpolate import (
-    _apply_boundary_load,
-    _assemble_load_1d,
-    _build_l2_mass_and_quad,
-    _evaluate_func_on_lattice,
-    _solve_kronecker,
-)
+from ..bspline._bspline_interpolate import _evaluate_func_on_lattice, _l2_projection, _tag
 from ..quad import PointsLattice
+from ._comm import as_communicator
 from ._distributed_function import DistributedFunction
 from ._distributed_space import DistributedSpace
 from ._thread_policy import _ensure_default_thread_policy
@@ -36,93 +34,39 @@ if TYPE_CHECKING:
 
     import numpy.typing as npt
 
+_cpp: Any = ext.mpi
+"""The compiled distributed algorithms (private)."""
 
-def _owned_quad_cell_mask(
-    space: BsplineSpace,
-    cell_owner: npt.NDArray[np.int32],
-    rank: int,
-    n_quads: tuple[int, ...],
-    quad_grid_shape: tuple[int, ...],
-) -> npt.NDArray[np.bool_]:
-    """Build the boolean mask of quadrature points lying in this rank's owned cells.
 
-    The global quadrature nodes are concatenated per element in each direction, so the
-    ``n_quad`` consecutive nodes of direction-``d`` element ``e`` map to interval ``e``.
-    A quadrature point's owning cell is the C-order flat id (over ``num_intervals``) of
-    its per-direction element tuple; the point is owned iff ``cell_owner`` assigns that
-    cell to ``rank``.
+def _trace_values(
+    func: Callable[..., npt.ArrayLike],
+    projection: Any,  # noqa: ANN401 -- the compiled L2 projection
+    trace: int,
+    n_components: int,
+    dtype: np.dtype[Any],
+) -> npt.NDArray[np.floating[Any]]:
+    """Sample ``func`` on one boundary trace's lattice, every component at once.
 
     Args:
-        space (BsplineSpace): The target B-spline space.
-        cell_owner (npt.NDArray[np.int32]): Owner rank of every global cell, C-order over
-            ``num_intervals``.
-        rank (int): This rank's id.
-        n_quads (tuple[int, ...]): Quadrature points per element per direction.
-        quad_grid_shape (tuple[int, ...]): Shape of the global quadrature grid
-            (``num_intervals[d] * n_quads[d]`` per direction).
+        func (Callable): Function being projected.
+        projection (Any): The compiled projection.
+        trace (int): The trace's index.
+        n_components (int): The number of output components.
+        dtype (np.dtype): The computation dtype.
 
     Returns:
-        npt.NDArray[np.bool_]: Boolean mask of shape ``quad_grid_shape``; ``True`` at
-        quadrature points whose owning cell belongs to ``rank``.
+        npt.NDArray: The values, shape ``(*trace_grid, n_components)``, C-contiguous in
+        ``dtype``.
 
-    Note:
-        Assumes a full partition: every cell is owned by exactly one rank (no inactive
-        ``-1`` cells).  A future trimmed-grid caller with unowned cells would need to
-        handle the ``-1`` owner before relying on this mask.
+    Raises:
+        ValueError: The function returned an array that does not reshape to the lattice.
     """
-    num_intervals = space.num_intervals
-    elem_idx_per_dir = [
-        np.repeat(np.arange(num_intervals[d], dtype=np.int64), n_quads[d]) for d in range(space.dim)
-    ]
-    mesh = np.meshgrid(*elem_idx_per_dir, indexing="ij")
-    cell_flat = np.ravel_multi_index(tuple(mesh), num_intervals)
-    return np.asarray(cell_owner[cell_flat] == rank).reshape(quad_grid_shape)
-
-
-def _assemble_owned_load(  # noqa: PLR0913
-    space: BsplineSpace,
-    components: list[npt.NDArray[np.floating[Any]]],
-    owned_mask: npt.NDArray[np.bool_],
-    out_dtype: np.dtype[np.float32] | np.dtype[np.float64],
-    quad_nodes_per_dir: list[npt.NDArray[np.float32 | np.float64]],
-    quad_weights_per_dir: list[npt.NDArray[np.float32 | np.float64]],
-) -> list[npt.NDArray[np.floating[Any]]]:
-    """Contract the owned-cell function values into a per-component load tensor.
-
-    Each component's quadrature values are masked to this rank's owned cells (others set
-    to zero), then contracted direction by direction with the weighted basis.  Because
-    the contraction is linear in the function values and every quadrature point belongs
-    to exactly one cell, summing these per-rank loads over all ranks reproduces the full
-    serial L2 load exactly.
-
-    Args:
-        space (BsplineSpace): The target B-spline space.
-        components (list[npt.NDArray[np.floating[Any]]]): Per-component quadrature values,
-            each of shape ``quad_grid_shape``.
-        owned_mask (npt.NDArray[np.bool_]): Owned-quadrature-point mask of shape
-            ``quad_grid_shape``.
-        out_dtype (np.dtype[np.float32] | np.dtype[np.float64]): Output floating dtype.
-        quad_nodes_per_dir (list[npt.NDArray[np.float32 | np.float64]]): Per-direction
-            global quadrature nodes.
-        quad_weights_per_dir (list[npt.NDArray[np.float32 | np.float64]]): Per-direction
-            global quadrature weights.
-
-    Returns:
-        list[npt.NDArray[np.floating[Any]]]: Per-component load tensors of shape
-        ``num_basis``.
-
-    Note:
-        This reproduces the full serial *interior* L2 load only.  Boundary-interpolation
-        rows are not applied here: they are imposed later (via ``_apply_boundary_load``)
-        on the reduced (global) load, after the ``allreduce``.
-    """
-    loads: list[npt.NDArray[np.floating[Any]]] = []
-    for comp in components:
-        load: npt.NDArray[np.floating[Any]] = np.where(owned_mask, comp, 0.0).astype(out_dtype)
-        for d, s1d in enumerate(space.spaces):
-            load = _assemble_load_1d(s1d, load, quad_nodes_per_dir[d], quad_weights_per_dir[d], d)
-        loads.append(load)
-    return loads
+    boundary_nodes = list(projection.trace_nodes(trace))
+    grid_shape = tuple(a.shape[0] for a in boundary_nodes)
+    raw = np.asarray(func(PointsLattice(boundary_nodes)))
+    if not np.issubdtype(raw.dtype, np.floating):
+        raw = raw.astype(np.float64)
+    return np.ascontiguousarray(raw.reshape(*grid_shape, n_components), dtype=dtype)
 
 
 def l2_project_bspline_distributed(  # noqa: PLR0913
@@ -138,11 +82,12 @@ def l2_project_bspline_distributed(  # noqa: PLR0913
 
     The MPI-parallel counterpart of :func:`~pantr.bspline.l2_project_bspline`.  L2
     assembly is per-element and maps directly onto the cell partition: each rank
-    evaluates ``func`` only on the quadrature points of its *owned* cells and contracts
-    them into a per-component load tensor; a single ``allreduce`` sums the global load
-    across ranks; and the replicated Kronecker solve recovers the global coefficients.
-    The returned :class:`~pantr.mpi.DistributedFunction` agrees with the serial L2
-    projection pointwise over every owned cell.
+    evaluates ``func`` on the whole global quadrature lattice, keeps the values at the
+    quadrature points of its *owned* cells (the others count as zero) and contracts them
+    into a per-component load tensor; a single ``allreduce`` sums the global load across
+    ranks; and the replicated Kronecker solve recovers the global coefficients.  The
+    returned :class:`~pantr.mpi.DistributedFunction` agrees with the serial L2 projection,
+    up to the order in which the load is summed.
 
     The per-direction mass matrices are partition-independent and built identically on
     every rank (cheap ``n_dofs_i x n_dofs_i`` systems), so only the load is communicated.
@@ -225,73 +170,34 @@ def l2_project_bspline_distributed(  # noqa: PLR0913
             f"got {type(global_space).__name__!r}."
         )
 
-    comm = distributed_space.comm
-    rank = distributed_space.rank
+    projection, _, _ = _l2_projection(global_space, n_quad, quadrature, boundary_interpolation)
 
-    # Mass matrices, global quadrature nodes/weights, and resolved settings are
-    # partition-independent: every rank builds them identically.
-    mass_matrices, quad_nodes_per_dir, quad_weights_per_dir, bi_flags, n_quads = (
-        _build_l2_mass_and_quad(global_space, n_quad, quadrature, boundary_interpolation)
-    )
-
-    # Evaluate func on the global quadrature lattice, restricted (by masking) to this
-    # rank's owned cells, and contract into a per-component load tensor.
-    quad_lattice = PointsLattice(quad_nodes_per_dir)
+    # Evaluate func on the whole global quadrature lattice and on every boundary trace; the
+    # compiled code masks the lattice values to this rank's owned cells.
+    quad_nodes_per_dir = list(projection.nodes)
     quad_grid_shape = tuple(a.shape[0] for a in quad_nodes_per_dir)
-    components, out_dtype = _evaluate_func_on_lattice(func, quad_lattice, quad_grid_shape)
+    components, out_dtype = _evaluate_func_on_lattice(
+        func, PointsLattice(quad_nodes_per_dir), quad_grid_shape
+    )
     n_components = len(components)
+    compute = np.dtype(np.result_type(global_space.dtype, out_dtype))
+    values = np.ascontiguousarray(np.stack(components, axis=-1), dtype=compute)
+    traces = [
+        _trace_values(func, projection, t, n_components, compute)
+        for t in range(len(projection.traces))
+    ]
 
-    owned_mask = _owned_quad_cell_mask(
-        global_space,
-        distributed_space.partition.cell_owner,
-        rank,
-        n_quads,
-        quad_grid_shape,
+    project = getattr(_cpp, f"l2_project_{_tag(np.dtype(global_space.dtype))}_{_tag(compute)}")
+    coeffs = project(
+        as_communicator(distributed_space.comm),
+        projection,
+        np.ascontiguousarray(distributed_space.partition.cell_owner, dtype=np.int32),
+        values,
+        n_components,
+        traces,
+        float(resolve_svd_tolerance(global_space.dtype, tol)),
     )
-    local_loads = _assemble_owned_load(
-        global_space,
-        components,
-        owned_mask,
-        out_dtype,
-        quad_nodes_per_dir,
-        quad_weights_per_dir,
-    )
-
-    # Stack components into a single tensor for one allreduce: (*num_basis, n_components).
-    num_basis = tuple(global_space.num_basis)
-    local_load = np.stack(local_loads, axis=-1).astype(out_dtype, copy=False)
-    global_load = cast(
-        "npt.NDArray[np.floating[Any]]",
-        np.asarray(comm.allreduce(local_load), dtype=out_dtype),
-    )
-    expected_shape = (*num_basis, n_components)
-    if global_load.shape != expected_shape:
-        raise ValueError(
-            f"Reduced load has shape {global_load.shape}, expected {expected_shape}; "
-            f"this indicates 'func' returned an inconsistent shape across ranks."
-        )
-
-    # Apply boundary-interpolation rows on the reduced (global) load, replicated on every
-    # rank.  Each boundary trace is partition-independent, matching the serial result.
-    ctrl_components: list[npt.NDArray[np.floating[Any]]] = []
-    for comp_idx in range(n_components):
-        load: npt.NDArray[np.floating[Any]] = global_load[..., comp_idx].copy()
-        _apply_boundary_load(
-            func,
-            global_space,
-            quad_nodes_per_dir,
-            quad_weights_per_dir,
-            bi_flags,
-            load,
-            comp_idx,
-            n_components,
-        )
-        coeffs = _solve_kronecker(mass_matrices, load, tol)
-        ctrl_components.append(coeffs)
-
-    ctrl = np.stack(ctrl_components, axis=-1).astype(global_space.dtype, copy=False)
-    global_cp = ctrl.reshape(*num_basis, n_components)
-
+    global_cp = np.asarray(coeffs).astype(global_space.dtype, copy=False)
     global_bspline = Bspline(global_space, global_cp)
     return DistributedFunction(global_bspline, distributed_space)
 

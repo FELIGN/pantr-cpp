@@ -264,7 +264,7 @@ jobs:
 
   # --- 8 ------------------------------------------------------------------------------------------
   install-consumer:
-    name: "8 install-consumer (find_package with the mpi component, poisoned mpi.h, METIS provider)"
+    name: "8 install-consumer (find_package with the mpi component, poisoned mpi.h, METIS provider, C++ MPI tests)"
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -281,12 +281,14 @@ jobs:
       # every package-search shortcut off; the header tests compile each core header with a
       # poisoned mpi.h first on the include path; the METIS provider (PANTR_WITH_METIS, off by
       # default) is built and its tests run here, in the build tree, against the distribution's
-      # METIS (the consumer project does not ask for the metis component).
+      # METIS (the consumer project does not ask for the metis component); and the C++ MPI tests
+      # (mpi.communicator_np2 and _np3) run under this runner's mpiexec, beside the fake-communicator
+      # suites.
       - name: Configure, build and run the install, header and METIS tests
         run: |
           cmake --preset gcc-release -DCMAKE_CXX_COMPILER=g++-14 -DPANTR_WITH_METIS=ON
           cmake --build --preset gcc-release
-          ctest --preset gcc-release -R "install|header|notices|metis"
+          ctest --preset gcc-release -R "install|header|notices|metis|mpi"
 
   # --- 9 ------------------------------------------------------------------------------------------
   mpi:
@@ -316,10 +318,15 @@ jobs:
         with:
           path: build/_deps
           key: deps-${{ hashFiles('cmake/PantrDependencies.cmake') }}
-      # Built here rather than downloaded: the MPI extension of a later stage is built from source
-      # against this runner's MPI, in this leg.
-      - name: Build the extension
+      # Built here rather than downloaded: the MPI extension (_pantr_mpi, package pantr_mpi) is built
+      # from source against this runner's MPI and mpi4py, in this leg (make ext builds it wherever
+      # it finds both).
+      - name: Build the extension and the MPI module
         run: make ext EXT_MULTI_ISA=OFF
+      - name: The MPI module is built, for Open MPI
+        run: |
+          PYTHONPATH="$PWD/src" python -c "import pantr_mpi._build_info as b; assert b.FAMILY == 'openmpi', b.FAMILY; print(b.BUILT_AGAINST)"
+          PYTHONPATH="$PWD/src" python -c "import pantr_mpi._pantr_mpi as m; assert m.compiled_implementation == 'openmpi'"
       - name: mpi4py matches the launcher
         run: mpiexec --oversubscribe -n 2 python -c "from mpi4py import MPI; assert MPI.COMM_WORLD.size == 2"
       - name: MPI tests, 2 ranks

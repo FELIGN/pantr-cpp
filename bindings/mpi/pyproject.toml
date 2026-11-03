@@ -1,0 +1,37 @@
+[build-system]
+# The same exact nanobind pin as pantr's pyproject.toml: _pantr_mpi and _pantr exchange only a
+# capsule of a versioned C struct, but every pantr extension module builds against one pin
+# (bindings/mpi/CMakeLists.txt refuses another). mpi4py 4.0 is the first with a C API usable under
+# the stable ABI (MPI4PY_LIMITED_API).
+requires = ["scikit-build-core==1.1.1", "nanobind==3.1.0", "mpi4py>=4.0,<5"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "pantr-mpi"
+description = "The MPI glue of pantr's pantr.mpi (install with pip install \"pantr[mpi]\")"
+requires-python = ">=3.12, <3.15"
+license = "MIT"
+authors = [{ name = "Pablo Antolin", email = "pablo.antolin@epfl.ch" }]
+dynamic = ["version"]
+# The MPI library itself is not bundled: install one (a system MPI, or the mpich / openmpi wheels)
+# of the family the wheel was built for. pantr.mpi checks it before loading the extension.
+dependencies = ["mpi4py>=4.0,<5"]
+
+[tool.scikit-build]
+minimum-version = "build-system.requires"
+# One version for pantr and pantr-mpi: read from pantr's __init__ in this source tree.
+metadata.version.provider = "scikit_build_core.metadata.regex"
+metadata.version.input = "../../src/pantr/__init__.py"
+metadata.version.regex = '^__version__[^=]*=\s*"(?P<value>[^"]+)"'
+wheel.py-api = "cp312"
+wheel.packages = []
+install.components = ["mpi"]
+install.strip = false
+build-dir = "../../build/skbuild-mpi/{wheel_tag}"
+
+[tool.scikit-build.cmake]
+build-type = "Release"
+version = ">=3.28"
+
+[tool.scikit-build.cmake.define]
+PANTR_STABLE_ABI = "ON"

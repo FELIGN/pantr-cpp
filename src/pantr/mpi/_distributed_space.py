@@ -36,9 +36,14 @@ class DistributedSpace:
     over-provisioned run, or a partition that excludes some ranks) has ``local`` set to
     ``None`` and ``owns_cells`` ``False`` instead of failing.
 
-    Construction performs no MPI communication: the partition is assumed identical on
-    every rank (guaranteed by pantr's deterministic partitioners and by
-    :func:`~pantr.mpi.from_dolfinx`), so each rank can window the global space locally.
+    Construction performs no MPI communication: the partition must be identical on every
+    rank, so that each rank can window the global space locally.
+    :func:`~pantr.mpi.create_distributed_space` guarantees it by computing the partition on
+    rank 0 and sending it to the others, and :func:`~pantr.mpi.from_dolfinx` by assembling
+    it from integer data every rank receives. A partition computed on every rank separately
+    is not guaranteed to be the same everywhere: a partitioner that works in floating point
+    (the spectral graph partition, a weighted recursive bisection) can round differently on
+    two machines.
 
     The public surface exposes:
 

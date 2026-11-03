@@ -7,7 +7,6 @@ thread count and resets the sticky policy flags after every test.
 
 from __future__ import annotations
 
-import importlib.util
 from types import SimpleNamespace
 from typing import Any
 
@@ -160,13 +159,10 @@ def test_configure_threads_validates() -> None:
         configure_threads(_MAX + 1)
 
 
-def test_configure_threads_limit_blas_warns_without_threadpoolctl() -> None:
-    """limit_blas=True warns when threadpoolctl is absent (and still sets Numba)."""
-    if importlib.util.find_spec("threadpoolctl") is not None:
-        pytest.skip("threadpoolctl is installed; test requires its absence")
-    with pytest.warns(UserWarning, match="threadpoolctl"):
-        configure_threads(1, limit_blas=True)
-    assert pantr.get_num_threads() == 1
+def test_configure_threads_has_no_limit_blas() -> None:
+    """``limit_blas`` was removed with threadpoolctl: pantr's linear algebra starts no threads."""
+    with pytest.raises(TypeError, match="limit_blas"):
+        configure_threads(1, limit_blas=True)  # type: ignore[call-arg]
 
 
 def test_configure_threads_after_default_policy(monkeypatch: pytest.MonkeyPatch) -> None:

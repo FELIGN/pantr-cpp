@@ -79,6 +79,8 @@ NB_MODULE(PANTR_EXT_MODULE_NAME, m) {
   nb::module_ grid =
       m.def_submodule("grid", "Structured grids, BVH, tags and partitions (private).");
   pantr::bindings::register_grid(grid);
+  nb::module_ mpi = m.def_submodule("mpi", "Distributed algorithms over a communicator (private).");
+  pantr::bindings::register_mpi(mpi);
   nb::module_ kernels = m.def_submodule(
       "_kernels", "Ported kernels for Python callers not yet ported (private, interim).");
   pantr::bindings::register_bezier_kernels(kernels);

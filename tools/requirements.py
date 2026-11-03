@@ -8,6 +8,8 @@ Prints the runtime dependencies, then those of each extra named, expanding ``pan
 self-references. CI installs the tools a job needs this way without building pantr itself, which
 since the C++ port compiles the extension (``make ext`` builds it where a job needs it).
 ``build`` names the build-system requirements (scikit-build-core and the pinned nanobind).
+The sibling distributions built from this tree (``pantr-mpi``) are left out: no index need hold
+them, since ``make ext`` builds them where a job needs them.
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ from pathlib import Path
 
 PYPROJECT = Path(__file__).resolve().parents[1] / "pyproject.toml"
 SELF = re.compile(r"^pantr\[([^\]]+)\]$")
+SIBLING = re.compile(r"^pantr-mpi\b")
 
 
 def requirements(extras: list[str]) -> list[str]:
@@ -43,6 +46,8 @@ def requirements(extras: list[str]) -> list[str]:
         if match:
             for name in match.group(1).split(","):
                 add_extra(name)
+        elif SIBLING.match(req):
+            return
         elif req not in out:
             out.append(req)
 
