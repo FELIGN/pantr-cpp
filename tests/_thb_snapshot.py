@@ -249,10 +249,11 @@ def load(path: Path) -> tuple[Snapshot, ProlongationSnapshot]:
 if __name__ == "__main__":
     import pantr
     from pantr._ext import ext
-    from tests._tree_env import check_extension_from_tree, check_pantr_from_tree
+    from tests._tree_env import TESTING_INSTALLED, check_extension_from_tree, check_pantr_from_tree
 
-    check_pantr_from_tree()
-    check_extension_from_tree()
+    if not TESTING_INSTALLED:
+        check_pantr_from_tree()
+        check_extension_from_tree()
     print(ext.isa)
     print(pantr.__file__)
     save(Path(sys.argv[1]), *take_small())

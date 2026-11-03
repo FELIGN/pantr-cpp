@@ -31,7 +31,7 @@ import pantr
 from pantr._ext import ext
 from pantr.tolerance import get_conservative
 from tests import _thb_snapshot as snap
-from tests._tree_env import TREE_SRC, subprocess_env
+from tests._tree_env import subprocess_env
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -134,11 +134,12 @@ class TestGenericRung:
             cwd=_REPO_ROOT,
         )
         assert result.returncode == 0, result.stderr
-        # The child checked it imports this tree's pantr and extension, and names its rung and
-        # the file it imported, so the comparison is against this checkout on the generic rung.
+        # The child names its rung and the file it imported, so the comparison is against the
+        # pantr this process imported (this checkout's or the installed wheel's) on the generic
+        # rung.
         rung, imported = result.stdout.split("\n")[:2]
         assert rung == "generic"
-        assert Path(imported).resolve().is_relative_to(TREE_SRC), imported
+        assert Path(imported).resolve() == Path(pantr.__file__).resolve(), imported
 
         space_here, prolongation_here = snap.take_small()
         space_there, prolongation_there = snap.load(out)
