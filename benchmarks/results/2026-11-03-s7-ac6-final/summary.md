@@ -1,0 +1,32 @@
+| case | main stat (ns) | main range | branch stat (ns) | branch range | flags |
+|---|---|---|---|---|---|
+| S4.bspline_insert_knots.large@t1 | 8290947 | 1520048 | 7996818 | 1771842 |  |
+| S4.bspline_insert_knots.large@t8 | 8265348 | 939632 | 7764706 | 1863340 |  |
+| S4.bspline_insert_knots.medium@t1 | 201631 | 31883 | 52235 | 2780 |  |
+| S4.bspline_insert_knots.medium@t8 | 202054 | 21098 | 52450 | 5065 |  |
+| S4.bspline_insert_knots.tiny@t1 | 103202 | 13529 | 10734 | 3841 |  |
+| S4.bspline_insert_knots.tiny@t8 | 103235 | 6378 | 10679 | 4591 |  |
+| S7.create_coons_surface.large@t1 | 618768331 | 47657460 | 499202977 | 25194457 |  |
+| S7.create_coons_surface.large@t8 | 611788588 | 44471412 | 498791913 | 36097017 |  |
+| S7.create_coons_surface.medium@t1 | 3177871 | 551596 | 219400 | 27872 |  |
+| S7.create_coons_surface.medium@t8 | 3198701 | 791787 | 218627 | 37237 |  |
+| S7.create_coons_surface.tiny@t1 | 1418693 | 137223 | 36967 | 5443 |  |
+| S7.create_coons_surface.tiny@t8 | 1424228 | 56287 | 36308 | 6150 |  |
+| S7.create_revolution.large@t1 | 106573934 | 9580636 | 13405571 | 3653255 |  |
+| S7.create_revolution.large@t8 | 104152127 | 12079704 | 12142134 | 3887889 |  |
+| S7.create_revolution.medium@t1 | 6202522 | 836012 | 191202 | 16625 |  |
+| S7.create_revolution.medium@t8 | 6054111 | 744320 | 189610 | 39570 |  |
+| S7.create_revolution.tiny@t1 | 335268 | 25096 | 18173 | 1649 |  |
+| S7.create_revolution.tiny@t8 | 336341 | 50435 | 18064 | 2905 |  |
+| S7.detect_interfaces.large@t1 | 1837954301 | 180295690 | 1897376 | 117501 |  |
+| S7.detect_interfaces.large@t8 | 1883480364 | 151671943 | 877930 | 161293 |  |
+| S7.detect_interfaces.medium@t1 | 117539786 | 8600666 | 187929 | 11092 |  |
+| S7.detect_interfaces.medium@t8 | 115152181 | 8188862 | 189736 | 9825 |  |
+| S7.detect_interfaces.tiny@t1 | 1705141 | 638221 | 8689 | 610 |  |
+| S7.detect_interfaces.tiny@t8 | 1665868 | 207510 | 8804 | 676 |  |
+| S7.join.large@t1 | 70149757 | 8454506 | 59648311 | 7959408 |  |
+| S7.join.large@t8 | 67915506 | 8116392 | 59912156 | 5770345 |  |
+| S7.join.medium@t1 | 710727 | 134428 | 45356 | 7339 |  |
+| S7.join.medium@t8 | 695995 | 68943 | 45008 | 4933 |  |
+| S7.join.tiny@t1 | 392070 | 37919 | 14698 | 1098 |  |
+| S7.join.tiny@t8 | 380510 | 28840 | 14654 | 1111 |  |
