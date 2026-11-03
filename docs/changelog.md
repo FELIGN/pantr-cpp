@@ -973,12 +973,18 @@
   anisotropic degrees and factors, truncated and not, subdivision factors 2 and 3, graded and
   ungraded refinement, reduced regularity, `float32` roots), the active functions of every
   cell, the coupling graph, `build_local`'s maps and masks and the prolongation's sparsity were
-  equal; tabulated values and derivatives, prolongation entries, extraction operators and
-  quasi-interpolation coefficients agreed to rounding (one 3D case with factor 3 exceeded the
-  sweep's time limit on both sides and is not counted). The other differences are the entries
-  below.
-- **On a `float32` root, `MultiLevelExtraction`'s operators (every target) and
-  `tabulate_basis_derivatives`** can differ from the previous release by `float32` rounding.
+  equal; tabulated values and derivatives, prolongation entries and extraction operators agreed
+  to rounding, and quasi-interpolation coefficients agreed to rounding except where a function's
+  leaf cell differs (see the entry on the leaf cell below). One 3D case with factor 3 was too slow
+  to compare and is not counted. The other differences are the entries below.
+- The private modules `pantr.bspline._thb_eval_core`, `_local_space_core` and
+  `_bspline_knot_insertion` (whose last function, `_compute_oslo_matrix_1d_core`, the entry above
+  kept), the helpers `_bspline_quasi_interpolation._interval_interior_points`,
+  `_local_weight_row`, `_tensor_point_grid` and `_contract_weights`, and the private attributes
+  the THB classes kept their state in, are gone with the Numba kernels and NumPy code they held.
+  What tests reach of them is in `pantr._testing`.
+- **On a `float32` root, `MultiLevelExtraction`'s operators (every target),
+  `tabulate_basis_derivatives` and `THBSpline.evaluate_derivatives`** can differ from the previous release by `float32` rounding.
 - **Which entries of `prolongation_to` and `prolongation_to_sparse` are exactly zero, and which are
   a negative zero,** changed: the local systems are solved by a Householder QR (a Jacobi SVD where
   the QR cannot certify the system's rank) instead of LAPACK's SVD, so an entry of rounding size
@@ -1007,9 +1013,11 @@
 - **A deep copy of a `THBSpline`** has read-only `control_points`, as the original has; the
   previous release's deep copy was writable.
 - **`compute_halo`, `dof_owner` and `dof_owner_windowed` of a `BsplineSpace` with no directions**
-  raise `ValueError` "a
-  B-spline space needs at least one direction" (the previous release returned an empty halo, and
-  raised `ValueError` about the partition's cell count for the other two).
+  raise `ValueError` "a B-spline space needs at least one direction". The previous release
+  returned an empty halo for an empty request; `dof_owner` and `dof_owner_windowed` raised
+  `ValueError` about the partition's cell count, except for a one-cell partition, where `dof_owner`
+  raised `ValueError` "need at least one array to concatenate" and `dof_owner_windowed` raised it
+  too, or returned an empty array when asked for no DOFs.
 - **`prolongation_to`, `prolongation_to_sparse` and `restriction_to` between spaces whose roots
   have different dtypes** (a `float32` root and a `float64` one) raise `TypeError`: the compiled
   space exists once per dtype. The previous release computed them.
@@ -1020,15 +1028,21 @@
   previous release could not use for these classes, now work. A subclass that declares its own
   `__slots__` loses those attributes when copied or pickled; the previous release kept them.
 - **Truncated THB functions evaluate above 24 directions**, where the previous release raised
-  `NotImplementedError`; the space's construction tables grow as `2^dim`, so memory is the limit,
-  and above 63 directions the construction raises `ValueError` (an implementation limit).
+  `NotImplementedError`; the space's construction tables grow as `2^dim`, so memory is the limit.
+  Where a table no longer fits a `std::vector` (from 60 directions on Linux x86-64) the
+  construction raises `ValueError`, and from 64 directions its message names the summed-area
+  table.
 - **A `regularity` that is not an integer** (`1.5`, `numpy.float64(1.0)`) raises `TypeError`. The
   previous release accepted some such values and built a space from them, or raised `ValueError`.
 - **Inputs outside the annotated types, and calls with two invalid arguments, in the THB classes
   and the local-space functions** can raise another message than before (an unhashable cell id, a
-  non-integer `level`, an integer `regularity` or cell id past 64 bits, which is clamped before it
-  is printed), and on a stale space a call with a second invalid argument reports the stale space
-  first. A few such inputs change outcome: `admissible_class=float("inf")` raises `OverflowError`,
+  non-integer `level`, an integer `regularity` beyond 32 bits, and a `refine_region` level or box
+  bound or a negative derivative order beyond 62 bits, each clamped before it is printed). With two
+  invalid arguments another one can be reported first: on a stale space, the stale space; on a
+  valid one, for example an out-of-range cell id before invalid `orders`. A few such inputs change
+  outcome: `admissible_class=float("inf")` raises `OverflowError` and `float("nan")` raises
+  `ValueError` (the previous release built the space, or for `refine` with NaN raised
+  `AssertionError`),
   a `numpy.float64` `level` for `refine_region` and a one-element array as a `regularity` entry
   raise `TypeError`, `create_thb_space` with a factor past 64 bits raises `TypeError`, and
   `THBSpline.evaluate_derivatives` accepts `orders=True` and huge orders (zero derivatives), where
