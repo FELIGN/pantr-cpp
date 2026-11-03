@@ -59,6 +59,8 @@ class Interface:
                 of range for the implied dimension, ``axis_map`` is not a
                 permutation of ``face_b``'s tangential axes, ``flips`` has a
                 different length, or the two sides are not in canonical order.
+            TypeError: If an id or an axis is not an integer, or does not fit in a signed
+                64-bit integer.
         """
         ext.multipatch.validate_interface(*_wire(self))
 
@@ -100,8 +102,10 @@ def _from_tuples(
 def _wire(interface: Interface) -> tuple[int, int, int, int, list[int], list[bool]]:
     """Spell an interface's fields as plain Python ints and bools for the compiled library.
 
-    The fields may hold NumPy integers or booleans (the dataclass does not convert them), which
-    the compiled signatures, typed ``int`` and ``bool``, would refuse.
+    The fields may hold NumPy integers or booleans (the dataclass does not convert them). The
+    compiled signature typed ``bool`` refuses ``np.bool_`` and the ints ``0`` and ``1``, so the
+    flips go through ``bool()``; the ids and axes go through ``operator.index``, which accepts any
+    integer-like and refuses a float.
 
     Args:
         interface (Interface): The interface.

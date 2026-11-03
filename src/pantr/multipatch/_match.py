@@ -57,6 +57,8 @@ def match_face_cps(  # noqa: PLR0913
             dimension, ``axis_map`` is not a permutation of ``face_b``'s
             tangential axes, ``flips`` has a different length, or the matched
             tangential directions hold different numbers of basis functions.
+        TypeError: If a face id or an axis is not an integer, or does not fit in a signed
+            64-bit integer.
 
     Example:
         >>> import numpy as np

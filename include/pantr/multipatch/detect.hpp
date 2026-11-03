@@ -276,7 +276,10 @@ template <StorageFloat T>
     const T hi = max_nan(a.col_max[c], b.col_max[c]);
     const T lo = min_nan(a.col_min[c], b.col_min[c]);
     const double extent = static_cast<double>(static_cast<T>(hi - lo));
-    // `hypot` rather than the square root of a sum of squares: no intermediate overflow.
+    // `hypot` rather than the square root of a sum of squares: no intermediate overflow (NumPy's
+    // norm overflowed to inf from about 1e154 and then matched every face). `hypot` is not
+    // correctly rounded in every libm; its last-ulp difference moves `scale` by one ulp, which
+    // the strict tier's 4 eps times `scale` absorbs.
     diagonal = c == 0 ? std::abs(extent) : std::hypot(diagonal, extent);
     const auto abs_max = static_cast<double>(max_nan(a.col_abs_max[c], b.col_abs_max[c]));
     magnitude = c == 0 ? abs_max : max_nan(magnitude, abs_max);

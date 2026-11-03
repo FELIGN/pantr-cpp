@@ -759,14 +759,14 @@ TEST_CASE("detect: the geometric tolerance follows the size of the geometry and 
                   "shift " << shift);
   }
   // A genuine gap stays a gap far from the origin, where the magnitude term loosens the tolerance.
-  const auto far = [&](double x0) {
+  const auto distant = [&](double x0) {
     return build<double>(d, [&](const Idx& idx, const Idx& nb) {
       return std::vector<double>{
           1e6 + x0 + static_cast<double>(idx[0]) / static_cast<double>(nb[0] - 1),
           1e6 + static_cast<double>(idx[1]) / static_cast<double>(nb[1] - 1)};
     });
   };
-  const std::vector<bs::Bspline<double>> apart = {far(0.0), far(2.0)};
+  const std::vector<bs::Bspline<double>> apart = {distant(0.0), distant(2.0)};
   CHECK(mp::detect_interfaces(view(apart)).empty());
 }
 

@@ -573,6 +573,18 @@ def test_multipatch_rejects_mixed_rank() -> None:
         MultiPatch([planar, spatial])
 
 
+def test_multipatch_rejects_mixed_dtype() -> None:
+    """Patches of different precisions cannot be combined, and the message names both dtypes."""
+    space = _anisotropic_space_2d()
+    double = _lattice_patch(space)
+    knots = [np.asarray(s.knots, dtype=np.float32) for s in space.spaces]
+    space32 = BsplineSpace([BsplineSpace1D(k, s.degree) for k, s in zip(knots, space.spaces, strict=True)])
+    single = Bspline(space32, np.asarray(double.control_points, dtype=np.float32))
+
+    with pytest.raises(ValueError, match="patch 0 has float64 but patch 1 has float32"):
+        MultiPatch([double, single])
+
+
 # ---------------------------------------------------------------- threads, dtypes, quirks
 
 
@@ -717,3 +729,33 @@ def test_detect_inherited_quirk_weight_column() -> None:
         Bspline(space, homogeneous + np.array([1.0, 0.0, 0.0]), is_rational=True),
     ]
     assert detect_interfaces(rational_second) == expected
+
+
+def test_a_periodic_direction_never_pairs_with_an_open_one() -> None:
+    """Equal corners and equal normalised knots, but four control points against six.
+
+    A periodic degree-2 direction on the knots ``(-2..6)/4`` holds four functions; the open
+    direction on the same knots holds six. The faces running along that direction pass the
+    corner and knot checks, so only the control-point count can refuse them, and it must do so
+    as "no interface", not as an error. The faces across it (one control row each) still pair.
+    Main gives the same two interfaces.
+    """
+    degree, n = 2, 4
+    knots = np.arange(-degree, n + degree + 1) / n
+    linear = BsplineSpace1D(np.array([0.0, 0.0, 1.0, 1.0]), 1)
+
+    def patch(periodic: bool) -> Bspline:
+        space = BsplineSpace([BsplineSpace1D(knots, degree, periodic=periodic), linear])
+        rows, cols = space.num_basis
+        x = np.full(rows, 0.5)
+        x[0], x[-1] = 0.0, 1.0
+        cps = np.stack(np.broadcast_arrays(x[:, None], np.arange(cols)[None, :]), axis=-1)
+        return Bspline(space, cps.astype(np.float64))
+
+    ring, strip = patch(True), patch(False)
+    assert ring.space.num_basis[0] != strip.space.num_basis[0]
+    found = detect_interfaces([ring, strip])
+    assert [(i.patch_a, i.face_a, i.patch_b, i.face_b) for i in found] == [
+        (0, 0, 1, 0),
+        (0, 1, 1, 1),
+    ]
