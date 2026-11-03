@@ -1,5 +1,6 @@
 # Fail unless every commit pinned in DEPS_FILE (a GIT_TAG of 40 hex digits) appears in NOTICES_FILE,
 # so the third-party listing cannot drift from the pins.
+cmake_minimum_required(VERSION 3.28)
 file(STRINGS "${DEPS_FILE}" tags REGEX "GIT_TAG [0-9a-f]+")
 file(READ "${NOTICES_FILE}" notices)
 set(n 0)

@@ -1,4 +1,6 @@
 # Fail if any header under INCLUDE_DIR other than those in ALLOWED (a |-separated list) mentions mpi.h in an #include.
+# The policies are set here because `cmake -P` sets none: without CMP0057, IN_LIST is an error.
+cmake_minimum_required(VERSION 3.28)
 string(REPLACE "|" ";" ALLOWED "${ALLOWED}")
 file(GLOB_RECURSE headers RELATIVE "${INCLUDE_DIR}" "${INCLUDE_DIR}/pantr/*.hpp" "${INCLUDE_DIR}/pantr/*.h")
 set(offenders "")
