@@ -1361,11 +1361,133 @@ def _s6_thb_cases() -> list[Case]:  # noqa: PLR0915
     return cases
 
 
+def _s7_curve(points: np.ndarray, degree: int, interior: np.ndarray) -> Any:  # noqa: ANN401
+    """Build a non-rational curve with ``points`` as control points, on an open knot vector.
+
+    Args:
+        points (np.ndarray): Control points, shape ``(n, 3)``.
+        degree (int): The degree.
+        interior (np.ndarray): The ``n - degree - 1`` interior knots, ascending in ``(0, 1)``.
+
+    Returns:
+        Any: The ``Bspline``.
+    """
+    from pantr.bspline import Bspline, BsplineSpace, BsplineSpace1D  # noqa: PLC0415
+
+    knots = np.concatenate([np.zeros(degree + 1), interior, np.ones(degree + 1)])
+    return Bspline(BsplineSpace([BsplineSpace1D(knots, degree)]), points)
+
+
+def _s7_interior(n: int, degree: int, shift: float) -> np.ndarray:
+    """Return the ``n - degree - 1`` interior knots of a uniform open knot vector, shifted.
+
+    Args:
+        n (int): Number of control points.
+        degree (int): The degree.
+        shift (float): Fraction of a knot span to shift every interior knot by (``0`` for none).
+
+    Returns:
+        np.ndarray: The interior knots, ascending in ``(0, 1)``.
+    """
+    spans = n - degree
+    inner = np.arange(1, spans) / spans
+    return inner + shift / spans
+
+
+def _s7_cases() -> list[Case]:
+    """The CAD and multipatch cases of the S7 stage (C7.1).
+
+    - ``create_coons_surface``: four cubic boundary curves of a square with 4, 32 and 1000 control
+      points each, the opposite curves carrying different interior knots (uniform against shifted
+      by a third of a span), so that the blend inserts knots; the patch has about 1e1, 1e3 and 1e6
+      control points.
+    - ``create_revolution``: a cubic profile curve of 4 and 1000 control points (``tiny``,
+      ``medium``), and a bicubic surface of 128 x 128 control points (``large``), revolved by a
+      full turn about the z axis.
+    - ``join``: two biquadratic surfaces meeting along a shared edge, of 3 x 3, 32 x 32 and
+      512 x 512 control points, joined along the first axis (the junction knot is then tried for
+      removal).
+    - ``detect_interfaces``: the biquadratic patches of a 1 x 2, 4 x 4 and 8 x 8 split of the unit
+      square, each of 4 x 4 intervals, conforming across every shared edge.
+    """
+    from pantr.bspline import Bspline, BsplineSpace, BsplineSpace1D  # noqa: PLC0415
+    from pantr.cad import create_coons_surface, create_revolution, join  # noqa: PLC0415
+    from pantr.multipatch import detect_interfaces  # noqa: PLC0415
+
+    cases: list[Case] = []
+
+    def add(name: str, size: str, what: str, setup: Callable[[], Callable[[], Any]]) -> None:
+        cases.append(Case(f"S7.{name}.{size}", "S7", size, what, setup))
+
+    for size, n in {"tiny": 4, "medium": 32, "large": 1000}.items():
+
+        def setup_coons(n: int = n) -> Callable[[], Any]:
+            t = np.linspace(0.0, 1.0, n)
+            zero, one = np.zeros(n), np.ones(n)
+            bump = 0.1 * np.sin(np.pi * t)
+            plain, shifted = _s7_interior(n, 3, 0.0), _s7_interior(n, 3, 1.0 / 3.0)
+            c_v0 = _s7_curve(np.stack([zero - bump, t, zero], axis=1), 3, plain)
+            c_v1 = _s7_curve(np.stack([one + bump, t, zero], axis=1), 3, shifted)
+            c_u0 = _s7_curve(np.stack([t, zero - bump, zero], axis=1), 3, plain)
+            c_u1 = _s7_curve(np.stack([t, one + bump, bump], axis=1), 3, shifted)
+            curves = ((c_v0, c_v1), (c_u0, c_u1))
+            return lambda: create_coons_surface(curves)
+
+        add("create_coons_surface", size, f"Coons patch, curves of {n} points", setup_coons)
+
+    for size, n in {"tiny": 4, "medium": 1000, "large": 128}.items():
+
+        def setup_revolution(n: int = n, surface: bool = size == "large") -> Callable[[], Any]:
+            t = np.linspace(0.0, 1.0, n)
+            profile = np.stack([1.0 + 0.2 * np.sin(3.0 * t), np.zeros(n), t], axis=1)
+            if surface:
+                knots = np.concatenate([np.zeros(4), _s7_interior(n, 3, 0.0), np.ones(4)])
+                space = BsplineSpace([BsplineSpace1D(knots, 3), BsplineSpace1D(knots.copy(), 3)])
+                offset = np.stack([np.zeros(n), 0.5 * t, np.zeros(n)], axis=1)
+                b = Bspline(space, profile[:, None, :] + offset[None, :, :])
+            else:
+                b = _s7_curve(profile, 3, _s7_interior(n, 3, 0.0))
+            return lambda: create_revolution(b, [0.0, 0.0, 0.0], axis=2)
+
+        what = "surface of 128^2 points" if size == "large" else f"curve of {n} points"
+        add("create_revolution", size, f"create_revolution, full turn, {what}", setup_revolution)
+
+    for size, n in {"tiny": 3, "medium": 32, "large": 512}.items():
+
+        def setup_join(n: int = n) -> Callable[[], Any]:
+            knots = np.concatenate([np.zeros(3), _s7_interior(n, 2, 0.0), np.ones(3)])
+            space = BsplineSpace([BsplineSpace1D(knots, 2), BsplineSpace1D(knots.copy(), 2)])
+            g = np.linspace(0.0, 1.0, n)
+            u, v = np.meshgrid(g, g, indexing="ij")
+            left = np.stack([u, v, 0.1 * np.sin(v)], axis=-1)
+            right = np.stack([u + 1.0, v, 0.1 * np.sin(v)], axis=-1)
+            b1, b2 = Bspline(space, left), Bspline(space, right)
+            return lambda: join(b1, b2, 0)
+
+        add("join", size, f"join, two biquadratic surfaces of {n}^2 points", setup_join)
+
+    for size, (nx, ny) in {"tiny": (1, 2), "medium": (4, 4), "large": (8, 8)}.items():
+
+        def setup_detect(nx: int = nx, ny: int = ny) -> Callable[[], Any]:
+            knots = np.concatenate([np.zeros(3), [0.25, 0.5, 0.75], np.ones(3)])
+            space = BsplineSpace([BsplineSpace1D(knots, 2), BsplineSpace1D(knots.copy(), 2)])
+            greville = np.array([0.0, 0.125, 0.375, 0.625, 0.875, 1.0])
+            patches = []
+            for i in range(nx):
+                for j in range(ny):
+                    u, v = np.meshgrid((i + greville) / nx, (j + greville) / ny, indexing="ij")
+                    patches.append(Bspline(space, np.stack([u, v], axis=-1)))
+            return lambda: detect_interfaces(patches)
+
+        add("detect_interfaces", size, f"detect_interfaces, {nx} x {ny} patches", setup_detect)
+    return cases
+
+
 def all_cases() -> list[Case]:
     """Return every case this tree can run.
 
     Returns:
-        list[Case]: The S1, S2, S4, S5 and S6 cases, then the r6 cases.
+        list[Case]: The S1, S2, S4, S5, S6 and S7 cases, then the r6 cases.
     """
     return (
         _s1_cases()
@@ -1379,5 +1501,6 @@ def all_cases() -> list[Case]:
         + _s6_grid_cases()
         + _s6_graph_cases()
         + _s6_thb_cases()
+        + _s7_cases()
         + _r6_cases()
     )
