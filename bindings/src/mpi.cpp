@@ -3,8 +3,9 @@
 // producers of an AnyCommunicator: a capsule from _pantr_mpi (an mpi4py communicator over real MPI,
 // through the comm_capsule.h table), and PyCommunicator, which calls a duck-typed Python object's
 // `rank`, `size`, `allgather` and `allreduce` with the payloads pantr.mpi has always sent (§5.4).
-// No MPI here. The GIL is held throughout: PyCommunicator calls Python, and the collectives run on
-// the calling thread. Reaches Eigen's LU and SVD (the collocation and mass solves).
+// No MPI here. The GIL is held, since PyCommunicator calls Python, except inside a collective of a
+// capsule's table (GilFreeComm), as mpi4py releases it in its own. Reaches Eigen's LU and SVD (the
+// collocation and mass solves).
 #include "arrays.hpp"
 #include "interface.hpp"
 
@@ -188,6 +189,37 @@ class PyCommunicator {
 
 static_assert(mpi::Communicator<PyCommunicator>);
 
+/// A communicator from another module's table (real MPI), called with the GIL released, as mpi4py
+/// releases it in a blocking collective: other Python threads run while this rank waits for the
+/// others. The table's functions touch no Python object (comm_capsule.h).
+class GilFreeComm {
+ public:
+  explicit GilFreeComm(AnyCommunicator inner) : inner_(std::move(inner)) {}
+  [[nodiscard]] int rank() const { return inner_.rank(); }
+  [[nodiscard]] int size() const { return inner_.size(); }
+  template <class T>
+  [[nodiscard]] Gathered<T> allgatherv(const Block<T>& b) const {
+    const nb::gil_scoped_release unlocked;
+    return inner_.allgatherv(b);
+  }
+  [[nodiscard]] std::pair<Gathered<std::int64_t>, Gathered<double>> allgather_owned(
+      const Block<std::int64_t>& index, const Block<double>& value) const {
+    const nb::gil_scoped_release unlocked;
+    return inner_.allgather_owned(index, value);
+  }
+  template <class T>
+  [[nodiscard]] NdArray<T> allreduce_sum(std::span<const T> data,
+                                         std::span<const std::size_t> shape) const {
+    const nb::gil_scoped_release unlocked;
+    return inner_.allreduce_sum(data, shape);
+  }
+
+ private:
+  AnyCommunicator inner_;
+};
+
+static_assert(mpi::Communicator<GilFreeComm>);
+
 /// The communicator a Python argument stands for: a `pantr.mpi.comm_v1` capsule (from _pantr_mpi),
 /// or any other object, taken as a duck-typed communicator.
 AnyCommunicator to_communicator(nb::handle comm, std::vector<nb::object> arrays = {}) {
@@ -201,7 +233,7 @@ AnyCommunicator to_communicator(nb::handle comm, std::vector<nb::object> arrays 
     auto* keep = new nb::object(nb::borrow(comm));
     std::shared_ptr<const pantr_mpi_comm> table(static_cast<const pantr_mpi_comm*>(p),
                                                 [keep](const pantr_mpi_comm*) { delete keep; });
-    return AnyCommunicator::from_table(std::move(table));
+    return AnyCommunicator(GilFreeComm(AnyCommunicator::from_table(std::move(table))));
   }
   return AnyCommunicator(PyCommunicator(nb::borrow(comm), std::move(arrays)));
 }

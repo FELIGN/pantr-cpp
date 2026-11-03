@@ -38,7 +38,8 @@ Architecture: `design/port_design.md` §5.
 - **Threads and MPI**: collectives run only on the calling thread, outside any `parallel_for`, so
   `MPI_THREAD_FUNNELED` suffices; `make_mpi_table` refuses a lower level, and under `FUNNELED` a
   collective from another thread than MPI's main thread is refused. The Python bindings hold the
-  GIL throughout.
+  GIL, except inside a real-MPI collective (a capsule's table), which they call with it released,
+  as mpi4py releases it in its own blocking collectives.
 - **The MPI family check** runs before `_pantr_mpi` is first imported: the family recorded at
   build time in `pantr_mpi/_build_info.py` (from the library version FindMPI reports, or set with
   `PANTR_MPI_FAMILY`; `custom` disables the check) is compared, at the family level dolfinx's
