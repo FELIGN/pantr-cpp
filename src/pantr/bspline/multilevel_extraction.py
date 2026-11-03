@@ -122,13 +122,26 @@ class MultiLevelExtraction:
             dict(self.__dict__) if hasattr(self, "__dict__") else None,
         )
 
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        """Restore a subclass's attributes.
+    def __setstate__(
+        self, state: dict[str, Any] | tuple[dict[str, Any] | None, dict[str, Any]]
+    ) -> None:
+        """Restore a subclass's attributes, or rebuild from a previous release's pickle.
+
+        A previous release pickled the slots of a plain object, a pair ``(attributes, slots)``
+        with the attributes of a subclass (or ``None``) and the slot values. Such a state rebuilds
+        the compiled extraction from ``_space`` and ``_target`` and drops the other slots (the
+        Oslo matrices and the caches).
 
         Args:
-            state (dict[str, Any]): The pickled extra attributes.
+            state (dict[str, Any] | tuple[dict[str, Any] | None, dict[str, Any]]): The pickled
+                state: a subclass's extra attributes, or the previous release's pair.
         """
-        self.__dict__.update(state)
+        if isinstance(state, tuple):
+            extra, slots = state
+            MultiLevelExtraction.__init__(self, slots["_space"], slots["_target"])
+            state = extra or {}
+        if state:
+            self.__dict__.update(state)
 
     def __copy__(self) -> MultiLevelExtraction:
         """Copy: the new object shares the compiled extraction and the space.

@@ -50,6 +50,19 @@ keeps that call's own range error where an overflow would have been another exce
 """
 
 
+class _TruncCoeffs(NamedTuple):
+    """Stored representation of a truncated function in the previous release.
+
+    The previous release held one per truncated function in the space's state. This release
+    keeps no such record; the class exists only so that pickles written by the previous release
+    resolve, and their state is rebuilt without it (see :meth:`THBSplineSpace.__setstate__`).
+    """
+
+    rep_level: int
+    box_lo: tuple[int, ...]
+    coeffs: npt.NDArray[np.float64]
+
+
 def _clamp_int(value: int) -> int:
     """Clamp a Python int to the range the compiled call takes.
 
@@ -333,6 +346,29 @@ class THBSplineSpace:
             THBSplineSpace: The rebuilt space (a subclass's extra attributes are restored by
             ``__setstate__``).
         """
+        space = cls.__new__(cls)
+        space._rebuild(root_space, own_grid, grid, truncate, regularity, snapshot)
+        return space
+
+    def _rebuild(  # noqa: PLR0913
+        self,
+        root_space: BsplineSpace,
+        own_grid: HierarchicalGrid,
+        grid: HierarchicalGrid,
+        truncate: bool,
+        regularity: tuple[int | None, ...],
+        snapshot: tuple[int, int, int],
+    ) -> None:
+        """Build the compiled space on ``own_grid`` and hold it, reporting ``grid``.
+
+        Args:
+            root_space (BsplineSpace): The level-0 space.
+            own_grid (HierarchicalGrid): The grid the compiled space is built on.
+            grid (HierarchicalGrid): The grid object the space reports.
+            truncate (bool): Whether the basis is truncated.
+            regularity (tuple[int | None, ...]): The per-direction regularity.
+            snapshot (tuple[int, int, int]): The ``(max_level, num_cells, version)`` snapshot.
+        """
         h_cls = _cpp.THBSplineSpaceF32 if root_space.dtype == _F32 else _cpp.THBSplineSpaceF64
         h = h_cls(
             root_space._h,
@@ -340,9 +376,7 @@ class THBSplineSpace:
             bool(truncate),
             [None if r is None else _clamp_int(int(r)) for r in regularity],
         )
-        space = cls.__new__(cls)
-        space._adopt(h, root_space, grid, truncate, regularity, snapshot)
-        return space
+        self._adopt(h, root_space, grid, truncate, regularity, snapshot)
 
     def __reduce__(self) -> tuple[Any, ...]:
         """Pickle through a state constructor, with a subclass's own attributes as state.
@@ -367,13 +401,37 @@ class THBSplineSpace:
             dict(self.__dict__) if hasattr(self, "__dict__") else None,
         )
 
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        """Restore a subclass's attributes.
+    def __setstate__(
+        self, state: dict[str, Any] | tuple[dict[str, Any] | None, dict[str, Any]]
+    ) -> None:
+        """Restore a subclass's attributes, or rebuild from a previous release's pickle.
+
+        A previous release pickled the slots of a plain object, a pair ``(attributes, slots)``
+        with the attributes of a subclass (or ``None``) and the slot values. Such a state rebuilds
+        the compiled space from the root space, the grid, the truncation, the regularity and the
+        grid snapshot, and drops everything else it held (the active functions, the truncated
+        coefficients and the caches). The snapshot is kept, so a space that was stale is stale.
+        The compiled space is built on the grid object as it is now, which for a stale space is
+        not the grid it was built on.
 
         Args:
-            state (dict[str, Any]): The pickled extra attributes.
+            state (dict[str, Any] | tuple[dict[str, Any] | None, dict[str, Any]]): The pickled
+                state: a subclass's extra attributes, or the previous release's pair.
         """
-        self.__dict__.update(state)
+        if isinstance(state, tuple):
+            extra, slots = state
+            grid = slots["_grid"]
+            self._rebuild(
+                slots["_root_space"],
+                grid,
+                grid,
+                bool(slots["_truncate"]),
+                tuple(slots["_regularity"]),
+                tuple(slots["_grid_snapshot"]),
+            )
+            state = extra or {}
+        if state:
+            self.__dict__.update(state)
 
     def __copy__(self) -> THBSplineSpace:
         """Copy: the new object shares the compiled value, the grid and the root space.

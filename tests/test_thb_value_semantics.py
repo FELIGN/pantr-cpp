@@ -15,13 +15,20 @@ protocol:
 * the relations between objects of one graph survive a deep copy and a pickle of a tuple: a space
   reports the grid it was copied with, a spline the space, an extraction the space and its grid;
 * a subclass keeps its class and its attributes, whatever its constructor takes, and a deep copy
-  or a pickle does not share a mutable attribute with the original.
+  or a pickle does not share a mutable attribute with the original;
+* a pickle written by the previous release, whose objects were plain ``__slots__`` objects, still
+  loads and equals the object this release builds from the same pieces. Those pickles are not
+  kept as bytes: the state they held is built by hand from stand-in classes with the previous
+  release's slots (the way the ``Bspline`` tests of the previous release's pickles do), and what
+  the previous release derived from the pieces is filled with values that fail the comparison if
+  the loader reads them.
 """
 
 from __future__ import annotations
 
 import copy
 import pickle
+import sys
 from collections.abc import Callable
 from typing import Any
 
@@ -36,6 +43,9 @@ from pantr.bspline import (
     THBSplineSpace,
     create_uniform_space,
 )
+from pantr.bspline import _thb_spline as thb_spline_module
+from pantr.bspline import _thb_spline_space as thb_space_module
+from pantr.bspline import multilevel_extraction as extraction_module
 from pantr.grid import HierarchicalGrid, hierarchical_grid, uniform_grid
 from tests._thb_support import VALUE_ATOL
 
@@ -355,3 +365,254 @@ class TestExtraction:
         copied = copier(original)
         copied.tag.append("changed")
         assert original.tag == ["c"]
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Pickles written by the previous release
+# ──────────────────────────────────────────────────────────────────────────────
+
+_PREVIOUS_PROTOCOLS = range(2, pickle.HIGHEST_PROTOCOL + 1)
+"""Protocols that pickle a ``__slots__`` object; the previous release refused 0 and 1."""
+
+_StandIn = Callable[..., Any]
+
+
+def _previous_space_slots(
+    grid: HierarchicalGrid, *, truncate: bool = True, regularity: int | None = None
+) -> dict[str, Any]:
+    """Return the slots the previous release's space held, with nonsense for what it derived.
+
+    The pieces the loader reads (root space, grid, truncation, regularity, snapshot) are the real
+    ones. What the previous release derived from them (active functions, truncated coefficients,
+    supports, caches) is filled with values that differ from any real one, so a loader that read
+    them could not equal a freshly built space.
+    """
+    return {
+        "_root_space": _root(),
+        "_grid": grid,
+        "_truncate": truncate,
+        "_regularity": (regularity, regularity),
+        "_grid_snapshot": (grid.max_level, grid.num_cells, grid.version),
+        "_active_funcs": (np.array([-1]),),
+        "_func_offset": np.array([0, -1]),
+        "_num_active": -1,
+        "_trunc": {0: thb_space_module._TruncCoeffs(0, (0, 0), np.full((1, 1), np.nan))},
+        "_support": (),
+        "_level_spaces": (),
+        "_contrib_cache": {"unread": None},
+        "_max_active_per_cell": -1,
+    }
+
+
+def _dump_previous(protocol: int, build: Callable[[_StandIn], Any]) -> bytes:
+    """Pickle what ``build`` makes from stand-ins for the previous release's classes.
+
+    ``build`` receives ``make(module, name, slots, subclass=None)``, which returns an instance of a
+    class named ``name`` in ``module`` with exactly ``slots`` as its ``__slots__``, holding those
+    values. The stand-in takes the place of the module's class while the pickle is written, so the
+    pickle names the class as the previous release's did and loading it finds this release's class.
+
+    With ``subclass`` the instance is of a subclass of that name in this test module, which has no
+    ``__slots__`` and the attribute ``tag``, laid out as the previous release's subclass was.
+
+    Args:
+        protocol (int): The pickle protocol.
+        build (Callable[[_StandIn], Any]): Builds the object given ``make``.
+
+    Returns:
+        bytes: The pickle.
+    """
+    with pytest.MonkeyPatch.context() as patch:
+
+        def make(
+            module: Any,
+            name: str,
+            slots: dict[str, Any],
+            subclass: str | None = None,
+        ) -> Any:
+            cls = type(name, (), {"__slots__": tuple(slots), "__module__": module.__name__})
+            patch.setattr(module, name, cls)
+            if subclass is not None:
+                cls = type(subclass, (cls,), {"__module__": __name__})
+                patch.setattr(sys.modules[__name__], subclass, cls)
+            obj = cls()
+            for key, value in slots.items():
+                setattr(obj, key, value)
+            if subclass is not None:
+                obj.tag = ["c"]
+            return obj
+
+        return pickle.dumps(build(make), protocol=protocol)
+
+
+def _previous_space(make: _StandIn, grid: HierarchicalGrid, **kwargs: Any) -> Any:
+    return make(thb_space_module, "THBSplineSpace", _previous_space_slots(grid, **kwargs))
+
+
+@pytest.mark.parametrize("protocol", _PREVIOUS_PROTOCOLS)
+class TestPreviousRelease:
+    """Pickles of the previous release's plain objects load into the compiled wrappers."""
+
+    @pytest.mark.parametrize("kwargs", _SPACES)
+    def test_a_space_loads_and_equals_a_new_one(
+        self, protocol: int, kwargs: dict[str, Any]
+    ) -> None:
+        reg = kwargs.get("regularity")
+        data = _dump_previous(
+            protocol,
+            lambda make: _previous_space(
+                make, _grid(), truncate=kwargs.get("truncate", True), regularity=reg
+            ),
+        )
+
+        loaded = pickle.loads(data)
+
+        assert type(loaded) is THBSplineSpace
+        _assert_same_space(loaded, _space(**kwargs))
+
+    def test_a_space_loaded_from_a_grid_refined_since_is_stale(self, protocol: int) -> None:
+        grid = _grid()
+        slots = _previous_space_slots(grid)
+        grid.refine(2, [8, 8], [10, 10])
+
+        loaded = pickle.loads(
+            _dump_previous(protocol, lambda make: make(thb_space_module, "THBSplineSpace", slots))
+        )
+
+        with pytest.raises(RuntimeError, match="stale"):
+            loaded.active_basis(0)
+
+    def test_a_space_watches_the_grid_it_was_loaded_with(self, protocol: int) -> None:
+        loaded = pickle.loads(_dump_previous(protocol, lambda make: _previous_space(make, _grid())))
+        loaded.active_basis(0)
+
+        loaded.grid.refine(2, [8, 8], [10, 10])
+
+        with pytest.raises(RuntimeError, match="stale"):
+            loaded.active_basis(0)
+
+    def test_a_subclass_of_a_space_keeps_its_class_and_attributes(self, protocol: int) -> None:
+        data = _dump_previous(
+            protocol,
+            lambda make: make(
+                thb_space_module, "THBSplineSpace", _previous_space_slots(_grid()), "_TaggedSpace"
+            ),
+        )
+
+        loaded = pickle.loads(data)
+
+        assert type(loaded) is _TaggedSpace
+        assert loaded.tag == ["c"]
+        _assert_same_space(loaded, _space())
+
+    @pytest.mark.parametrize("rank", [0, 2], ids=["scalar", "vector"])
+    def test_a_spline_loads_and_equals_a_new_one(self, protocol: int, rank: int) -> None:
+        want = _spline(rank)
+        # The previous release held the control points as a read-only (num_total_basis, rank) array.
+        stored = want.control_points.reshape(want.space.num_total_basis, -1).copy()
+        stored.flags.writeable = False
+
+        def build(make: _StandIn) -> Any:
+            slots = {
+                "_space": _previous_space(make, _grid()),
+                "_control_points": stored,
+                "_scalar": rank == 0,
+            }
+            return make(thb_spline_module, "THBSpline", slots)
+
+        loaded = pickle.loads(_dump_previous(protocol, build))
+
+        assert type(loaded) is THBSpline
+        assert loaded.rank == want.rank
+        np.testing.assert_array_equal(loaded.control_points, want.control_points)
+        assert loaded.control_points.shape == want.control_points.shape
+        assert not loaded.control_points.flags.writeable
+        _assert_same_space(loaded.space, want.space)
+        pts = np.random.default_rng(6).uniform(size=(40, 2))
+        np.testing.assert_allclose(
+            loaded.evaluate(pts), want.evaluate(pts), rtol=0.0, atol=VALUE_ATOL
+        )
+
+    def test_a_subclass_of_a_spline_keeps_its_class_and_attributes(self, protocol: int) -> None:
+        n = _space().num_total_basis
+
+        def build(make: _StandIn) -> Any:
+            slots = {
+                "_space": _previous_space(make, _grid()),
+                "_control_points": np.arange(float(n)).reshape(n, 1),
+                "_scalar": True,
+            }
+            return make(thb_spline_module, "THBSpline", slots, "_TaggedSpline")
+
+        loaded = pickle.loads(_dump_previous(protocol, build))
+
+        assert type(loaded) is _TaggedSpline
+        assert loaded.tag == ["c"]
+        np.testing.assert_array_equal(loaded.control_points, np.arange(float(n)))
+
+    @pytest.mark.parametrize("target", ["bezier", "lagrange", "cardinal"])
+    def test_an_extraction_loads_and_equals_a_new_one(self, protocol: int, target: str) -> None:
+        def build(make: _StandIn) -> Any:
+            slots = {
+                "_space": _previous_space(make, _grid()),
+                "_target": target,
+                "_oslo": (),
+                "_ext": {},
+                "_coeffs_cache": {(0, (0, 0), 0): ((), np.full(1, np.nan))},
+            }
+            return make(extraction_module, "MultiLevelExtraction", slots)
+
+        loaded = pickle.loads(_dump_previous(protocol, build))
+        want = MultiLevelExtraction(_space(), target)  # type: ignore[arg-type]
+
+        assert type(loaded) is MultiLevelExtraction
+        assert loaded.target == target
+        assert loaded.num_elements == want.num_elements
+        _assert_same_space(loaded.space, want.space)
+        for cid in range(0, want.num_elements, 3):
+            for method in ("operator", "multilevel_operator"):
+                np.testing.assert_allclose(
+                    getattr(loaded, method)(cid),
+                    getattr(want, method)(cid),
+                    rtol=0.0,
+                    atol=VALUE_ATOL,
+                )
+
+    def test_an_extraction_of_a_stale_space_loads_stale(self, protocol: int) -> None:
+        grid = _grid()
+        space_slots = _previous_space_slots(grid)
+        grid.refine(2, [8, 8], [10, 10])
+
+        def build(make: _StandIn) -> Any:
+            slots = {
+                "_space": make(thb_space_module, "THBSplineSpace", space_slots),
+                "_target": "bezier",
+                "_oslo": (),
+                "_ext": {},
+                "_coeffs_cache": {},
+            }
+            return make(extraction_module, "MultiLevelExtraction", slots)
+
+        loaded = pickle.loads(_dump_previous(protocol, build))
+
+        with pytest.raises(RuntimeError, match="stale"):
+            loaded.operator(0)
+
+    def test_a_subclass_of_an_extraction_keeps_its_class_and_attributes(
+        self, protocol: int
+    ) -> None:
+        def build(make: _StandIn) -> Any:
+            slots = {
+                "_space": _previous_space(make, _grid()),
+                "_target": "bezier",
+                "_oslo": (),
+                "_ext": {},
+                "_coeffs_cache": {},
+            }
+            return make(extraction_module, "MultiLevelExtraction", slots, "_TaggedExtraction")
+
+        loaded = pickle.loads(_dump_previous(protocol, build))
+
+        assert type(loaded) is _TaggedExtraction
+        assert loaded.tag == ["c"]
+        assert loaded.target == "bezier"

@@ -114,13 +114,29 @@ class THBSpline:
             dict(self.__dict__) if hasattr(self, "__dict__") else None,
         )
 
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        """Restore a subclass's attributes.
+    def __setstate__(
+        self, state: dict[str, Any] | tuple[dict[str, Any] | None, dict[str, Any]]
+    ) -> None:
+        """Restore a subclass's attributes, or rebuild from a previous release's pickle.
+
+        A previous release pickled the slots of a plain object, a pair ``(attributes, slots)``
+        with the attributes of a subclass (or ``None``) and the slot values ``_space``,
+        ``_control_points`` (always two-dimensional) and ``_scalar``. Such a state rebuilds the
+        compiled spline from the space and the control points.
 
         Args:
-            state (dict[str, Any]): The pickled extra attributes.
+            state (dict[str, Any] | tuple[dict[str, Any] | None, dict[str, Any]]): The pickled
+                state: a subclass's extra attributes, or the previous release's pair.
         """
-        self.__dict__.update(state)
+        if isinstance(state, tuple):
+            extra, slots = state
+            control_points = slots["_control_points"]
+            if slots["_scalar"]:
+                control_points = control_points[:, 0]
+            THBSpline.__init__(self, slots["_space"], control_points)
+            state = extra or {}
+        if state:
+            self.__dict__.update(state)
 
     def __copy__(self) -> THBSpline:
         """Copy: the new object shares the compiled value and the space.
