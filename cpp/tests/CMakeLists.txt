@@ -57,6 +57,8 @@ set(_pantr_test_sources
     test_thb_space.cpp
     test_thb_refine.cpp
     test_local_space.cpp
+    test_build_local.cpp
+    test_mpi_distributed.cpp
     test_thb_spline.cpp
     test_thb_extraction.cpp
     test_thb_qi.cpp
@@ -118,16 +120,37 @@ if(TARGET pantr_metis)
   doctest_discover_tests(pantr_tests_metis)
 endif()
 
+# --- MPI ------------------------------------------------------------------------------------------
+# The distributed algorithms over real MPI, run under mpiexec on 2 and 3 ranks, where pantr::mpi is
+# built (an MPI was found). Open MPI refuses more ranks than cores without --oversubscribe.
+if(TARGET pantr_mpi)
+  add_executable(pantr_tests_mpi mpi/test_mpi_communicator.cpp)
+  target_link_libraries(pantr_tests_mpi PRIVATE pantr::mpi pantr_native_arch pantr_doctest
+                                                pantr_cxx_warnings)
+  target_include_directories(pantr_tests_mpi PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  set(_pantr_mpiexec_flags ${MPIEXEC_PREFLAGS})
+  if(MPI_CXX_LIBRARY_VERSION_STRING MATCHES "Open MPI")
+    list(APPEND _pantr_mpiexec_flags --oversubscribe)
+  endif()
+  foreach(_n 2 3)
+    add_test(NAME mpi.communicator_np${_n}
+             COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${_n} ${_pantr_mpiexec_flags}
+                     $<TARGET_FILE:pantr_tests_mpi> ${MPIEXEC_POSTFLAGS})
+    set_tests_properties(mpi.communicator_np${_n} PROPERTIES TIMEOUT 300)
+  endforeach()
+endif()
+
 # --- Header rules ---------------------------------------------------------------------------------
 # Every public header compiles on its own (self-contained) with a poisoned mpi.h first on the
 # include path, so a core header that reaches mpi.h, directly or through another header, fails the
-# build. The MPI communicator header is the one header allowed to include it.
-set(PANTR_MPI_HEADER_ALLOWED "pantr/mpi/mpi_communicator.hpp")
+# build. The two MPI headers are the ones allowed to include it: the table of collectives and the
+# communicator over it.
+set(PANTR_MPI_HEADER_ALLOWED "pantr/mpi/mpi_table.hpp;pantr/mpi/mpi_communicator.hpp")
 file(GLOB_RECURSE _pantr_headers CONFIGURE_DEPENDS RELATIVE "${PROJECT_SOURCE_DIR}/include"
      "${PROJECT_SOURCE_DIR}/include/pantr/*.hpp" "${PROJECT_SOURCE_DIR}/include/pantr/*.h")
 set(_pantr_header_tus "")
 foreach(_h IN LISTS _pantr_headers)
-  if(_h STREQUAL PANTR_MPI_HEADER_ALLOWED)
+  if(_h IN_LIST PANTR_MPI_HEADER_ALLOWED)
     continue()
   endif()
   string(MAKE_C_IDENTIFIER "${_h}" _id)
@@ -147,11 +170,12 @@ add_test(NAME header_rules.poison_mpi_control
 set_tests_properties(header_rules.poison_mpi_control PROPERTIES
                      PASS_REGULAR_EXPRESSION "poisoned mpi.h reached")
 
-# No header names mpi.h at all, outside the allowed one (catches a guarded include the compile
+# No header names mpi.h at all, outside the allowed ones (catches a guarded include the compile
 # check would not reach).
+string(REPLACE ";" "|" _pantr_mpi_allowed_arg "${PANTR_MPI_HEADER_ALLOWED}")
 add_test(NAME header_rules.no_mpi_include_text
          COMMAND "${CMAKE_COMMAND}" -DINCLUDE_DIR=${PROJECT_SOURCE_DIR}/include
-                 -DALLOWED=${PANTR_MPI_HEADER_ALLOWED} -P "${CMAKE_CURRENT_SOURCE_DIR}/header_rules/check_no_mpi.cmake")
+                 "-DALLOWED=${_pantr_mpi_allowed_arg}" -P "${CMAKE_CURRENT_SOURCE_DIR}/header_rules/check_no_mpi.cmake")
 
 # config.hpp rejects fast-math, under each flag that enables it. MSVC has /fp:fast only: no flag of
 # its own assumes finite math.

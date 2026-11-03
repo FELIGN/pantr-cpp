@@ -263,11 +263,41 @@ class L2Projection {
       throw value_error("L2Projection: expected " + std::to_string(traces_.size()) +
                         " trace value arrays, got " + std::to_string(trace_values.size()) + ".");
     }
-    NdArray<C> total = load<C>(values);
+    return solve_load<C>(load<C>(values), trace_values, tol);
+  }
+
+  /// Finish a projection from its interior load: each trace's load written over the entries of
+  /// its boundary (later traces over earlier ones), then the Kronecker mass solve. The second half
+  /// of `project`, for a load assembled elsewhere (summed over ranks in `pantr::mpi`).
+  ///
+  /// Args:
+  ///     total (NdArray<C>): The interior load, `(n_0, ..., n_{d-1})` (consumed).
+  ///     trace_values (const std::vector<std::span<const C>>&): The component on each trace's
+  ///         lattice, one per trace.
+  ///     tol (double): Truncation tolerance of the SVD path (see `solve_collocation`).
+  ///
+  /// Returns:
+  ///     NdArray<C>: The coefficients, `(n_0, ..., n_{d-1})`.
+  ///
+  /// Raises:
+  ///     value_error: Another load size, another number of traces or trace values, or an SVD
+  ///         failure.
+  template <StorageFloat C>
+  [[nodiscard]] NdArray<C> solve_load(NdArray<C> total,
+                                      const std::vector<std::span<const C>>& trace_values,
+                                      double tol) const {
+    if (trace_values.size() != traces_.size()) {
+      throw value_error("L2Projection: expected " + std::to_string(traces_.size()) +
+                        " trace value arrays, got " + std::to_string(trace_values.size()) + ".");
+    }
     const std::size_t dim = nodes_.size();
     std::vector<std::size_t> nb(dim);
     for (std::size_t d = 0; d < dim; ++d) {
       nb[d] = static_cast<std::size_t>(space_.spaces()[d].num_basis());
+    }
+    if (total.size() != checked_product(nb)) {
+      throw value_error("L2Projection: expected a load of " + std::to_string(checked_product(nb)) +
+                        " entries, got " + std::to_string(total.size()) + ".");
     }
     for (std::size_t t = 0; t < traces_.size(); ++t) {
       const NdArray<C> tl = trace_load<C>(t, trace_values[t]);

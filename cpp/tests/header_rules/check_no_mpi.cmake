@@ -1,8 +1,9 @@
-# Fail if any header under INCLUDE_DIR other than ALLOWED mentions mpi.h in an #include.
+# Fail if any header under INCLUDE_DIR other than those in ALLOWED (a |-separated list) mentions mpi.h in an #include.
+string(REPLACE "|" ";" ALLOWED "${ALLOWED}")
 file(GLOB_RECURSE headers RELATIVE "${INCLUDE_DIR}" "${INCLUDE_DIR}/pantr/*.hpp" "${INCLUDE_DIR}/pantr/*.h")
 set(offenders "")
 foreach(h IN LISTS headers)
-  if(h STREQUAL ALLOWED)
+  if(h IN_LIST ALLOWED)
     continue()
   endif()
   file(STRINGS "${INCLUDE_DIR}/${h}" hits REGEX "#[ \t]*include[ \t]*[<\"]mpi\\.h[>\"]")
