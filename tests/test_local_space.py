@@ -714,9 +714,8 @@ def test_build_local_refuses_a_rank_no_cell_has(rank: float, hierarchical: bool)
     owned cells must not be looked up for a truncated rank while the masks compare with the
     untruncated one, which would return a local space owning nothing.
     """
-    space = create_uniform_space([2, 2], [4, 4])
-    if hierarchical:
-        space = create_thb_space(space)
+    root = create_uniform_space([2, 2], [4, 4])
+    space: BsplineSpace | THBSplineSpace = create_thb_space(root) if hierarchical else root
     part = Partition(np.arange(16, dtype=np.int32) % 2, 2)
     with pytest.raises(ValueError, match="owns no cells"):
         build_local(space, part, rank)  # type: ignore[arg-type]
