@@ -61,6 +61,9 @@ OpenMP run on one thread, and `NUMBA_NUM_THREADS` is the thread setting.
 | `results/2026-11-03-s7-ac6-final` | the same at 7800ec9, after the Oslo bands of a first-axis insertion are again formed per row: every case of the previous run, fresh; no case flagged, so the insertion flag was not confirmed (`summary.md` and `summary.json` only) |
 | `results/2026-11-03-s7-ac6-tip` | `compare.py --side main=<scratch>/main-11ab436/src --side branch=<this tree at 42d2cef>/src --k 10 --threads 1 8 --cpus 0-7 --filter '^S7\.'`: every CAD and multipatch case at the stage's last tree, after the cad binding stopped releasing the GIL; no case flagged. The shared machine was heavily loaded by other users during this run, so both sides read slower than in the runs above (`summary.md` and `summary.json` only) |
 
+| `results/2026-11-03-s8-ac6-tip` | `compare.py --side main=<scratch>/main-11ab436/src --side branch=<this tree at 3696bea>/src --k 10 --threads 1 8 --cpus 0-7 --filter '^S8\.'`: every distributed case on one rank through a duck-typed communicator; `from_dolfinx.large` is flagged at both thread counts (the binding sent a copy of the cell ids), which 9181cf3 addressed |
+| `results/2026-11-03-s8-ac6-confirm` | the same command at 9181cf3: the confirming re-run; no case flagged. The shared machine was loaded by other users during both runs (`summary.md` and `summary.json` only) |
+
 Each holds `summary.md` (the statistic and range per side and case, and the flags), `summary.json`
 (the same with every process median, the protocol, the commits and the machine) and `raw/` (each
 process's record, with every repeat).
