@@ -16,7 +16,9 @@
 /// rung of the Python extension is one such build), and wherever the Fiedler vector is
 /// ill-determined that decides the partition: a repeated or near-repeated second eigenvalue, or
 /// two entries equal up to rounding (a graph symmetric under reversing its vertex order, whose
-/// parts can then come out mirrored).
+/// parts can then come out mirrored), or several entries equal up to rounding where the order is
+/// split. With three parts or more each part split again is such a graph too, so a graph that is
+/// not symmetric itself can still have a symmetric part.
 #pragma once
 
 #include "pantr/config.hpp"

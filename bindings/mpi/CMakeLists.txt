@@ -42,7 +42,7 @@ if(NOT DEFINED PROJECT_NAME)
   set(PANTR_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../include"
       CACHE PATH "pantr's include directory (holding pantr/mpi/comm_capsule.h)")
   add_library(_pantr_mpi_capsule INTERFACE)
-  if(EXISTS "${PANTR_INCLUDE_DIR}/pantr/mpi/comm_capsule.h")
+  if(PANTR_INCLUDE_DIR AND EXISTS "${PANTR_INCLUDE_DIR}/pantr/mpi/comm_capsule.h")
     target_include_directories(_pantr_mpi_capsule INTERFACE "${PANTR_INCLUDE_DIR}")
     message(STATUS "pantr-mpi: pantr's headers from ${PANTR_INCLUDE_DIR}")
   else()

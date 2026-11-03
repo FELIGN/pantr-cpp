@@ -16,6 +16,13 @@ if(CONSUMER_CAPSULE_ONLY)
   if(NOT TARGET pantr::mpi_capsule OR TARGET pantr::pantr)
     message(FATAL_ERROR "COMPONENTS mpi-capsule must define pantr::mpi_capsule and not pantr::pantr")
   endif()
+  # Nothing links the target here, so CMake would not check its include directory: check that it
+  # holds the capsule header the pantr-mpi extension includes.
+  get_target_property(_capsule_includes pantr::mpi_capsule INTERFACE_INCLUDE_DIRECTORIES)
+  if(NOT EXISTS "${_capsule_includes}/pantr/mpi/comm_capsule.h")
+    message(FATAL_ERROR "pantr::mpi_capsule's include directory (${_capsule_includes}) has no "
+                        "pantr/mpi/comm_capsule.h")
+  endif()
   return()
 elseif(CONSUMER_WITH_MPI)
   find_package(pantr 0.7 REQUIRED COMPONENTS mpi)

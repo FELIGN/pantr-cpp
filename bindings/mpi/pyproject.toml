@@ -2,9 +2,9 @@
 # The same exact nanobind pin as pantr's pyproject.toml: _pantr_mpi and _pantr exchange only a
 # capsule of a versioned C struct, but every pantr extension module builds against one pin
 # (bindings/mpi/CMakeLists.txt refuses another). mpi4py 4.0 is the first with a C API usable under
-# the stable ABI (MPI4PY_LIMITED_API). pantr at the same version supplies, from its sdist, the
-# headers and CMake package (`find_package(pantr COMPONENTS mpi-capsule)`, found in the build
-# environment's site-packages); a build from pantr's source tree uses the tree's headers instead.
+# the stable ABI (MPI4PY_LIMITED_API). pantr at the same version supplies the headers and CMake
+# package a build from this sdist uses (`find_package(pantr COMPONENTS mpi-capsule)`, found in the
+# build environment's site-packages); a build from pantr's source tree uses the tree's headers.
 requires = ["scikit-build-core==1.1.1", "nanobind==3.1.0", "mpi4py>=4.0,<5", "pantr==0.7.0"]
 build-backend = "scikit_build_core.build"
 

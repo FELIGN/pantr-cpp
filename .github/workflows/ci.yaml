@@ -425,7 +425,8 @@ jobs:
           if cmake -S cpp/tests/consumer -B build/wheel-core -Dpantr_DIR="$pantr_dir" > wheel-core.log 2>&1; then
             echo "pantr::pantr was found in the wheel's package, which has no third-party headers"; exit 1
           fi
-          grep -q "mpi-capsule" wheel-core.log || { cat wheel-core.log; exit 1; }
+          tr -s ' \n' ' ' < wheel-core.log | grep -q "provides COMPONENTS mpi-capsule only" \
+            || { cat wheel-core.log; exit 1; }
       - uses: actions/upload-artifact@v7
         with:
           name: wheel-${{ matrix.label }}

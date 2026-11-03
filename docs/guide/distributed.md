@@ -52,8 +52,11 @@ The `pantr-mpi` wheels are built for one MPI family per platform. To use another
 pip install --no-binary pantr-mpi --force-reinstall --no-deps pantr-mpi
 ```
 
-The build needs a C++20 compiler, CMake 3.28 or later and `mpi4py` 4.0 or later; it builds
-against the headers of the installed `pantr` of the same version.
+The build needs a C++20 compiler, CMake 3.28 or later and `mpi4py` 4.0 or later, and it uses
+the headers and CMake package of `pantr` at the same version: pip's isolated build environment
+fetches that `pantr` from the index. To build against the `pantr` already installed (offline, or
+a `pantr` wheel built locally), add `--no-build-isolation`, with `scikit-build-core`, `nanobind`
+and `mpi4py` installed beforehand at the versions `pantr-mpi`'s `pyproject.toml` asks for.
 
 `import pantr.mpi` succeeds even without `mpi4py`; only code paths that genuinely
 need MPI (e.g. `pantr.mpi.require_mpi()`) raise when it is absent. The
