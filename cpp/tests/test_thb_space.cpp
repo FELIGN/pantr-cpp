@@ -206,7 +206,8 @@ std::vector<GoldenCase> golden_cases() {
 /// contraction of a multiply-add. `m` is `value_error_units`, the bound on the rounding error of a
 /// value with non-negative terms, `4` is `build_slack`, and `scale` is the largest recorded
 /// magnitude of the table, because a derivative's terms cancel and its error is relative to them,
-/// not to the (smaller) result.
+/// not to the (smaller) result. `eps` is the root's storage epsilon: a float root forms its
+/// two-scale coefficients in float, so a contracted multiply-add moves them by float ulps.
 template <class T>
 void check_against_golden(const THBSplineSpace<T>& space, const gold::Case& g) {
   const auto d = static_cast<std::size_t>(g.dim);
@@ -233,7 +234,7 @@ void check_against_golden(const THBSplineSpace<T>& space, const gold::Case& g) {
     }
   }
 
-  const double unit = build_slack * value_error_units(space) * eps;
+  const double unit = build_slack * value_error_units(space) * storage_eps(space);
   std::size_t n_trunc = 0;
   for (I64 dof = 0; dof < space.num_total_basis(); ++dof) {
     n_trunc += space.truncated(dof) != nullptr ? std::size_t{1} : std::size_t{0};
