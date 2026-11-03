@@ -5,8 +5,10 @@
 #   - from pantr's own build (bindings/CMakeLists.txt, PANTR_BUILD_MPI_MODULE), against the tree's
 #     headers, installed in the `mpi` component (make ext puts it in src/pantr_mpi/);
 #   - on its own, by bindings/mpi/pyproject.toml (scikit-build-core), against the headers of this
-#     source tree (PANTR_INCLUDE_DIR, by default ../../include) or of an installed pantr found by
-#     find_package(pantr COMPONENTS mpi-capsule).
+#     source tree (PANTR_INCLUDE_DIR, by default ../../include) or, from the pantr-mpi sdist, of
+#     an installed pantr found by find_package(pantr COMPONENTS mpi-capsule): scikit-build-core
+#     searches the build environment's site-packages, and elsewhere pass
+#     -Dpantr_DIR=$(python -c "import pantr; print(pantr.cmake_dir())").
 # It needs only comm_capsule.h and mpi_table.hpp from pantr, an MPI with its C++ wrapper, mpi4py's C
 # headers (mpi4py >= 4.0 for the stable ABI) and the nanobind pinned in pantr's pyproject.toml.
 #
@@ -42,9 +44,11 @@ if(NOT DEFINED PROJECT_NAME)
   add_library(_pantr_mpi_capsule INTERFACE)
   if(EXISTS "${PANTR_INCLUDE_DIR}/pantr/mpi/comm_capsule.h")
     target_include_directories(_pantr_mpi_capsule INTERFACE "${PANTR_INCLUDE_DIR}")
+    message(STATUS "pantr-mpi: pantr's headers from ${PANTR_INCLUDE_DIR}")
   else()
     find_package(pantr REQUIRED COMPONENTS mpi-capsule)
     target_link_libraries(_pantr_mpi_capsule INTERFACE pantr::mpi_capsule)
+    message(STATUS "pantr-mpi: pantr's headers from the installed pantr at ${pantr_DIR}")
   endif()
   set(_pantr_mpi_capsule_target _pantr_mpi_capsule)
   set(_pantr_mpi_destination pantr_mpi)

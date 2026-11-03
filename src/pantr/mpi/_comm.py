@@ -78,8 +78,9 @@ def check_mpi_family(family: str, built_against: str, library_version: str) -> N
     expected = _FAMILY_NAMES.get(family, family)
     raise ImportError(
         f"pantr-mpi was built for {expected} ({built_against}), but mpi4py loaded "
-        f"{loaded_text}. Use an MPI of that family, or build pantr-mpi from pantr's source "
-        f"tree against this one (bindings/mpi, with this MPI's compiler wrappers on PATH)"
+        f"{loaded_text}. Use an MPI of that family, or build pantr-mpi from its sdist against "
+        "this one, with this MPI's compiler wrappers on PATH: "
+        "pip install --no-binary pantr-mpi --force-reinstall --no-deps pantr-mpi"
     )
 
 

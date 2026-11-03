@@ -44,6 +44,17 @@ pip install 'pantr[mpi]'           # + mpi4py and pantr-mpi, for distributed spa
 pip install 'pantr[metis]'         # + pymetis, for partition_graph(backend="metis")
 ```
 
+The `pantr-mpi` wheels are built for one MPI family per platform. To use another MPI, build
+`pantr-mpi` from its source distribution against it, with that MPI's compiler wrappers
+(`mpicxx`) on `PATH`:
+
+```bash
+pip install --no-binary pantr-mpi --force-reinstall --no-deps pantr-mpi
+```
+
+The build needs a C++20 compiler, CMake 3.28 or later and `mpi4py` 4.0 or later; it builds
+against the headers of the installed `pantr` of the same version.
+
 `import pantr.mpi` succeeds even without `mpi4py`; only code paths that genuinely
 need MPI (e.g. `pantr.mpi.require_mpi()`) raise when it is absent. The
 partition/windowing layer (`partition_grid`, `partition_graph`, `build_local`) is

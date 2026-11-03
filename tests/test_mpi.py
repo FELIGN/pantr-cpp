@@ -226,7 +226,11 @@ def test_mpi4py_comm_without_pantr_mpi(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_mpi_extra_pins_pantr_mpi_at_this_version() -> None:
-    """``pantr[mpi]`` pulls pantr-mpi at pantr's own version, which bindings/mpi builds."""
+    """``pantr[mpi]`` pulls pantr-mpi at pantr's own version, which bindings/mpi builds.
+
+    pantr-mpi's sdist builds against an installed pantr of that same version (its headers and
+    CMake package), so its build requirements pin it too.
+    """
     root = Path(__file__).resolve().parents[1]
     if not (root / "pyproject.toml").exists():
         pytest.skip("not run from a source tree")
@@ -235,6 +239,7 @@ def test_mpi_extra_pins_pantr_mpi_at_this_version() -> None:
     ]
     assert f"pantr-mpi=={pantr.__version__}" in extras["mpi"]
     mpi_project = tomllib.loads((root / "bindings/mpi/pyproject.toml").read_text())
+    assert f"pantr=={pantr.__version__}" in mpi_project["build-system"]["requires"]
     version_input = mpi_project["tool"]["scikit-build"]["metadata"]["version"]["input"]
     assert (root / "bindings/mpi" / version_input).resolve() == (
         root / "src/pantr/__init__.py"

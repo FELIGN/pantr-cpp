@@ -2,8 +2,10 @@
 # The same exact nanobind pin as pantr's pyproject.toml: _pantr_mpi and _pantr exchange only a
 # capsule of a versioned C struct, but every pantr extension module builds against one pin
 # (bindings/mpi/CMakeLists.txt refuses another). mpi4py 4.0 is the first with a C API usable under
-# the stable ABI (MPI4PY_LIMITED_API).
-requires = ["scikit-build-core==1.1.1", "nanobind==3.1.0", "mpi4py>=4.0,<5"]
+# the stable ABI (MPI4PY_LIMITED_API). pantr at the same version supplies, from its sdist, the
+# headers and CMake package (`find_package(pantr COMPONENTS mpi-capsule)`, found in the build
+# environment's site-packages); a build from pantr's source tree uses the tree's headers instead.
+requires = ["scikit-build-core==1.1.1", "nanobind==3.1.0", "mpi4py>=4.0,<5", "pantr==0.7.0"]
 build-backend = "scikit_build_core.build"
 
 [project]
@@ -28,6 +30,17 @@ wheel.packages = []
 install.components = ["mpi"]
 install.strip = false
 build-dir = "../../build/skbuild-mpi/{wheel_tag}"
+
+# An sdist holds bindings/mpi alone, with no pantr tree two levels up: read the version the sdist
+# recorded in its PKG-INFO, build in a temporary directory, and take pantr's headers from the
+# installed pantr (an empty PANTR_INCLUDE_DIR makes CMakeLists.txt use find_package).
+[[tool.scikit-build.overrides]]
+if.from-sdist = true
+metadata.version.provider = "scikit_build_core.metadata.regex"
+metadata.version.input = "PKG-INFO"
+metadata.version.regex = '^Version:\s*(?P<value>\S+)'
+build-dir = ""
+cmake.define.PANTR_INCLUDE_DIR = ""
 
 [tool.scikit-build.cmake]
 build-type = "Release"
