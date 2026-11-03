@@ -797,6 +797,42 @@ TEST_CASE("detect: the tolerance tier is the storage type's, and an override rep
   CHECK(mp::detect_interfaces(view(f64), std::numeric_limits<double>::quiet_NaN()).empty());
 }
 
+TEST_CASE("detect: a tolerance within a rounding of the displacement is rounded to the type") {
+  // The shared face has three nodes (degree 2 along it), the corners exact and the middle one
+  // displaced along x by three ulps of 1 in `float`, 3 eps_f, which both types store exactly, so
+  // the difference of that pair is exactly `3 eps_f` in either type. The relative override is
+  // chosen so that the absolute geometric tolerance, relative * scale with scale the diagonal of
+  // the joint box (2, 1), is `3 eps_f (1 - 1e-8)` in double: below the difference by a relative
+  // 1e-8, which is far above the rounding of the product (about 1e-16) and far below half a
+  // `float` spacing at that magnitude (about 4e-8). The tolerance is rounded to `float` before the
+  // comparison there and lands on `3 eps_f`, so the pair matches; compared in double it would be
+  // refused, as the double patches are.
+  const double eps_f = static_cast<double>(std::numeric_limits<float>::epsilon());
+  const double scale = std::hypot(2.0, 1.0);
+  const auto pair = [&](auto tag) {
+    using U = decltype(tag);
+    const std::vector<Dir> dirs = {dir2(), dir3()};
+    return std::vector<bs::Bspline<U>>{
+        lattice<U>(dirs, {0.0, 0.0}), build<U>(dirs, [&](const Idx& idx, const Idx& nb) {
+          const bool middle = idx[0] == 0 && idx[1] == 1;
+          return std::vector<double>{
+              1.0 + (middle ? 3.0 * eps_f : 0.0) +
+                  static_cast<double>(idx[0]) / static_cast<double>(nb[0] - 1),
+              static_cast<double>(idx[1]) / static_cast<double>(nb[1] - 1)};
+        })};
+  };
+  const std::vector<mp::Interface> one = {iface(0, 1, 1, 0, {1}, {false})};
+  const double tol_just_below = 3.0 * eps_f * (1.0 - 1e-8) / scale;
+  const double tol_below = 2.0 * eps_f / scale;
+  const auto f32 = pair(float{});
+  const auto f64 = pair(double{});
+  CHECK(mp::detect_interfaces(view(f32), tol_just_below) == one);
+  CHECK(mp::detect_interfaces(view(f64), tol_just_below).empty());
+  // Two ulps is below the displacement in either type.
+  CHECK(mp::detect_interfaces(view(f32), tol_below).empty());
+  CHECK(mp::detect_interfaces(view(f64), tol_below).empty());
+}
+
 TEST_CASE(
     "detect: patches converted to one type compare at the larger relative tolerance of a pair") {
   // The detail overload the binding uses for patches of different dtypes: per-patch relative
