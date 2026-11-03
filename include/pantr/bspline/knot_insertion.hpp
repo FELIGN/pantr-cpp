@@ -368,12 +368,11 @@ template <StorageFloat T>
     } else {
       detail::check_net_matches("insert_knots", shape[d], space.knots().size(), p);
       std::vector<T> refined = compute_inserted_knot_vector<T>(space.knots(), p, new_knots[d], tol);
-      const detail::OsloRows<T> rows = detail::oslo_rows<T>(p, space.knots(), refined);
       std::vector<std::size_t> next_shape = shape;
-      next_shape[d] = rows.first_col.size();
+      next_shape[d] = refined.size() - static_cast<std::size_t>(p) - 1;
       next = NdArray<T>(next_shape, for_overwrite);
-      detail::apply_oslo_rows_along_axis<T>(rows, current.data(), around.outer, shape[d],
-                                            around.inner, next.data());
+      detail::refine_along_axis<T>(p, space.knots(), std::span<const T>(refined), current.data(),
+                                   around.outer, shape[d], around.inner, next.data());
       refined_space = BsplineSpace1D<T>(std::span<const T>(refined), p);
       shape = std::move(next_shape);
     }
