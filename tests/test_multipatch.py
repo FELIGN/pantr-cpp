@@ -578,7 +578,9 @@ def test_multipatch_rejects_mixed_dtype() -> None:
     space = _anisotropic_space_2d()
     double = _lattice_patch(space)
     knots = [np.asarray(s.knots, dtype=np.float32) for s in space.spaces]
-    space32 = BsplineSpace([BsplineSpace1D(k, s.degree) for k, s in zip(knots, space.spaces, strict=True)])
+    space32 = BsplineSpace(
+        [BsplineSpace1D(k, s.degree) for k, s in zip(knots, space.spaces, strict=True)]
+    )
     single = Bspline(space32, np.asarray(double.control_points, dtype=np.float32))
 
     with pytest.raises(ValueError, match="patch 0 has float64 but patch 1 has float32"):
