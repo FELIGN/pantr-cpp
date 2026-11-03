@@ -1077,8 +1077,9 @@
   (`pantr.cad`), and `Interface`'s checks, `match_face_cps`, `detect_interfaces` and `MultiPatch`
   (`pantr.multipatch`), run in pantr's C++ library.** Names, signatures, defaults and the types
   returned are unchanged; `create_extrusion`, `create_sweep`, `create_rectangle`, `create_disk` and
-  `create_cylinder` are the same Python code as before (`create_disk` and `create_cylinder` call
-  the compiled `create_circle`, `create_ruled` and `create_extrusion` through the public functions). In a sweep against
+  `create_cylinder` are the same Python code as before (`create_disk` calls the compiled
+  `create_circle` and `create_ruled`, and `create_cylinder` the compiled `create_circle` and the
+  Python `create_extrusion`, all through the public functions). In a sweep against
   the previous release (calls of the CAD functions on random and edge inputs, in `float32`,
   `float64` and mixed precision, rational and not; random multipatch inputs in one to three
   dimensions), the interfaces found, the accepted and refused inputs and the exception types were
@@ -1093,34 +1094,48 @@
   `create_revolution` with an axis of more than three coordinates ("Rotation axis must have at
   most 3 coordinates, got 4."), `join` of two pieces whose transverse knots differ by a rounding
   ("junction faces of different shapes"), and `detect_interfaces` of a patch with fewer
-  coordinates than the rank of an earlier one. `create_circle(angle=inf)` raises the same
-  `ValueError` as before without the `RuntimeWarning`s NumPy emitted first.
+  coordinates than the rank of an earlier one. `create_circle`, `create_disk` and
+  `create_revolution` with `angle=inf` raise the same `ValueError` as before without the
+  `RuntimeWarning`s NumPy emitted first, and `create_circle(radius=inf)` and `create_revolution`
+  with a `point` near the largest double no longer emit NumPy's `RuntimeWarning`s.
 - **Inputs of mixed precision are converted to the precision of the result before the operation.**
   `create_ruled` (the first B-spline's precision), the Coons constructions (the first curve's or
   face's) and `join` (`float64`) used to compute each `float32` input in `float32` and convert
   afterwards, so their control points can differ from the previous release by `float32` rounding.
   The tolerance of their checks is still read at the coarsest precision supplied. Where the
   `float32` and `float64` inputs carry one knot in their two precisions, the previous release
-  counted its two readings as two knots: a mixed-precision `create_ruled`, Coons construction or
-  join of such inputs could be refused (with a multiplicity error, or with a `ValueError` from
-  NumPy when the two pieces came out with different numbers of control points) and is built now,
-  and one that was built can now have fewer control points (a Coons patch of 6 x 2 basis
-  functions, with the knots `0.3`, `0.3f` and `0.3f`, is now one of 5 x 2 with one knot), the
-  same surface to `float32` rounding. `make_compat` of mixed precisions computes in
-  `float64` and returns each B-spline in its own precision, so a `float32` knot and a `float64`
-  knot one `float32` rounding apart give both B-splines the same number of basis functions, where
-  the previous release could give them different numbers.
-- **A `float64` value beyond the `float32` range, converted to `float32` by a mixed-precision
-  `create_ruled` or Coons construction, raises `ValueError`** ("The value 1e+300 is outside the
-  range of the target floating-point type."), where the previous release stored `inf` and warned
-  with `RuntimeWarning: overflow encountered in cast`.
+  counted its two readings as two knots. A mixed-precision `create_ruled` or Coons construction of
+  such inputs could be refused (with a multiplicity error, or with a `ValueError` from NumPy when
+  the two pieces came out with different numbers of control points) and is built now. A `join`
+  whose first piece is `float64` could be refused with the multiplicity error and is built now; a
+  `join` of surfaces or volumes whose first piece is `float32` is still refused (with the dtype
+  error; it was a NumPy `ValueError` when the knots differed). One that was built can now have
+  fewer control points, the same surface to `float32` rounding: a degree-2 Coons patch whose
+  `float64` curve has the knot `0.3` and whose `float32` curve has `0.3f` had 6 x 2 basis
+  functions with the interior knots `0.3`, `0.3f`, `0.3f`, and now has 5 x 2 with `0.3` and
+  `0.3f`; with a `float32` first curve it had 6 x 2 with `0.3f` three times and now has 4 x 2
+  with `0.3f` once. `make_compat` of mixed precisions computes in `float64` and returns each
+  B-spline in its own precision, so a `float32` knot and a `float64` knot one `float32` rounding
+  apart give both B-splines the same number of basis functions, where the previous release could
+  give them different numbers. For the same reason a mixed-precision `make_compat` is built
+  where the previous release refused it with the multiplicity error, and is refused with that
+  error where two readings of one knot now exceed the degree's maximum multiplicity (the previous
+  release returned B-splines with different knot vectors there).
+- **A `float64` control point or weight above the largest `float32` (3.4028234663852886e+38),
+  converted to `float32` by a mixed-precision `create_ruled` or Coons construction, raises
+  `ValueError`** ("The value 1e+300 is outside the range of the target floating-point type.").
+  The previous release stored `inf` and warned (`RuntimeWarning: overflow encountered in cast`)
+  from 3.4028235677973366e+38 up, and stored the largest `float32` without a warning for values
+  between the two.
 - **An `Interface` patch id, face id or axis, or a `match_face_cps` face id or axis, past the
   signed 64-bit range raises `TypeError`.** The previous release built `Interface(2**70, 1,
   2**70 + 1, 0, (1,), (False,))` and refused an out-of-range face with `ValueError`.
 - **Inputs outside the annotated types, and calls with two invalid arguments,** in `pantr.cad` and
   `pantr.multipatch`, may be refused with another exception or message: a float id in `Interface`
   raises `TypeError` (it was accepted), `MultiPatch` reports a patch of another dtype before a patch
-  of another dimension, rank or rationality further down the list, and `create_revolution` with an
+  of another dimension, rank or rationality that stands earlier in the list, and also when one
+  patch differs in both (the previous release reported the dimension, rank or rationality first),
+  and `create_revolution` with an
   out-of-range integer `axis` raises its `IndexError` before the checks of the B-spline and of
   `point`.
 - **A `bool` `axis` of `join` is taken as the integer it equals:** `join(c1, c2, axis=False)` joins
@@ -1128,7 +1143,9 @@
   required for the axis", and a refused `True` is printed as `1` ("axis must be in [0, 1), got
   1."). An axis past the signed 64-bit range in `join` or `make_compat` is printed as
   `9223372036854775807` (`-9223372036854775808` below the range) in the refusal, rather than as
-  given.
+  given. `make_compat(axes=True)` reports "Axis 1 out of range" (it said "Axis True"),
+  `join(axis=numpy.True_)` raises `TypeError` where it raised `ValueError`, and
+  `join(axis=numpy.False_)` still raises `TypeError`, with another message.
 - The private helpers of `pantr.cad` and `pantr.multipatch` are gone with the Python code they
   held: `_validation._ColumnGroup`, `_EUCLIDEAN_COLUMNS`, `_HOMOGENEOUS_COLUMNS`, `_column_groups`
   and `_coarsest_dtype`; every private function, class and constant of `_compat`, `_join` and
@@ -1141,9 +1158,11 @@
 
 ### Fixed
 - **`detect_interfaces` and `MultiPatch` of patches whose joint bounding box has a diagonal
-  beyond about `1.3e154`** find the interfaces there are. The previous release took the length of
-  the patches' joint bounding box with `numpy.linalg.norm`, whose sum of squares overflowed to `inf`, so the tolerance became
-  infinite and every face was matched with every face.
+  from about `1.34e154` (the square root of the largest double) up to the largest double** find
+  the interfaces there are; beyond that the tolerance is infinite, as before. The previous release
+  took the length of the patches' joint bounding box with `numpy.linalg.norm`, whose sum of
+  squares overflowed to `inf`, so the tolerance became infinite and every face was matched with
+  every face.
 - **`partition_graph` bisects graphs above 512 vertices along their Fiedler vector.** It asked
   ARPACK for the two smallest eigenpairs of the Laplacian and took the second, which is the
   Fiedler pair only if the first is the constant vector's (eigenvalue 0). The start vector is
