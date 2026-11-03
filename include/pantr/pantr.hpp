@@ -82,6 +82,8 @@
 #include "pantr/thb/types.hpp"
 
 #include "pantr/cad/compat.hpp"
+#include "pantr/cad/coons.hpp"
+#include "pantr/cad/join.hpp"
 #include "pantr/cad/operations.hpp"
 #include "pantr/cad/primitives.hpp"
 
