@@ -1483,11 +1483,142 @@ def _s7_cases() -> list[Case]:
     return cases
 
 
+class _OneRank:
+    """A duck-typed communicator of one rank, as the Python suite's fakes are."""
+
+    rank = 0
+    size = 1
+
+    def allgather(self, obj: Any) -> list[Any]:  # noqa: ANN401
+        return [obj]
+
+    def allreduce(self, arr: Any) -> Any:  # noqa: ANN401
+        return arr
+
+
+def _s8_cases() -> list[Case]:
+    """The distributed cases of the S8 stage (C8.1, C8.2), on one rank.
+
+    They run through a duck-typed communicator (design/port_design.md, section 9.1: ``n = 1``,
+    the fake-communicator path).
+
+    The spaces are biquadratic (bicubic for the quasi-interpolant) on 2 x 2, 16 x 16 and 64 x 64
+    intervals, the THB space :func:`_thb_fixture` on 4, 16 and 48 root intervals:
+
+    - ``create_distributed_space``: the grid partition and the local window.
+    - ``interpolate_distributed``, ``fit_distributed`` (values already distributed),
+      ``l2_project_distributed``, ``quasi_interpolate_distributed``,
+      ``quasi_interpolate_thb_distributed``: on a distributed space built in the setup.
+    - ``from_dolfinx``: a mesh stand-in of 4, 1e3 and 1e6 cells, every one owned by the rank.
+    """
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    from pantr.bspline import create_greville_lattice, create_uniform_space  # noqa: PLC0415
+    from pantr.mpi import (  # noqa: PLC0415
+        create_distributed_space,
+        fit_bspline_distributed,
+        from_dolfinx,
+        interpolate_bspline_distributed,
+        l2_project_bspline_distributed,
+        quasi_interpolate_bspline_distributed,
+        quasi_interpolate_thb_spline_distributed,
+    )
+
+    def f_points(p: Any) -> Any:  # noqa: ANN401
+        return np.sin(3.0 * p.sum(axis=1))
+
+    def f_lattice(lat: Any) -> Any:  # noqa: ANN401
+        return f_points(lat.get_all_points(order="C"))
+
+    cases: list[Case] = []
+
+    def add(name: str, size: str, what: str, setup: Callable[[], Callable[[], Any]]) -> None:
+        cases.append(Case(f"S8.{name}.{size}", "S8", size, what, setup))
+
+    comm = _OneRank()
+    for size, side in {"tiny": 2, "medium": 16, "large": 64}.items():
+
+        def setup_create(side: int = side) -> Callable[[], Any]:
+            space = create_uniform_space([2, 2], [side, side])
+            return lambda: create_distributed_space(space, comm)
+
+        def setup_interp(side: int = side) -> Callable[[], Any]:
+            ds = create_distributed_space(create_uniform_space([2, 2], [side, side]), comm)
+            return lambda: interpolate_bspline_distributed(f_points, ds)
+
+        def setup_fit(side: int = side) -> Callable[[], Any]:
+            space = create_uniform_space([2, 2], [side, side])
+            ds = create_distributed_space(space, comm)
+            lat = create_greville_lattice(space)
+            values = f_points(lat.get_all_points(order="C"))
+            return lambda: fit_bspline_distributed(values, lat, ds, values_distributed=True)
+
+        def setup_l2(side: int = side) -> Callable[[], Any]:
+            ds = create_distributed_space(create_uniform_space([2, 2], [side, side]), comm)
+            return lambda: l2_project_bspline_distributed(f_lattice, ds)
+
+        def setup_qi(side: int = side) -> Callable[[], Any]:
+            ds = create_distributed_space(create_uniform_space([3, 3], [side, side]), comm)
+            return lambda: quasi_interpolate_bspline_distributed(f_points, ds)
+
+        label = f"biquadratic {side}^2 intervals, one rank"
+        add("create_distributed_space", size, f"create_distributed_space, {label}", setup_create)
+        add(
+            "interpolate_distributed",
+            size,
+            f"interpolate_bspline_distributed, {label}",
+            setup_interp,
+        )
+        add(
+            "fit_distributed",
+            size,
+            f"fit_bspline_distributed (distributed values), {label}",
+            setup_fit,
+        )
+        add("l2_project_distributed", size, f"l2_project_bspline_distributed, {label}", setup_l2)
+        add(
+            "quasi_interpolate_distributed",
+            size,
+            f"quasi_interpolate_bspline_distributed, bicubic {side}^2 intervals, one rank",
+            setup_qi,
+        )
+
+    for size, side in {"tiny": 4, "medium": 16, "large": 48}.items():
+
+        def setup_thb_qi(side: int = side) -> Callable[[], Any]:
+            ds = create_distributed_space(_thb_fixture(side), comm)
+            return lambda: quasi_interpolate_thb_spline_distributed(f_points, ds)
+
+        add(
+            "quasi_interpolate_thb_distributed",
+            size,
+            f"quasi_interpolate_thb_spline_distributed, THB fixture {side}^2 root, one rank",
+            setup_thb_qi,
+        )
+
+    for size, n_cells in SIZES.items():
+
+        def setup_dolfinx(n_cells: int = n_cells) -> Callable[[], Any]:
+            index = np.arange(n_cells, dtype=np.int64)
+            mesh = SimpleNamespace(
+                comm=comm,
+                topology=SimpleNamespace(
+                    dim=2,
+                    original_cell_index=index,
+                    index_map=lambda _dim: SimpleNamespace(size_local=n_cells),
+                ),
+            )
+            return lambda: from_dolfinx(mesh, n_cells)
+
+        add("from_dolfinx", size, f"from_dolfinx, {n_cells} cells, one rank", setup_dolfinx)
+    return cases
+
+
 def all_cases() -> list[Case]:
     """Return every case this tree can run.
 
     Returns:
-        list[Case]: The S1, S2, S4, S5, S6 and S7 cases, then the r6 cases.
+        list[Case]: The S1, S2, S4, S5, S6, S7 and S8 cases, then the r6 cases.
     """
     return (
         _s1_cases()
@@ -1502,5 +1633,6 @@ def all_cases() -> list[Case]:
         + _s6_graph_cases()
         + _s6_thb_cases()
         + _s7_cases()
+        + _s8_cases()
         + _r6_cases()
     )
