@@ -795,7 +795,6 @@
   `_ZERO_TOL_SAFETY`, and `_bspline_derivative._derivative_rational`,
   `_derivative_rational_open`, `_refine_to_common_space_1d` and `_tile_scalar_bspline`, are gone
   with the Numba kernels and NumPy code they held, whose work is now done in C++.
-  `pantr.cad._compat` keeps the two breakpoint helpers it took from `_bspline_product` as its own.
   What tests reach of the root finder and of the knot classes is in `pantr._testing`. The warmup
   thread that `import pantr` starts compiled Numba kernels across the package (by this change only
   the knot-class and root-finder ones were left); it now compiles nothing
@@ -1078,7 +1077,8 @@
   (`pantr.cad`), and `Interface`'s checks, `match_face_cps`, `detect_interfaces` and `MultiPatch`
   (`pantr.multipatch`), run in pantr's C++ library.** Names, signatures, defaults and the types
   returned are unchanged; `create_extrusion`, `create_sweep`, `create_rectangle`, `create_disk` and
-  `create_cylinder` are the same Python code as before, over the compiled calls. In a sweep against
+  `create_cylinder` are the same Python code as before (`create_disk` and `create_cylinder` call
+  the compiled `create_circle`, `create_ruled` and `create_extrusion` through the public functions). In a sweep against
   the previous release (calls of the CAD functions on random and edge inputs, in `float32`,
   `float64` and mixed precision, rational and not; random multipatch inputs in one to three
   dimensions), the interfaces found, the accepted and refused inputs and the exception types were
@@ -1091,17 +1091,22 @@
   B-splines whose control points have different widths (a second B-spline of width one is still
   broadcast and accepted), `join` and the Coons constructions of pieces of different ranks,
   `create_revolution` with an axis of more than three coordinates ("Rotation axis must have at
-  most 3 coordinates, got 4."), and `detect_interfaces` of a patch with fewer coordinates than the
-  rank of an earlier one.
+  most 3 coordinates, got 4."), `join` of two pieces whose transverse knots differ by a rounding
+  ("junction faces of different shapes"), and `detect_interfaces` of a patch with fewer
+  coordinates than the rank of an earlier one. `create_circle(angle=inf)` raises the same
+  `ValueError` as before without the `RuntimeWarning`s NumPy emitted first.
 - **Inputs of mixed precision are converted to the precision of the result before the operation.**
   `create_ruled` (the first B-spline's precision), the Coons constructions (the first curve's or
   face's) and `join` (`float64`) used to compute each `float32` input in `float32` and convert
   afterwards, so their control points can differ from the previous release by `float32` rounding.
-  The tolerance of their checks is still read at the coarsest precision supplied. One consequence
-  is a newly accepted input: a mixed-precision Coons patch or join whose `float32` and `float64`
-  knots differ by the rounding to `float32` could be refused (with a multiplicity error, or with a
-  `ValueError` from NumPy when the two curves of an opposite pair came out with different numbers
-  of control points), because the two readings of one knot counted as two; it is built now. `make_compat` of mixed precisions computes in
+  The tolerance of their checks is still read at the coarsest precision supplied. Where the
+  `float32` and `float64` inputs carry one knot in their two precisions, the previous release
+  counted its two readings as two knots: a mixed-precision `create_ruled`, Coons construction or
+  join of such inputs could be refused (with a multiplicity error, or with a `ValueError` from
+  NumPy when the two pieces came out with different numbers of control points) and is built now,
+  and one that was built can now have fewer control points (a Coons patch of 6 x 2 basis
+  functions, with the knots `0.3`, `0.3f` and `0.3f`, is now one of 5 x 2 with one knot), the
+  same surface to `float32` rounding. `make_compat` of mixed precisions computes in
   `float64` and returns each B-spline in its own precision, so a `float32` knot and a `float64`
   knot one `float32` rounding apart give both B-splines the same number of basis functions, where
   the previous release could give them different numbers.
@@ -1124,17 +1129,20 @@
   1."). An axis past the signed 64-bit range in `join` or `make_compat` is printed as
   `9223372036854775807` (`-9223372036854775808` below the range) in the refusal, rather than as
   given.
-- The private helpers of `pantr.cad` and `pantr.multipatch` (`_validation._ColumnGroup`,
-  `_column_groups`, `_coarsest_dtype`; the private functions and constants of `_primitives`,
-  `_compat`, `_operations`, `_join` and `_coons`; `_interface.face_axis_side` and
-  `tangential_axes`; `_match.face_index_grids`; `_detect.verify_interface` and the private
-  functions of `_detect`) are gone with the Python code they held. What the tests reach of them
+- The private helpers of `pantr.cad` and `pantr.multipatch` are gone with the Python code they
+  held: `_validation._ColumnGroup`, `_EUCLIDEAN_COLUMNS`, `_HOMOGENEOUS_COLUMNS`, `_column_groups`
+  and `_coarsest_dtype`; every private function, class and constant of `_compat`, `_join` and
+  `_coons`; those of `_primitives` and `_operations` except `_primitives._linear_space_1d` and
+  `_operations._MAX_DIM_FOR_OPERATIONS`, which the Python extrusion and sweep still use;
+  `_interface.face_axis_side` and `tangential_axes`; `_match.face_index_grids`,
+  `_face_slab_index` and `_validate_face`; and `_detect.verify_interface` with every private
+  function and class of `_detect`. What the tests reach of them
   is in `pantr._testing` (`coons_edge_pairs`).
 
 ### Fixed
-- **`detect_interfaces` and `MultiPatch` of patches with coordinates near `1e154` or beyond** find
-  the interfaces there are. The previous release took the length of the patches' joint bounding
-  box with `numpy.linalg.norm`, whose sum of squares overflowed to `inf`, so the tolerance became
+- **`detect_interfaces` and `MultiPatch` of patches whose joint bounding box has a diagonal
+  beyond about `1.3e154`** find the interfaces there are. The previous release took the length of
+  the patches' joint bounding box with `numpy.linalg.norm`, whose sum of squares overflowed to `inf`, so the tolerance became
   infinite and every face was matched with every face.
 - **`partition_graph` bisects graphs above 512 vertices along their Fiedler vector.** It asked
   ARPACK for the two smallest eigenpairs of the Laplacian and took the second, which is the
