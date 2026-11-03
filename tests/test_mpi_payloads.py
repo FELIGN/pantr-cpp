@@ -51,7 +51,7 @@ class _Recording:
 
 
 def _flat(p: np.ndarray) -> np.ndarray:
-    return np.sin(p[:, 0]) + p[:, -1]
+    return np.asarray(np.sin(p[:, 0]) + p[:, -1], dtype=np.float64)
 
 
 def _flat2(p: np.ndarray) -> np.ndarray:
