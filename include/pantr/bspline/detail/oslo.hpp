@@ -215,7 +215,8 @@ template <StorageFloat T>
 
 /// Write one refined row, `row = sum_l a[l] * in[base + l]` over the columns inside `[0, n1)`,
 /// summed in increasing `l`, the first term assigned (`0 + w * x` rounds as `w * x` does, so this
-/// gives the bits of a zero-initialised accumulation); a row with no such column is set to zero.
+/// gives the values of a zero-initialised accumulation, though an entry that is exactly zero can
+/// now be `-0.0` where `0 + (-0.0)` gave `+0.0`); a row with no such column is set to zero.
 ///
 /// `Inner == 0` takes the row length at run time; a length of one to four is fixed at compile time,
 /// so that a net of a few coordinates per point is not a loop of a few iterations. `noexcept` so

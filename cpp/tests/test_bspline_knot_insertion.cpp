@@ -12,6 +12,7 @@
 
 #include "bspline_oracle.hpp"
 
+#include <pantr/bezier/detail/along_axis.hpp>
 #include <pantr/bspline/blossom.hpp>
 #include <pantr/bspline/bspline.hpp>
 #include <pantr/bspline/evaluate.hpp>
@@ -1154,4 +1155,60 @@ TEST_CASE("inherited: restrict with a float32 bound near a knot" * doctest::shou
 TEST_CASE("inherited: split of a float32 spline at a value near a knot" * doctest::should_fail()) {
   const bs::Bspline<float> bf = near_knot_curve();
   CHECK_NOTHROW(static_cast<void>(bs::split<float>(bf, 0, kNearKnot)));
+}
+
+// Refining an axis in place of the axis must give, value for value, what refining the axis moved to
+// the front gives (`flatten_along_axis`, `insert_knots_1d`, `unflatten_along_axis`, the route the
+// periodic branch still takes): the same bands, applied in the same order. It is compared on a 3D
+// net along each axis, for every per-point width from one coordinate to five (one to four run a
+// body with the width fixed at compile time, five the run-time one), with a negative zero among
+// the control points. Values are compared, not bits: `0 + (-0.0)` is `+0.0` and an assigned first
+// term keeps `-0.0`, a difference of sign that compares equal.
+TEST_CASE_TEMPLATE(
+    "knot insertion: refining an axis in place equals refining it moved to the front", T, double,
+    float) {
+  const std::vector<T> k0 = {0, 0, 0, T(0.5), 1, 1, 1};
+  const std::vector<T> k1 = {0, 0, 1, 1};
+  const std::vector<T> k2 = {0, 0, 0, 0, 1, 1, 1, 1};
+  const bs::BsplineSpace1D<T> s0(std::span<const T>(k0), 2);
+  const bs::BsplineSpace1D<T> s1(std::span<const T>(k1), 1);
+  const bs::BsplineSpace1D<T> s2(std::span<const T>(k2), 3);
+  const bs::BsplineSpace<T> space(std::vector<bs::BsplineSpace1D<T>>{s0, s1, s2});
+  const std::vector<T> ins0 = {T(0.25), T(0.5), T(0.75)};
+  const std::vector<T> ins1 = {T(0.125), T(0.375), T(0.625), T(0.875)};
+  const std::vector<T> ins2 = {T(0.5), T(0.5)};
+  const std::vector<std::vector<T>> inserted = {ins0, ins1, ins2};
+  for (std::size_t width = 1; width <= 5; ++width) {
+    const std::size_t total = 4 * 2 * 4 * width;
+    std::vector<T> cp(total);
+    for (std::size_t i = 0; i < total; ++i) {
+      cp[i] = static_cast<T>(static_cast<double>((i * 37) % 23) / 7.0 - 1.5);
+    }
+    cp[1] = T(-0.0);
+    const bs::Bspline<T> b(space, std::span<const T>(cp), false);
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+      CAPTURE(width);
+      CAPTURE(axis);
+      std::vector<std::span<const T>> per(3);
+      per[axis] = inserted[axis];
+      const bs::Bspline<T> got =
+          bs::insert_knots<T>(b, std::span<const std::span<const T>>(per.data(), per.size()));
+
+      const std::vector<std::size_t> shape(b.shape().begin(), b.shape().end());
+      const NdArray<T> flat =
+          pantr::bezier::detail::flatten_along_axis<T>(b.control_points(), shape, axis);
+      const bs::BsplineSpace1D<T>& dir = space.spaces()[axis];
+      const bs::KnotsAndCtrl<T> ref = bs::insert_knots_1d<T>(
+          dir.knots(), dir.degree(), flat.template view<2>(), per[axis], dir.tolerance());
+      const NdArray<T> want =
+          pantr::bezier::detail::unflatten_along_axis<T>(ref.ctrl.template view<2>(), shape, axis);
+      REQUIRE(got.size() == want.size());
+      const std::span<const T> g = got.control_points();
+      for (std::size_t i = 0; i < want.size(); ++i) {
+        REQUIRE(g[i] == want.data()[i]);
+      }
+      const std::span<const T> gk = got.space().spaces()[axis].knots();
+      REQUIRE(std::equal(gk.begin(), gk.end(), ref.knots.begin(), ref.knots.end()));
+    }
+  }
 }
