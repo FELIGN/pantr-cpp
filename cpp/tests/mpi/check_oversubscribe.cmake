@@ -12,8 +12,11 @@ function(expect text want)
   endif()
 endfunction()
 
-# Open MPI 4 names its runtime OpenRTE; Open MPI 5 names itself.
+# Open MPI 4's mpiexec names its runtime OpenRTE, its mpirun and Open MPI 5 name Open MPI.
 expect("mpiexec (OpenRTE) 4.1.6\n\nReport bugs to http://www.open-mpi.org/community/help/" TRUE)
+expect("mpirun (Open MPI) 4.1.6\n\nReport bugs to http://www.open-mpi.org/community/help/" TRUE)
+# Another launcher that only mentions the project is not Open MPI's.
+expect("prterun (PRRTE) 3.0.13\n\nReport bugs to https://github.com/openpmix/prrte" FALSE)
 expect("mpiexec (Open MPI) 5.0.3\n\nReport bugs to https://www.open-mpi.org/community/help/" TRUE)
 expect("Intel(R) MPI Library for Linux* OS, Version 2021.18.0 Build 20260327 (id: 821f207)" FALSE)
 expect("HYDRA build details:\n    Version:                                 4.1.2" FALSE)

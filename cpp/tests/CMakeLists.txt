@@ -130,13 +130,20 @@ if(TARGET pantr_mpi)
   target_include_directories(pantr_tests_mpi PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
   set(_pantr_mpiexec_flags ${MPIEXEC_PREFLAGS})
   include(PantrMpiexecFlags)
+  # The cap keeps a launcher that waits for input from hanging the configure; every launcher's
+  # --version returns at once. A probe that fails is reported rather than read as "not Open MPI".
   execute_process(COMMAND "${MPIEXEC_EXECUTABLE}" --version OUTPUT_VARIABLE _pantr_mpiexec_version
-                  ERROR_VARIABLE _pantr_mpiexec_version TIMEOUT 30)
+                  ERROR_VARIABLE _pantr_mpiexec_version RESULT_VARIABLE _pantr_mpiexec_rc TIMEOUT 30)
+  if(NOT _pantr_mpiexec_rc EQUAL 0)
+    message(WARNING "pantr: '${MPIEXEC_EXECUTABLE} --version' failed (${_pantr_mpiexec_rc}); the "
+                    "MPI tests run without --oversubscribe")
+  endif()
   pantr_mpiexec_needs_oversubscribe(_pantr_oversubscribe "${_pantr_mpiexec_version}")
   if(_pantr_oversubscribe)
     list(APPEND _pantr_mpiexec_flags --oversubscribe)
   endif()
-  message(STATUS "pantr: the MPI tests run under ${MPIEXEC_EXECUTABLE} ${_pantr_mpiexec_flags}")
+  string(JOIN " " _pantr_mpiexec_shown ${_pantr_mpiexec_flags})
+  message(STATUS "pantr: the MPI tests run under ${MPIEXEC_EXECUTABLE} ${_pantr_mpiexec_shown}")
   foreach(_n 2 3)
     add_test(NAME mpi.communicator_np${_n}
              COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${_n} ${_pantr_mpiexec_flags}
