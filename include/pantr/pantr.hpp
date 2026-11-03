@@ -36,6 +36,7 @@
 
 #include "pantr/bspline/blossom.hpp"
 #include "pantr/bspline/bspline.hpp"
+#include "pantr/bspline/convert.hpp"
 #include "pantr/bspline/coupling_graph.hpp"
 #include "pantr/bspline/degree.hpp"
 #include "pantr/bspline/derivative.hpp"
@@ -79,3 +80,8 @@
 #include "pantr/thb/spline.hpp"
 #include "pantr/thb/tolerances.hpp"
 #include "pantr/thb/types.hpp"
+
+#include "pantr/multipatch/detect.hpp"
+#include "pantr/multipatch/interface.hpp"
+#include "pantr/multipatch/match.hpp"
+#include "pantr/multipatch/multi_patch.hpp"
