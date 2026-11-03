@@ -16,7 +16,9 @@ from pantr.bspline import (
     THBSplineSpace,
     build_local,
     compute_halo,
+    create_thb_space,
     create_uniform_periodic_knots,
+    create_uniform_space,
     dof_owner,
     dof_owner_windowed,
 )
@@ -701,3 +703,20 @@ def test_dof_owner_windowed_validation() -> None:
     )
     with pytest.raises(ValueError, match="periodic"):
         dof_owner_windowed(periodic, Partition(np.zeros(4, dtype=np.int32), 1), [0])
+
+
+@pytest.mark.parametrize("rank", [0.5, 1.5])
+@pytest.mark.parametrize("hierarchical", [False, True])
+def test_build_local_refuses_a_rank_no_cell_has(rank: float, hierarchical: bool) -> None:
+    """A rank that is not an integer owns no cell: cells are owned by integer ranks only.
+
+    The previous release compared the owners with the rank as given, found no cell and raised; the
+    owned cells must not be looked up for a truncated rank while the masks compare with the
+    untruncated one, which would return a local space owning nothing.
+    """
+    space = create_uniform_space([2, 2], [4, 4])
+    if hierarchical:
+        space = create_thb_space(space)
+    part = Partition(np.arange(16, dtype=np.int32) % 2, 2)
+    with pytest.raises(ValueError, match="owns no cells"):
+        build_local(space, part, rank)  # type: ignore[arg-type]
