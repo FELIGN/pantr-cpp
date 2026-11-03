@@ -22,34 +22,22 @@ def block_bounds(n_total: int, n_parts: int, rank: int) -> tuple[int, int]:
     """This rank's half-open block of a contiguous range split evenly."""
 
 def collocate_f64_f64(
-    comm: object,
-    system: pantr._pantr.bspline.TensorCollocationF64,
-    local: Annotated[NDArray[numpy.float64], dict(order="C", device="cpu", writable=False)],
-    tol: float,
+    comm: object, system: pantr._pantr.bspline.TensorCollocationF64, local: object, tol: float
 ) -> NDArray[numpy.float64]:
     """Gather every rank's value block and solve the collocation system (nodes P, space T)."""
 
 def collocate_f64_f32(
-    comm: object,
-    system: pantr._pantr.bspline.TensorCollocationF64,
-    local: Annotated[NDArray[numpy.float64], dict(order="C", device="cpu", writable=False)],
-    tol: float,
+    comm: object, system: pantr._pantr.bspline.TensorCollocationF64, local: object, tol: float
 ) -> NDArray[numpy.float64]:
     """Gather every rank's value block and solve the collocation system (nodes P, space T)."""
 
 def collocate_f32_f64(
-    comm: object,
-    system: pantr._pantr.bspline.TensorCollocationF32,
-    local: Annotated[NDArray[numpy.float64], dict(order="C", device="cpu", writable=False)],
-    tol: float,
+    comm: object, system: pantr._pantr.bspline.TensorCollocationF32, local: object, tol: float
 ) -> NDArray[numpy.float64]:
     """Gather every rank's value block and solve the collocation system (nodes P, space T)."""
 
 def collocate_f32_f32(
-    comm: object,
-    system: pantr._pantr.bspline.TensorCollocationF32,
-    local: Annotated[NDArray[numpy.float64], dict(order="C", device="cpu", writable=False)],
-    tol: float,
+    comm: object, system: pantr._pantr.bspline.TensorCollocationF32, local: object, tol: float
 ) -> NDArray[numpy.float32]:
     """Gather every rank's value block and solve the collocation system (nodes P, space T)."""
 
@@ -112,10 +100,6 @@ def gather_owned(
     """Gather every rank's owned (DOF, coefficient) pairs into the global field."""
 
 def partition_from_owner(
-    comm: object,
-    local_ids: Annotated[
-        NDArray[numpy.int64], dict(shape=(None,), order="C", device="cpu", writable=False)
-    ],
-    n_cells: int,
+    comm: object, local_ids: object, n_cells: int
 ) -> pantr._pantr.grid.Partition:
     """The partition whose owner of each cell is the rank that sent it."""

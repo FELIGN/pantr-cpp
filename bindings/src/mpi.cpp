@@ -109,7 +109,14 @@ void append_entry(const nb::module_& np, nb::handle x, Gathered<T>& out) {
 /// reference to the object; copies share it. Used with the GIL held.
 class PyCommunicator {
  public:
-  explicit PyCommunicator(nb::object comm) : comm_(std::move(comm)) {}
+  /// Args:
+  ///     comm (nb::object): The duck-typed communicator.
+  ///     arrays (std::vector<nb::object>): The caller's own NumPy arrays a payload may be: a block
+  ///         whose data are exactly one of them is sent as that array, as the previous Python sent
+  ///         it, rather than as a copy (a communicator may keep what it is sent, so a payload
+  ///         over C++ memory is always sent as a copy).
+  explicit PyCommunicator(nb::object comm, std::vector<nb::object> arrays = {})
+      : comm_(std::move(comm)), arrays_(std::move(arrays)) {}
 
   // Read as the previous Python read them, `int(comm.rank)`: a float is truncated, `None` raises
   // TypeError.
@@ -119,7 +126,7 @@ class PyCommunicator {
   template <class T>
   [[nodiscard]] Gathered<T> allgatherv(const Block<T>& b) const {
     mpi::check_block(b);
-    nb::object result = comm_.attr("allgather")(to_python(b.data, b.shape));
+    nb::object result = comm_.attr("allgather")(send(b));
     const nb::module_ np = nb::module_::import_("numpy");
     Gathered<T> out;
     for (nb::handle item : result) {
@@ -162,14 +169,28 @@ class PyCommunicator {
   }
 
  private:
+  /// The caller's array whose data the block is, else a copy of the block.
+  template <class T>
+  [[nodiscard]] nb::object send(const Block<T>& b) const {
+    for (const nb::object& a : arrays_) {
+      Any<T> view;
+      if (nb::try_cast(a, view, false) && view.data() == b.data.data() &&
+          shape_of(view) == b.shape) {
+        return a;
+      }
+    }
+    return to_python(b.data, b.shape);
+  }
+
   nb::object comm_;
+  std::vector<nb::object> arrays_;
 };
 
 static_assert(mpi::Communicator<PyCommunicator>);
 
 /// The communicator a Python argument stands for: a `pantr.mpi.comm_v1` capsule (from _pantr_mpi),
 /// or any other object, taken as a duck-typed communicator.
-AnyCommunicator to_communicator(nb::handle comm) {
+AnyCommunicator to_communicator(nb::handle comm, std::vector<nb::object> arrays = {}) {
   if (PyCapsule_CheckExact(comm.ptr()) != 0) {
     void* p = PyCapsule_GetPointer(comm.ptr(), PANTR_MPI_COMM_CAPSULE_NAME);
     if (p == nullptr) {
@@ -182,7 +203,7 @@ AnyCommunicator to_communicator(nb::handle comm) {
                                                 [keep](const pantr_mpi_comm*) { delete keep; });
     return AnyCommunicator::from_table(std::move(table));
   }
-  return AnyCommunicator(PyCommunicator(nb::borrow(comm)));
+  return AnyCommunicator(PyCommunicator(nb::borrow(comm), std::move(arrays)));
 }
 
 using Derivs = std::vector<std::optional<std::pair<long long, long long>>>;
@@ -196,13 +217,14 @@ template <class P, class T>
 void def_collocate(nb::module_& m) {
   using Cm = std::conditional_t<(sizeof(P) > sizeof(T)), P, T>;
   m.def(("collocate_" + tag<P>() + "_" + tag<T>()).c_str(),
-        [](nb::handle comm, const bspline::TensorCollocation<P>& system, const Any<double>& local,
+        [](nb::handle comm, const bspline::TensorCollocation<P>& system, nb::object local_values,
            double tol) {
-          const AnyCommunicator c = to_communicator(comm);
+          const auto local = nb::cast<Any<double>>(local_values, false);
+          const AnyCommunicator c = to_communicator(comm, {local_values});
           const Block<double> b{flat_of(local), shape_of(local)};
           return to_numpy(mpi::collocate_values_distributed<T, Cm>(c, system, b, tol));
         },
-        nb::arg("comm"), nb::arg("system"), nb::arg("local").noconvert(), nb::arg("tol"),
+        nb::arg("comm"), nb::arg("system"), nb::arg("local"), nb::arg("tol"),
         "Gather every rank's value block and solve the collocation system (nodes P, space T).");
 }
 
@@ -298,12 +320,13 @@ void register_mpi(nb::module_& m) {
 
   m.def(
       "partition_from_owner",
-      [](nb::handle comm, const Vec<std::int64_t>& local_ids, std::int64_t n_cells) {
-        const AnyCommunicator c = to_communicator(comm);
+      [](nb::handle comm, nb::object local_ids_array, std::int64_t n_cells) {
+        const auto local_ids = nb::cast<Vec<std::int64_t>>(local_ids_array, false);
+        const AnyCommunicator c = to_communicator(comm, {local_ids_array});
         return mpi::partition_from_owner(
             c, std::span<const std::int64_t>(local_ids.data(), local_ids.shape(0)), n_cells);
       },
-      nb::arg("comm"), nb::arg("local_ids").noconvert(), nb::arg("n_cells"),
+      nb::arg("comm"), nb::arg("local_ids"), nb::arg("n_cells"),
       "The partition whose owner of each cell is the rank that sent it.");
 }
 
