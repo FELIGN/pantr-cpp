@@ -969,19 +969,21 @@
 - **`THBSplineSpace`, `THBSpline`, `MultiLevelExtraction`, `quasi_interpolate_thb_spline`,
   `compute_halo`, `dof_owner`, `dof_owner_windowed` and `build_local` run in pantr's C++ library.**
   Names, signatures and defaults are unchanged. In a sweep of calls against the previous release,
-  one process each (1D, 2D and 3D spaces of degrees 2 and 3, truncated and not, subdivision
-  factors 2 and 3, graded and ungraded refinement, `float32` roots), the active functions of every
+  one process each (1D and 2D spaces of degrees 2 and 3 and 3D spaces of degrees 2 and 3,
+  anisotropic degrees and factors, truncated and not, subdivision factors 2 and 3, graded and
+  ungraded refinement, reduced regularity, `float32` roots), the active functions of every
   cell, the coupling graph, `build_local`'s maps and masks and the prolongation's sparsity were
   equal; tabulated values and derivatives, prolongation entries, extraction operators and
   quasi-interpolation coefficients agreed to rounding (one 3D case with factor 3 exceeded the
   sweep's time limit on both sides and is not counted). The other differences are the entries
   below.
-- **The extraction operators of `MultiLevelExtraction(space, "cardinal")` on a `float32` root**
-  agree with the previous release to `float32` rounding, not to `float64` rounding as the other
-  targets do.
-- **Which entries of `prolongation_to` and `prolongation_to_sparse` are a negative zero** changed:
-  the local systems are solved by a Householder QR (a Jacobi SVD where the QR cannot certify the
-  system's rank) instead of LAPACK's SVD. `-0.0 == 0.0`, so no comparison of values sees it.
+- **On a `float32` root, `MultiLevelExtraction`'s operators (every target) and
+  `tabulate_basis_derivatives`** can differ from the previous release by `float32` rounding.
+- **Which entries of `prolongation_to` and `prolongation_to_sparse` are exactly zero, and which are
+  a negative zero,** changed: the local systems are solved by a Householder QR (a Jacobi SVD where
+  the QR cannot certify the system's rank) instead of LAPACK's SVD, so an entry of rounding size
+  (about `1e-15`) can come out as `0.0` where it did not, or the reverse, and `count_nonzero` or
+  `eliminate_zeros()` can give another count. The sparsity pattern stored is the same.
 - **`coarsen` can number the cells of the coarsened grid differently.** It visits the parents of
   one level in index order, where the previous release followed the iteration order of a Python
   set; the cells, their levels and the space built on them are the same, but their flat ids, and
@@ -1004,23 +1006,33 @@
   `TypeError`).
 - **A deep copy of a `THBSpline`** has read-only `control_points`, as the original has; the
   previous release's deep copy was writable.
-- **`compute_halo` and `dof_owner` of a `BsplineSpace` with no directions** raise `ValueError` "a
+- **`compute_halo`, `dof_owner` and `dof_owner_windowed` of a `BsplineSpace` with no directions**
+  raise `ValueError` "a
   B-spline space needs at least one direction" (the previous release returned an empty halo, and
-  raised `ValueError` about the partition's cell count for `dof_owner`).
-- **`prolongation_to` between spaces whose roots have different dtypes** (a `float32` root and a
-  `float64` one) raises `TypeError`: the compiled space exists once per dtype. The previous release
-  computed it.
+  raised `ValueError` about the partition's cell count for the other two).
+- **`prolongation_to`, `prolongation_to_sparse` and `restriction_to` between spaces whose roots
+  have different dtypes** (a `float32` root and a `float64` one) raise `TypeError`: the compiled
+  space exists once per dtype. The previous release computed them.
 - **Pickles of `THBSplineSpace`, `THBSpline` and `MultiLevelExtraction` written by the previous
-  release load**, a stale space staying stale, except a `THBSpline` whose space was already stale
-  when it was pickled, which raises `ValueError` on loading. A subclass that declares its own
+  release load**, a stale space staying stale (it is rebuilt on its grid as it now is, so its
+  counts are those of the current grid), except a `THBSpline` whose space was already stale when
+  it was pickled, which raises `ValueError` on loading. Pickle protocols 0 and 1, which the
+  previous release could not use for these classes, now work. A subclass that declares its own
   `__slots__` loses those attributes when copied or pickled; the previous release kept them.
-- **Truncated THB functions evaluate in any dimension**; the previous release raised
-  `NotImplementedError` above 24 directions.
+- **Truncated THB functions evaluate above 24 directions**, where the previous release raised
+  `NotImplementedError`; the space's construction tables grow as `2^dim`, so memory is the limit,
+  and above 63 directions the construction raises `ValueError` (an implementation limit).
+- **A `regularity` that is not an integer** (`1.5`, `numpy.float64(1.0)`) raises `TypeError`. The
+  previous release accepted some such values and built a space from them, or raised `ValueError`.
 - **Inputs outside the annotated types, and calls with two invalid arguments, in the THB classes
   and the local-space functions** can raise another message than before (an unhashable cell id, a
   non-integer `level`, an integer `regularity` or cell id past 64 bits, which is clamped before it
   is printed), and on a stale space a call with a second invalid argument reports the stale space
-  first.
+  first. A few such inputs change outcome: `admissible_class=float("inf")` raises `OverflowError`,
+  a `numpy.float64` `level` for `refine_region` and a one-element array as a `regularity` entry
+  raise `TypeError`, `create_thb_space` with a factor past 64 bits raises `TypeError`, and
+  `THBSpline.evaluate_derivatives` accepts `orders=True` and huge orders (zero derivatives), where
+  the previous release raised.
 - **Spectral partitions can change, at any size, where the Fiedler vector is not determined by the
   graph.** The eigenvector of the second-smallest Laplacian eigenvalue is now computed by Eigen up
   to 512 vertices and by Spectra above, not by LAPACK and ARPACK. When that eigenvalue is repeated
