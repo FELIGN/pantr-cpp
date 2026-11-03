@@ -8,36 +8,13 @@ and which of those axes run in opposite directions.
 from __future__ import annotations
 
 import dataclasses
+import operator
+from typing import TYPE_CHECKING
 
+from .._ext import ext
 
-def face_axis_side(face: int) -> tuple[int, int]:
-    """Split a face id into its parametric axis and side.
-
-    Faces are numbered ``2 * axis + side`` with ``side == 0`` the low-parameter
-    face and ``side == 1`` the high one, matching
-    :meth:`pantr.grid.Grid.local_facet_axis_side`.
-
-    Args:
-        face (int): Face id.
-
-    Returns:
-        tuple[int, int]: ``(axis, side)``.
-    """
-    return divmod(face, 2)
-
-
-def tangential_axes(face: int, dim: int) -> tuple[int, ...]:
-    """Return the patch axes tangential to a face, in increasing order.
-
-    Args:
-        face (int): Face id.
-        dim (int): Parametric dimension of the patch.
-
-    Returns:
-        tuple[int, ...]: The ``dim - 1`` axes other than the face's own axis.
-    """
-    axis, _ = face_axis_side(face)
-    return tuple(k for k in range(dim) if k != axis)
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 
 @dataclasses.dataclass(frozen=True)
@@ -83,34 +60,7 @@ class Interface:
                 permutation of ``face_b``'s tangential axes, ``flips`` has a
                 different length, or the two sides are not in canonical order.
         """
-        dim = len(self.axis_map) + 1
-        if len(self.flips) != len(self.axis_map):
-            raise ValueError(
-                f"flips and axis_map must have equal length; "
-                f"got {len(self.flips)} and {len(self.axis_map)}"
-            )
-        for name, face in (("face_a", self.face_a), ("face_b", self.face_b)):
-            if not 0 <= face < 2 * dim:
-                raise ValueError(
-                    f"{name}={face} out of range for dim={dim}; expected 0 <= face < {2 * dim}"
-                )
-        if self.patch_a == self.patch_b and self.face_a == self.face_b:
-            raise ValueError(
-                f"An interface cannot join a face to itself "
-                f"(patch {self.patch_a}, face {self.face_a})"
-            )
-        expected = set(tangential_axes(self.face_b, dim))
-        if set(self.axis_map) != expected or len(set(self.axis_map)) != len(self.axis_map):
-            raise ValueError(
-                f"axis_map={self.axis_map} must be a permutation of the tangential axes "
-                f"{tuple(sorted(expected))} of face_b={self.face_b}"
-            )
-        if (self.patch_a, self.face_a) >= (self.patch_b, self.face_b):
-            raise ValueError(
-                f"Interface sides must be in canonical order: "
-                f"({self.patch_a}, {self.face_a}) must be lexicographically smaller than "
-                f"({self.patch_b}, {self.face_b})"
-            )
+        ext.multipatch.validate_interface(*_wire(self))
 
     @property
     def dim(self) -> int:
@@ -120,3 +70,51 @@ class Interface:
             int: ``len(axis_map) + 1``.
         """
         return len(self.axis_map) + 1
+
+
+def _from_tuples(
+    found: Iterable[tuple[int, int, int, int, list[int], list[bool]]],
+) -> tuple[Interface, ...]:
+    """Build interfaces from the compiled library's ``(patch_a, face_a, ...)`` tuples.
+
+    Args:
+        found (Iterable[tuple[int, int, int, int, list[int], list[bool]]]): One tuple
+            ``(patch_a, face_a, patch_b, face_b, axis_map, flips)`` per interface.
+
+    Returns:
+        tuple[Interface, ...]: The interfaces, in the order given.
+    """
+    return tuple(
+        Interface(
+            patch_a=patch_a,
+            face_a=face_a,
+            patch_b=patch_b,
+            face_b=face_b,
+            axis_map=tuple(axis_map),
+            flips=tuple(flips),
+        )
+        for patch_a, face_a, patch_b, face_b, axis_map, flips in found
+    )
+
+
+def _wire(interface: Interface) -> tuple[int, int, int, int, list[int], list[bool]]:
+    """Spell an interface's fields as plain Python ints and bools for the compiled library.
+
+    The fields may hold NumPy integers or booleans (the dataclass does not convert them), which
+    the compiled signatures, typed ``int`` and ``bool``, would refuse.
+
+    Args:
+        interface (Interface): The interface.
+
+    Returns:
+        tuple[int, int, int, int, list[int], list[bool]]: ``(patch_a, face_a, patch_b, face_b,
+        axis_map, flips)``.
+    """
+    return (
+        operator.index(interface.patch_a),
+        operator.index(interface.face_a),
+        operator.index(interface.patch_b),
+        operator.index(interface.face_b),
+        [operator.index(a) for a in interface.axis_map],
+        [bool(f) for f in interface.flips],
+    )

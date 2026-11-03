@@ -8,6 +8,7 @@ from pantr._pantr import bspline as bspline
 from pantr._pantr import change_basis as change_basis
 from pantr._pantr import geometry as geometry
 from pantr._pantr import grid as grid
+from pantr._pantr import multipatch as multipatch
 from pantr._pantr import quad as quad
 from pantr._pantr import roots as roots
 from pantr._pantr import tolerance as tolerance

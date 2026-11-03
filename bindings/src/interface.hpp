@@ -9,7 +9,7 @@ namespace pantr::bindings {
 /// Version of the module's interface. pantr/_ext.py refuses a module whose version differs from
 /// its EXPECTED_INTERFACE, so a stale build fails at import instead of as a phantom regression.
 /// Bump both together with any change to what the module exposes.
-inline constexpr int kInterfaceVersion = 15;
+inline constexpr int kInterfaceVersion = 16;
 
 /// Register the translation of pantr's C++ exceptions to Python exceptions.
 void register_errors(nanobind::module_& m);
@@ -140,6 +140,11 @@ void register_partition_graph(nanobind::module_& m);
 
 /// The spectral partitioner with its solver options, in the `_testing` submodule.
 void register_partition_graph_testing(nanobind::module_& m);
+
+/// Register the `multipatch` submodule (the interface check, the face matching, the detection of
+/// interfaces among patches and the validation of a collection of patches). After
+/// `register_bspline` and `register_bspline_ops`: the patches it takes are the Bspline classes.
+void register_multipatch(nanobind::module_& m);
 
 /// Register the block and factorization helpers of the grids in the `_testing` submodule.
 void register_grid_testing(nanobind::module_& m);
