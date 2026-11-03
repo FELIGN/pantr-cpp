@@ -129,9 +129,14 @@ if(TARGET pantr_mpi)
                                                 pantr_cxx_warnings)
   target_include_directories(pantr_tests_mpi PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
   set(_pantr_mpiexec_flags ${MPIEXEC_PREFLAGS})
-  if(MPI_CXX_LIBRARY_VERSION_STRING MATCHES "Open MPI")
+  include(PantrMpiexecFlags)
+  execute_process(COMMAND "${MPIEXEC_EXECUTABLE}" --version OUTPUT_VARIABLE _pantr_mpiexec_version
+                  ERROR_VARIABLE _pantr_mpiexec_version TIMEOUT 30)
+  pantr_mpiexec_needs_oversubscribe(_pantr_oversubscribe "${_pantr_mpiexec_version}")
+  if(_pantr_oversubscribe)
     list(APPEND _pantr_mpiexec_flags --oversubscribe)
   endif()
+  message(STATUS "pantr: the MPI tests run under ${MPIEXEC_EXECUTABLE} ${_pantr_mpiexec_flags}")
   foreach(_n 2 3)
     add_test(NAME mpi.communicator_np${_n}
              COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${_n} ${_pantr_mpiexec_flags}
