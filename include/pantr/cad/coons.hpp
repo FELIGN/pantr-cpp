@@ -83,6 +83,10 @@ struct EdgeReadings {
 }
 
 /// Make a pair of B-splines compatible (`make_compat` of the two).
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed): the callers check the
+///     parametric dimension, and the refusals are `make_compat`'s alone.
 template <StorageFloat T>
 [[nodiscard]] std::array<bspline::Bspline<T>, 2> compat_pair(const bspline::Bspline<T>& a,
                                                              const bspline::Bspline<T>& b) {
@@ -127,6 +131,8 @@ template <StorageFloat T>
     all.push_back(rational ? promote_to_rational<T>(t) : t);
   }
   for (std::size_t i = 1; i < all.size(); ++i) {
+    // Guards an out-of-bounds read of the later terms in the sum below. No input reaching it has
+    // been constructed: the edge check fires first on the inputs tried.
     const std::span<const std::size_t> s0 = all[0].shape();
     const std::span<const std::size_t> si = all[i].shape();
     if (!std::equal(s0.begin(), s0.end(), si.begin(), si.end())) {
@@ -156,9 +162,9 @@ template <StorageFloat T>
 ///
 /// One construction serves the patch's bilinear term and the volume's trilinear one; both are the
 /// construction `build_bilinear_volume` uses for its two blended directions. Keeping them one
-/// function is what stops the two paths drifting apart, which is how the patch came to build its
-/// corner term from projected points while the volume built its from homogeneous ones (pantr issue
-/// 327).
+/// function is what stops the two paths drifting apart: a corner term built from projected points
+/// beside two homogeneous terms does not cancel in the inclusion-exclusion, and the blend misses
+/// its boundary curves (pantr issue 327).
 ///
 /// Args:
 ///     corners (std::span<const T>): `2^dim` corners of `width` coefficients, row-major, indexed
@@ -276,10 +282,10 @@ struct CornerReadings {
 /// rather than by epsilons. Failing the other way is the expensive one: a `value_error` on a
 /// geometrically perfect patch. The conservative tier is the widest the table sanctions without a
 /// derivation of its own, and at unit scale it lands on `9.1e-13` for `double`, within a factor of
-/// 1.1 of the `1e-12` this check used before it acquired a scale. Taking the scale over all eight
-/// is what makes the verdict independent of which corner happens to sit at the origin: a corner at
-/// `(0, 0, 0)` supplies no scale of its own, and grading it against zero would demand bitwise
-/// agreement of a coordinate the caller may well have computed.
+/// 1.1 of an absolute `1e-12`. Taking the scale over all eight is what makes the verdict
+/// independent of which corner happens to sit at the origin: a corner at `(0, 0, 0)` supplies no
+/// scale of its own, and grading it against zero would demand bitwise agreement of a coordinate
+/// the caller may well have computed.
 ///
 /// A fixed absolute tolerance cannot do this. Measured across twelve decades of `1e-12 / L`, a
 /// one-ulp corner mismatch was rejected at `L >= 1e6` -- a micron-unit model of a metre-scale part
@@ -553,9 +559,9 @@ template <StorageFloat T>
 /// graded by three comparisons instead of one; nothing else changes, including that these are
 /// projected points and so carry one physical dimension between them.
 ///
-/// The w-faces are the reason this reads every edge from both of its carriers. Every edge, and so
-/// every corner, used to be read off the u- and v-faces alone, which agree with themselves by
-/// construction, so a w-face contradicting them was never compared with anything.
+/// The w-faces are the reason this reads every edge from both of its carriers. Reading each edge,
+/// and so each corner, off the u- and v-faces alone would compare those faces with themselves,
+/// which agree by construction, and a w-face contradicting them would be compared with nothing.
 ///
 /// The comparison is `gap > tol` to refuse, so a NaN gap is not refused.
 ///
@@ -880,11 +886,10 @@ void verify_positive_weights(const bspline::Bspline<T>& volume) {
 /// Extract the volume's 8 corner coefficients from the four edges free in u.
 ///
 /// The array is sized and filled in **one** space, which is what the corner term of the blend
-/// needs and what this used to get wrong: it took its width from the edges' coefficients, which
-/// are homogeneous for a rational face, and filled it from `boundary_point`, which projects. A
-/// rational volume then failed with a NumPy broadcast error naming shapes `(3,)` and `(4,)` rather
-/// than anything the caller had supplied (pantr issue 309). `homogeneous_endpoint` is the read
-/// that stays in the space the width was taken from.
+/// needs. A width taken from the edges' coefficients, which are homogeneous for a rational face,
+/// and filled from `boundary_point`, which projects, mixes two spaces: a rational volume then
+/// fails on shapes `(3,)` and `(4,)` rather than on anything the caller supplied (pantr issue
+/// 309). `homogeneous_endpoint` is the read that stays in the space the width was taken from.
 ///
 /// `rational` is the **volume's**, not these four edges': the corner term is one of seven that are
 /// added together, so it has to live in the same space as the other six even when the faces that
@@ -969,6 +974,8 @@ template <StorageFloat T>
   const std::size_t width = made[0].cp_size();
   const std::size_t n_free = made[0].num_basis(0);
   for (const auto& e : made) {
+    // Guards an out-of-bounds read of the edges' control points below. No input reaching it has
+    // been constructed: the edge check fires first on the inputs tried.
     if (e.cp_size() != width || e.num_basis(0) != n_free) {
       throw value_error(
           "A Coons blend volume needs four edges with equal control nets after being made "

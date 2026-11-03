@@ -52,9 +52,9 @@ inline constexpr double norm_tol = 1e-14;
 ///     axis (std::span<const double>): One to three coordinates, zero-padded.
 ///
 /// Returns:
-///     std::array<double, 3>: The coordinates divided by their Euclidean norm (NaN throughout when
-///     a coordinate is NaN or infinite: the norm is then not zero, and the quotient is not a
-///     number).
+///     std::array<double, 3>: The coordinates divided by their Euclidean norm. A NaN coordinate
+///     gives NaN throughout (the norm is NaN). An infinite one makes the norm infinite: that
+///     coordinate becomes NaN (`inf / inf`) and the others 0, so `[inf, 0, 1]` gives `[nan, 0, 0]`.
 ///
 /// Raises:
 ///     value_error: More than three coordinates; a zero vector.

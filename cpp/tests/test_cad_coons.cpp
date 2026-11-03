@@ -39,6 +39,7 @@
 #include <pantr/bspline/bspline.hpp>
 #include <pantr/bspline/convert.hpp>
 #include <pantr/bspline/degree.hpp>
+#include <pantr/bspline/knot_insertion.hpp>
 #include <pantr/bspline/reparametrize.hpp>
 #include <pantr/bspline/slice.hpp>
 #include <pantr/cad/compat.hpp>
@@ -1047,4 +1048,98 @@ TEST_CASE_TEMPLATE("create_coons_volume: faces of different ranks are refused", 
   const std::string message = volume_refusal<T>(faces);
   CHECK_MESSAGE(has(message, "the faces must have one rank."), message);
   CHECK(has(message, "gives a point of"));
+}
+
+// ============================================================ NaN verdicts and the shape guard
+
+namespace {
+
+/// The cube's faces with the z coordinate of `face_w0`'s `(u = 1, v = 1)` corner set to NaN.
+template <class T>
+Faces<T> nan_w0_corner() {
+  auto corners = face_corners(cube(1.0));
+  corners[4][(1 * 2 + 1) * 3 + 2] = std::numeric_limits<double>::quiet_NaN();
+  return as_pairs<T>({bilinear_face<T>(corners[0]), bilinear_face<T>(corners[1]),
+                      bilinear_face<T>(corners[2]), bilinear_face<T>(corners[3]),
+                      bilinear_face<T>(corners[4]), bilinear_face<T>(corners[5])});
+}
+
+}  // namespace
+
+TEST_CASE_TEMPLATE("verify_corners_3d: a NaN corner is not refused, inherited from the reference",
+                   T, float, double) {
+  // Unusual input, pinned as inherited from the reference implementation (not endorsed): the
+  // corner comparison refuses `gap > tol`, which a NaN gap does not satisfy, and the NaN scale
+  // makes the tolerance NaN too. The corner check alone therefore accepts the corner. The edge
+  // check that follows in `create_coons_volume` does not (see the next test), so the volume as a
+  // whole is refused, at the edge and not at the corner.
+  const Faces<T> faces = nan_w0_corner<T>();
+  const std::vector<cad::detail::EdgeReadings<T>> readings =
+      cad::detail::coons_edge_pairs<T>(faces);
+  CHECK_NOTHROW(cad::detail::verify_corners_3d<T>(readings, tier_of<T>()));
+  const std::string message = volume_refusal<T>(faces);
+  CHECK_MESSAGE(has(message, "Edge "), message);
+  CHECK_FALSE(has(message, "Corner "));
+}
+
+TEST_CASE_TEMPLATE("verify_edges_3d: a NaN edge control point is refused", T, float, double) {
+  // face_w0 becomes a degree-(2, 1) patch whose middle control point at v = 1 has a NaN
+  // coordinate: all eight corners are finite and agree, so only the edge comparison sees it. It is
+  // refused because the comparison is `!(gap <= tol)`, which a NaN gap satisfies.
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  auto faces = bilinear_faces<T>(cube(1.0));
+  faces[2][0] = quadratic_linear<T>({0, 0, 0, 0, 1, 0,        //
+                                     0.5, 0, 0, 0.5, 1, nan,  //
+                                     1, 0, 0, 1, 1, 0});
+  const std::string message = volume_refusal<T>(faces);
+  CHECK_MESSAGE(has(message, "Edge "), message);
+  CHECK_MESSAGE(has(message, "gap nan"), message);
+}
+
+TEST_CASE_TEMPLATE("verify_positive_weights: a NaN weight is refused", T, float, double) {
+  // The smallest weight is taken as NumPy takes it: a NaN weight is the smallest, wherever it
+  // sits (first, in the middle, or last in the control net), and is refused.
+  const bs::Bspline<T> trilinear = make_spline<T>(
+      {Dir{clamped(1, {}), 1}, Dir{clamped(1, {}), 1}, Dir{clamped(1, {}), 1}}, 3, true, 1);
+  REQUIRE(trilinear.cp_size() == 4);
+  CHECK_NOTHROW(cad::detail::verify_positive_weights<T>(trilinear));
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  for (const std::size_t at : {std::size_t{0}, std::size_t{3}, std::size_t{7}}) {
+    std::vector<double> flat = control_points_of(trilinear);
+    flat[at * 4 + 3] = nan;
+    const std::string message = refusal(
+        [&] { cad::detail::verify_positive_weights<T>(with_control_points(trilinear, flat)); });
+    CAPTURE(at);
+    CHECK_MESSAGE(has(message, "weight is not certified positive"), message);
+    CHECK_MESSAGE(has(message, "control weight nan at index"), message);
+  }
+}
+
+TEST_CASE_TEMPLATE("create_coons_volume: a shared edge of unequal control-net sizes is refused", T,
+                   float, double) {
+  // An interior knot of the u direction a quarter of the space tolerance above another leaves
+  // `make_compat` with unequal numbers of functions (see "knots a rounding apart" above). Here
+  // face_v0 and face_v1 carry the knot at 0.5 and face_w0 and face_w1 the shifted one, so every
+  // pair of opposite faces is compatible and the corners agree, while each u edge is read from a
+  // v face and a w face and comes out with different control-point counts: the shape guard of
+  // `verify_edges_3d` refuses before anything is built from them.
+  const bs::Bspline<T> probe = line<T>({0, 0, 0}, {1, 0, 0});
+  const double tol = probe.space().spaces()[0].tolerance();
+  const double shifted = static_cast<double>(static_cast<T>(0.5 + 0.25 * tol));
+  REQUIRE(shifted > 0.5);
+  const auto with_u_knot = [](const bs::Bspline<T>& face, double knot) {
+    const std::array<T, 1> k = {static_cast<T>(knot)};
+    std::vector<std::span<const T>> per_dim(2);
+    per_dim[0] = std::span<const T>(k);
+    return bs::insert_knots<T>(face, per_dim);
+  };
+  auto faces = bilinear_faces<T>(cube(1.0));
+  faces[1][0] = with_u_knot(faces[1][0], 0.5);
+  faces[1][1] = with_u_knot(faces[1][1], 0.5);
+  faces[2][0] = with_u_knot(faces[2][0], shifted);
+  faces[2][1] = with_u_knot(faces[2][1], shifted);
+  const std::string message = volume_refusal<T>(faces);
+  CHECK_MESSAGE(has(message, "Edge u_v"), message);
+  CHECK_MESSAGE(has(message, "give control nets of different shapes after being made compatible"),
+                message);
 }

@@ -361,3 +361,33 @@ TEST_CASE("make_compat: the mixed-precision overload keeps each input's storage 
               cad::detail::make_compat(std::span<const cad::AnyBspline>(mixed_dims), std::nullopt));
         }).find("got {1, 2}.") != std::string::npos);
 }
+
+TEST_CASE("remap_domain: a float end knot is the double remap rounded once to float") {
+  // [0, 0.7f] onto [0.1, 0.9]. The remap is computed in double, `0.1 + 0.7f * (0.8 / 0.7f)`, which
+  // is 0.9 to double precision, and rounded once: the end knot is `float(0.9)`. The Python
+  // implementation's remap ran in float32 arithmetic and ended one float ulp above it, so the end
+  // knot is a deliberate difference, not an oracle.
+  const bs::Bspline<float> b = make_spline<float>({Dir{{0.0, 0.0, 0.7, 0.7}, 1}}, 3, false, 1);
+  REQUIRE(knots_as_double(b, 0).back() == static_cast<double>(0.7f));
+  const bs::Bspline<float> r = cad::detail::remap_domain<float>(b, 0, 0.1, 0.9);
+  const std::vector<double> knots = knots_as_double(r, 0);
+  CHECK(knots.front() == static_cast<double>(0.1f));
+  CHECK(knots.back() == static_cast<double>(0.9f));
+  CHECK(cad_test::control_points_of(r) == cad_test::control_points_of(b));
+}
+
+TEST_CASE("make_compat: a float knot and a double knot a float rounding apart get equal counts") {
+  // The mixed-precision overload widens to double, so the float 0.3f and the double 0.3 are two
+  // distinct knots of a double space, and each space gets the other's inserted: equal
+  // numbers of knots. The Python implementation, which kept the float32 curve in float32,
+  // returned unequal counts for the same pair.
+  const bs::Bspline<float> f = curve<float>(2, {0.3}, 3, 1);
+  const bs::Bspline<double> d = curve<double>(2, {0.3}, 3, 2);
+  const std::vector<cad::AnyBspline> in = {f, d};
+  const std::vector<cad::AnyBspline> got =
+      cad::detail::make_compat(std::span<const cad::AnyBspline>(in), std::nullopt);
+  REQUIRE(got.size() == 2);
+  const auto& gf = std::get<bs::Bspline<float>>(got[0]);
+  const auto& gd = std::get<bs::Bspline<double>>(got[1]);
+  CHECK(knots_as_double(gf, 0).size() == knots_as_double(gd, 0).size());
+}

@@ -57,6 +57,9 @@ struct InteriorBreakpoints {
 ///
 /// Returns:
 ///     InteriorBreakpoints: The interior classes.
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed).
 template <StorageFloat T>
 [[nodiscard]] InteriorBreakpoints interior_breakpoints(const bspline::BsplineSpace1D<T>& space,
                                                        double tol) {
@@ -112,6 +115,10 @@ template <StorageFloat T>
 /// a_old)`, computed in `double` and cast to `T`; the control points are shared unchanged, and the
 /// periodic flag of the direction is kept.
 ///
+/// The remap is computed in `double` and rounded once to `T`, while the Python implementation's
+/// `float32` remap ran in `float32` arithmetic, so a `float` end knot can differ from that
+/// implementation's by one `float` ulp.
+///
 /// Args:
 ///     b (const bspline::Bspline<T>&): The B-spline.
 ///     axis (std::size_t): The direction to remap, `< b.dim()`.
@@ -124,6 +131,9 @@ template <StorageFloat T>
 /// Raises:
 ///     value_error: A remapped knot is finite and beyond the range of `T`, or the remapped knots
 ///         define no space.
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed): `axis < b.dim()`.
 template <StorageFloat T>
 [[nodiscard]] bspline::Bspline<T> remap_domain(const bspline::Bspline<T>& b, std::size_t axis,
                                                double a_new, double b_new) {
@@ -153,6 +163,10 @@ template <StorageFloat T>
 ///     results (std::vector<bspline::Bspline<T>>&): The B-splines, replaced by their remapped
 ///         versions where a domain differs.
 ///     axes (const std::vector<std::size_t>&): The axes to process.
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed): `results` is not empty and
+///     every axis is below the parametric dimension.
 template <StorageFloat T>
 void same_domain(std::vector<bspline::Bspline<T>>& results, const std::vector<std::size_t>& axes) {
   for (const std::size_t a : axes) {
@@ -183,6 +197,10 @@ void same_domain(std::vector<bspline::Bspline<T>>& results, const std::vector<st
 ///         versions where a degree is below the largest.
 ///     axes (const std::vector<std::size_t>&): The axes to process.
 ///     dim (std::size_t): The parametric dimension.
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed): every axis is below `dim`, which
+///     is the parametric dimension of every B-spline.
 template <StorageFloat T>
 void same_degree(std::vector<bspline::Bspline<T>>& results, const std::vector<std::size_t>& axes,
                  std::size_t dim) {
@@ -262,6 +280,10 @@ merge_breakpoints(const std::vector<std::vector<double>>& points,
 ///         axis.
 ///     axes (const std::vector<std::size_t>&): The axes to process.
 ///     dim (std::size_t): The parametric dimension.
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed): `results` is not empty, every
+///     axis is below `dim`, and the B-splines share one domain and one degree along each axis.
 template <StorageFloat T>
 void merge_knots(std::vector<bspline::Bspline<T>>& results, const std::vector<std::size_t>& axes,
                  std::size_t dim) {
@@ -399,6 +421,10 @@ namespace detail {
 /// `cad::make_compat<double>` (so the merge tolerance is the converted first B-spline's, a
 /// `double` tolerance, whatever type the first had), and each result is cast back to the storage
 /// type of the input at its position.
+///
+/// Widening to `double` can treat a `float` knot and a nearby `double` knot differently from the
+/// Python implementation, which kept them apart: for a `float` `0.3f` against a `double` `0.3` it
+/// returned unequal numbers of knots, while this returns equal ones.
 ///
 /// Args:
 ///     bsplines (std::span<const AnyBspline>): The B-splines, of one parametric dimension.

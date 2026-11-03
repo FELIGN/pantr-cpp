@@ -61,6 +61,10 @@ template <StorageFloat T>
 ///
 /// Raises:
 ///     value_error: `angle` is not finite.
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed): `in` holds `rows` control
+///     points of four coordinates, `out` has room for as many, and the two ranges do not overlap.
 inline void rotate_weighted_z(const double* in, double* out, std::size_t rows, double angle) {
   const std::array<double, 3> e_z = {0.0, 0.0, 1.0};
   const transform::AffineTransform rotation = transform::AffineTransform::rotation_3d(angle, e_z);
