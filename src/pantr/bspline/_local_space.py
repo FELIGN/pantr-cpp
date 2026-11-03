@@ -246,7 +246,9 @@ def build_local(
             f"partition has {partition.n_cells} cells; "
             f"expected {global_space.num_total_intervals} (space.num_total_intervals)."
         )
-    owned = partition.owned_cells(rank)
+    # Compared with the rank as given, as the ownership masks below are: a rank that is not an
+    # integer owns no cell (`Partition.owned_cells` would truncate it first).
+    owned = np.flatnonzero(partition.cell_owner == rank).astype(np.int64)
     if owned.size == 0:
         raise ValueError(f"rank {rank} owns no cells; cannot build a local space.")
 
@@ -367,7 +369,9 @@ def _build_local_thb(thb: THBSplineSpace, partition: Partition, rank: int) -> Lo
             f"partition has {partition.n_cells} cells; expected {thb.grid.num_cells} "
             f"(grid.num_cells)."
         )
-    owned = partition.owned_cells(rank)
+    # Compared with the rank as given, as the ownership masks below are: a rank that is not an
+    # integer owns no cell (`Partition.owned_cells` would truncate it first).
+    owned = np.flatnonzero(partition.cell_owner == rank).astype(np.int64)
     if owned.size == 0:
         raise ValueError(f"rank {rank} owns no cells; cannot build a local space.")
 
