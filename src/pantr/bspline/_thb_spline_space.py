@@ -268,7 +268,9 @@ class THBSplineSpace:
             root_space._h,
             grid._h,
             bool(truncate),
-            [None if r is None else _clamp_int(int(r)) for r in reg],
+            # `operator.index`, not `int`: a float regularity is refused, never truncated into a
+            # space of another continuity.
+            [None if r is None else _clamp_int(operator.index(r)) for r in reg],
         )
         snapshot = (grid.max_level, grid.num_cells, grid.version)
         self._adopt(h, root_space, grid, truncate, reg, snapshot)
@@ -374,7 +376,9 @@ class THBSplineSpace:
             root_space._h,
             own_grid._h,
             bool(truncate),
-            [None if r is None else _clamp_int(int(r)) for r in regularity],
+            # `operator.index`, not `int`: a float regularity is refused, never truncated into a
+            # space of another continuity.
+            [None if r is None else _clamp_int(operator.index(r)) for r in regularity],
         )
         self._adopt(h, root_space, grid, truncate, regularity, snapshot)
 
