@@ -139,6 +139,10 @@ if(TARGET pantr_mpi)
     set_tests_properties(mpi.communicator_np${_n} PROPERTIES TIMEOUT 300)
   endforeach()
 endif()
+# Which launchers get --oversubscribe, decided from their `mpiexec --version` text.
+add_test(NAME mpi.oversubscribe_decision
+         COMMAND "${CMAKE_COMMAND}" -DMODULE_DIR=${PROJECT_SOURCE_DIR}/cmake
+                 -P "${CMAKE_CURRENT_SOURCE_DIR}/mpi/check_oversubscribe.cmake")
 
 # --- Header rules ---------------------------------------------------------------------------------
 # Every public header compiles on its own (self-contained) with a poisoned mpi.h first on the
