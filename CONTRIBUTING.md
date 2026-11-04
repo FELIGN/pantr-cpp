@@ -28,7 +28,7 @@ ruff check .                             # lint
 ruff format --check .                    # formatting
 mypy --config-file mypy.ini src tests    # static types (strict)
 PYTHONPATH=src lint-imports              # import-boundary contracts
-pytest                                   # tests (JIT enabled)
+pytest                                   # tests
 ```
 
 `make pre-pull-request` runs all of them in one go, plus the docs build.

@@ -454,17 +454,16 @@ class CaseTimeout(RuntimeError):
 
 
 CASE_TIMEOUT_SECONDS: Final = 30.0
-"""Wall-clock budget for **one attempt** at a case; two expiries make it a hang.
+"""Wall-clock budget for one case; an expiry is reported as a timeout.
 
 Non-termination is one of the outcomes this sweep hunts, and it needs a budget because
 the alternative is that the *sweep* hangs and nobody runs it again. That is not
 hypothetical: ``Bspline.reduce_degree(1)`` never returns on a degree-1 *periodic* spline,
 and stalled a 25952-case run indefinitely.
 
-The value is deliberately **not** load-bearing, because it cannot be: a budget that
-separates "slow" from "stuck" by magnitude alone has to be tuned to a machine.
-:func:`_call_with_budget` retries once instead, so a one-time first-call cost is not
-reported as a hang.
+The value is a generous allowance, an admitted heuristic rather than a bound: a budget that
+separated "slow" from "stuck" by magnitude alone would have to be tuned to a machine, so a
+timeout is a lead to check, not a verdict (below).
 
 **Limitation:** the alarm is delivered at a Python bytecode boundary, so it interrupts a
 hang in a Python loop but **not** one inside the compiled extension, which does not return
@@ -473,11 +472,10 @@ line printed before each case is what identifies it.
 
 **The same limitation makes a slow *library* call indistinguishable from a hang, and a
 reader must not read a timeout as non-termination.** A long-running call into LAPACK or any
-other C extension does not return to the interpreter either, so both attempts run to
-completion and the retry that separates "slow" from "stuck" everywhere else cannot separate
-them here. Measured: ``Bspline.multiply`` on a degree-62 periodic spline reaches a dense
-``numpy.linalg.lstsq`` over the product space at degree 124 and **returns after 78 s**,
-having been reported as "did not terminate, on two attempts". It is slow, not stuck. Before
+other C extension does not return to the interpreter either, so the alarm fires only once the
+call has returned. Seen on the previous release: ``Bspline.multiply`` on a degree-62 periodic
+spline reached a dense ``numpy.linalg.lstsq`` over the product space at degree 124 and returned
+long after the budget, having been reported as not terminating. It is slow, not stuck. Before
 recording a timeout as a hang, re-run the case with a generous budget and a
 ``faulthandler`` traceback and see where it actually sits.
 """
@@ -516,16 +514,12 @@ def _timeout_guard(seconds: float) -> AbstractContextManager[None]:
 
 
 def _call_with_budget(case: Case) -> Any:  # noqa: ANN401 -- returns whatever the entry point does
-    """Run a case's thunk under the timeout, retrying once if the first attempt expires.
+    """Run a case's thunk under the timeout.
 
-    The retry was introduced for the previous release's JIT compilation, which charged the
-    first case to reach a kernel with its codegen; the compiled extension has no such cost,
-    so the retry is now a heuristic against any other one-time first-call cost. It
-    separates the two by observation rather than by a constant tuned to one machine: a
-    one-time cost is paid once, so the second attempt is fast, while a genuine
-    non-termination expires again. The cost is that a real hang takes
-    ``2 * CASE_TIMEOUT_SECONDS`` to report, which is the right trade -- hangs are rare and
-    a false one is far more expensive than a slow one.
+    The previous release retried a case once, because its first call into a JIT kernel paid
+    the compilation and could expire the budget on a healthy case. The compiled extension has
+    no such first-call cost, and a call into it cannot be interrupted before it returns, so a
+    second attempt would only re-run the same call; there is none.
 
     Args:
         case (Case): The case to run.
@@ -534,13 +528,8 @@ def _call_with_budget(case: Case) -> Any:  # noqa: ANN401 -- returns whatever th
         Any: Whatever the entry point returned.
 
     Raises:
-        CaseTimeout: If the call expires twice, i.e. it genuinely does not terminate.
+        CaseTimeout: If the call does not return within :data:`CASE_TIMEOUT_SECONDS`.
     """
-    try:
-        with _timeout_guard(CASE_TIMEOUT_SECONDS):
-            return case.run()
-    except CaseTimeout:
-        pass
     with _timeout_guard(CASE_TIMEOUT_SECONDS):
         return case.run()
 
@@ -573,7 +562,7 @@ def run_case(index: int, case: Case) -> Outcome:
                 case,
                 Verdict.BUG,
                 "timeout",
-                f"the call did not terminate, on two attempts: {exc}",
+                f"the call did not return within the budget: {exc}",
                 _warning_names(caught),
             )
         except Exception as exc:  # a sweep classifies whatever comes out, by design

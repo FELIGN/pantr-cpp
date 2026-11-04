@@ -15,6 +15,7 @@ their median.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import math
 import os
@@ -121,12 +122,12 @@ def main() -> int:
     ):
         raise SystemExit(f"pantr resolves to {pantr.__file__}, not under {args.expect_src}")
 
-    try:  # A tree that runs Numba (main) warms its kernels up on a background thread.
+    # A tree that runs Numba (main) warms its kernels up on a background thread; a tree without
+    # the module (the C++ port) has nothing to wait for.
+    if importlib.util.find_spec("pantr._numba_compat") is not None:
         from pantr._numba_compat import wait_for_jit_warmup  # noqa: PLC0415
 
         wait_for_jit_warmup()
-    except ImportError:
-        pass
     pantr.set_num_threads(args.threads)
 
     sys.path.insert(0, str(Path(__file__).resolve().parent))

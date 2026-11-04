@@ -20,8 +20,9 @@ The following operations are parallelized over **evaluation points**:
 | Batch applies of `SpanwiseElementExtraction` (`apply_many`, `apply_transpose_many`, `apply_MT_K_M_many`, `apply_M_K_MT_many`) | C++ (`include/pantr/bspline/spanwise_extraction.hpp`), on pantr's own thread pool, GIL released when the batch is large enough to run in parallel | cells |
 
 By default, every CPU the process may run on is used: the pool sizes itself from the process's
-CPU affinity mask, not from the machine's core count, so a process restricted with `taskset`, a
-container's CPU set or a batch scheduler uses only the CPUs it was given.
+CPU affinity mask (on Linux), not from the machine's core count, so a process restricted with
+`taskset`, a cpuset or a batch scheduler's binding uses only the CPUs it was given. A CPU quota
+(Docker's `--cpus`, a Kubernetes limit) does not change the mask: set `PANTR_NUM_THREADS` there.
 
 ## Controlling the thread count
 
@@ -104,9 +105,13 @@ with concurrent.futures.ThreadPoolExecutor(8) as pool:
     results = [f.result() for f in futures]
 ```
 
-This works because a PaNTr call large enough to run in parallel **releases the GIL** while it
-computes, so multiple Python threads genuinely run PaNTr kernels concurrently. A call too small to
-run in parallel keeps the GIL: its work is shorter than the cost of releasing it.
+This works for the operations that **release the GIL** while they compute, which most parallel
+entry points do once the call is large enough to use the pool (whatever the thread setting): the
+basis tabulations, B-spline and Bézier evaluation, the spanwise extraction's batch applies, point
+location and the grids' batch queries. Several Python threads then run PaNTr kernels
+concurrently. A call too small to use the pool keeps the GIL, since its work is shorter than the
+cost of releasing it, and so do a few parallel operations (Bézier split, slice and restrict among
+them), which serialize the calling threads.
 
 ### Pattern 3: Balanced -- user and PaNTr share cores
 
@@ -134,7 +139,7 @@ over-subscribes the pool.
 
 | Variable | Default | Effect |
 |---|---|---|
-| `PANTR_NUM_THREADS` | unset (the CPUs of the affinity mask) | Lowers the pool's capacity, the most threads `pantr.set_num_threads` accepts; never raises it above the CPUs the process may use. Set to a non-empty value, it also disables the default one-thread-per-rank policy of `pantr.mpi` (see {doc}`/guide/distributed`). A value other than a positive integer makes the first parallel call raise `ValueError`. |
+| `PANTR_NUM_THREADS` | unset (the CPUs of the affinity mask) | Lowers the pool's capacity, the most threads `pantr.set_num_threads` accepts; never raises it above the CPUs the process may use. Set to a non-empty value, it also disables the default one-thread-per-rank policy of `pantr.mpi` (see {func}`pantr.mpi.configure_threads`). A value other than a positive integer makes the first parallel call raise `ValueError`. |
 
 `NUMBA_NUM_THREADS`, `NUMBA_THREADING_LAYER` and `NUMBA_DISABLE_JIT` are not read: PaNTr no
 longer uses Numba.

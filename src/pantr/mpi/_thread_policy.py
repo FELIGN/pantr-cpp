@@ -6,8 +6,9 @@ compute threads -- heavy oversubscription. To prevent this, every MPI-engaging e
 point of :mod:`pantr.mpi` (:class:`~pantr.mpi.DistributedSpace`,
 :func:`~pantr.mpi.from_dolfinx`, and any future ones) applies a process-level default
 on first use: the calling thread's parallelism on the compiled extension's thread pool
-(:mod:`pantr._parallel`) is limited to **one thread per rank** (flat MPI). A malformed
-``PANTR_NUM_THREADS`` makes applying it raise :class:`ValueError`.
+(:mod:`pantr._parallel`) is limited to **one thread per rank** (flat MPI). Any non-empty
+``PANTR_NUM_THREADS`` disables it, a malformed one included: that one raises
+:class:`ValueError` at the first call that needs the thread count instead.
 
 The default is sticky (applied at most once per process) and never overrides explicit
 user configuration; see :func:`_ensure_default_thread_policy`. The pool's capacity is

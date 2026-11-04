@@ -1,6 +1,6 @@
 // _pantr.bezier (continued): degree reduction and minimisation, and fitting, for pantr.bezier's
-// wrapper; and the internals the tests reach through _pantr._testing. A translation unit of its own because it
-// reaches Eigen's SVD (bezier.cpp reaches no Eigen).
+// wrapper; and the internals the tests reach through _pantr._testing. A translation unit of its own
+// because it reaches Eigen's SVD (bezier.cpp reaches no Eigen).
 #include "arrays.hpp"
 #include "interface.hpp"
 

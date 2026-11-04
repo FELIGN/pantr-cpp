@@ -85,8 +85,8 @@ test:
 
 # Run the docstring examples shipped in the package sources. Kept out of `test`
 # because `testpaths = tests` in pytest.ini deliberately excludes src/, and a plain
-# `pytest` run should stay the fast inner loop. No coverage and no xdist: the whole
-# set runs in about a second, and worker startup would dominate.
+# `pytest` run should stay the fast inner loop. No coverage and no xdist: the set is
+# small, and worker startup would dominate.
 doctest:
 	pytest --doctest-modules src/pantr
 

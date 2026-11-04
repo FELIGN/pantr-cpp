@@ -27,6 +27,28 @@ EXIT_FINDINGS: Final = 1
 EXIT_INCOMPLETE: Final = 4
 
 
+def _sanitizer_line() -> str:
+    """Say whether an out-of-range access in a kernel would be caught in this process.
+
+    The sweep's verdict on such an access is AddressSanitizer's abort, which needs its runtime
+    mapped into the process (the CI job preloads it with a sanitized extension). Without it, a
+    clean run says nothing about overruns, so the run says so.
+
+    Returns:
+        str: The line to print.
+    """
+    try:
+        maps = pathlib.Path("/proc/self/maps").read_text(encoding="utf-8")
+    except OSError:
+        return "[sweep] cannot tell whether AddressSanitizer is loaded: overruns may go unseen"
+    if "libasan" in maps:
+        return "[sweep] AddressSanitizer is loaded: an out-of-range access aborts its case"
+    return (
+        "[sweep] AddressSanitizer is NOT loaded: an out-of-range access in a kernel goes "
+        "unseen, so a clean run grades exceptions and invariants only"
+    )
+
+
 def _build_parser(group_names: tuple[str, ...]) -> argparse.ArgumentParser:
     """Build the command-line parser.
 
@@ -165,6 +187,7 @@ def main(argv: list[str] | None = None) -> int:
     profile = Profile.SMOKE if args.profile == "smoke" else Profile.FULL
     groups = tuple(args.group) if args.group else tuple(GROUPS)
     print(f"[sweep] profile={profile.name} groups={','.join(groups)}", file=sys.stderr, flush=True)
+    print(_sanitizer_line(), file=sys.stderr, flush=True)
 
     if args.count_only:
         total = sum(1 for _ in iter_cases(profile, groups))

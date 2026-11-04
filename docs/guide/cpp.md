@@ -12,9 +12,11 @@ cmake -S . -B build -DPANTR_BUILD_TESTS=OFF
 cmake --install build --prefix /path/to/prefix
 ```
 
-The install holds pantr's headers, its CMake package and the third-party headers it bundles
-(Eigen, Spectra, Kokkos mdspan, Boost.Multiprecision and Boost.Config). The distributed layer
-`pantr::mpi` is installed only when CMake finds an MPI at configure time.
+The configure step fetches the bundled third-party sources over the network (see
+`cmake/PantrDependencies.cmake` for building offline). The install holds pantr's headers, its CMake
+package and the third-party headers it bundles (Eigen, Spectra, Kokkos mdspan, Boost.Multiprecision
+and Boost.Config). The distributed layer `pantr::mpi` is installed only when CMake finds an MPI at
+configure time.
 
 ## Building against it
 
@@ -51,9 +53,9 @@ int main() {
 
 ## Threads
 
-C++ code runs on the same thread pool as the Python package (see {doc}`/guide/parallelism`):
-`pantr::parallel::max_threads()` is its capacity (the CPUs of the affinity mask, lowered by
-`PANTR_NUM_THREADS`), and `pantr::parallel::set_num_threads(n)` sets the calling thread's
+A C++ program gets a thread pool of the same design as the Python package's (see
+{doc}`/guide/parallelism`): `pantr::parallel::max_threads()` is its capacity (the CPUs of the
+affinity mask, lowered by `PANTR_NUM_THREADS`), and `pantr::parallel::set_num_threads(n)` sets the calling thread's
 parallelism.
 
 ## The CMake package in the Python wheel

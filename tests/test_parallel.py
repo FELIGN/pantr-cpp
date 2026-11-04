@@ -124,8 +124,11 @@ class TestDrivesTheCppPool:
         import subprocess  # noqa: PLC0415
         import sys  # noqa: PLC0415
 
+        from pantr._ext import ext  # noqa: PLC0415
         from tests._tree_env import subprocess_env  # noqa: PLC0415
 
+        if ext.max_threads() < 2:  # the child inherits this process's affinity
+            pytest.skip("needs a C++ pool capacity of at least 2")
         env = subprocess_env()
         env["PANTR_NUM_THREADS"] = "2"
         env["NUMBA_NUM_THREADS"] = "4"
