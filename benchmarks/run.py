@@ -5,10 +5,11 @@ Usage (one process; the interleaved protocol is ``compare.py``)::
     PYTHONPATH=<tree>/src python benchmarks/run.py --out FILE [--threads N] [--filter REGEX]
 
 ``PYTHONPATH`` must be absolute and name the tree to measure: the record says which ``pantr`` it
-imported, and the caller checks it. Per case: one warm-up phase (Numba compiles and caches here,
-and the import's background warmup is awaited first), then a loop count chosen so one repeat
-lasts at least ``--min-time``, then ``--repeats`` timed repeats with ``time.perf_counter_ns``. The
-record keeps every repeat's per-call time; the process statistic is their median.
+imported, and the caller checks it. Per case: one warm-up phase (a tree that runs Numba, such as
+``main``, compiles and caches here, and its import's background warmup is awaited first), then a
+loop count chosen so one repeat lasts at least ``--min-time``, then ``--repeats`` timed repeats with
+``time.perf_counter_ns``. The record keeps every repeat's per-call time; the process statistic is
+their median.
 """
 
 from __future__ import annotations
@@ -71,7 +72,7 @@ def _governor() -> str:
 
 
 WARMUP_CALLS = 3
-"""Calls made before timing at the least (the first compiles a Numba kernel)."""
+"""Calls made before timing at the least (on a Numba tree, the first compiles a kernel)."""
 
 WARMUP_SECONDS = 0.05
 """Time spent calling before timing at the least."""
@@ -120,7 +121,7 @@ def main() -> int:
     ):
         raise SystemExit(f"pantr resolves to {pantr.__file__}, not under {args.expect_src}")
 
-    try:
+    try:  # A tree that runs Numba (main) warms its kernels up on a background thread.
         from pantr._numba_compat import wait_for_jit_warmup  # noqa: PLC0415
 
         wait_for_jit_warmup()

@@ -9,8 +9,8 @@ lives under `results/` beside the command that produced it.
 
 Every side is a source tree's `src` directory, given as an absolute path; `run.py` records which
 `pantr` it imported and `compare.py` refuses a side that imported another one. A tree with the
-extension needs `make ext` first. Measure `main` from a detached worktree of it, so that its Numba
-cache stays out of any checkout you work in.
+extension needs `make ext` first. Measure `main`, which still runs Numba, from a detached worktree
+of it, so that its Numba cache stays out of any checkout you work in.
 
 ```bash
 git worktree add --detach <scratch>/main <main-commit>
@@ -20,7 +20,9 @@ python benchmarks/compare.py --out-dir benchmarks/results/<date>-<what> \
 ```
 
 Run nothing else heavy while measuring. `--cpus` pins every process to the same CPUs, BLAS and
-OpenMP run on one thread, and `NUMBA_NUM_THREADS` is the thread setting.
+OpenMP run on one thread, and the thread setting goes to both sides in two variables, each side
+reading one: `NUMBA_NUM_THREADS` for `main` (Numba's pool) and `PANTR_NUM_THREADS` for the branch
+(the C++ pool's capacity); `run.py` then sets it with `pantr.set_num_threads` on both.
 
 ## Results
 

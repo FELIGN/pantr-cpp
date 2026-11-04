@@ -6,12 +6,14 @@ Usage::
         [--reference main] [--k 10] [--threads 1 8] [--cpus 0-7] [--filter REGEX]
 
 The protocol (design/port_design.md, section 9.2, with the plan's DR-3): K rounds; in each round
-every side runs once per thread setting, each in a fresh process pinned to ``--cpus`` with BLAS
-and OpenMP threads at 1, the side order rotating from round to round so that no side always runs
-first. Per process the statistic is the median of its repeats. Per side and case: the
-**statistic** is the median of its K process medians and the **range** the max minus the min of
-them. A side is flagged on a case when its statistic exceeds the reference's statistic plus the
-reference's range; a flag counts only when a fresh interleaved re-run flags it again.
+every side runs once per thread setting, each in a fresh process pinned to ``--cpus`` with BLAS and
+OpenMP threads at 1 and the thread setting in both ``NUMBA_NUM_THREADS`` (read by ``main``, which
+runs Numba) and ``PANTR_NUM_THREADS`` (read by the C++ pool), the side order rotating from round to
+round so that no side always runs first. Per process the statistic is the median of its repeats. Per
+side and case: the **statistic** is the median of its K process medians and the **range** the max
+minus the min of them. A side is flagged on a case when its statistic exceeds the reference's
+statistic plus the reference's range; a flag counts only when a fresh interleaved re-run flags it
+again.
 
 ``--r6 ABI3,VERSIONED`` adds the stage-0 stable-ABI verdict on the ``tiny`` cases: the trigger is
 an ABI3 statistic over the reference's statistic plus its range **and** more than the reference's
@@ -39,7 +41,10 @@ def _env(src: Path, threads: int) -> dict[str, str]:
     env["PYTHONPATH"] = str(src)
     for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
         env[var] = "1"
+    # Each side reads one of the two and ignores the other: main's Numba the first, the C++
+    # pool the second.
     env["NUMBA_NUM_THREADS"] = str(max(threads, 1))
+    env["PANTR_NUM_THREADS"] = str(max(threads, 1))
     return env
 
 
