@@ -9,7 +9,6 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
-from pantr._numba_compat import wait_for_jit_warmup
 from pantr._testing import degree_reduce_1d
 from pantr._testing import elevation_matrix as _elevation_matrix_exact
 from pantr._testing import interpolating_reduction_operator as _interpolating_reduction_operator
@@ -27,14 +26,6 @@ from pantr.bspline import (
     create_uniform_open_knots,
     create_uniform_periodic_knots,
 )
-
-# Several tests here reach `Bezier.evaluate` within milliseconds of the process
-# starting, and it dispatches to a `parallel=True` kernel. Numba's default workqueue
-# layer is not safe against that racing `pantr/__init__.py`'s background warmup thread:
-# the interpreter *aborts* rather than raising. Measured on this file with a warm Numba
-# cache, before this barrier was added: 3 of 4 runs aborted. Same mitigation, and the
-# same reason, as `tests/test_bernstein_underflow.py`.
-wait_for_jit_warmup()
 
 _EPS = float(np.finfo(np.float64).eps)
 

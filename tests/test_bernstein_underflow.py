@@ -35,20 +35,11 @@ import numpy.typing as npt
 import pytest
 
 from pantr import _testing
-from pantr._numba_compat import wait_for_jit_warmup
 from pantr.basis import tabulate_bernstein_1d
 from pantr.bezier import Bezier
 
 _MAX_SAFE_DEGREE_NO_MIRROR_FLOAT64 = _testing.BERNSTEIN_MAX_UNMIRRORED_DEGREE_FLOAT64
 _MAX_SAFE_DEGREE_NO_MIRROR_FLOAT32 = _testing.BERNSTEIN_MAX_UNMIRRORED_DEGREE_FLOAT32
-
-# This module calls parallel=True Numba kernels (the fused Bezier ones) directly (bypassing the
-# public API) very early in the test session. Numba's default threading
-# layer cannot safely compile the same kernel concurrently from two threads,
-# so wait for pantr's background warmup thread to finish first — otherwise it
-# can race with these direct calls and crash the interpreter (see
-# `pantr/__init__.py`'s `_async_warmup` and `_numba_compat.wait_for_jit_warmup`).
-wait_for_jit_warmup()
 
 DEGREES = [2, 5, 10, 20, 30, 64]
 

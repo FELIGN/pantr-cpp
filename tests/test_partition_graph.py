@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import importlib.util
 
-import numba as nb
 import numpy as np
 import numpy.typing as npt
 import pytest
@@ -256,7 +255,7 @@ def test_is_deterministic() -> None:
 
 def test_is_independent_of_the_thread_count() -> None:
     # Nothing in the partitioner runs in parallel; one thread and several give the same owners.
-    many = min(8, nb.config.NUMBA_NUM_THREADS, ext.max_threads())
+    many = min(8, ext.max_threads())
     if many < 2:
         pytest.skip("a single thread is available, so there is no parallel run to compare")
     for graph in (coupling_graph(create_uniform_space([2, 2], [30, 25])), _grid_graph((32, 27))):

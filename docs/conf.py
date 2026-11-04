@@ -19,11 +19,6 @@ from typing import Final
 import pyvista
 from pyvista.plotting.utilities.sphinx_gallery import DynamicScraper
 
-# Disable Numba JIT during documentation build. This avoids issues with
-# JIT caching and potential concurrent-compilation crashes while Sphinx
-# imports the package.
-os.environ["NUMBA_DISABLE_JIT"] = "1"
-
 PROJECT_ROOT: Final[Path] = Path(__file__).resolve().parent.parent
 SRC_PATH: Final[Path] = PROJECT_ROOT / "src"
 

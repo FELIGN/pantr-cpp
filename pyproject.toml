@@ -38,13 +38,10 @@ classifiers = [
   "Topic :: Scientific/Engineering",
 ]
 # Always-on runtime dependencies. Optional features (MPI, METIS partitioning,
-# visualization) live in `[project.optional-dependencies]` and are opt-in. Numba and
-# threadpoolctl stay until the last stage of the C++ port removes the last kernel using them.
+# visualization) live in `[project.optional-dependencies]` and are opt-in.
 dependencies = [
   "numpy>=1.26,<3",
   "scipy>=1.15,<2",  # 1.15 added BarycentricInterpolator's `rng`, which Lagrange tabulation needs to be reproducible
-  "numba>=0.63,<0.66",  # 0.66.0 broke mypy's view of get_num_threads/config.NUMBA_NUM_THREADS
-  "threadpoolctl>=3.0",
 ]
 
 [project.optional-dependencies]

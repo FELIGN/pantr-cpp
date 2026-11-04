@@ -23,7 +23,6 @@ import sys
 from pathlib import Path
 from typing import NamedTuple
 
-import numba as nb
 import numpy as np
 import pytest
 
@@ -52,11 +51,10 @@ def _many_threads() -> int:
     """Pick a thread count above one for the parallel run.
 
     Returns:
-        int: Eight, capped at the most threads ``pantr.set_num_threads`` accepts and at the C++
+        int: Eight, capped at the most threads ``pantr.set_num_threads`` accepts, the thread
         pool's capacity.
     """
-    numba_cap: int = nb.config.NUMBA_NUM_THREADS
-    return min(8, numba_cap, ext.max_threads())
+    return min(8, int(ext.max_threads()))
 
 
 def _assert_same(label: str, left: NamedTuple, right: NamedTuple) -> None:

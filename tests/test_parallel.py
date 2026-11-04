@@ -37,12 +37,18 @@ class TestGetSetNumThreads:
             set_num_threads(-1)
 
     def test_set_exceeds_max_raises(self) -> None:
-        """set_num_threads beyond NUMBA_NUM_THREADS raises ValueError."""
-        import numba as nb  # noqa: PLC0415
+        """set_num_threads beyond the thread pool's capacity raises ValueError."""
+        from pantr._ext import ext  # noqa: PLC0415
 
-        max_threads: int = nb.config.NUMBA_NUM_THREADS
-        with pytest.raises(ValueError, match="NUMBA_NUM_THREADS"):
-            set_num_threads(max_threads + 1)
+        with pytest.raises(ValueError, match="thread pool's capacity"):
+            set_num_threads(ext.max_threads() + 1)
+
+    def test_set_at_max_is_accepted(self) -> None:
+        """The capacity itself is accepted: the bound is inclusive."""
+        from pantr._ext import ext  # noqa: PLC0415
+
+        set_num_threads(ext.max_threads())
+        assert get_num_threads() == ext.max_threads()
 
 
 class TestNumThreadsContextManager:
@@ -72,33 +78,10 @@ class TestNumThreadsContextManager:
             assert get_num_threads() == 1
         assert get_num_threads() == prev
 
-    def test_limit_blas_limits_and_restores(self) -> None:
-        """limit_blas=True limits BLAS threads in-block and restores on exit."""
-        from threadpoolctl import threadpool_info  # noqa: PLC0415
-
-        prev = get_num_threads()
-        with num_threads(1, limit_blas=True):
-            assert get_num_threads() == 1
-            pools = threadpool_info()
-            if not pools:
-                pytest.skip("no BLAS thread pool detected; threadpoolctl has nothing to limit")
-            for pool in pools:
-                assert pool["num_threads"] == 1
-        assert get_num_threads() == prev
-
-    def test_limit_blas_restores_on_exception(self) -> None:
-        """limit_blas=True restores BLAS threads even when an exception propagates."""
-        from threadpoolctl import threadpool_info  # noqa: PLC0415
-
-        pools_before = threadpool_info()
-        if not pools_before:
-            pytest.skip("no BLAS thread pool detected")
-        prev = get_num_threads()
-        with pytest.raises(RuntimeError), num_threads(1, limit_blas=True):
-            raise RuntimeError("crash inside blas context")
-        assert get_num_threads() == prev  # type: ignore[unreachable, unused-ignore]
-        for pool in threadpool_info():
-            assert pool["num_threads"] >= prev
+    def test_limit_blas_is_gone(self) -> None:
+        """``limit_blas`` was removed with threadpoolctl: the keyword is refused."""
+        with pytest.raises(TypeError, match="limit_blas"), num_threads(1, limit_blas=True):  # type: ignore[call-arg]
+            pass
 
 
 class TestPublicReExports:
@@ -118,7 +101,7 @@ class TestPublicReExports:
 
 
 class TestDrivesTheCppPool:
-    """``set_num_threads`` drives the C++ pool as well as Numba until Numba is removed (DR-19)."""
+    """``set_num_threads`` is the C++ pool's per-thread setting."""
 
     def test_setting_reaches_the_cpp_pool(self) -> None:
         """The calling thread's C++ setting follows, and bounds the threads a C++ loop uses."""
@@ -132,11 +115,11 @@ class TestDrivesTheCppPool:
         set_num_threads(1)
         assert ext._testing.count_threads_used(64, 200) == 1
 
-    def test_cpp_setting_is_capped_at_the_pool_capacity(self) -> None:
-        """Where Numba's maximum exceeds the C++ capacity, the C++ setting stops at the capacity.
+    def test_maximum_is_pantr_num_threads(self) -> None:
+        """``PANTR_NUM_THREADS`` sets the maximum; ``NUMBA_NUM_THREADS`` is not read.
 
-        A fresh process with ``PANTR_NUM_THREADS=2`` (the C++ capacity) and
-        ``NUMBA_NUM_THREADS=4`` (Numba's maximum), both read once at start.
+        A fresh process with ``PANTR_NUM_THREADS=2`` and ``NUMBA_NUM_THREADS=4`` (each read
+        once at start): the default and the maximum are 2, and 3 is refused.
         """
         import subprocess  # noqa: PLC0415
         import sys  # noqa: PLC0415
@@ -148,20 +131,39 @@ class TestDrivesTheCppPool:
         env["NUMBA_NUM_THREADS"] = "4"
         script = (
             "import pantr; from pantr._ext import ext\n"
-            "pantr.set_num_threads(4)\n"
-            "print(pantr.get_num_threads(), ext.get_num_threads(), ext.max_threads())\n"
+            "print(pantr.get_num_threads(), ext.max_threads())\n"
+            "try:\n"
+            "    pantr.set_num_threads(3)\n"
+            "except ValueError as e:\n"
+            "    print('refused', 'PANTR_NUM_THREADS' in str(e))\n"
         )
         result = subprocess.run(
             [sys.executable, "-c", script], capture_output=True, text=True, check=False, env=env
         )
         assert result.returncode == 0, result.stderr
-        assert result.stdout.split() == ["4", "2", "2"]
+        assert result.stdout.split() == ["2", "2", "refused", "True"]
 
-    def test_context_manager_restores_the_cpp_setting(self) -> None:
-        """``num_threads`` restores both pools on exit."""
+    def test_setting_is_per_thread(self) -> None:
+        """A setting made in one thread leaves another thread's at the capacity."""
+        import threading  # noqa: PLC0415
+
         from pantr._ext import ext  # noqa: PLC0415
 
         set_num_threads(1)
+        seen: list[int] = []
+        worker = threading.Thread(target=lambda: seen.append(get_num_threads()))
+        worker.start()
+        worker.join()
+        assert seen == [ext.max_threads()]
+        assert get_num_threads() == 1
+
+    def test_context_manager_restores_the_cpp_setting(self) -> None:
+        """``num_threads`` restores the C++ setting on exit."""
+        from pantr._ext import ext  # noqa: PLC0415
+
+        if ext.max_threads() < 2:
+            pytest.skip("needs a C++ pool capacity of at least 2")
+        set_num_threads(1)
         with num_threads(2):
-            assert ext.get_num_threads() == min(2, ext.max_threads())
+            assert ext.get_num_threads() == 2
         assert ext.get_num_threads() == 1

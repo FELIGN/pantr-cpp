@@ -76,7 +76,7 @@ def _flatten_along_axis(
 ) -> tuple[npt.NDArray[np.float32 | np.float64], tuple[int, ...]]:
     """Move ``axis`` to position 0 and flatten trailing dimensions.
 
-    Returns a C-contiguous 2-D view suitable for passing to Numba kernels
+    Returns a C-contiguous 2-D view suitable for passing to compiled kernels
     that operate along a single axis, together with the trailing shape
     needed to invert the operation via :func:`_unflatten_along_axis`.
 

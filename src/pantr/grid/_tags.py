@@ -10,7 +10,7 @@ facets.
 
 - :class:`CellTags` -- named ``(cell_ids, values)`` associations, with
   :meth:`CellTags.to_dense` to scatter a tag into a dense ``(num_cells,)`` array
-  when a downstream Numba kernel needs one.
+  when a downstream compiled kernel needs one.
 - :class:`FacetTags` -- named ``(keys, values)`` associations where each key is a
   ``(cell_id, local_facet_id)`` pair.
 
@@ -272,7 +272,7 @@ class CellTags:
     ) -> npt.NDArray[Any]:
         r"""Scatter tag ``name`` into a dense ``(num_cells,)`` array.
 
-        Untagged cells receive ``fill``. Useful when a downstream Numba kernel
+        Untagged cells receive ``fill``. Useful when a downstream compiled kernel
         wants a per-cell label array rather than the sparse representation.
 
         Args:
@@ -506,7 +506,7 @@ class FacetTags:
     ) -> npt.NDArray[Any]:
         r"""Scatter tag ``name`` into a dense ``(num_cells, facets_per_cell)`` array.
 
-        Untagged facets receive ``fill``. Useful when a downstream Numba kernel
+        Untagged facets receive ``fill``. Useful when a downstream compiled kernel
         wants a per-facet label array rather than the sparse representation.
 
         Args:

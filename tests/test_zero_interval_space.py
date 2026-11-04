@@ -48,12 +48,8 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
-from pantr._numba_compat import wait_for_jit_warmup
 from pantr._testing import knot_tolerance
 from pantr.bspline import Bspline, BsplineSpace, BsplineSpace1D
-
-wait_for_jit_warmup()
-
 
 TICKET_KNOTS = np.full(4, 5.0)
 """The exact knot vector from the ticket's reproduction."""

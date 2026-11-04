@@ -89,7 +89,7 @@ class DistributedSpace:
 
         Note:
             Construction engages the default MPI thread policy: unless threads were
-            explicitly configured, this process's Numba thread pool is limited to one
+            explicitly configured, this process's parallel kernels are limited to one
             thread per rank. See :func:`pantr.mpi.configure_threads`.
         """
         _ensure_default_thread_policy()

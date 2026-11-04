@@ -71,26 +71,22 @@ def pytest_sessionstart(session: pytest.Session) -> None:
 
 @pytest.fixture(autouse=True)
 def _isolate_thread_state() -> Iterator[None]:
-    """Keep the thread counts (Numba's and the C++ pool's) and the thread policy test-local.
+    """Keep the thread count and the thread policy test-local.
 
     MPI-engaging entry points (:mod:`pantr.mpi`) apply a sticky process-level default
-    of one Numba thread per rank; without isolation, a single such test would
+    of one thread per rank; without isolation, a single such test would
     serialize every later parallel-kernel test in the session.
 
     Yields:
         None
     """
-    import numba as nb  # noqa: PLC0415
-
     from pantr._ext import ext  # noqa: PLC0415
 
-    prev = int(nb.get_num_threads())
-    prev_cpp = ext.get_num_threads()
+    prev = ext.get_num_threads()
     yield
     from pantr.mpi import _thread_policy  # noqa: PLC0415
 
     try:
         _thread_policy._reset_policy_for_testing()
     finally:
-        nb.set_num_threads(prev)
-        ext.set_num_threads(prev_cpp)
+        ext.set_num_threads(prev)

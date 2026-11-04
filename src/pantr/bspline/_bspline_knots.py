@@ -3,7 +3,7 @@
 The knot classes, the domain test, the basis count, the spaces, the knot tolerance, the
 snapping and interval checks, the cardinal intervals, the extraction operators and the knot
 factories are C++ (``include/pantr/bspline/knots.hpp``, ``extraction.hpp`` and
-``knot_factories.hpp``); the Numba kernels this module held were deleted with their last
+``knot_factories.hpp``); the Python kernels this module held were deleted with their last
 callers (the coexistence rule of the C++ port).
 """
 

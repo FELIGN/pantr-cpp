@@ -38,7 +38,6 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
-from pantr._numba_compat import nb_jit
 from pantr._testing import bezier_identity_mask, lagrange_identity_mask, required_scratch_size
 from pantr.basis import LagrangeVariant
 from pantr.bspline import (
@@ -1529,8 +1528,7 @@ def test_struct_view_float32_reproduces_the_batch_apply() -> None:
     )
 
 
-@nb_jit(nopython=True)
-def _njit_read_view(  # pragma: no cover -- executed through Numba.
+def _read_view(  # pragma: no cover -- executed through Numba.
     view: ExtractionStructView,
 ) -> tuple[float, int, int, int]:
     """Read every field of a view: operator sum, index-map sum, identity count, int fields."""
@@ -1563,7 +1561,8 @@ def test_struct_view_is_accepted_by_njit_code(dtype: Any, target: str) -> None:
     """A user's ``@njit`` function takes the view as one argument and reads its arrays.
 
     This is the property the guide promises (pantr ships no Numba kernels to call): the oracle is
-    NumPy reading the same fields. The operator sums differ from NumPy's only by the order of
+    NumPy reading the same fields. Numba is not a pantr dependency, so the test runs where it is
+    installed and is skipped elsewhere. The operator sums differ from NumPy's only by the order of
     summation: both are bounded by ``(n - 1) u sum|x|`` in the float64 accumulator, so they
     agree within ``(n - 1) eps_64 sum|x|``.
     """
@@ -1573,7 +1572,8 @@ def test_struct_view_is_accepted_by_njit_code(dtype: Any, target: str) -> None:
     assert ext.dtype == dtype
     view = make_struct_view(ext)
 
-    ops_total, idx_total, n_identity, ints = _njit_read_view(view)
+    numba: Any = pytest.importorskip("numba")
+    ops_total, idx_total, n_identity, ints = numba.njit(_read_view)(view)
 
     # NumPy reads the extraction's own properties, which the view must carry unchanged.
     flat = np.concatenate([a.astype(np.float64).ravel() for a in ext.compact_ops_1d])

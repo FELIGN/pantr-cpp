@@ -24,16 +24,16 @@ Main exports:
 - :func:`create_distributed_space`: build a :class:`DistributedSpace` from a space.
 - :class:`DistributedFunction`: the per-rank handle to an MPI-distributed function.
 - :func:`create_distributed_function`: build a :class:`DistributedFunction` from a function.
-- :func:`configure_threads`: explicitly set this rank's Numba thread count.
+- :func:`configure_threads`: explicitly set this rank's thread count.
 - :func:`interpolate_bspline_distributed`: distributed B-spline collocation interpolation.
 - :func:`fit_bspline_distributed`: distributed B-spline fit from pre-evaluated values.
 - :func:`l2_project_bspline_distributed`: distributed B-spline L2 projection.
 - :func:`quasi_interpolate_bspline_distributed`: distributed B-spline quasi-interpolation.
 - :func:`quasi_interpolate_thb_spline_distributed`: distributed THB-spline quasi-interpolation.
 
-A process-level thread policy coordinates MPI with PaNTr's Numba parallelism: the
-first use of any MPI-engaging entry point limits this process to **one Numba thread
-per rank**, unless threads were explicitly configured (``NUMBA_NUM_THREADS``,
+A process-level thread policy coordinates MPI with PaNTr's thread pool: the
+first use of any MPI-engaging entry point limits this process to **one thread
+per rank**, unless threads were explicitly configured (``PANTR_NUM_THREADS``,
 ``pantr.set_num_threads``, ``pantr.num_threads``, or :func:`configure_threads`).
 Every new MPI entry point added to this package must call
 ``_ensure_default_thread_policy()`` from ``pantr.mpi._thread_policy`` before any

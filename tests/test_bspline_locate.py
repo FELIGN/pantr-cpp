@@ -2014,12 +2014,10 @@ class TestThreadCount:
         (oracle: the residual at the returned coordinates is within the acceptance threshold,
         the contract on a map that may fold) and points shifted far off it (oracle: not found).
         """
-        import numba as nb  # noqa: PLC0415 -- the cap NUMBA_NUM_THREADS puts on pantr.num_threads
-
         from pantr import num_threads  # noqa: PLC0415
         from pantr._ext import ext  # noqa: PLC0415
 
-        many = min(8, nb.config.NUMBA_NUM_THREADS, ext.max_threads())
+        many = min(8, ext.max_threads())
         if many < 2:
             pytest.skip("a single thread is available, so there is no parallel run to compare")
         spline = _warped_patch()

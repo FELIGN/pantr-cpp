@@ -2,34 +2,26 @@
 
 Provides a thin wrapper around the thread-pool configuration so that users can
 limit (or disable) the parallelism used by PaNTr without touching environment
-variables or Numba internals directly.
+variables directly.
 
-While the C++ port is under way, PaNTr's parallel kernels run on two pools:
-Numba's and the C++ pool of the compiled extension. One setting drives both
-(:func:`set_num_threads`); the value reported and validated is Numba's until
-its last kernel is removed. The C++ side receives the same count, capped at
-its pool's capacity (``pantr._ext.ext.max_threads()``: the CPUs this process
-may run on, lowered by ``PANTR_NUM_THREADS``). The two maxima agree by default,
-since Numba too sizes from the affinity where the OS reports one; they differ
-when ``PANTR_NUM_THREADS`` lowers the C++ capacity, or when ``NUMBA_NUM_THREADS``
-is set above the CPUs the process may use, and then the C++ pool still never
-runs more threads than its capacity.
+PaNTr's parallel kernels run on the thread pool of its compiled extension. The pool's
+capacity, and so the largest count :func:`set_num_threads` accepts, is the number of CPUs
+this process may run on (its affinity mask), lowered by the ``PANTR_NUM_THREADS``
+environment variable when that is set; both are read once per process. The setting is
+per thread: :func:`set_num_threads` changes the parallelism of the calling thread only,
+and every other thread keeps its own, the capacity by default.
 
 Typical usage::
 
     import pantr
 
-    # Query / set globally
+    # Query / set for the calling thread
     pantr.set_num_threads(4)
     print(pantr.get_num_threads())
 
     # Scoped override (restores previous value on exit)
     with pantr.num_threads(1):
         result = space.tabulate_basis(pts)  # runs serially
-
-    # Also throttle BLAS threads
-    with pantr.num_threads(4, limit_blas=True):
-        result = space.tabulate_basis(pts)
 """
 
 from __future__ import annotations
@@ -38,10 +30,7 @@ import contextlib
 import os
 import threading
 from collections.abc import Generator
-from typing import Any, Final
-
-import numba as nb
-from threadpoolctl import threadpool_limits
+from typing import Final
 
 from pantr._ext import ext
 
@@ -51,55 +40,53 @@ default in :mod:`pantr.mpi`) so they never override an explicit user decision.""
 
 
 def get_num_threads() -> int:
-    """Return the current number of threads used by parallel kernels.
+    """Return the number of threads the calling thread's parallel kernels may use.
 
     Returns:
-        int: Active Numba thread-pool size.
+        int: The calling thread's setting, at most the pool's capacity.
     """
-    return int(nb.get_num_threads())
+    return int(ext.get_num_threads())
 
 
 def _set_num_threads_raw(n: int) -> None:
-    """Set the Numba thread count without marking it as explicit configuration.
+    """Set the calling thread's thread count without marking it as explicit configuration.
 
     Internal hook for default policies (e.g. the per-rank default applied by
     :mod:`pantr.mpi`): performs the same validation as :func:`set_num_threads`
     but leaves the explicit-configuration flag untouched, so a policy-applied
-    value remains distinguishable from a user decision. Sets Numba's count and the
-    C++ pool's setting for the calling thread, the latter capped at the C++ pool's
-    capacity (see the module docstring).
+    value remains distinguishable from a user decision.
 
     Args:
-        n (int): Desired thread count.  Must be >= 1 and at most
-            ``numba.config.NUMBA_NUM_THREADS``.
+        n (int): Desired thread count. Must be >= 1 and at most the pool's capacity.
 
     Raises:
-        ValueError: If *n* is less than 1 or exceeds the maximum, or if the
+        ValueError: If *n* is less than 1 or exceeds the pool's capacity, or if the
             ``PANTR_NUM_THREADS`` environment variable is not a positive integer.
     """
-    max_threads: int = nb.config.NUMBA_NUM_THREADS
     if n < 1:
         raise ValueError(f"n must be >= 1, got {n}")
-    if n > max_threads:
-        raise ValueError(f"n must be <= NUMBA_NUM_THREADS ({max_threads}), got {n}")
-    cpp_capacity = ext.max_threads()
-    nb.set_num_threads(n)
-    ext.set_num_threads(min(n, cpp_capacity))
+    capacity = int(ext.max_threads())
+    if n > capacity:
+        raise ValueError(
+            f"n must be <= the thread pool's capacity ({capacity}: the CPUs this process may "
+            f"use, lowered by PANTR_NUM_THREADS), got {n}"
+        )
+    ext.set_num_threads(n)
 
 
 def set_num_threads(n: int) -> None:
-    """Set the number of threads used by parallel kernels.
+    """Set the number of threads the calling thread's parallel kernels may use.
 
     Calling this marks the thread count as explicitly configured: default
     policies (e.g. the per-rank MPI default in :mod:`pantr.mpi`) will never
     override it afterwards.
 
     Args:
-        n (int): Desired thread count.  Must be >= 1 and at most
-            ``numba.config.NUMBA_NUM_THREADS``.
+        n (int): Desired thread count. Must be >= 1 and at most the pool's capacity:
+            the CPUs this process may run on, lowered by ``PANTR_NUM_THREADS``.
 
     Raises:
-        ValueError: If *n* is less than 1 or exceeds the maximum, or if the
+        ValueError: If *n* is less than 1 or exceeds the pool's capacity, or if the
             ``PANTR_NUM_THREADS`` environment variable is not a positive integer.
     """
     _set_num_threads_raw(n)
@@ -110,31 +97,28 @@ def _threads_explicitly_configured() -> bool:
     """Report whether the user explicitly configured the thread count.
 
     ``True`` when :func:`set_num_threads` was called directly, when the
-    ``NUMBA_NUM_THREADS`` environment variable is set, or when the
-    :func:`num_threads` context manager was used.  The flag is set on both
-    entry *and* exit of :func:`num_threads` (exit restores the previous count
-    via :func:`set_num_threads`), so any use of that context manager permanently
-    marks the process as explicitly configured for the rest of its lifetime.
+    ``PANTR_NUM_THREADS`` environment variable is set to a non-empty value (an empty one
+    leaves the pool's capacity unchanged, as if unset), or when the :func:`num_threads`
+    context manager was used. The flag is set on both entry *and* exit of
+    :func:`num_threads` (exit restores the previous count via :func:`set_num_threads`),
+    so any use of that context manager permanently marks the process as explicitly
+    configured for the rest of its lifetime.
 
     Returns:
         bool: Whether explicit thread configuration is in effect.
     """
-    return _user_configured.is_set() or "NUMBA_NUM_THREADS" in os.environ
+    return _user_configured.is_set() or os.environ.get("PANTR_NUM_THREADS", "") != ""
 
 
 @contextlib.contextmanager
-def num_threads(n: int, *, limit_blas: bool = False) -> Generator[None, None, None]:
-    """Context manager that temporarily sets the parallel thread count.
+def num_threads(n: int) -> Generator[None, None, None]:
+    """Context manager that temporarily sets the calling thread's thread count.
 
-    On entry the Numba thread-pool size is changed to *n*; on exit the
-    previous value is restored.  When *limit_blas* is ``True``, BLAS/LAPACK
-    thread pools (OpenBLAS, MKL, ...) are also limited to *n* threads for the
-    duration of the block, via ``threadpoolctl``.
+    On entry the calling thread's setting is changed to *n*; on exit the previous
+    value is restored.
 
     Args:
         n (int): Desired thread count for the block.
-        limit_blas (bool): If ``True``, also limit BLAS/LAPACK threads
-            via ``threadpoolctl``.  Defaults to ``False``.
 
     Yields:
         None
@@ -154,17 +138,9 @@ def num_threads(n: int, *, limit_blas: bool = False) -> Generator[None, None, No
     """
     prev = get_num_threads()
     set_num_threads(n)
-
-    blas_ctx: Any = None
-    if limit_blas:
-        blas_ctx = threadpool_limits(limits=n)
-        blas_ctx.__enter__()
-
     try:
         yield
     finally:
-        if blas_ctx is not None:
-            blas_ctx.__exit__(None, None, None)
         set_num_threads(prev)
 
 

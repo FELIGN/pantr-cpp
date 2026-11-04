@@ -64,20 +64,3 @@ __all__ = [
     "tolerance",
     "transform",
 ]
-
-# The Numba JIT warmup ran on a background thread so that import did not block; what
-# remains of it is the completion event the barrier waits on.
-import threading
-from typing import TYPE_CHECKING
-
-if not TYPE_CHECKING:
-
-    def _async_warmup() -> None:
-        from ._numba_compat import _warmup_complete  # noqa: PLC0415
-
-        # Every kernel this warmed is ported to C++ (the B-spline knot classes and root
-        # finder were the last), so there is nothing to compile; the event is still set
-        # on a thread of its own, as before, until Numba and its barrier are retired.
-        _warmup_complete.set()
-
-    threading.Thread(target=_async_warmup, daemon=True).start()

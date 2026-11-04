@@ -33,7 +33,6 @@ from collections.abc import Callable
 from types import ModuleType
 from typing import Any
 
-import numba
 import numpy as np
 import numpy.typing as npt
 import pytest
@@ -41,6 +40,7 @@ import pytest
 import pantr
 import pantr.bezier._bezier as bezier_module
 import pantr.transform as transform_module
+from pantr._ext import ext
 from pantr.bezier import Bezier, create_from_bspline
 from pantr.bspline import Bspline, BsplineSpace, BsplineSpace1D
 from pantr.geometry import AABB
@@ -1087,7 +1087,7 @@ def test_absurd_dimension_raises_value_error(call: str) -> None:
     assert proc.stdout.strip() == "ValueError", detail
 
 
-_MAX_THREADS = int(numba.config.NUMBA_NUM_THREADS)
+_MAX_THREADS = int(ext.max_threads())
 _THREADS = [
     pytest.param(1, id="serial"),
     pytest.param(min(8, _MAX_THREADS), id="parallel"),

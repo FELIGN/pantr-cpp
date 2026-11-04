@@ -22,7 +22,6 @@ import copy
 import pickle
 from typing import Any
 
-import numba as nb
 import numpy as np
 import numpy.typing as npt
 import pytest
@@ -68,11 +67,10 @@ def _many_threads() -> int:
     """Pick a thread count above one for the parallel run.
 
     Returns:
-        int: Eight, capped at the most threads `pantr.num_threads` accepts (a CI runner may
-        allow four) and at the C++ pool's capacity.
+        int: Eight, capped at the most threads `pantr.num_threads` accepts, the thread pool's
+        capacity (a CI runner may allow four).
     """
-    numba_cap: int = nb.config.NUMBA_NUM_THREADS
-    return min(8, numba_cap, ext.max_threads())
+    return min(8, int(ext.max_threads()))
 
 
 def test_locate_many_is_independent_of_the_thread_count() -> None:

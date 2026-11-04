@@ -1,4 +1,4 @@
-.PHONY: help ext stubs stubs-check cpp test doctest coverage clean install ruff-lint ruff-format ruff-format-check type-check import-lint pre-pull-request docs
+.PHONY: help ext stubs stubs-check cpp test doctest coverage clean install ruff-lint ruff-format ruff-format-check type-check import-lint dependency-check pre-pull-request docs
 
 help:
 	@echo "Commands:"
@@ -16,6 +16,7 @@ help:
 	@echo "  ruff-format-check : check Ruff formatting without changing files."
 	@echo "  type-check: run mypy static type checker."
 	@echo "  import-lint: check import boundaries (core must not import pantr.mpi)."
+	@echo "  dependency-check: no numba or threadpoolctl; scipy only in its boundary modules."
 	@echo "  docs      : build the documentation."
 	@echo "  pre-pull-request: build the extension, check its stubs, run the C++ suite, then lint, format, format check, type check, import lint, tests, coverage, and docs."
 
@@ -71,7 +72,7 @@ cpp:
 	cmake --build --preset gcc-release
 	ctest --preset gcc-release
 
-# Run the test suite with Numba JIT enabled. PYTEST_WORKERS defaults to 8, not auto:
+# Run the test suite. PYTEST_WORKERS defaults to 8, not auto:
 # pytest-xdist sizes `auto` from os.cpu_count(), which ignores the process affinity mask,
 # so on a shared many-core machine it starts far more workers than the CPUs allowed. CI
 # runners are sized for their job, so CI passes PYTEST_WORKERS=auto explicitly.
@@ -85,30 +86,13 @@ test:
 # Run the docstring examples shipped in the package sources. Kept out of `test`
 # because `testpaths = tests` in pytest.ini deliberately excludes src/, and a plain
 # `pytest` run should stay the fast inner loop. No coverage and no xdist: the whole
-# set runs in under a second, and worker startup would dominate.
-#
-# NUMBA_DISABLE_JIT=1 is deliberate. With JIT off, `prange` is `range` and no Numba
-# threading layer is ever entered, so this run cannot race the background warmup thread
-# that pantr/__init__.py starts: the concurrent-compilation abort class is structurally
-# absent here, not merely improbable. It is also 28x faster (0.9s against 24s cold),
-# which matters now that `pre-pull-request` depends on it.
-#
-# Historical note, so nobody "restores" the JIT here: the JIT-enabled run this replaced
-# measured 0 aborts in 44 runs (24 cold-cache, 20 warm), but was safe only because
-# pytest happens to collect basis/_basis_1D.py early and its examples reach a
-# `wait_for_jit_warmup()` call site before any unguarded kernel. Reordering the modules
-# or dropping those examples would have removed that protection silently.
-#
-# What this gives up is the compiled path, which is `test`'s job over the whole suite.
-# This target checks that the documentation matches the code, and the values it asserts
-# go through np.allclose or .tolist(), neither of which depends on JIT-vs-interpreter
-# rounding.
+# set runs in about a second, and worker startup would dominate.
 doctest:
-	NUMBA_DISABLE_JIT=1 pytest --doctest-modules src/pantr
+	pytest --doctest-modules src/pantr
 
-# Generate an XML coverage report with Numba JIT disabled
+# Generate an XML coverage report
 coverage:
-	COVERAGE_FILE=/tmp/.coverage NUMBA_DISABLE_JIT=1 pytest -m "not slow" --cov=src/pantr --cov-report=term-missing --cov-report=xml
+	COVERAGE_FILE=/tmp/.coverage pytest -m "not slow" --cov=src/pantr --cov-report=term-missing --cov-report=xml
 
 # Remove build artifacts
 clean:
@@ -146,9 +130,14 @@ import-lint:
 	PYTHONPATH="$(CURDIR)/src" python -m tests._tree_env
 	PYTHONPATH="$(CURDIR)/src" lint-imports
 
+# Retired dependencies (numba, threadpoolctl) stay out of every manifest and module, and scipy is
+# imported only where a public function returns a scipy object (tools/check_dependencies.py).
+dependency-check:
+	python tools/check_dependencies.py
+
 # Build documentation
 docs:
 	$(MAKE) -C docs html SPHINXOPTS="$(SPHINXOPTS)"
 
 # Aggregate target to run all checks before creating a pull request
-pre-pull-request: ext stubs-check cpp ruff-lint ruff-format ruff-format-check type-check import-lint test doctest coverage docs
+pre-pull-request: ext stubs-check cpp ruff-lint ruff-format ruff-format-check type-check import-lint dependency-check test doctest coverage docs

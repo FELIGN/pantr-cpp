@@ -88,12 +88,10 @@ import sys
 from pathlib import Path
 import pantr
 from pantr._ext import ext
-from pantr._numba_compat import wait_for_jit_warmup
 
 def os_threads():
     return len(list(Path("/proc/self/task").iterdir()))
 
-wait_for_jit_warmup()  # the import's warmup thread must not exit mid-count
 twin = __import__(f"pantr.{sys.argv[1]}", fromlist=["_"])
 cap = ext.max_threads()
 ext.set_num_threads(cap)

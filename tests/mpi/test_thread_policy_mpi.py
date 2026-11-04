@@ -10,11 +10,11 @@ from __future__ import annotations
 
 import os
 
-import numba as nb
 import pytest
 
 import pantr
 import pantr.mpi
+from pantr._ext import ext
 from pantr.bspline import create_uniform_space
 from pantr.grid import partition_grid, tensor_product_grid
 from pantr.mpi import DistributedSpace
@@ -35,9 +35,9 @@ def _build_distributed_space(comm: object) -> DistributedSpace:
 
 
 def test_default_policy_one_thread_per_rank() -> None:
-    """Every rank ends up with exactly one Numba thread after construction."""
-    if "NUMBA_NUM_THREADS" in os.environ:
-        pytest.skip("explicit NUMBA_NUM_THREADS disables the default policy")
+    """Every rank ends up with exactly one thread after construction."""
+    if os.environ.get("PANTR_NUM_THREADS", ""):
+        pytest.skip("an explicit PANTR_NUM_THREADS disables the default policy")
     comm = MPI.COMM_WORLD
     _build_distributed_space(comm)
     counts = comm.allgather(pantr.get_num_threads())
@@ -46,7 +46,7 @@ def test_default_policy_one_thread_per_rank() -> None:
 
 def test_configure_threads_wins_across_ranks() -> None:
     """An explicit configure_threads value survives construction on every rank."""
-    n = min(2, int(nb.config.NUMBA_NUM_THREADS))
+    n = min(2, int(ext.max_threads()))
     if n < 2:
         pytest.skip("needs >= 2 available threads to observe a non-default count")
     comm = MPI.COMM_WORLD

@@ -13,7 +13,6 @@ Two kinds of tests live here:
 
 from __future__ import annotations
 
-import os
 from math import pi
 from typing import TYPE_CHECKING
 
@@ -43,9 +42,6 @@ from pantr.viz._vtk_ordering import vtk_ordering_hex, vtk_ordering_quad
 
 if TYPE_CHECKING:
     import numpy.typing as npt
-
-_JIT_DISABLED = os.environ.get("NUMBA_DISABLE_JIT", "0") == "1"
-
 
 # ---------------------------------------------------------------------------
 # Shared helpers

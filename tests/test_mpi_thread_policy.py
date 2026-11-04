@@ -1,7 +1,7 @@
 """Tests for the per-rank MPI thread policy (:mod:`pantr.mpi._thread_policy`).
 
 MPI is not available in the test environment: communicators are duck-typed fakes (the
-policy code never imports ``mpi4py``). The autouse conftest fixture restores the Numba
+policy code never imports ``mpi4py``). The autouse conftest fixture restores the
 thread count and resets the sticky policy flags after every test.
 """
 
@@ -10,17 +10,17 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
-import numba as nb
 import numpy as np
 import pytest
 
 import pantr
+from pantr._ext import ext
 from pantr._parallel import _threads_explicitly_configured
 from pantr.bspline import create_uniform_space
 from pantr.grid import partition_grid, tensor_product_grid
 from pantr.mpi import DistributedSpace, _thread_policy, configure_threads, from_dolfinx
 
-_MAX = int(nb.config.NUMBA_NUM_THREADS)
+_MAX = int(ext.max_threads())
 
 pytestmark = pytest.mark.skipif(
     _MAX < 2, reason="needs >= 2 available threads to observe throttling"
@@ -58,8 +58,8 @@ def _fake_mesh(n_cells: int) -> SimpleNamespace:
 
 def _unthrottled_and_unmarked(monkeypatch: pytest.MonkeyPatch) -> None:
     """Establish the no-explicit-configuration precondition at full width."""
-    monkeypatch.delenv("NUMBA_NUM_THREADS", raising=False)
-    nb.set_num_threads(_MAX)  # raw numba: does not mark explicit configuration
+    monkeypatch.delenv("PANTR_NUM_THREADS", raising=False)
+    ext.set_num_threads(_MAX)  # the raw C++ setting: does not mark explicit configuration
     assert not _threads_explicitly_configured()
 
 
@@ -69,14 +69,14 @@ def _unthrottled_and_unmarked(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_distributed_space_applies_default_policy(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Constructing a DistributedSpace limits the process to 1 Numba thread."""
+    """Constructing a DistributedSpace limits the process to 1 thread."""
     _unthrottled_and_unmarked(monkeypatch)
     _build_distributed_space()
     assert pantr.get_num_threads() == 1
 
 
 def test_from_dolfinx_applies_default_policy(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Calling from_dolfinx limits the process to 1 Numba thread."""
+    """Calling from_dolfinx limits the process to 1 thread."""
     _unthrottled_and_unmarked(monkeypatch)
     from_dolfinx(_fake_mesh(4), 4)
     assert pantr.get_num_threads() == 1
@@ -87,7 +87,7 @@ def test_policy_is_sticky(monkeypatch: pytest.MonkeyPatch) -> None:
     _unthrottled_and_unmarked(monkeypatch)
     _build_distributed_space()
     assert pantr.get_num_threads() == 1
-    nb.set_num_threads(_MAX)  # raise again without marking explicit configuration
+    ext.set_num_threads(_MAX)  # raise again without marking explicit configuration
     _build_distributed_space()
     assert pantr.get_num_threads() == _MAX
 
@@ -98,16 +98,32 @@ def test_policy_is_sticky(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_env_var_disables_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    """An explicit NUMBA_NUM_THREADS environment variable disables the default."""
+    """An explicit PANTR_NUM_THREADS environment variable disables the default."""
     _unthrottled_and_unmarked(monkeypatch)
-    monkeypatch.setenv("NUMBA_NUM_THREADS", str(_MAX))
+    monkeypatch.setenv("PANTR_NUM_THREADS", str(_MAX))
     _build_distributed_space()
     assert pantr.get_num_threads() == _MAX
 
 
+def test_empty_env_var_does_not_disable_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An empty PANTR_NUM_THREADS leaves the capacity unchanged, so it is no configuration."""
+    _unthrottled_and_unmarked(monkeypatch)
+    monkeypatch.setenv("PANTR_NUM_THREADS", "")
+    _build_distributed_space()
+    assert pantr.get_num_threads() == 1
+
+
+def test_numba_env_var_no_longer_disables_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """NUMBA_NUM_THREADS is not read: the default applies with it set."""
+    _unthrottled_and_unmarked(monkeypatch)
+    monkeypatch.setenv("NUMBA_NUM_THREADS", str(_MAX))
+    _build_distributed_space()
+    assert pantr.get_num_threads() == 1
+
+
 def test_set_num_threads_disables_default(monkeypatch: pytest.MonkeyPatch) -> None:
     """A prior pantr.set_num_threads call disables the default."""
-    monkeypatch.delenv("NUMBA_NUM_THREADS", raising=False)
+    monkeypatch.delenv("PANTR_NUM_THREADS", raising=False)
     pantr.set_num_threads(_MAX)
     _build_distributed_space()
     assert pantr.get_num_threads() == _MAX
@@ -132,7 +148,7 @@ def test_num_threads_active_context_prevents_throttling(monkeypatch: pytest.Monk
 
 def test_configure_threads_disables_default(monkeypatch: pytest.MonkeyPatch) -> None:
     """A prior configure_threads call disables the default."""
-    monkeypatch.delenv("NUMBA_NUM_THREADS", raising=False)
+    monkeypatch.delenv("PANTR_NUM_THREADS", raising=False)
     configure_threads(_MAX)
     _build_distributed_space()
     assert pantr.get_num_threads() == _MAX
@@ -155,7 +171,7 @@ def test_configure_threads_validates() -> None:
     """Out-of-range counts raise ValueError (delegated to set_num_threads)."""
     with pytest.raises(ValueError, match="n must be >= 1"):
         configure_threads(0)
-    with pytest.raises(ValueError, match="NUMBA_NUM_THREADS"):
+    with pytest.raises(ValueError, match="thread pool's capacity"):
         configure_threads(_MAX + 1)
 
 
@@ -183,7 +199,7 @@ def test_configure_threads_after_default_policy(monkeypatch: pytest.MonkeyPatch)
 
 def test_reset_clears_stickiness_and_explicit_flag(monkeypatch: pytest.MonkeyPatch) -> None:
     """_reset_policy_for_testing restores the pristine (default-applies) state."""
-    monkeypatch.delenv("NUMBA_NUM_THREADS", raising=False)
+    monkeypatch.delenv("PANTR_NUM_THREADS", raising=False)
     pantr.set_num_threads(_MAX)
     _build_distributed_space()
     assert pantr.get_num_threads() == _MAX  # explicit configuration won
