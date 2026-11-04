@@ -44,8 +44,13 @@
   sent from rank 0 (see under Changed). The previous release read only `rank` and `size`.
 - **`pantr.mpi.configure_threads` has no `limit_blas` argument**: passing it raises `TypeError`.
   It limited BLAS threads through `threadpoolctl`; the dense solves of the distributed algorithms
-  are compiled Eigen, which starts no thread of its own. `pantr.num_threads(..., limit_blas=...)`
-  is unchanged.
+  are compiled Eigen, which starts no thread of its own.
+- **`pantr.num_threads` has no `limit_blas` argument**: `pantr.num_threads(n, limit_blas=True)`
+  raises `TypeError`. It limited BLAS threads through `threadpoolctl`, which pantr no longer
+  depends on. pantr's dense solves are compiled Eigen, which starts no thread of its own, but some
+  calls still reach NumPy's BLAS (for example `THBSplineSpace.restriction_to`, through
+  `numpy.linalg.pinv`). To limit the BLAS threads of those and of NumPy or SciPy calls in your
+  code, use `threadpoolctl.threadpool_limits` directly.
 - **An `mpi4py` communicator of an MPI initialized below `MPI_THREAD_FUNNELED`** is refused with
   `RuntimeError` (`mpi4py` asks for `MPI_THREAD_MULTIPLE` by default). pantr calls MPI only from
   the thread that calls the distributed algorithm, outside its thread pool; at
@@ -202,8 +207,6 @@
 - `to_periodic` grades the seam in control-point units, from the control points' scale and
   dtype. The budget no longer depends on the knot vector's magnitude or on the parametric
   `tol`.
-- Every Layer 2 entry point over a `parallel=True` kernel now waits for the JIT warmup
-  thread before its first call, which avoids a process abort when a call races the warmup.
 - **Quadrature, tolerance, basis tabulation and change of basis run in pantr's C++
   library** (`pantr.quad`, `pantr.tolerance`, `pantr.basis`, `pantr.change_basis` are thin
   wrappers over it; names, signatures and defaults are unchanged, and messages too except as
@@ -225,14 +228,35 @@
   depend on the thread count. `pantr.set_num_threads` sets their parallelism.
 - **`PANTR_NUM_THREADS` caps pantr's C++ thread pool** (the previous release ignored it): unset
   or empty, the pool may use every CPU the process may run on, and a larger count is lowered to
-  that. It is read on the pool's first use, not at import, and `pantr.get_num_threads` does not
-  report it. A value that is not a positive decimal integer (`abc`, `0`, `-1`, `+2`, `" 2"`,
-  `2.5`), or one above 18446744073709551609 on a 64-bit platform, makes each call that uses the
-  pool raise `ValueError` "PANTR_NUM_THREADS must be a positive integer, got '...'": among them a
-  basis tabulation or a B-spline or Bézier evaluation large enough to run on the pool,
-  `pantr.set_num_threads` and `pantr.num_threads`, and the distributed algorithms of `pantr.mpi`,
-  from `create_distributed_space` on when `pantr.mpi` applies its default thread policy (no
-  `NUMBA_NUM_THREADS` and no thread count set).
+  that. It is read once, on the first call that needs the thread count (`get_num_threads`,
+  `set_num_threads`, `num_threads`, or a call that runs on the pool), not at import. A value that is not a positive decimal
+  integer (`abc`, `0`, `-1`, `+2`, `" 2"`, `2.5`), or one above 18446744073709551609 on a 64-bit
+  platform, makes each call that uses the pool raise `ValueError` "PANTR_NUM_THREADS must be a
+  positive integer, got '...'": among them a basis tabulation or a B-spline or Bézier evaluation
+  large enough to run on the pool, `pantr.get_num_threads`, `pantr.set_num_threads` and
+  `pantr.num_threads`.
+- **The thread count is the C++ pool's, and `NUMBA_NUM_THREADS` is no longer read.**
+  `pantr.get_num_threads`, `pantr.set_num_threads` and `pantr.num_threads` act on pantr's own
+  thread pool, still per thread. Their maximum, the default of every thread, is the pool's
+  capacity: the CPUs the process may run on, lowered by `PANTR_NUM_THREADS`. The previous
+  release's was Numba's, `NUMBA_NUM_THREADS` when set; so with `NUMBA_NUM_THREADS=2` on four
+  CPUs, `get_num_threads()` was 2 and `set_num_threads(3)` raised, and they are now 4 and
+  accepted, while `PANTR_NUM_THREADS=2` now makes them 2 and `ValueError`. A count above the CPUs
+  the process may run on, which `NUMBA_NUM_THREADS` allowed, is no longer possible. The
+  `ValueError` for a count above the maximum names the pool's capacity instead of
+  `NUMBA_NUM_THREADS`.
+- **`PANTR_NUM_THREADS`, not `NUMBA_NUM_THREADS`, disables `pantr.mpi`'s default thread
+  policy.** The policy, one thread per rank on the first `DistributedSpace` or `from_dolfinx`,
+  is skipped when the thread count was configured explicitly: by `pantr.set_num_threads`,
+  `pantr.num_threads` or `pantr.mpi.configure_threads`, as before, or now by a non-empty
+  `PANTR_NUM_THREADS` in the environment, which replaces `NUMBA_NUM_THREADS` there. With
+  `PANTR_NUM_THREADS=3` a rank keeps 3 threads where the previous release cut it to 1, and with
+  `NUMBA_NUM_THREADS=3` it is cut to 1 where it kept 3.
+- **numba and threadpoolctl are no longer dependencies**, and `import pantr` imports neither:
+  every Numba kernel is replaced by C++ compiled into pantr's extension, and its thread pool
+  replaces Numba's. Nor does the import start a background thread to compile kernels, and the
+  private `pantr._numba_compat` (with `wait_for_jit_warmup`) is gone. `NUMBA_DISABLE_JIT`,
+  `NUMBA_THREADING_LAYER` and the other Numba settings have no effect on pantr.
 - **`PointsLattice` stores coordinates of a dtype other than float32 and float64 as
   float64.** The lattice is a C++ value of one of those two types; an integer lattice used
   to keep its dtype, and no tabulation could use it.
@@ -840,10 +864,7 @@
   `_ZERO_TOL_SAFETY`, and `_bspline_derivative._derivative_rational`,
   `_derivative_rational_open`, `_refine_to_common_space_1d` and `_tile_scalar_bspline`, are gone
   with the Numba kernels and NumPy code they held, whose work is now done in C++.
-  What tests reach of the root finder and of the knot classes is in `pantr._testing`. The warmup
-  thread that `import pantr` starts compiled Numba kernels across the package (by this change only
-  the knot-class and root-finder ones were left); it now compiles nothing
-  and only sets the event that the remaining warmup barriers wait on.
+  What tests reach of the root finder and of the knot classes is in `pantr._testing`.
 - **B-spline fitting (`interpolate_bspline`, `fit_bspline`, `l2_project_bspline`,
   `quasi_interpolate_bspline`) runs in pantr's C++ library**, with the names, signatures, defaults
   and dtype rules it had: which dtype a solve runs in, which values are refused and with which

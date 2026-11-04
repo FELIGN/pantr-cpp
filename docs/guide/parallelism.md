@@ -48,12 +48,13 @@ The setting is **per thread**: `pantr.set_num_threads` changes the parallelism o
 from the calling thread only, and every other thread keeps its own, the maximum by default. The
 maximum, which `set_num_threads` cannot exceed, is the pool's capacity: the CPUs of the affinity
 mask, lowered by the `PANTR_NUM_THREADS` environment variable when it is set. Both are read once,
-the first time the pool is needed.
+on the first call that needs the thread count.
 
 ### BLAS / LAPACK coordination
 
-PaNTr's own dense linear algebra is compiled into the extension and starts no thread of its own.
-NumPy and SciPy operations in your code (matrix multiplies, solves, etc.) still use their own
+PaNTr's dense solves are compiled into the extension and start no thread of their own, though a
+few calls still reach NumPy's BLAS (for example `THBSplineSpace.restriction_to`, through
+`numpy.linalg.pinv`). Those, and NumPy and SciPy operations in your code, use their own
 thread pools (OpenBLAS, MKL, or Apple Accelerate). When PaNTr's threads *and* BLAS threads are
 both active, the total number of OS threads can exceed the number of cores, causing
 **over-subscription** and degraded performance. To limit BLAS threads around a block, use
