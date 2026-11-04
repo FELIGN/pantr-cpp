@@ -1043,8 +1043,7 @@ def test_unique_knots_are_knots_of_the_space() -> None:
     # did the same grouping and deliberately did not make this mistake: it wrote back
     # `np.mean(self._knots[mask])`, with a comment about the care being taken. Two
     # implementations of one idea, disagreeing. The space now snaps and reports its classes
-    # from one C++ classification, so the two cannot diverge; this Numba helper remains for the
-    # unported modules until they move to C++ as well.
+    # from one C++ classification, so the two cannot diverge.
     #
     # `tol` was the space's absolute tolerance (`get_strict(float32) = 1e-7`), so the
     # grid was coarse compared with a 2.5e-7 spacing and 2.5 rounded to 2 while 7.5

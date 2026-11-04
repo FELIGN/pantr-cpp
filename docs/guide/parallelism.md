@@ -139,7 +139,7 @@ over-subscribes the pool.
 
 | Variable | Default | Effect |
 |---|---|---|
-| `PANTR_NUM_THREADS` | unset (the CPUs of the affinity mask) | Lowers the pool's capacity, the most threads `pantr.set_num_threads` accepts; never raises it above the CPUs the process may use. Set to a non-empty value, it also disables the default one-thread-per-rank policy of `pantr.mpi` (see {func}`pantr.mpi.configure_threads`). A value other than a positive integer makes the first parallel call raise `ValueError`. |
+| `PANTR_NUM_THREADS` | unset (the CPUs of the affinity mask) | Lowers the pool's capacity, the most threads `pantr.set_num_threads` accepts; never raises it above the CPUs the process may use. Set to a non-empty value, it also disables the default one-thread-per-rank policy of `pantr.mpi` (see {mod}`pantr.mpi`). A value other than a positive integer makes the first parallel call raise `ValueError`. |
 
 `NUMBA_NUM_THREADS`, `NUMBA_THREADING_LAYER` and `NUMBA_DISABLE_JIT` are not read: PaNTr no
 longer uses Numba.

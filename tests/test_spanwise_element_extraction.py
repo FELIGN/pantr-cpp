@@ -1215,7 +1215,7 @@ def test_compact_ops_1d_shape(target: str, dtype: npt.DTypeLike) -> None:
         zip(ext.compact_ops_1d, ext.is_identity_mask_1d, strict=True)
     ):
         n_non_id = int(np.sum(~mask))
-        # Always at least 1 row (safe Numba indexing invariant)
+        # Always at least 1 row, so a consumer's kernel can index row 0 unconditionally
         assert compact_ops.shape[0] >= 1, f"dir {k}: compact_ops has 0 rows"
         if n_non_id > 0:
             assert compact_ops.shape[0] == n_non_id, (
@@ -1429,7 +1429,7 @@ def test_struct_view_fields_match_extraction(space_factory: Any, target: str) ->
 @pytest.mark.parametrize("target", ["bezier", "lagrange", "cardinal"])
 @pytest.mark.parametrize("space_factory", [_space_1d, _space_2d, _space_3d])
 def test_struct_view_ints_are_python_ints(space_factory: Any, target: str) -> None:
-    """Scalar fields are plain ``int`` (not ``np.int*``), for clean Numba unboxing."""
+    """Scalar fields are plain ``int`` (not ``np.int*``), which a user's ``@njit`` code unboxes."""
     ext = SpanwiseElementExtraction(space_factory(), target)  # type: ignore[arg-type]
     view = make_struct_view(ext)
     assert type(view.dim) is int
