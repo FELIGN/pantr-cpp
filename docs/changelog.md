@@ -35,7 +35,8 @@
   wheel does not carry the third-party headers a CMake install of pantr bundles, so its package
   provides `find_package(pantr COMPONENTS mpi-capsule)` only and refuses `pantr::pantr` with a
   message saying so. This is what `pantr-mpi`'s source distribution builds against, so
-  `pip install --no-binary pantr-mpi pantr-mpi` builds it for a local MPI.
+  `pip install --no-binary pantr-mpi pantr-mpi` builds it for a local MPI, provided the `pantr`
+  the build finds is this release's wheel (see the distributed guide on build isolation).
 
 ### Rejected where it used to be accepted
 - **`create_distributed_space` and `create_distributed_function` with a duck-typed communicator
@@ -1098,7 +1099,8 @@
   (a square grid of cells, as in a uniform space with as many intervals in each direction), every
   vector of its eigenspace is a Fiedler vector and the two releases use different ones, so the
   parts differ and the cut weight can be larger or smaller; when the graph or the part is
-  symmetric under reversing the vertex order and its Fiedler vector is antisymmetric (a 1D space,
+  symmetric under reversing the vertex order (or under reflecting one direction of a
+  tensor-product grid) and its Fiedler vector is antisymmetric (a 1D space,
   or the first four of the six cells of a quadratic 1D space with a double knot after the second,
   inside a graph that is not symmetric), the vector's two largest entries (in absolute value) tie
   up to rounding, with opposite signs, so the sign chosen for it, and with it the order of the
@@ -1227,7 +1229,9 @@
   and call pattern change.** `from_dolfinx`'s inconsistent-gather message says `comm.size` where
   it said `mesh.comm.size`; it accepts a gather that returns a generator (the previous release
   raised `TypeError`), and a gather that returns `None`, a float `n_cells` such as `8.0` and an
-  `n_cells` too large to allocate raise the same exception types with other messages. In
+  `n_cells` too large to allocate (up to 2**63 - 1) raise the same exception types with other
+  messages; an `n_cells` of 2**63 or more raises `TypeError` where the previous release raised
+  `ValueError`. In
   `interpolate_bspline_distributed` and `fit_bspline_distributed`, value blocks that cover more
   grid points than there are raise the "do not tile" `ValueError`
   (the previous release raised NumPy's broadcasting error, unless every row past the end of the
@@ -1247,9 +1251,12 @@
   `ValueError` (the previous release kept the last duplicate, wrapped a negative index and raised
   NumPy's `IndexError` past the end), and their component-count mismatch message is "rank r sent
   k DOFs and c coefficients; expected n per DOF" (the previous release raised NumPy's reshape or
-  broadcasting error, except that the THB quasi-interpolant gave a 0-d coefficient entry's one
-  value to all of that rank's DOFs); DOF ids gathered as a `(k, 1)` array are accepted (the
-  previous release raised NumPy's broadcasting error). None of these arises with a correct
+  broadcasting error, except that the THB quasi-interpolant gave an entry that NumPy broadcasts
+  over the rank's DOFs, namely a 0-d array or one of shape `(1,)`, `(1, 1)`, `(1, c)` or `(c,)`,
+  to all of that rank's DOFs); DOF ids gathered as a `(k, 1)` array are accepted (the previous
+  release raised NumPy's broadcasting error), and the THB quasi-interpolant accepts a scalar
+  coefficient entry shaped `(k, 1)` and a c-component entry flattened to `(k·c,)`, as the
+  B-spline one already did (the previous release raised NumPy's broadcasting error). None of these arises with a correct
   communicator. `l2_project_bspline_distributed` calls `func` once per boundary trace for all
   components together, where the previous release called it once per trace and
   component; the values are the same. Its `comm.allreduce` payload is C-contiguous, where the
