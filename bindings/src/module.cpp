@@ -81,14 +81,9 @@ NB_MODULE(PANTR_EXT_MODULE_NAME, m) {
   pantr::bindings::register_grid(grid);
   nb::module_ mpi = m.def_submodule("mpi", "Distributed algorithms over a communicator (private).");
   pantr::bindings::register_mpi(mpi);
-  nb::module_ kernels = m.def_submodule(
-      "_kernels", "Ported kernels for Python callers not yet ported (private, interim).");
-  pantr::bindings::register_bezier_kernels(kernels);
-  pantr::bindings::register_bezier_approx_kernels(kernels);
-  pantr::bindings::register_bspline_kernels(kernels);
-  pantr::bindings::register_bspline_product_kernels(kernels);
   nb::module_ testing = m.def_submodule("_testing", "Probes for tests and benchmarks (private).");
   pantr::bindings::register_testing(testing);
+  pantr::bindings::register_bezier_testing(testing);
   pantr::bindings::register_roots_testing(testing);
   pantr::bindings::register_bezier_approx_testing(testing);
   pantr::bindings::register_bspline_testing(testing);

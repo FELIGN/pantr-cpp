@@ -20,12 +20,14 @@ module.
   (``_get_lagrange_points``), which the domain derivation rebuilds in exact arithmetic.
 - The Builtin root provider's internals (de Casteljau, sign predicates, hull clip, Newton polish,
   Yuksel's finder, Bezier clipping and the candidate merge), with the call conventions of the
-  Numba kernels they replaced (a root array and a count).
+  previous release's kernels they replaced (a root array and a count).
 - The degree-reduction operators and their process table, the exact elevation matrix, and the
   pieces of the rational round-trip measure (Gram norm, Gauss grid, projected sampling).
 - The root provider's raw state (``root_provider_state``, ``set_root_provider_state``), so a test
   can return it to "resolve on first use".
 - :func:`bernstein_interpolate`: values on the modified-Chebyshev grid to Bernstein coefficients.
+- The Bernstein product of two raw coefficient arrays (:func:`bernstein_product_coefficients`
+  and its tensor form), the formula behind ``Bezier.multiply``.
 - The B-spline knot vector's scale and absolute tolerance (``knot_scale``, ``knot_tolerance``)
   and the snapping diagnosis (``check_snapping_kept_an_interval``), which a space applies at
   construction and no public function exposes on their own.
@@ -157,7 +159,7 @@ ROOTS_CLIP_MAX_DEPTH: Final[int] = _t.ROOTS_CLIP_MAX_DEPTH
 """Depth at which Bezier clipping gives an interval up (and reports a gap)."""
 
 # -- degree reduction --
-interpolating_reduction_operator = ext._kernels.interpolating_reduction_operator
+interpolating_reduction_operator = _t.interpolating_reduction_operator
 l2_reduction_operator = _t.l2_reduction_operator
 elevation_matrix = _t.elevation_matrix
 evaluate_blossom_1d = _t.evaluate_blossom_1d
@@ -166,8 +168,8 @@ blossom_span = _t.blossom_span
 blossom_span_f32 = _t.blossom_span_f32
 oslo_rows = _t.oslo_rows
 oslo_rows_f32 = _t.oslo_rows_f32
-oslo_matrix = ext._kernels.oslo_matrix
-oslo_matrix_f32 = ext._kernels.oslo_matrix_f32
+oslo_matrix = _t.oslo_matrix
+oslo_matrix_f32 = _t.oslo_matrix_f32
 knot_scale = _t.knot_scale
 knot_tolerance = _t.knot_tolerance
 bspline_max_insertions = _t.bspline_max_insertions
@@ -365,22 +367,9 @@ def unique_knots_and_multiplicity(
         knots' dtype) and their multiplicities.
     """
     k = np.ascontiguousarray(knots)
-    fn: Any = _by_dtype_kernel("unique_knots_and_multiplicity_1d", k.dtype)
+    fn: Any = _by_dtype("unique_knots_and_multiplicity_1d", k.dtype)
     values, mults = fn(k, int(degree), float(tol), bool(in_domain))
     return values, mults
-
-
-def _by_dtype_kernel(name: str, dtype: npt.DTypeLike) -> Any:  # noqa: ANN401
-    """Get an interim ``_kernels`` function by dtype (``_f32`` for ``float32``).
-
-    Args:
-        name (str): The ``float64`` function's name.
-        dtype (npt.DTypeLike): ``float32`` or ``float64``.
-
-    Returns:
-        Any: The function.
-    """
-    return getattr(ext._kernels, name + ("_f32" if np.dtype(dtype) == np.float32 else ""))
 
 
 def squared_l2_norm(coeffs: npt.NDArray[np.floating[Any]]) -> float:
@@ -447,6 +436,82 @@ def bernstein_interpolate(
     ]
     cp = fit_bezier(arr, nodes, tol=tol).control_points
     return np.asarray(cp[..., 0], dtype=arr.dtype)
+
+
+def bernstein_product_coefficients(
+    b_f: npt.NDArray[np.float32 | np.float64],
+    b_g: npt.NDArray[np.float32 | np.float64],
+) -> npt.NDArray[np.float32 | np.float64]:
+    r"""Compute the Bernstein coefficients of the product of two Bézier segments.
+
+    The formula behind :meth:`pantr.bezier.Bezier.multiply`, applied to raw arrays,
+    element-wise over the rank axis:
+
+    .. math::
+
+        d_k = \frac{1}{\binom{p+q}{k}} \sum_{i=\max(0,k-q)}^{\min(p,k)}
+              \binom{p}{i} \binom{q}{k-i}\, b_f[i] \cdot b_g[k-i]
+
+    Args:
+        b_f (npt.NDArray[np.float32 | np.float64]): Coefficients of the first segment,
+            shape ``(p+1, rank)``.
+        b_g (npt.NDArray[np.float32 | np.float64]): Coefficients of the second segment,
+            shape ``(q+1, rank)``, cast to ``b_f``'s dtype.
+
+    Returns:
+        npt.NDArray[np.float32 | np.float64]: The product's coefficients, shape
+        ``(p+q+1, rank)``, in ``b_f``'s dtype.
+
+    Raises:
+        ValueError: If the shapes are not ``(p+1, rank)`` and ``(q+1, rank)`` with one rank.
+    """
+    return _bernstein_product(b_f, b_g, "bernstein_product")
+
+
+def bernstein_product_coefficients_nd(
+    b_f: npt.NDArray[np.float32 | np.float64],
+    b_g: npt.NDArray[np.float32 | np.float64],
+) -> npt.NDArray[np.float32 | np.float64]:
+    """Compute the tensor-product Bernstein coefficients of the product of two Bézier patches.
+
+    The formula of :func:`bernstein_product_coefficients`, per direction, over every direction.
+
+    Args:
+        b_f (npt.NDArray[np.float32 | np.float64]): Coefficients of the first patch,
+            shape ``(*p+1, rank)``.
+        b_g (npt.NDArray[np.float32 | np.float64]): Coefficients of the second patch,
+            shape ``(*q+1, rank)`` with the same number of directions, cast to ``b_f``'s dtype.
+
+    Returns:
+        npt.NDArray[np.float32 | np.float64]: The product's coefficients, shape
+        ``(*(p+q+1), rank)``, in ``b_f``'s dtype.
+
+    Raises:
+        ValueError: If the operands differ in their number of directions or in rank.
+    """
+    return _bernstein_product(b_f, b_g, "bernstein_product_nd")
+
+
+def _bernstein_product(
+    b_f: npt.NDArray[np.float32 | np.float64],
+    b_g: npt.NDArray[np.float32 | np.float64],
+    name: str,
+) -> npt.NDArray[np.float32 | np.float64]:
+    """Call a compiled Bernstein product on C-contiguous operands of ``b_f``'s dtype.
+
+    Args:
+        b_f (npt.NDArray[np.float32 | np.float64]): The first operand.
+        b_g (npt.NDArray[np.float32 | np.float64]): The second operand.
+        name (str): ``"bernstein_product"`` or ``"bernstein_product_nd"``.
+
+    Returns:
+        npt.NDArray[np.float32 | np.float64]: The product's coefficients.
+    """
+    dtype = np.float32 if b_f.dtype == np.float32 else np.float64
+    result: npt.NDArray[np.float32 | np.float64] = _by_dtype(name, dtype)(
+        np.ascontiguousarray(b_f, dtype=dtype), np.ascontiguousarray(b_g, dtype=dtype)
+    )
+    return result
 
 
 BINCOEFF_MAX_N: Final[int] = _t.bincoeff_max_n

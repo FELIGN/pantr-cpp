@@ -1,6 +1,6 @@
 // _pantr.bspline: the product of two B-splines, the rational derivative built on it, and the
-// roots of a scalar B-spline; in _testing, the root finder's kernel and merge; in _kernels, the
-// knot classes of a raw knot vector. The product and the rational derivative reach Eigen's SVD
+// roots of a scalar B-spline; in _testing, the root finder's kernel and merge, and the knot
+// classes of a raw knot vector. The product and the rational derivative reach Eigen's SVD
 // (the product's change of representation); the roots share the translation unit as the third
 // operation of the same stage.
 #include "arrays.hpp"
@@ -100,11 +100,6 @@ void def_kernels(nb::module_& m, const std::string& suffix) {
 
 }  // namespace
 
-void register_bspline_product_kernels(nb::module_& m) {
-  def_kernels<double>(m, "");
-  def_kernels<float>(m, "_f32");
-}
-
 void register_bspline_product(nb::module_& m) {
   // The classes exist already (register_bspline_ops runs first); their methods are bound here.
   auto f64 = nb::borrow<nb::class_<bspline::Bspline<double>>>(m.attr("BsplineF64"));
@@ -119,6 +114,8 @@ void register_bspline_product(nb::module_& m) {
 }
 
 void register_bspline_product_testing(nb::module_& m) {
+  def_kernels<double>(m, "");
+  def_kernels<float>(m, "_f32");
   m.def(
       "bspline_max_insertions", [](int degree) { return bspline::max_insertions(degree); },
       nb::arg("degree"), "The Morken-Reimers insertion budget per zero at a degree.");

@@ -1,5 +1,6 @@
-// _pantr.bezier: the Bezier value type and its operations, for pantr.bezier's wrapper; and the
-// Bezier kernels the not-yet-ported Python callers reach through _pantr._kernels (DR-2). Arguments
+// _pantr.bezier: the Bezier value type and its operations, for pantr.bezier's wrapper; and, in
+// _pantr._testing, the Bernstein product of two coefficient arrays (the formula behind
+// Bezier.multiply, which no public function applies to raw arrays). Arguments
 // arrive normalised (C-contiguous, the exact dtype); the wrapper keeps the checks whose messages
 // spell a Python value or a NumPy dtype.
 #include "arrays.hpp"
@@ -208,13 +209,7 @@ void def_bezier(nb::module_& m, const char* name) {
 }
 
 template <class T>
-void def_bezier_kernels(nb::module_& m, const std::string& suffix) {
-  m.def(("bezier_elevate_degree_1d" + suffix).c_str(),
-        [](std::size_t degree, const Points<T>& ctrl, std::size_t increment) {
-          return to_numpy(bezier::elevate_degree_1d(degree, view_of_points(ctrl), increment));
-        },
-        nb::arg("degree"), nb::arg("ctrl").noconvert(), nb::arg("increment"),
-        "Elevate the degree of a (degree + 1, n_cols) Bernstein array.");
+void def_bezier_testing(nb::module_& m, const std::string& suffix) {
   m.def(("bernstein_product" + suffix).c_str(),
         [](const Any<T>& a, const Any<T>& b) {
           const std::vector<std::size_t> as = shape_of(a);
@@ -241,11 +236,11 @@ void register_bezier(nb::module_& m) {
   def_bezier<float>(m, "BezierF32");
 }
 
-void register_bezier_kernels(nb::module_& m) {
+void register_bezier_testing(nb::module_& m) {
   // Distinct names per dtype: overloads differing only in an unshaped array's dtype overlap for
   // mypy, and the caller knows the dtype.
-  def_bezier_kernels<double>(m, "");
-  def_bezier_kernels<float>(m, "_f32");
+  def_bezier_testing<double>(m, "");
+  def_bezier_testing<float>(m, "_f32");
 }
 
 }  // namespace pantr::bindings

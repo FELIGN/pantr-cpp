@@ -79,6 +79,30 @@ def change_basis_cache_size() -> int:
 def change_basis_cache_clear() -> None:
     """Empty the change-of-basis process tables (matrices handed out stay valid)."""
 
+def bernstein_product(
+    a: Annotated[NDArray[numpy.float64], dict(order="C", device="cpu", writable=False)],
+    b: Annotated[NDArray[numpy.float64], dict(order="C", device="cpu", writable=False)],
+) -> NDArray[numpy.float64]:
+    """Bernstein coefficients of the pointwise product of two (*degrees_plus_1, rank) arrays (the 1D formula for one direction, the tensor formula otherwise)."""
+
+def bernstein_product_nd(
+    a: Annotated[NDArray[numpy.float64], dict(order="C", device="cpu", writable=False)],
+    b: Annotated[NDArray[numpy.float64], dict(order="C", device="cpu", writable=False)],
+) -> NDArray[numpy.float64]:
+    """As bernstein_product, always by the tensor formula."""
+
+def bernstein_product_f32(
+    a: Annotated[NDArray[numpy.float32], dict(order="C", device="cpu", writable=False)],
+    b: Annotated[NDArray[numpy.float32], dict(order="C", device="cpu", writable=False)],
+) -> NDArray[numpy.float32]:
+    """Bernstein coefficients of the pointwise product of two (*degrees_plus_1, rank) arrays (the 1D formula for one direction, the tensor formula otherwise)."""
+
+def bernstein_product_nd_f32(
+    a: Annotated[NDArray[numpy.float32], dict(order="C", device="cpu", writable=False)],
+    b: Annotated[NDArray[numpy.float32], dict(order="C", device="cpu", writable=False)],
+) -> NDArray[numpy.float32]:
+    """As bernstein_product, always by the tensor formula."""
+
 def have_same_sign(a: float, b: float) -> bool: ...
 def have_opposite_signs(a: float, b: float) -> bool: ...
 def spans_zero(a: float, b: float) -> bool: ...
@@ -233,6 +257,11 @@ def dedup_roots(
     param_tol: float,
     geom_tol: float,
 ) -> NDArray[numpy.float64]: ...
+def interpolating_reduction_operator(
+    degree: int, decrement: int
+) -> Annotated[NDArray[numpy.float64], dict(writable=False)]:
+    """The endpoint-interpolating reduction operator (read-only, from the process table)."""
+
 def l2_reduction_operator(
     degree: int, decrement: int
 ) -> Annotated[NDArray[numpy.float64], dict(writable=False)]: ...
@@ -360,6 +389,28 @@ def blossom_span_f32(
     n: int,
 ) -> int:
     """The span the blossom's recurrence starts from, in [0, n]."""
+
+def oslo_matrix(
+    degree: int,
+    old_knots: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    new_knots: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+) -> NDArray[numpy.float64]:
+    """The dense Oslo refinement matrix (m + 1, n + 1)."""
+
+def oslo_matrix_f32(
+    degree: int,
+    old_knots: Annotated[
+        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    new_knots: Annotated[
+        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+) -> NDArray[numpy.float32]:
+    """The dense Oslo refinement matrix (m + 1, n + 1)."""
 
 bincoeff_max_n: int = ...
 
@@ -634,6 +685,26 @@ def lagrange_identity_mask_f32(
 
 def required_scratch_size(op: int, rows: Sequence[int], cols: Sequence[int]) -> int:
     """The scratch entries an operation on factors of these shapes needs per cell."""
+
+def unique_knots_and_multiplicity_1d(
+    knots: Annotated[
+        NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    degree: int,
+    tol: float,
+    in_domain: bool,
+) -> tuple[NDArray[numpy.float64], NDArray[numpy.int64]]:
+    """The knot classes of a raw knot vector at an explicit absolute tolerance, as `(knots, multiplicities)`."""
+
+def unique_knots_and_multiplicity_1d_f32(
+    knots: Annotated[
+        NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
+    ],
+    degree: int,
+    tol: float,
+    in_domain: bool,
+) -> tuple[NDArray[numpy.float32], NDArray[numpy.int64]]:
+    """The knot classes of a raw knot vector at an explicit absolute tolerance, as `(knots, multiplicities)`."""
 
 def bspline_max_insertions(degree: int) -> int:
     """The Morken-Reimers insertion budget per zero at a degree."""

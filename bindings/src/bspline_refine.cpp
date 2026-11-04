@@ -1,7 +1,6 @@
 // _pantr.bspline: knot insertion, conversion to open and periodic form, subdivision, restriction
-// and splitting of a Bspline; the two knot-vector functions BsplineSpace1D shares; the 1D kernels
-// the Python callers not yet ported reach (_kernels, which includes the Oslo matrix; _testing
-// re-exports it through pantr._testing); and the blossom and the banded Oslo rows (_testing).
+// and splitting of a Bspline; the two knot-vector functions BsplineSpace1D shares; and, in
+// _testing, the blossom and the Oslo matrix in its banded and dense forms.
 //
 // This translation unit reaches Eigen (the periodic conversion's QR), which the module's
 // vectorization settings already cover for every unit (EIGEN_DONT_VECTORIZE on MSVC's v4 rung).
@@ -198,14 +197,11 @@ void register_bspline_refine(nb::module_& m) {
   def_functions<float>(m, "_f32");
 }
 
-void register_bspline_kernels(nb::module_& m) {
-  def_kernels<double>(m, "");
-  def_kernels<float>(m, "_f32");
-}
-
 void register_bspline_blossom_testing(nb::module_& m) {
   def_blossom<double>(m, "");
   def_blossom<float>(m, "_f32");
+  def_kernels<double>(m, "");
+  def_kernels<float>(m, "_f32");
 }
 
 }  // namespace pantr::bindings

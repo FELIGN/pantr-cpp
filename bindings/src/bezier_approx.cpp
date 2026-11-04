@@ -1,6 +1,5 @@
 // _pantr.bezier (continued): degree reduction and minimisation, and fitting, for pantr.bezier's
-// wrapper; the reduction operator for the B-spline reduction not yet ported (_kernels, DR-2); and
-// the internals the tests reach through _pantr._testing. A translation unit of its own because it
+// wrapper; and the internals the tests reach through _pantr._testing. A translation unit of its own because it
 // reaches Eigen's SVD (bezier.cpp reaches no Eigen).
 #include "arrays.hpp"
 #include "interface.hpp"
@@ -112,7 +111,7 @@ void register_bezier_approx(nb::module_& m) {
   def_fit<float>(m, "_f32");
 }
 
-void register_bezier_approx_kernels(nb::module_& m) {
+void register_bezier_approx_testing(nb::module_& m) {
   m.def(
       "interpolating_reduction_operator",
       [](long long degree, long long decrement) {
@@ -121,9 +120,6 @@ void register_bezier_approx_kernels(nb::module_& m) {
       },
       nb::arg("degree"), nb::arg("decrement"),
       "The endpoint-interpolating reduction operator (read-only, from the process table).");
-}
-
-void register_bezier_approx_testing(nb::module_& m) {
   m.def(
       "l2_reduction_operator",
       [](long long degree, long long decrement) {

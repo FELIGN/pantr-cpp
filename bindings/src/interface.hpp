@@ -9,7 +9,7 @@ namespace pantr::bindings {
 /// Version of the module's interface. pantr/_ext.py refuses a module whose version differs from
 /// its EXPECTED_INTERFACE, so a stale build fails at import instead of as a phantom regression.
 /// Bump both together with any change to what the module exposes.
-inline constexpr int kInterfaceVersion = 18;
+inline constexpr int kInterfaceVersion = 19;
 
 /// Register the translation of pantr's C++ exceptions to Python exceptions.
 void register_errors(nanobind::module_& m);
@@ -38,16 +38,13 @@ void register_transform(nanobind::module_& m);
 /// Register the `bezier` submodule (the Bezier value type and its operations).
 void register_bezier(nanobind::module_& m);
 
-/// Register the Bezier kernels of the `_kernels` submodule (for Python callers not yet ported).
-void register_bezier_kernels(nanobind::module_& m);
+/// Register the Bernstein product of raw coefficient arrays in the `_testing` submodule.
+void register_bezier_testing(nanobind::module_& m);
 
 /// Register degree reduction and fitting in the `bezier` submodule.
 void register_bezier_approx(nanobind::module_& m);
 
-/// Register the reduction operator in the `_kernels` submodule (for the B-spline reduction).
-void register_bezier_approx_kernels(nanobind::module_& m);
-
-/// Register the reduction and fitting internals in the `_testing` submodule.
+/// Register the reduction operators and the fitting internals in the `_testing` submodule.
 void register_bezier_approx_testing(nanobind::module_& m);
 
 /// Register the `roots` submodule (the Builtin root provider).
@@ -103,23 +100,15 @@ void register_bspline_locate(nanobind::module_& m);
 
 void register_bspline_locate_testing(nanobind::module_& m);
 
-/// Register the Morken-Reimers kernel, its merge and its insertion budget in the `_testing`
-/// submodule.
+/// Register the Morken-Reimers kernel, its merge and its insertion budget, and the knot classes
+/// of a raw knot vector at an explicit tolerance, in the `_testing` submodule.
 void register_bspline_product_testing(nanobind::module_& m);
-
-/// Register the knot classes of a raw knot vector at an explicit tolerance in the `_kernels`
-/// submodule (for Python callers not yet ported).
-void register_bspline_product_kernels(nanobind::module_& m);
-
-/// Register the 1D refinement kernels in the `_kernels` submodule (for Python callers not yet
-/// ported).
-void register_bspline_kernels(nanobind::module_& m);
 
 /// Register the knot-removal tolerances, the binomial kernel and the 1D degree kernels in the
 /// `_testing` submodule.
 void register_bspline_modify_testing(nanobind::module_& m);
 
-/// Register the blossom in the `_testing` submodule.
+/// Register the blossom and the Oslo matrix (banded and dense) in the `_testing` submodule.
 void register_bspline_blossom_testing(nanobind::module_& m);
 
 /// Register the `grid` submodule (the grids, the BVH, the tag registries, the partition and the
