@@ -46,10 +46,13 @@ def test_default_policy_one_thread_per_rank() -> None:
 
 def test_configure_threads_wins_across_ranks() -> None:
     """An explicit configure_threads value survives construction on every rank."""
-    n = min(2, int(ext.max_threads()))
-    if n < 2:
-        pytest.skip("needs >= 2 available threads to observe a non-default count")
     comm = MPI.COMM_WORLD
+    # Each rank's capacity is its own affinity, which an MPI launcher's pinning can make differ
+    # between ranks; decided per rank, a skip on some ranks would leave the others waiting in the
+    # collective below.
+    n = min(2, int(comm.allreduce(int(ext.max_threads()), op=MPI.MIN)))
+    if n < 2:
+        pytest.skip("needs >= 2 available threads on every rank to observe a non-default count")
     pantr.mpi.configure_threads(n)
     _build_distributed_space(comm)
     counts = comm.allgather(pantr.get_num_threads())
