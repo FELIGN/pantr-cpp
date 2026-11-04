@@ -36,11 +36,11 @@ pytest                                   # tests (JIT enabled)
 Build the documentation the same way CI does:
 
 ```bash
-NUMBA_DISABLE_JIT=1 make docs SPHINXOPTS="-W --keep-going -j auto"
+make docs SPHINXOPTS="-W --keep-going -j auto"
 ```
 
 > Coverage is opt-in: a plain `pytest` run carries none. To run the coverage gate
-> locally: `NUMBA_DISABLE_JIT=1 pytest --cov=src/pantr --cov-report=xml`, which
+> locally: `pytest --cov=src/pantr --cov-report=xml`, which
 > applies the `coverage.toml` threshold of 85%.
 
 The optional MPI smoke tests under `tests/mpi/` are skipped unless
@@ -54,13 +54,11 @@ PANTR_RUN_MPI=1 mpiexec -n 2 python -m pytest tests/mpi/
 
 - **Types**: strict mypy; all public and private functions must be fully typed.
 - **Docstrings**: Google-style, enforced by Ruff's `pydocstyle` rules. Private
-  functions are documented too; Numba kernels carry a `Note:` stating that no
-  input validation is performed.
+  functions are documented too, and so is the C++ (Google style in `///` comments).
 - **Style**: Ruff, line length 100, target Python 3.12.
-- **Layering**: the library is organized in three strict layers — public API,
-  implementation helpers (all input validation), and Numba kernels (no
-  validation). Review the architecture section of the documentation before
-  adding code.
+- **Layering**: the public Python API is a thin wrapper over private bindings of
+  the C++ library, which validates its inputs once; see `design/python_wrappers.md`
+  before adding code.
 
 ## Commits and branches
 

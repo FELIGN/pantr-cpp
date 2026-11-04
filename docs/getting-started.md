@@ -2,12 +2,15 @@
 
 ## Installation
 
-PaNTr requires Python 3.11–3.14. The serial core depends only on NumPy, SciPy, Numba,
-and threadpoolctl:
+PaNTr requires Python 3.12 or later. Its algorithms are compiled C++, shipped as a compiled
+extension in the wheel, and the serial core depends only on NumPy and SciPy:
 
 ```bash
 pip install pantr
 ```
+
+Building from source needs a C++20 compiler and CMake 3.28 or later. To use PaNTr from C++
+rather than Python, see {doc}`/guide/cpp`.
 
 ### Optional features
 
@@ -19,7 +22,8 @@ else is affected.
 
 The extras below are a convenience that pulls in the backend for you, and installing the
 backend yourself is equivalent, except for `mpi`: it also installs `pantr-mpi`, pantr's own
-MPI glue, which an `mpi4py` communicator needs:
+MPI glue built for one MPI family, which an `mpi4py` communicator needs (see
+{doc}`/guide/distributed`):
 
 | Capability | Module | Backend | Install (extra *or* direct) |
 |---|---|---|---|

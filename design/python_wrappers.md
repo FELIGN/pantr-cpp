@@ -33,11 +33,10 @@ public API follow it. Architecture: `design/port_design.md` §3.1, §3.8 and §8
   by `pantr._testing`, as are the private Python helpers a test reaches (`_cached_*`, the degree
   domains, `_get_lagrange_points`). No shim keeps a retired private path alive; a test of a retired Numba
   detail (a serial twin, a dispatch threshold) is replaced by the property it protected.
-- **`_pantr._kernels` is the interim surface of the coexistence rule** (DR-2): a Python caller not
-  yet ported reaches a ported kernel through it, with the argument conventions of the Numba kernel
-  it replaces (any strides, output written in place), except that an output of another dtype
-  than the kernel's is refused rather than written through a converted copy. It shrinks as
-  callers are ported and is deleted with the last one.
+- **`_pantr._kernels` was the interim surface of the coexistence rule** (DR-2): a Python caller
+  not yet ported reached a ported kernel through it, with the argument conventions of the Numba
+  kernel it replaced. It was deleted when its last library caller was ported (S9); the kernels
+  only tests still reached moved into `_pantr._testing`.
 - **Typing:** the stubs are generated from the bindings (`make stubs`) and committed. A call whose
   dtype is only known at run time passes its array arguments untyped (`cast(Any, ...)` or an
   `Any`-typed module alias) rather than satisfying one overload per branch.

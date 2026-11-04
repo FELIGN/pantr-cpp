@@ -131,8 +131,8 @@ Two specializations reuse the same model:
 ## Library shape
 
 The serial core ({mod}`pantr.bspline`, {mod}`pantr.bezier`, {mod}`pantr.basis`,
-{mod}`pantr.cad`, {mod}`pantr.grid`, {mod}`pantr.quad`, …) depends only on NumPy, SciPy,
-and Numba. Two further modules ship with every install but are **dependency-gated** —
+{mod}`pantr.cad`, {mod}`pantr.grid`, {mod}`pantr.quad`, …) depends only on NumPy and SciPy
+(its kernels are compiled into PaNTr's extension). Two further modules ship with every install but are **dependency-gated** —
 they need a third-party backend and activate automatically once it is importable (until
 then, using them raises a clear error). They are never imported by the core:
 

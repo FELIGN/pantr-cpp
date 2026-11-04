@@ -80,7 +80,7 @@ for worked examples; this page is the exhaustive contract.
 
 ## Parallelism & visualization
 
-Thread-pool control for the Numba kernels (see {doc}`/guide/parallelism`):
+Thread-pool control for the compiled kernels (see {doc}`/guide/parallelism`):
 
 ```{eval-rst}
 .. autofunction:: pantr.get_num_threads

@@ -188,7 +188,8 @@ assembles the ``(n_out, n_in)`` Kronecker product for one element and
 ### Calling kernels from Numba
 
 The applies run in the compiled library, and PaNTr ships no Numba kernels to call from your
-own code. What it hands you for a kernel you write yourself are the operators: the compact
+own code (nor does it depend on Numba: install it yourself to write such kernels). What it
+hands you for a kernel you write yourself are the operators: the compact
 arrays, index maps and identity masks
 ({attr}`~pantr.bspline.SpanwiseElementExtraction.compact_ops_1d`,
 {attr}`~pantr.bspline.SpanwiseElementExtraction.idx_maps_1d`,

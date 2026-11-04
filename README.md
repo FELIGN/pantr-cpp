@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](https://github.com/FELIGN/pantr/blob/main/LICENSE)
 [![Documentation Status](https://readthedocs.org/projects/pantr/badge/?version=latest)](https://pantr.readthedocs.io/en/latest/?badge=latest)
 
-Polynomial and NURBS Toolkit (**PaNTr**) is a Python 3.12–3.14 library for geometric modeling and numerical analysis using [NumPy](https://numpy.org), [SciPy](https://scipy.org), and [Numba](https://numba.pydata.org).
+Polynomial and NURBS Toolkit (**PaNTr**) is a library for geometric modeling and numerical analysis: header-only C++20, with a Python 3.12–3.14 API built on [NumPy](https://numpy.org) and [SciPy](https://scipy.org).
 
 **Documentation:** [pantr.readthedocs.io](https://pantr.readthedocs.io)
 
@@ -26,8 +26,9 @@ Polynomial and NURBS Toolkit (**PaNTr**) is a Python 3.12–3.14 library for geo
 - **Quadrature and change of basis** — Gauss–Legendre and tensor-product
   rules, plus exact change of basis operators between Bernstein, Lagrange,
   monomial, and cardinal B-spline bases.
-- **Fast and typed** — Numba-JIT kernels parallelized over CPU cores, with
-  strict type hints across the public API.
+- **Fast and typed** — compiled C++ kernels parallelized over CPU cores on
+  PaNTr's own thread pool, with strict type hints across the public API, and the
+  same library usable from C++ through CMake (`find_package(pantr)`).
 - **Dependency-gated MPI and visualization** — `pantr.mpi` distributes spaces across
   ranks once [`mpi4py`](https://github.com/mpi4py/mpi4py) is installed, and `pantr.viz`
   renders exact higher-order geometry through [PyVista](https://docs.pyvista.org) /
@@ -40,8 +41,8 @@ Polynomial and NURBS Toolkit (**PaNTr**) is a Python 3.12–3.14 library for geo
 pip install pantr
 ```
 
-Requires Python 3.12–3.14. The serial core depends only on NumPy, SciPy,
-Numba, and [threadpoolctl](https://github.com/joblib/threadpoolctl).
+Requires Python 3.12–3.14. The serial core depends only on NumPy and SciPy;
+the wheel carries the compiled extension.
 
 To install the latest development version from source:
 
