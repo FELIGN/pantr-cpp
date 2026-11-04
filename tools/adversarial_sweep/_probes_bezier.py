@@ -1377,7 +1377,7 @@ def _compose_cases(profile: Profile) -> Iterator[Case]:
         if profile is Profile.FULL:
             # A different route to high combined degree: multi-D inner uses the
             # NumPy nD product path (`_bernstein_product_coefficients_nd`,
-            # `math.comb`-based), not the Numba 1D bincoeff kernel -- so this is
+            # `math.comb`-based), not the 1D bincoeff kernel -- so this is
             # a genuinely different mechanism, not the known cliff.
             outer_cp_nd = _random_control_points(1, 1, 30, dtype, offset=10100)
             inner_cp_nd = _random_control_points(1, 2, 3, dtype, offset=10101)
@@ -1507,7 +1507,7 @@ def _multiply_cases(profile: Profile) -> Iterator[Case]:
 
     Invariant 5: ``(f * g).evaluate(t) == f.evaluate(t) * g.evaluate(t)``.
     Multiply uses ``math.comb`` (arbitrary-precision Python ints), not the
-    Numba ``_bincoeff`` kernel, so it is not subject to the known int64 cliff;
+    ``_bincoeff`` kernel, so it is not subject to the known int64 cliff;
     degrees here are kept moderate to avoid unrelated float64 conditioning noise.
 
     Args:

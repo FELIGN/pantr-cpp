@@ -1,22 +1,22 @@
 """Adversarial parameter sweep over pantr's public entry points.
 
-The sweep exists because pantr's Layer-3 kernels run under Numba ``nopython=True``,
-where there is no bounds checking: an out-of-range write silently corrupts memory, a
-negative index wraps to the end of the array, and int64 arithmetic overflows
-untrapped. The test suite runs clean under ``NUMBA_BOUNDSCHECK=1``, so the gap is
-inputs the suite does not contain. This tool generates them.
+The sweep exists because pantr's kernels are compiled code with no bounds checking of
+their own: an out-of-range write silently corrupts memory and integer arithmetic
+overflows untrapped. The test suite runs clean, so the gap is inputs the suite does not
+contain. This tool generates them. What catches an overrun is the build it runs against:
+CI runs it on an extension built with AddressSanitizer, UndefinedBehaviorSanitizer and
+libstdc++'s assertions, where an overrun aborts the process; against an ordinary build
+it grades exceptions, non-finite results and declared invariants only.
 
 Main pieces:
 
 * :mod:`adversarial_sweep._axes` -- the parameter axes and the hostile input families.
-* :mod:`adversarial_sweep._core` -- the case model, the four-way verdict rule, the
-  runner, and :func:`adversarial_sweep._core.assert_boundscheck_active`, the canary
-  that proves the harness could have caught an overrun.
+* :mod:`adversarial_sweep._core` -- the case model, the four-way verdict rule and the
+  runner.
 * :mod:`adversarial_sweep._registry` -- group name to case generator.
 * ``adversarial_sweep._probes_*`` -- one module per area under test.
 
-Run it through ``tools/sweep.py``, which puts ``src`` and ``tools`` on the path and
-configures the bounds check::
+Run it through ``tools/sweep.py``, which puts ``src`` and ``tools`` on the path::
 
     conda run -n pantr python tools/sweep.py --profile smoke
     conda run -n pantr python tools/sweep.py --profile full --journal sweep.jsonl

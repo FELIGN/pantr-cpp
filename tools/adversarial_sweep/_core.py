@@ -15,16 +15,15 @@ outcome to a single :class:`Verdict`:
     almost always a nested Layer-2 validator firing, so it is reported as
     *suspected* rather than as a bug.
 ``BUG``
-    Everything else: an ``IndexError`` from Numba's bounds check, any other
-    exception type, a non-finite result from finite inputs, or a declared
+    Everything else: an exception type other than those, a non-finite result from
+    finite inputs, or a declared
     invariant that failed. Also *any* exception at all on a case flagged
     :attr:`Case.must_succeed`, which is how a documented exception type raised for
     an undocumented reason stops passing for a correct rejection.
 
-Only ``BUG`` makes the runner exit non-zero.
-
-The module also owns :func:`assert_boundscheck_active`, the canary that proves the
-harness *could* have caught an out-of-bounds access before any result is trusted.
+Only ``BUG`` makes the runner exit non-zero. An out-of-range access in a kernel is not
+an exception: it aborts the process where the extension is built with the sanitizers,
+and goes unnoticed where it is not.
 """
 
 from __future__ import annotations
@@ -65,17 +64,8 @@ class Verdict(enum.IntEnum):
     """Raised ``ValueError``/``TypeError`` that the ``Raises:`` section omits."""
 
     BUG = 3
-    """A finding: bounds-check hit, unexpected exception, or broken invariant."""
+    """A finding: unexpected exception, non-finite result, or broken invariant."""
 
-
-NUMBA_OOB_MESSAGE: Final = "index is out of bounds"
-"""Exact ``IndexError`` message Numba's bounds check raises (verified on numba 0.65.1).
-
-NumPy's own out-of-range ``IndexError`` messages always name the offending index and
-the axis size, so an exact match on this string separates a Numba kernel overrun --
-which is silent memory corruption when the bounds check is off -- from an ordinary
-Python-level indexing error.
-"""
 
 _RAISES_HEADER: Final = re.compile(r"^\s*Raises:\s*$")
 _RAISES_ENTRY: Final = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_.]*)\s*:")
@@ -169,7 +159,7 @@ class Outcome:
         index (int): Position of the case in the sweep, for ``--start-index``.
         case (Case): The case that produced this outcome.
         verdict (Verdict): Severity classification.
-        kind (str): Short machine-readable reason (e.g. ``"numba-oob"``).
+        kind (str): Short machine-readable reason (e.g. ``"must-succeed:IndexError"``).
         detail (str): One-line human explanation.
         warnings (tuple[str, ...]): Warning categories raised during the call.
     """
@@ -232,83 +222,6 @@ class Summary(NamedTuple):
             int: Sum of all per-verdict counts.
         """
         return sum(self.counts.values())
-
-
-# ---------------------------------------------------------------------------
-# Canary: prove the bounds check is live before trusting any clean result
-# ---------------------------------------------------------------------------
-
-
-class CanaryError(RuntimeError):
-    """Raised when the bounds-check canary fails to fire."""
-
-
-def assert_boundscheck_active() -> str:
-    """Verify that Numba's bounds check is live for a ``cache=True`` kernel.
-
-    ``NUMBA_BOUNDSCHECK=1`` is silently ignored when a stale on-disk cache entry
-    exists, because the cache key does not include the flag. Every pantr kernel is
-    ``cache=True``, so a sweep run against a warm cache returns a false clean. This
-    compiles two deliberately out-of-range ``cache=True`` kernels and requires both
-    to raise.
-
-    It also refuses to run with ``NUMBA_DISABLE_JIT=1``, and that check is not
-    ceremony: with the JIT off, ``njit`` is a no-op, the two probe kernels run as
-    plain Python, and NumPy raises ``IndexError`` on its own. The canary would pass
-    while nothing had been compiled at all -- the exact false clean it exists to
-    prevent. The repository's coverage run does set that variable, so the
-    configuration is reachable by accident.
-
-    Returns:
-        str: One-line description of the verified configuration.
-
-    Raises:
-        CanaryError: If the bounds check is off, if the JIT is disabled, or if either
-            deliberate out-of-bounds access fails to raise ``IndexError``.
-    """
-    import numba  # noqa: PLC0415  -- deferred so the env can be fixed up first
-
-    if not numba.config.BOUNDSCHECK:
-        raise CanaryError(
-            "numba.config.BOUNDSCHECK is off; run with NUMBA_BOUNDSCHECK=1 and a "
-            "fresh NUMBA_CACHE_DIR (see the module docstring for the invocation)."
-        )
-    if numba.config.DISABLE_JIT:
-        raise CanaryError(
-            "NUMBA_DISABLE_JIT is set, so no kernel is compiled and the bounds check "
-            "grades nothing; the canary below would pass on plain NumPy indexing. "
-            "Unset it: this sweep exists to exercise compiled kernels."
-        )
-
-    @numba.njit(cache=True)  # type: ignore[misc]
-    def _read_past_end(a: npt.NDArray[np.float64]) -> float:
-        """Read three elements past the end of ``a``."""
-        acc = 0.0
-        for i in range(a.size + 3):
-            acc += a[i]
-        return acc
-
-    @numba.njit(cache=True)  # type: ignore[misc]
-    def _read_before_start(a: npt.NDArray[np.float64]) -> float:
-        """Index ``a`` with a negative index that wraps past the front."""
-        return float(a[-a.size - 2])
-
-    probe = np.ones(4, dtype=np.float64)
-    for name, kernel in (("read-past-end", _read_past_end), ("negative-wrap", _read_before_start)):
-        try:
-            value = kernel(probe)
-        except IndexError:
-            continue
-        raise CanaryError(
-            f"canary {name!r} did not raise: returned {value!r}. The bounds check is "
-            "not active for cache=True kernels -- most likely a stale Numba cache. "
-            "A sweep that cannot detect an out-of-bounds access is worthless."
-        )
-
-    return (
-        f"canary OK: numba {numba.__version__}, BOUNDSCHECK="
-        f"{numba.config.BOUNDSCHECK}, JIT enabled, both deliberate overruns raised IndexError"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -514,9 +427,6 @@ def classify(case: Case, exc: Exception) -> tuple[Verdict, str, str]:
     name = type(exc).__name__
     message = str(exc).strip()
 
-    if isinstance(exc, IndexError) and message == NUMBA_OOB_MESSAGE:
-        return Verdict.BUG, "numba-oob", "Numba bounds check: out-of-range access in a kernel"
-
     if case.must_succeed:
         return (
             Verdict.BUG,
@@ -552,16 +462,14 @@ hypothetical: ``Bspline.reduce_degree(1)`` never returns on a degree-1 *periodic
 and stalled a 25952-case run indefinitely.
 
 The value is deliberately **not** load-bearing, because it cannot be: a budget that
-separates "slow" from "stuck" by magnitude alone has to be tuned to a machine, and the
-first call into any kernel pays LLVM codegen that is far larger than the work itself
-(16.6 s against 0.000 s here). :func:`_call_with_budget` does the separating instead, by
-retrying once; thirty seconds is then merely a generous allowance for one compile.
+separates "slow" from "stuck" by magnitude alone has to be tuned to a machine.
+:func:`_call_with_budget` retries once instead, so a one-time first-call cost is not
+reported as a hang.
 
-**Limitation, stated because it matters for the port:** the alarm is delivered at a Python
-bytecode boundary, so it interrupts a hang in a Layer-2 Python loop but **not** one inside
-a compiled ``nopython`` kernel, which does not return to the interpreter. A kernel that
-spins forever still hangs the sweep, and the progress line printed before each case is
-what identifies it.
+**Limitation:** the alarm is delivered at a Python bytecode boundary, so it interrupts a
+hang in a Python loop but **not** one inside the compiled extension, which does not return
+to the interpreter. A kernel that spins forever still hangs the sweep, and the progress
+line printed before each case is what identifies it.
 
 **The same limitation makes a slow *library* call indistinguishable from a hang, and a
 reader must not read a timeout as non-termination.** A long-running call into LAPACK or any
@@ -610,18 +518,11 @@ def _timeout_guard(seconds: float) -> AbstractContextManager[None]:
 def _call_with_budget(case: Case) -> Any:  # noqa: ANN401 -- returns whatever the entry point does
     """Run a case's thunk under the timeout, retrying once if the first attempt expires.
 
-    The retry is what makes the budget's absolute value stop mattering, and it is not an
-    optimization -- without it the harness reports a *hang* that is really a slow compile.
-    The first call into any Numba kernel pays LLVM codegen, and under
-    ``NUMBA_BOUNDSCHECK=1`` on a fresh cache that is expensive: measured at **16.6 s** for
-    the first ``tabulate_bernstein_1d`` call on the development machine against **0.000 s**
-    for the second, a ratio of 8.7e5. Whichever case happens to reach a kernel first is
-    charged the whole of it, so on a machine slower at codegen a perfectly healthy case
-    blows any fixed budget -- which is exactly what happened on CI, where a degree-0
-    Bernstein tabulation was reported as a 30 s hang.
-
-    Retrying separates the two by observation rather than by a constant tuned to one
-    machine: compilation is paid once, so the second attempt is fast, while a genuine
+    The retry was introduced for the previous release's JIT compilation, which charged the
+    first case to reach a kernel with its codegen; the compiled extension has no such cost,
+    so the retry is now a heuristic against any other one-time first-call cost. It
+    separates the two by observation rather than by a constant tuned to one machine: a
+    one-time cost is paid once, so the second attempt is fast, while a genuine
     non-termination expires again. The cost is that a real hang takes
     ``2 * CASE_TIMEOUT_SECONDS`` to report, which is the right trade -- hangs are rare and
     a false one is far more expensive than a slow one.
@@ -729,7 +630,7 @@ def run_sweep(  # noqa: PLR0913 -- five keyword-only knobs, each one CLI flag
     """Run a sequence of cases, journaling each one before it executes.
 
     Each case's identity is written to ``progress`` and flushed *before* the call,
-    so a hang or a hard crash (which an unchecked Numba kernel can produce) still
+    so a hang or a hard crash (which a sanitizer's abort or an unchecked kernel produces) still
     identifies the case that caused it.
 
     Failures while *building* a case are caught too, and reported through

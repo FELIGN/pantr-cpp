@@ -37,7 +37,7 @@ env:
 jobs:
   # --- 1 ------------------------------------------------------------------------------------------
   lint:
-    name: "1 lint (ruff, ruff format, clang-format)"
+    name: "1 lint (ruff, ruff format, clang-format, dependencies)"
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -51,6 +51,8 @@ jobs:
         run: ruff check .
       - name: Ruff formatting check
         run: ruff format --check .
+      - name: No numba or threadpoolctl; scipy only in its boundary modules
+        run: python tools/check_dependencies.py
       - name: clang-format check
         run: |
           git ls-files -- 'include/*.hpp' 'cpp/*.hpp' 'cpp/*.cpp' 'bindings/*.hpp' 'bindings/*.cpp' \
@@ -150,7 +152,7 @@ jobs:
           path: src/pantr
       - name: Import boundaries (import-linter, against this tree)
         run: make import-lint
-      - name: Tests (JIT on)
+      - name: Tests
         run: make test PYTEST_WORKERS=auto
       - name: Doctests
         run: make doctest
@@ -336,7 +338,7 @@ jobs:
 
   # --- 10 -----------------------------------------------------------------------------------------
   sweep:
-    name: "10 sweep (sanitized extension, Numba bounds checks, slow tests)"
+    name: "10 sweep (sanitized extension, slow tests)"
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
@@ -369,6 +371,13 @@ jobs:
           EXT_CMAKE_ARGS="-DCMAKE_BUILD_TYPE=RelWithDebInfo
           '-DCMAKE_CXX_FLAGS=-fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer -D_GLIBCXX_ASSERTIONS'
           -DCMAKE_MODULE_LINKER_FLAGS=-fsanitize=address,undefined"
+      # The sweep's verdict on an out-of-range access is the sanitizer's abort, so a module built
+      # without the instrumentation would pass clean while detecting nothing.
+      - name: The extension is instrumented
+        run: |
+          for so in src/pantr/_pantr*.so; do
+            nm -D --undefined-only "$so" | grep -q __asan_report || { echo "$so: no ASan"; exit 1; }
+          done
       - name: Adversarial sweep and slow tests, under the sanitizers
         env:
           ASAN_OPTIONS: detect_leaks=0

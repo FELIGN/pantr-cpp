@@ -293,7 +293,7 @@ def _first_basis_in_range(num_basis: int, degree: int, *, periodic: bool) -> Pre
 
     ``first_basis`` is what a caller scatters the local block with, so an index that
     leaves no room for the block means the caller writes out of bounds -- silently, in a
-    Numba kernel. Checking it here is cheaper than discovering it in the port.
+    compiled kernel. Checking it here is cheaper than discovering it in the port.
 
     The admissible range differs by knot family. On a clamped or unclamped space the
     block ``first_basis .. first_basis + degree`` must fit, so the index stops at

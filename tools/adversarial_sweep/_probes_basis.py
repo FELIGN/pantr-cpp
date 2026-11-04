@@ -1,7 +1,7 @@
 """Probes for :mod:`pantr.basis` and :mod:`pantr.change_basis`.
 
 The 1D tabulators (Bernstein, cardinal B-spline, Lagrange, Legendre) and their
-tensor-product ``nD`` wrappers are pure NumPy dispatchers over Numba kernels, so
+tensor-product ``nD`` wrappers are thin dispatchers over compiled kernels, so
 the yield here is contract violations -- a wrong shape, a broken partition of
 unity, a `Lagrange` basis that fails to reproduce the identity at its own
 nodes, a change-of-basis round trip that drifts beyond what the matrix's own
@@ -17,7 +17,7 @@ contract genuinely admits both, and the exceptions say why at the site. The deci
 easy for this group and worth stating once: the only precondition any tabulator states is
 ``degree >= 0`` (plus a valid ``out``), and **no entry point here documents a domain for
 its evaluation points at all** -- Layer 1 is silent, and the one kernel that made a domain
-claim, the retired Numba cardinal B-spline kernel's "Values are zero outside [0, 1]", was
+claim, the previous release's cardinal B-spline kernel's "Values are zero outside [0, 1]", was
 contradicted by the kernel itself, which extrapolated (the C++ kernel says it evaluates the
 polynomial pieces at every point). So an out-of-domain or ``NaN`` point is not an illegal
 input, it is an unspecified one: the call must still *return*, and what it returns is graded by the
@@ -91,8 +91,8 @@ _DOMAIN_ELIGIBLE_POINT_FAMILIES: Final = frozenset({"interior", "right_endpoint"
 def _capped(seq: tuple[Any, ...], n: int, profile: Profile) -> tuple[Any, ...]:
     """Cap a sequence to its first ``n`` entries for the smoke profile only.
 
-    The SMOKE profile is meant to stay small enough for a CI test to recompile
-    every kernel into a fresh Numba cache; several entry points in this group
+    The SMOKE profile is meant to stay small enough for a CI test to run under
+    the sanitizers; several entry points in this group
     multiply degree, dtype and point-family axes together, so smoke needs an
     extra cap beyond what those shared axes already provide on their own. FULL
     is returned unchanged.

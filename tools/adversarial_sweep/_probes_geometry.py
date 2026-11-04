@@ -9,7 +9,7 @@ is legal too, since the constructor documents its arguments as "array-like of
 finite-or-infinite floats" and rejects only ``NaN``.
 
 Both are pure NumPy, so the yield here is contract violations and translation
-sensitivity rather than Numba overruns: the bounding-box invariants that matter are
+sensitivity rather than overruns: the bounding-box invariants that matter are
 that a transformed box still encloses the images of every corner, and that
 ``union``/``intersect``/``pad`` keep their set relations at a domain translated to
 ``[1e6, 1e6 + 1]`` as well as on the unit box.
