@@ -65,6 +65,8 @@ reading one: `NUMBA_NUM_THREADS` for `main` (Numba's pool) and `PANTR_NUM_THREAD
 
 | `results/2026-11-03-s8-ac6-tip` | `compare.py --side main=<scratch>/main-11ab436/src --side branch=<this tree at 3696bea>/src --k 10 --threads 1 8 --cpus 0-7 --filter '^S8\.'`: every distributed case on one rank through a duck-typed communicator; `from_dolfinx.large` is flagged at both thread counts (the binding sent a copy of the cell ids), which 9181cf3 addressed |
 | `results/2026-11-03-s8-ac6-confirm` | the same command at 9181cf3: the confirming re-run; no case flagged. The shared machine was loaded by other users during both runs (`summary.md` and `summary.json` only) |
+| `results/2026-11-04-p9-ac6-final` | `compare.py --side main=<scratch>/main-11ab436/src --side branch=<this tree at 4b7c8fb>/src --k 10 --threads 1 8 --cpus 0-7`: every case of `cases.py`, after Numba and threadpoolctl were removed (the branch's last change to `src` and the extension is 20a7020); flags `S2.bezier_construct.tiny@t8` and the `S4.bspline_construct` cases at every size and both thread counts (`summary.md` and `summary.json` only) |
+| `results/2026-11-04-p9-ac6-confirm` | the confirming re-run, the same at 4b7c8fb with `--filter '^(S2\.bezier_construct\|S4\.bspline_construct)\.'`: `bezier_construct` is not flagged again; `bspline_construct` is, at `large` at both thread counts and at `medium` and `tiny` with one thread, the construction flag first recorded in `2026-10-31-s4b-ac6` (`summary.md` and `summary.json` only) |
 
 Each holds `summary.md` (the statistic and range per side and case, and the flags), `summary.json`
 (the same with every process median, the protocol, the commits and the machine) and `raw/` (each
