@@ -139,7 +139,7 @@ def violations(root: Path = ROOT) -> list[str]:
         for req in _requirements(pyproject):
             match = _NAME.match(req)
             if match and _normalized(match.group(1)) in retired:
-                found.append(f"{pyproject.relative_to(root)}: requires {req!r}")
+                found.append(f"{pyproject.relative_to(root).as_posix()}: requires {req!r}")
     sources = [*(root / "src").glob("**/*.py"), *(root / "src").glob("**/*.pyi")]
     for path in sorted(sources):
         rel = path.relative_to(root).as_posix()
