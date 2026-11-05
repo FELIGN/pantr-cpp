@@ -17,6 +17,20 @@ from pantr.basis import LagrangeVariant, tabulate_lagrange, tabulate_lagrange_1d
 from pantr.tolerance import get_default
 
 
+def _real_roots(roots: npt.ArrayLike) -> npt.NDArray[np.float64]:
+    """Return polynomial roots as float64, refusing any with a nonzero imaginary part.
+
+    NumPy 2.5 returns Legendre roots as complex128 even though every one is real; casting that
+    array to float would warn. A nonzero imaginary part would mean a wrong oracle, so it raises.
+    """
+    arr = np.asarray(roots)
+    if np.iscomplexobj(arr):
+        if np.any(arr.imag != 0.0):
+            raise AssertionError(f"complex Legendre roots: {arr}")
+        arr = arr.real
+    return np.asarray(arr, dtype=np.float64)
+
+
 def _lagrange_nodes(
     variant: LagrangeVariant, n_pts: int, dtype: npt.DTypeLike
 ) -> npt.NDArray[np.floating[Any]]:
@@ -30,11 +44,8 @@ def _lagrange_nodes(
     if variant == LagrangeVariant.GAUSS_LEGENDRE:
         coefs64 = np.zeros(n_pts + 1, dtype=np.float64)
         coefs64[-1] = 1.0
-        legroots_t = cast(
-            "Callable[[npt.NDArray[np.float64]], npt.NDArray[np.float64]]",
-            legendre.legroots,
-        )
-        nodes = legroots_t(coefs64)
+        legroots_t = cast("Callable[[npt.NDArray[np.float64]], npt.ArrayLike]", legendre.legroots)
+        nodes = _real_roots(legroots_t(coefs64))
     elif variant == LagrangeVariant.GAUSS_LOBATTO_LEGENDRE:
         if n_pts == 2:
             nodes = np.array([-1.0, 1.0], dtype=target_dtype)
@@ -42,7 +53,7 @@ def _lagrange_nodes(
             basis_t = cast("Callable[[int], Any]", legendre.Legendre.basis)
             P_basis = basis_t(n_pts - 1)
             P_prime = P_basis.deriv()
-            interior = cast(npt.NDArray[np.float64], P_prime.roots())
+            interior = _real_roots(P_prime.roots())
             nodes = np.concatenate((np.array([-1.0]), interior, np.array([1.0]))).astype(
                 target_dtype, copy=False
             )
