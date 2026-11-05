@@ -247,6 +247,9 @@ nitpick_ignore_regex = [
     ("py:class", r"np\.\w+"),
     ("py:class", r"npt\.\w+"),
     ("py:class", r"numpy\.\w+"),
+    # NumPy 2.5 declares NDArray with a `type` statement, so autodoc renders `npt.NDArray[...]`
+    # as the bare name `NDArray`, which no inventory resolves either.
+    ("py:class", r"NDArray"),
     # pantr.viz annotations reference pyvista via the local alias `pv`; pyvista
     # exposes no cross-referenceable inventory in this build.
     ("py:class", r"pv\.\w+"),
