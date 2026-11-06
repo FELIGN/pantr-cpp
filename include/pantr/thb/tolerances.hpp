@@ -76,10 +76,14 @@ inline constexpr double cell_membership_safety = 2.0;
 /// The `1 +` is the floor that keeps the threshold positive for a coarse function whose column is
 /// empty.
 ///
-/// A least-squares solve by the SVD (LAPACK's `gelsd`) is normwise backward stable (Golub and Van
-/// Loan, *Matrix Computations*, 4th ed., section 5.5; Higham, *Accuracy and Stability of Numerical
-/// Algorithms*, 2nd ed., chapter 20): the computed `x_hat` is the exact least-squares solution of
-/// `(A + dA) y ~= b + db` with `||dA|| <= c eps ||A||` and `||db|| <= c eps ||b||`.
+/// The local systems are solved by Householder QR with column pivoting where a rank certificate
+/// holds (`linalg::try_lstsq_full_rank_qr`), else by the minimum-norm solution of a one-sided
+/// Jacobi SVD (`linalg::lstsq_min_norm_jacobi`). Both are normwise backward stable: the computed
+/// `x_hat` is the exact least-squares solution of `(A + dA) y ~= b + db` with `||dA||` and `||db||`
+/// bounded by `c eps` times `||A||` and `||b||`. For the QR path, with the full column rank the
+/// certificate supplies, Higham, *Accuracy and Stability of Numerical Algorithms*, 2nd ed.,
+/// Theorem 20.3, states it; its constant is of the form `m gamma~_{m n}`, so `c` grows with the
+/// system's dimensions.
 ///
 /// The step from that to a residual bound is worth spelling out, because `x_hat` does not satisfy
 /// the perturbed system exactly: a least-squares solution leaves its own residual `r_pert`. Writing
@@ -91,14 +95,18 @@ inline constexpr double cell_membership_safety = 2.0;
 ///                     <= 2 (||dA|| max(||x||, ||x_hat||) + ||db||),
 ///
 /// which is `O(c eps (||A|| ||x|| + ||b||))`. The factor of two is that argument's, not a safety
-/// pad. Every factor on the right is of order one here: the entries of `A`, `x` and `b` are all
-/// refinement coefficients in `[0, 1]`. The residual is therefore a small multiple of `eps`, and
-/// `c` is the part no closed form is available for. The code grades `max_i |A x - b|`, an infinity
-/// norm, which is at most the two-norm the bound is stated in, so the bound covers it.
+/// pad. The entries of `A`, `x` and `b` are refinement coefficients in `[0, 1]`, but the norms are
+/// two-norms of vectors with many such entries, and `c` carries the dimensions: the bound is a
+/// small multiple of `eps` only for small systems. For the Jacobi fallback on a rank-deficient `A`
+/// the trial-vector step does not hold as written: the truncated-SVD solution is not the minimiser
+/// of the perturbed problem, and the bound gains a truncation term `s_{k+1}(A + dA) ||x||`, `k` the
+/// kept rank. The code grades `max_i |A x - b|`, an infinity norm, which is at most the two-norm
+/// the bound is stated in.
 ///
-/// The tier is `tolerance::get_conservative<double>()`, `4096 eps`, whose stated meaning is a long
-/// accumulation, which an SVD-based least-squares solve is. It stands in for the unknown `c`: an
-/// admitted heuristic factor, not a derived one.
+/// The tier is `tolerance::get_conservative<double>()`, `4096 eps`. No theorem gives it: for
+/// realistic `m` and `n`, Theorem 20.3's bound with `r = 0`, `2 m gamma~_{m n} ||b||_2`, is far
+/// above it. The factor is admitted, not derived; that it does not refuse genuine refinements is
+/// observed on the configurations the suite constructs, not proved.
 ///
 /// A `sqrt(M)` term with `M` the number of rows was considered, since `||b||_2` carries one, and
 /// rejected on measurement of the Python implementation's residuals, which did not grow with `M`;

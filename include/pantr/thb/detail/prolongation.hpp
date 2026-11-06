@@ -409,8 +409,9 @@ template <StorageFloat T>
 /// which answers only where a rank certificate holds). Where it declines, a rank-deficient system
 /// that only a tiling `HierarchicalGrid::from_blocks` accepted without validating can reach, the
 /// minimum-norm solution by `linalg::lstsq_min_norm_jacobi` is used. Both are backward stable,
-/// which the residual gate that follows assumes; the divide-and-conquer SVD of `lstsq_min_norm` is
-/// not on every local system.
+/// which the residual gate that follows assumes (see `prolongation_residual_tolerance`, whose
+/// factor is admitted rather than derived); the divide-and-conquer SVD of `lstsq_min_norm` is not
+/// on every local system.
 ///
 /// Args:
 ///     coarse (const THBSpaceRep<T>&): The coarse space.
