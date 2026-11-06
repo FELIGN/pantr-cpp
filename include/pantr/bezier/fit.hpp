@@ -43,6 +43,15 @@ namespace pantr::bezier {
 /// Default truncation tolerance of the fitting SVD, in units of the dtype's epsilon: a singular
 /// value below `100 * eps * sigma_max` is treated as zero. Kept from the previous release (an
 /// admitted factor: two digits above the backward error of the SVD itself, `O(eps * sigma_max)`).
+///
+/// It is the default of the fits' public `tol` (Bézier and B-spline), not the numerical rank of a
+/// least-squares solve in general: `linalg::lstsq_rcond`, `eps * max(m, n)` with no factor, is the
+/// cutoff of NumPy's `lstsq` that the internal changes of representation reproduce. Unifying the
+/// two would move every fit whose matrix has a singular value between them, a change of a public
+/// default this release does not make. The comparison at a tie also stays as each previous-release
+/// fit wrote it: a Bézier fit keeps `s >= tol * s_max` (`truncated_pinv`), a
+/// B-spline fit `s > tol * s_max` (`bspline::detail::truncated_svd_solve`); they differ only for a
+/// singular value exactly on the cutoff.
 inline constexpr double svd_tol_factor = 100.0;
 
 namespace detail {

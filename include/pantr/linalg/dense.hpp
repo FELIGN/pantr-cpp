@@ -74,6 +74,9 @@ template <StorageFloat T>
 
 /// The rank cutoff of `numpy.linalg.lstsq(rcond=None)` relative to the largest singular value.
 ///
+/// Not the fits' truncation default `bezier::svd_tol_factor`, which is a public parameter's default
+/// kept from the previous release (see there for why the two stay separate).
+///
 /// Args:
 ///     rows (Eigen::Index): Rows of the matrix.
 ///     cols (Eigen::Index): Columns.
