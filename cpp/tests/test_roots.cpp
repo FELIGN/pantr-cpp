@@ -1164,12 +1164,12 @@ TEST_CASE_TEMPLATE("roots newton cap: an exhausted hybrid returns its bracket an
   CHECK(std::fabs(i.x - 0.8) <= rho);
 }
 
-TEST_CASE_TEMPLATE("roots newton cap: a one-sided Newton sequence exhausts the cap, loudly", T,
-                   float, double) {
-  // p(t) = (t - 1/3)^3: Newton approaches the triple root from one side with ratio 2/3, so the far
-  // end of the bracket never moves and 64 iterations leave it wide; its midpoint is near 2/3,
-  // nowhere near the root. Bug caught: the cap returning that midpoint as the root, silently
-  // (the previous release returned about 0.667 for this polynomial).
+TEST_CASE("roots newton cap: a triple root exhausts the cap in float64, loudly") {
+  // p(t) = (t - 1/3)^3: Newton approaches the triple root with ratio 2/3, and the bisection
+  // safeguard halves the bracket only every second iteration, so 64 iterations do not reach the
+  // strict float64 tolerance (2^-49). Bug caught: the cap returning the bracket's midpoint as the
+  // root, silently (the previous release returned about 0.667 for this polynomial).
+  using T = double;
   const Truth tr = make_truth({{rat(1, 3), 3}});
   const std::vector<T> c = stored<T>(tr);
   const double strict = 4.0 * static_cast<double>(std::numeric_limits<T>::epsilon());
@@ -1183,6 +1183,23 @@ TEST_CASE_TEMPLATE("roots newton cap: a one-sided Newton sequence exhausts the c
   CHECK_THROWS_WITH_AS(static_cast<void>(pr::Builtin{}.find_monotone_roots_batch<T>(
                            pantr::mdview<const T, 2>(c.data(), 1, c.size()), strict)),
                        doctest::Contains("row 0: find_monotone_root"), pantr::state_error);
+}
+
+TEST_CASE("roots newton safeguard: the triple root converges in float32") {
+  // The same polynomial in float32, whose strict tolerance (2^-21) the bisection safeguard reaches
+  // within the cap. Bug caught: a hybrid without the safeguard, whose far end never moved (the
+  // previous release returned about 0.667 here too).
+  using T = float;
+  const Truth tr = make_truth({{rat(1, 3), 3}});
+  const std::vector<T> c = stored<T>(tr);
+  const Frame f{4.0 * static_cast<double>(std::numeric_limits<T>::epsilon()),
+                frame_for<T>(tr, c).value_tol};
+  const double rho = position_bound<T>(tr, c, tr.in_unit_interval[0], f);
+  const prd::Bracketed r = prd::solve_monotone<T>(std::span<const T>(c), f.param_tol);
+  CHECK(r.converged);
+  CHECK(std::fabs(r.x - 1.0 / 3.0) <= rho);
+  CHECK(std::fabs(pr::Builtin{}.find_monotone_root<T>(std::span<const T>(c), f.param_tol) -
+                  1.0 / 3.0) <= rho);
 }
 
 // ---- The monotone solver -----------------------------------------------------------------------

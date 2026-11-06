@@ -449,9 +449,9 @@
   `find_monotone_root`) run in pantr's C++ library**; `pantr.bezier` is now a thin wrapper
   over it, with the names, signatures and defaults it had. The reduction operators are
   assembled in exact rationals as before (now Boost.Multiprecision) and are the same bits.
-  `reduce_degree` and `find_monotone_root` reproduce the previous release's values bit for bit
-  on `float32` and `float64` (except where `find_monotone_root` now raises at its iteration cap,
-  under "Fixed"), and so does `find_roots` when the largest coefficient magnitude is 1 (otherwise its roots can
+  `reduce_degree` reproduces the previous release's values bit for bit on `float32` and
+  `float64`; `find_monotone_root` moves within `tol` of them, since its Newton/bisection solve
+  now has a bisection safeguard (under "Fixed"), and so does `find_roots` when the largest coefficient magnitude is 1 (otherwise its roots can
   move within the change of the zero floor, under "Changed"), except where
   Bezier clipping used to drop roots or report a multiple root more than once (under "Fixed") and
   in the depth-cap case below (measured over random, constructed and special-value inputs). `degree_reduction_error` sums its Gram contraction in another order and
@@ -1343,6 +1343,14 @@
   `[0, 1]` it did not resolve, with the `RuntimeWarning` it gives for Bézier clipping's depth cap.
   A `tol` below the spacing of doubles at the root reaches the cap too, and raises there, where
   the previous release's value was as close as doubles allow. Inherited from the previous release.
+- **`pantr.bezier.find_monotone_root` converges on `float32` simple roots** such as that of
+  `(t - 5/8)(t + 1)^3`, which reached the iteration cap above (and in the previous release gave a
+  value far from the root). Its solve now bisects whenever a step fails to halve the bracket,
+  takes the Newton step from the bracket's end with the smaller value, keeps each Newton point at
+  least `tol / 2` inside the bracket, and returns a point where the polynomial evaluates to an
+  exact zero; its roots move within `tol` of the previous release's elsewhere. A multiple root,
+  such as that of `(t - 1/3)^3` in `float64`, can still reach the cap and raise. `find_roots`
+  keeps the previous solve, so a `float32` stall there still warns.
 - **A knot vector whose first domain knot repeats past `knots[degree]`** (a non-clamped vector
   with `knots[degree] == knots[degree + 1]`, or a first knot repeated more than `degree + 1`
   times) gets correct Bézier, Lagrange and cardinal extraction operators, `to_beziers` pieces,
