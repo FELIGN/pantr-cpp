@@ -257,8 +257,8 @@ inline void check_coeffs(std::size_t n_coeff) {
 }
 
 inline void check_tol(double tol, const char* name) {
-  if (tol <= 0.0) {  // NaN passes, as in the previous release
-    throw value_error(std::string(name) + " must be positive, got " + py_repr(tol));
+  if (!(tol > 0.0 && std::isfinite(tol))) {  // NaN included
+    throw value_error(std::string(name) + " must be positive and finite, got " + py_repr(tol));
   }
 }
 
@@ -287,7 +287,7 @@ class Builtin {
   ///     RootSet<double>: Ascending computed roots; `gap_localized` when clipping gave up.
   ///
   /// Raises:
-  ///     value_error: `coeff` is empty, or a tolerance is not positive.
+  ///     value_error: `coeff` is empty, or a tolerance is not positive and finite.
   template <StorageFloat T>
   [[nodiscard]] RootSet<double> find_roots(std::span<const T> coeff, FindRootsOptions o) const {
     detail::check_coeffs(coeff.size());
@@ -306,7 +306,7 @@ class Builtin {
   ///     BatchRootSet: Roots, counts and completeness per row.
   ///
   /// Raises:
-  ///     value_error: No column, or a tolerance is not positive.
+  ///     value_error: No column, or a tolerance is not positive and finite.
   template <StorageFloat T>
   [[nodiscard]] BatchRootSet find_roots_batch(mdview<const T, 2> coeffs, FindRootsOptions o) const {
     detail::check_coeffs(coeffs.extent(1));
@@ -353,7 +353,7 @@ class Builtin {
   ///     double: The root, or NaN when the end values do not change sign.
   ///
   /// Raises:
-  ///     value_error: `coeff` is empty, or `param_tol` is not positive.
+  ///     value_error: `coeff` is empty, or `param_tol` is not positive and finite.
   template <StorageFloat T>
   [[nodiscard]] double find_monotone_root(std::span<const T> coeff, double param_tol) const {
     detail::check_coeffs(coeff.size());
@@ -371,7 +371,7 @@ class Builtin {
   ///     std::vector<double>: One root per row, NaN where there is none.
   ///
   /// Raises:
-  ///     value_error: No column, or `param_tol` is not positive.
+  ///     value_error: No column, or `param_tol` is not positive and finite.
   template <StorageFloat T>
   [[nodiscard]] std::vector<double> find_monotone_roots_batch(mdview<const T, 2> coeffs,
                                                               double param_tol) const {

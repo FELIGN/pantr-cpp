@@ -39,6 +39,10 @@
   the build finds is this release's wheel (see the distributed guide on build isolation).
 
 ### Rejected where it used to be accepted
+- **`pantr.bezier.find_roots` and `find_monotone_root` with `tol=inf` or `tol=nan`** raise
+  `ValueError` ("tol must be positive and finite"). With `tol=inf`, `find_roots`
+  returned no roots and `find_monotone_root` a value, without a warning; with NaN, `find_roots`
+  could report one root several times.
 - **`create_distributed_space` and `create_distributed_function` with a duck-typed communicator
   of more than one rank that has no `allgather`** raise `AttributeError`: the partition is now
   sent from rank 0 (see under Changed). The previous release read only `rank` and `size`.

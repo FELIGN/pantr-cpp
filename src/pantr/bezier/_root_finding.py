@@ -95,8 +95,8 @@ def find_roots(
         TypeError: If ``bezier`` is not a :class:`Bezier` instance (or sequence
             thereof).
         ValueError: If any Bezier has ``dim != 1`` or ``rank != 1``, or ``tol``
-            is not positive. In batch mode, also raised if degrees are not
-            uniform.
+            is not positive and finite. In batch mode, also raised if degrees
+            are not uniform.
 
     Warns:
         RuntimeWarning: If the root finder gave up on part of [0, 1] before narrowing it
@@ -177,8 +177,8 @@ def find_monotone_root(
         TypeError: If ``bezier`` is not a :class:`Bezier` instance (or sequence
             thereof).
         ValueError: If any Bezier has ``dim != 1`` or ``rank != 1``, or ``tol``
-            is not positive. In batch mode, also raised if degrees are not
-            uniform.
+            is not positive and finite. In batch mode, also raised if degrees
+            are not uniform.
     """
     from pantr.bezier._bezier import Bezier as BezierCls  # noqa: PLC0415
 

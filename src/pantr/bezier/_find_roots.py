@@ -15,6 +15,7 @@ exported from :mod:`pantr.bezier`.
 from __future__ import annotations
 
 import importlib
+import math
 import os
 import types
 import warnings
@@ -319,12 +320,12 @@ def _resolve_tol(dtype: np.dtype[Any], tol: float | None) -> float:
         float: The tolerance.
 
     Raises:
-        ValueError: If ``tol`` is not positive.
+        ValueError: If ``tol`` is not positive and finite (NaN included).
     """
     if tol is None:
         return get_strict(dtype)
-    if tol <= 0.0:
-        msg = f"tol must be positive, got {tol}"
+    if not (tol > 0.0 and math.isfinite(tol)):
+        msg = f"tol must be positive and finite, got {tol}"
         raise ValueError(msg)
     return tol
 

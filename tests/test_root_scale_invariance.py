@@ -21,7 +21,7 @@ import numpy as np
 import pytest
 from numpy import typing as npt
 
-from pantr.bezier import Bezier, find_roots
+from pantr.bezier import Bezier, find_monotone_root, find_roots
 
 _DEG6_ROOTS = [Fraction(k, 10) for k in range(1, 7)]
 """Six simple roots, 1/10 apart: the degree-6 case, which takes Bezier clipping and the merge."""
@@ -162,3 +162,15 @@ def test_explicit_tol_is_not_a_floor_on_coefficient_values() -> None:
     for got in (find_roots(Bezier(c), tol=1e-3), _batch_row(c, 1e-3)):
         assert got.shape == (2,)
         np.testing.assert_allclose(got, [0.3, 0.7], rtol=0.0, atol=1e-3)
+
+
+@pytest.mark.parametrize("tol", [np.inf, -np.inf, np.nan])
+def test_non_finite_tol_raises(tol: float) -> None:
+    """A non-finite ``tol`` raises ``ValueError`` (``inf`` used to return no roots, silently)."""
+    b = Bezier(_bernstein(_DEG6_ROOTS))
+    with pytest.raises(ValueError, match="tol must be positive and finite"):
+        find_roots(b, tol=tol)
+    with pytest.raises(ValueError, match="tol must be positive and finite"):
+        find_roots([b, b], tol=tol)
+    with pytest.raises(ValueError, match="tol must be positive and finite"):
+        find_monotone_root(Bezier([1.0, -1.0]), tol=tol)

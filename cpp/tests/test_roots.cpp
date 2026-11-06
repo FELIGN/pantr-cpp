@@ -1010,6 +1010,20 @@ TEST_CASE_TEMPLATE("roots validation: empty coefficients and non-positive tolera
                        doctest::Contains("value_tol must be positive"), pantr::value_error);
   CHECK_THROWS_WITH_AS(static_cast<void>(b.find_roots<T>(good, {1e-10, -1.0})),
                        doctest::Contains("value_tol must be positive"), pantr::value_error);
+  // A non-finite tolerance is refused too: an infinite one made every polynomial "zero" and
+  // returned no roots, a NaN one passed every comparison.
+  const double inf = std::numeric_limits<double>::infinity();
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  for (const double bad : {inf, -inf, nan}) {
+    CAPTURE(bad);
+    CHECK_THROWS_WITH_AS(static_cast<void>(b.find_roots<T>(good, {bad, 1e-10})),
+                         doctest::Contains("param_tol must be positive and finite"),
+                         pantr::value_error);
+    CHECK_THROWS_WITH_AS(static_cast<void>(b.find_roots<T>(good, {1e-10, bad})),
+                         doctest::Contains("value_tol must be positive and finite"),
+                         pantr::value_error);
+    CHECK_THROWS_AS(static_cast<void>(b.find_monotone_root<T>(good, bad)), pantr::value_error);
+  }
   // The monotone entry points and the batch ones validate alike.
   CHECK_THROWS_AS(static_cast<void>(b.find_monotone_root<T>(empty, 1e-10)), pantr::value_error);
   CHECK_THROWS_AS(static_cast<void>(b.find_monotone_root<T>(good, 0.0)), pantr::value_error);
