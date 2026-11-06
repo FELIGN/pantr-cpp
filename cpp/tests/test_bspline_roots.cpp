@@ -689,21 +689,20 @@ TEST_CASE_TEMPLATE("find_roots: refuses a rational spline without positive weigh
       pantr::value_error);
 }
 
-TEST_CASE_TEMPLATE("find_roots: refuses a tolerance that is not positive", T, double, float) {
+TEST_CASE_TEMPLATE("find_roots: refuses a tolerance that is not positive and finite", T, double,
+                   float) {
   const bs::Bspline<T> spline = make_scalar<T>(clamped(2, {0.5}), 2, {1.0, -1.0, 1.0, -1.0});
-  CHECK_THROWS_WITH_AS(static_cast<void>(bs::find_roots<T>(spline, -1.0)),
-                       "tol must be positive, got -1.0", pantr::value_error);
-  CHECK_THROWS_WITH_AS(static_cast<void>(bs::find_roots<T>(spline, 0.0)),
-                       "tol must be positive, got 0.0", pantr::value_error);
-  CHECK_THROWS_WITH_AS(static_cast<void>(bs::find_roots<T>(spline, -0.0)),
-                       "tol must be positive, got -0.0", pantr::value_error);
-  CHECK_THROWS_WITH_AS(static_cast<void>(bs::find_roots<T>(spline, -1e-05)),
-                       "tol must be positive, got -1e-05", pantr::value_error);
-  // Only `tol <= 0` raises, as in Python, so a NaN passes; it certifies nothing, since every
-  // comparison with it is false, and the threshold it makes is NaN.
-  const bs::BsplineRootSet nan_tol =
-      bs::find_roots<T>(spline, std::numeric_limits<double>::quiet_NaN());
-  CHECK(std::isnan(nan_tol.root_tol));
+  for (const auto& [tol, text] : std::vector<std::pair<double, std::string>>{
+           {-1.0, "-1.0"},
+           {0.0, "0.0"},
+           {-0.0, "-0.0"},
+           {-1e-05, "-1e-05"},
+           {std::numeric_limits<double>::quiet_NaN(), "nan"},
+           {std::numeric_limits<double>::infinity(), "inf"}}) {
+    CHECK_THROWS_WITH_AS(static_cast<void>(bs::find_roots<T>(spline, tol)),
+                         ("tol must be positive and finite, got " + text).c_str(),
+                         pantr::value_error);
+  }
   // A positive tolerance is used as given.
   CHECK_NOTHROW(static_cast<void>(bs::find_roots<T>(spline, 1e-8)));
 }
@@ -716,7 +715,7 @@ TEST_CASE_TEMPLATE("find_roots: refuses a spline with no isolated zero set", T, 
       "The spline is identically zero, so every point of its domain is a root", pantr::value_error);
   CHECK_THROWS_WITH_AS(
       static_cast<void>(bs::find_roots<T>(make_scalar<T>(knots, 2, {0.0, 0.0, 0.0, 0.0}), -2.0)),
-      "tol must be positive, got -2.0", pantr::value_error);
+      "tol must be positive and finite, got -2.0", pantr::value_error);
 
   // Vanishing on the first knot interval [0, 0.5]: the three coefficients active there are zero.
   CHECK_THROWS_WITH_AS(

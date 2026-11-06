@@ -27,6 +27,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
@@ -274,6 +275,35 @@ inline void check_monotone_converged(const Bracketed& r) {
   }
 }
 
+/// Refuse coefficients with a NaN or an infinite entry: no root, and no "no root", is an answer
+/// for them.
+///
+/// Args:
+///     coeff (std::span<const T>): Coefficients.
+///     row (std::optional<std::size_t>): The batch row they are, named in the message.
+///
+/// Raises:
+///     value_error: An entry is not finite.
+template <StorageFloat T>
+void check_finite_coeffs(std::span<const T> coeff, std::optional<std::size_t> row = std::nullopt) {
+  if (std::all_of(coeff.begin(), coeff.end(), [](T v) { return std::isfinite(v); })) {
+    return;
+  }
+  throw value_error((row ? "row " + std::to_string(*row) + ": " : std::string()) +
+                    "coefficients must be finite, got a NaN or an infinite entry");
+}
+
+/// `check_finite_coeffs` over each row of a batch.
+///
+/// Raises:
+///     value_error: An entry is not finite (the first such row is named).
+template <StorageFloat T>
+void check_finite_rows(mdview<const T, 2> coeffs) {
+  for (std::size_t i = 0; i < coeffs.extent(0); ++i) {
+    check_finite_coeffs<T>(std::span<const T>(&coeffs(i, 0), coeffs.extent(1)), i);
+  }
+}
+
 inline void check_tol(double tol, const char* name) {
   if (!(tol > 0.0 && std::isfinite(tol))) {  // NaN included
     throw value_error(std::string(name) + " must be positive and finite, got " + py_repr(tol));
@@ -306,12 +336,14 @@ class Builtin {
   ///     solve reached its iteration cap.
   ///
   /// Raises:
-  ///     value_error: `coeff` is empty, or a tolerance is not positive and finite.
+  ///     value_error: `coeff` is empty or has a NaN or an infinite entry, or a tolerance is not
+  ///         positive and finite.
   template <StorageFloat T>
   [[nodiscard]] RootSet<double> find_roots(std::span<const T> coeff, FindRootsOptions o) const {
     detail::check_coeffs(coeff.size());
     detail::check_tol(o.param_tol, "param_tol");
     detail::check_tol(o.value_tol, "value_tol");
+    detail::check_finite_coeffs<T>(coeff);
     return detail::dispatch_single<T>(coeff, o.param_tol, o.value_tol);
   }
 
@@ -325,12 +357,14 @@ class Builtin {
   ///     BatchRootSet: Roots, counts and completeness per row.
   ///
   /// Raises:
-  ///     value_error: No column, or a tolerance is not positive and finite.
+  ///     value_error: No column, a NaN or an infinite coefficient (the first such row is named), or
+  ///         a tolerance is not positive and finite.
   template <StorageFloat T>
   [[nodiscard]] BatchRootSet find_roots_batch(mdview<const T, 2> coeffs, FindRootsOptions o) const {
     detail::check_coeffs(coeffs.extent(1));
     detail::check_tol(o.param_tol, "param_tol");
     detail::check_tol(o.value_tol, "value_tol");
+    detail::check_finite_rows<T>(coeffs);
     const std::size_t n_polys = coeffs.extent(0);
     const std::size_t degree = coeffs.extent(1) - 1;
     const std::size_t width = (std::max)(degree, std::size_t{1});
@@ -372,12 +406,14 @@ class Builtin {
   ///     double: The root, or NaN when the end values do not change sign.
   ///
   /// Raises:
-  ///     value_error: `coeff` is empty, or `param_tol` is not positive and finite.
+  ///     value_error: `coeff` is empty or has a NaN or an infinite entry, or `param_tol` is not
+  ///         positive and finite.
   ///     state_error: The iteration reached its cap before the bracket narrowed to `param_tol`.
   template <StorageFloat T>
   [[nodiscard]] double find_monotone_root(std::span<const T> coeff, double param_tol) const {
     detail::check_coeffs(coeff.size());
     detail::check_tol(param_tol, "param_tol");
+    detail::check_finite_coeffs<T>(coeff);
     const detail::Bracketed r = detail::solve_monotone<T>(coeff, param_tol);
     detail::check_monotone_converged(r);
     return r.x;
@@ -393,7 +429,8 @@ class Builtin {
   ///     std::vector<double>: One root per row, NaN where there is none.
   ///
   /// Raises:
-  ///     value_error: No column, or `param_tol` is not positive and finite.
+  ///     value_error: No column, a NaN or an infinite coefficient (the first such row is named), or
+  ///         `param_tol` is not positive and finite.
   ///     state_error: A row's iteration reached its cap before its bracket narrowed to
   ///         `param_tol` (the first such row is named).
   template <StorageFloat T>
@@ -401,6 +438,7 @@ class Builtin {
                                                               double param_tol) const {
     detail::check_coeffs(coeffs.extent(1));
     detail::check_tol(param_tol, "param_tol");
+    detail::check_finite_rows<T>(coeffs);
     const std::size_t n_polys = coeffs.extent(0);
     const std::size_t n1 = coeffs.extent(1);
     std::vector<detail::Bracketed> solved(n_polys);

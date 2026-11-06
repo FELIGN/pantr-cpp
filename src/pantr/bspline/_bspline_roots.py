@@ -37,6 +37,7 @@ error to allow for.
 
 from __future__ import annotations
 
+import math
 import warnings
 from typing import TYPE_CHECKING, Any
 
@@ -67,7 +68,7 @@ def _find_roots_impl(
 
     Raises:
         TypeError: If ``bspline`` is not a :class:`~pantr.bspline.Bspline`.
-        ValueError: If ``tol`` is not positive, or if the spline is not scalar and
+        ValueError: If ``tol`` is not positive and finite, or if the spline is not scalar and
             univariate, has degree zero, has a non-positive weight, is identically
             zero or vanishes identically on a knot interval.
     """
@@ -78,8 +79,8 @@ def _find_roots_impl(
     if not isinstance(candidate, BsplineCls):
         msg = f"Expected a Bspline instance, got {type(candidate).__name__}"
         raise TypeError(msg)
-    if tol is not None and tol <= 0.0:
-        msg = f"tol must be positive, got {tol}"
+    if tol is not None and not (tol > 0.0 and math.isfinite(tol)):  # NaN included
+        msg = f"tol must be positive and finite, got {tol}"
         raise ValueError(msg)
 
     handle: Any = bspline._h
@@ -140,7 +141,7 @@ def find_roots(
         TypeError: If ``bspline`` is not a :class:`~pantr.bspline.Bspline`.
         ValueError: If ``bspline`` is not univariate and scalar valued, has
             degree zero, is rational with a non-positive weight, vanishes
-            identically on a knot interval, or if ``tol`` is not positive.
+            identically on a knot interval, or if ``tol`` is not positive and finite.
 
     Warns:
         RuntimeWarning: If a zero exhausted its insertion budget before the

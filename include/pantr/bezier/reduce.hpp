@@ -23,6 +23,7 @@
 #include "pantr/core/binomial.hpp"
 #include "pantr/core/errors.hpp"
 #include "pantr/core/exact_rational.hpp"
+#include "pantr/core/format.hpp"
 #include "pantr/core/mdspan.hpp"
 #include "pantr/core/ndarray.hpp"
 #include "pantr/core/scalar.hpp"
@@ -812,9 +813,13 @@ template <StorageFloat T>
 ///     Bezier<T>: The reduced Bézier, or a copy of `b` when nothing was reduced.
 ///
 /// Raises:
-///     value_error: A direction's degree exceeds `bincoeff_max_n`.
+///     value_error: A direction's degree exceeds `bincoeff_max_n`, or `tol` is NaN or infinite
+///         (infinity would accept every reduction, NaN none).
 template <StorageFloat T>
 [[nodiscard]] Bezier<T> minimize_degree(const Bezier<T>& b, std::optional<double> tol) {
+  if (tol.has_value() && !std::isfinite(*tol)) {
+    throw value_error("tol must be finite, got " + py_repr(*tol));
+  }
   for (std::size_t d = 0; d < b.dim(); ++d) {
     const auto p = static_cast<long long>(b.degree(d));
     if (p >= 1) {

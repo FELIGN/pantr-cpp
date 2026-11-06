@@ -56,6 +56,16 @@
   `float32` range** (for example knots on `[-2e38, 2e38]`) raise `OverflowError`: the two-scale
   matrix between the levels overflows. The previous release built the refined space, and its
   `prolongation_to` returned NaN entries without a warning.
+- **`pantr.bezier.find_roots` and `find_monotone_root`, single and batch, with a NaN or infinite
+  coefficient** raise `ValueError` ("coefficients must be finite", naming the first such row in
+  batch mode). The previous release answered: `find_monotone_root` of three NaN coefficients
+  returned about `1`, and `find_roots` returned no roots.
+- **`Bezier.minimize_degree` with `tol=inf` or `tol=nan`** raises `ValueError` ("tol must be
+  finite"); the previous release reduced any Bézier to degree 0 with either, without a warning. A
+  zero or negative `tol` still keeps the input.
+- **`pantr.bspline.find_roots` with `tol=nan` or `tol=inf`** raises `ValueError` ("tol must be
+  positive and finite"); the previous release returned no roots for NaN, and for `inf` raised that
+  the spline vanishes identically.
 - **`create_distributed_space` and `create_distributed_function` with a duck-typed communicator
   of more than one rank that has no `allgather`** raise `AttributeError`: the partition is now
   sent from rank 0 (see under Changed). The previous release read only `rank` and `size`.

@@ -1202,6 +1202,32 @@ TEST_CASE("roots newton safeguard: the triple root converges in float32") {
                   1.0 / 3.0) <= rho);
 }
 
+TEST_CASE_TEMPLATE("roots: a NaN or infinite coefficient is refused at every entry", T, float,
+                   double) {
+  // Bug caught: NaN coefficients answered (the previous release's monotone root was about 1, and
+  // find_roots reported no root).
+  const pr::Builtin b;
+  const pr::FindRootsOptions o{1e-6, 1e-6};
+  for (const double bad :
+       {std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::infinity()}) {
+    const std::vector<T> one{T(-1), static_cast<T>(bad), T(1)};
+    const std::vector<T> two{T(-1), T(0.5), T(1), T(-1), static_cast<T>(bad), T(1)};
+    const pantr::mdview<const T, 2> rows(two.data(), 2, 3);
+    CHECK_THROWS_WITH_AS(static_cast<void>(b.find_roots<T>(std::span<const T>(one), o)),
+                         "coefficients must be finite, got a NaN or an infinite entry",
+                         pantr::value_error);
+    CHECK_THROWS_WITH_AS(static_cast<void>(b.find_monotone_root<T>(std::span<const T>(one), 1e-6)),
+                         "coefficients must be finite, got a NaN or an infinite entry",
+                         pantr::value_error);
+    CHECK_THROWS_WITH_AS(static_cast<void>(b.find_roots_batch<T>(rows, o)),
+                         doctest::Contains("row 1: coefficients must be finite"),
+                         pantr::value_error);
+    CHECK_THROWS_WITH_AS(static_cast<void>(b.find_monotone_roots_batch<T>(rows, 1e-6)),
+                         doctest::Contains("row 1: coefficients must be finite"),
+                         pantr::value_error);
+  }
+}
+
 // ---- The monotone solver -----------------------------------------------------------------------
 
 TEST_CASE_TEMPLATE(

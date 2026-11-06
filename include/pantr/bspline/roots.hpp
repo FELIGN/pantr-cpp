@@ -1361,8 +1361,8 @@ inline std::vector<double> merge_certified(const Bspline<double>& numerator,
 ///     tol (std::optional<double>): Relative parametric tolerance. The iteration stops when the
 ///         spread of the last `degree` iterates falls to `tol * max(|t_a|, |t_{a+degree}|,
 ///         domain_length)`, so that it transforms correctly when the parametric domain is scaled
-///         or moved away from the origin. Must satisfy `!(tol <= 0)`, so a NaN passes (and
-///         certifies nothing). Defaults to `tolerance::get_strict<T>()`.
+///         or moved away from the origin. Must be positive and finite. Defaults to
+///         `tolerance::get_strict<T>()`.
 ///     max_insertions_override (std::optional<int>): Insertion budget per zero, at least 0.
 ///         Defaults to `max_insertions(degree)`. The Python implementation has no such argument; it
 ///         lets a caller exercise the exhaustion paths.
@@ -1373,16 +1373,16 @@ inline std::vector<double> merge_certified(const Bspline<double>& numerator,
 ///
 /// Raises:
 ///     value_error: `b` is not univariate and scalar valued, has degree zero, is rational with a
-///         non-positive (or NaN) weight, `tol` is not positive, the budget is negative, the spline
-///         is identically zero, it vanishes identically on a knot interval, or the basis
+///         non-positive (or NaN) weight, `tol` is not positive and finite, the budget is negative,
+///         the spline is identically zero, it vanishes identically on a knot interval, or the basis
 ///         derivative recurrence met a zero divisor while merging.
 template <StorageFloat T>
 [[nodiscard]] BsplineRootSet find_roots(const Bspline<T>& b,
                                         std::optional<double> tol = std::nullopt,
                                         std::optional<int> max_insertions_override = std::nullopt) {
   const Bspline<T> spline = detail::validate_bspline_for_roots<T>(b);
-  if (tol.has_value() && *tol <= 0.0) {
-    throw value_error("tol must be positive, got " + py_repr(*tol));
+  if (tol.has_value() && !(*tol > 0.0 && std::isfinite(*tol))) {  // NaN included
+    throw value_error("tol must be positive and finite, got " + py_repr(*tol));
   }
   if (max_insertions_override.has_value() && *max_insertions_override < 0) {
     throw value_error("max_insertions must be non-negative, got " +

@@ -653,7 +653,8 @@ class Bezier:
 
         Raises:
             ValueError: If a direction's degree exceeds 61, the largest for which the
-                binomial coefficients of the round trip are exact.
+                binomial coefficients of the round trip are exact, or ``tol`` is NaN
+                or infinite.
 
         Example:
             >>> import numpy as np
