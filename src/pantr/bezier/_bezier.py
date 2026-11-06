@@ -429,16 +429,15 @@ class Bezier:
         result has degree ``p - 1`` (or ``p`` when ``keep_degree=True``).
 
         For rational Bézier, the quotient rule is applied, producing a
-        rational Bézier of degree ``2p`` in direction ``d`` (or the original
-        degree when ``keep_degree=True``).
+        rational Bézier of degree ``2p`` in direction ``d``; ``keep_degree``
+        is not consulted.
 
         Args:
             direction (int): Parametric direction for differentiation.
                 Must be in ``[0, dim)``. Defaults to 0.
-            keep_degree (bool): If ``True``, the result preserves the same
-                degree as the original Bézier by fusing derivative and degree
-                elevation. This is useful, for instance, when computing
-                derivatives of rational polynomials (in the numerator).
+            keep_degree (bool): If ``True``, the result of a non-rational
+                Bézier preserves the original degree by fusing derivative and
+                degree elevation. Ignored for a rational Bézier.
                 Defaults to ``False``.
 
         Returns:
