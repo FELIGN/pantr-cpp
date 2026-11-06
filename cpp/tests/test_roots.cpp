@@ -1167,7 +1167,7 @@ TEST_CASE_TEMPLATE("roots newton cap: an exhausted hybrid returns its bracket an
 TEST_CASE("roots newton cap: a triple root exhausts the cap in float64, loudly") {
   // p(t) = (t - 1/3)^3: Newton approaches the triple root with ratio 2/3, and the bisection
   // safeguard halves the bracket only every second iteration, so 64 iterations do not reach the
-  // strict float64 tolerance (2^-49). Bug caught: the cap returning the bracket's midpoint as the
+  // strict float64 tolerance (2^-50). Bug caught: the cap returning the bracket's midpoint as the
   // root, silently (the previous release returned about 0.667 for this polynomial).
   using T = double;
   const Truth tr = make_truth({{rat(1, 3), 3}});

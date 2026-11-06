@@ -89,6 +89,8 @@ class THBSplineSpace {
   ///         a refinement of a truncated function meets a zero two-scale slice. A periodic root
   ///         is refused with the `value_error` of `BsplineSpace1D::first_basis_per_interval`.
   ///     state_error: A function of a level space has an empty support (an invalid space).
+  ///     std::overflow_error: A two-scale matrix between two levels overflows `T` (see
+  ///         `detail::make_two_scale`).
   THBSplineSpace(bspline::BsplineSpace<T> root, grid::HierarchicalGrid hierarchy, bool truncate,
                  std::vector<std::optional<int>> regularity)
       : rep_(build(std::move(root), std::move(hierarchy), truncate, std::move(regularity))) {}
@@ -476,7 +478,7 @@ class THBSplineSpace {
   ///     value_error: `admissible_class` is below 2.
   ///     index_error: An id is outside `[0, grid().num_cells())`; the message lists every one.
   ///     std::overflow_error: A level would have more cells along an axis than `int64` holds.
-  ///     value_error, state_error: As the constructor, for the refined grid.
+  ///     value_error, state_error, std::overflow_error: As the constructor, for the refined grid.
   [[nodiscard]] THBSplineSpace refine(std::span<const std::int64_t> cell_ids,
                                       std::optional<std::int64_t> admissible_class) const {
     detail::check_admissible_class(admissible_class);

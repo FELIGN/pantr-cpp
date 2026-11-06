@@ -90,7 +90,8 @@ namespace detail {
 ///
 /// Raises:
 ///     value_error: The grids have different `ndim()`, or their domains do not overlap on some
-///         axis (the per-axis intersection is empty or degenerate).
+///         axis (the per-axis intersection is empty or degenerate), or the overlap on an axis is
+///         wider than the largest double.
 [[nodiscard]] inline TensorProductGrid overlay(const TensorProductGrid& grid_a,
                                                const TensorProductGrid& grid_b) {
   if (grid_a.ndim() != grid_b.ndim()) {
@@ -110,7 +111,7 @@ namespace detail {
     // length 1 sitting at 1e6 resolves its breakpoints no better than eps * 1e6, however short the
     // window is.
     const double atol = relative * (std::max)({hi - lo, std::fabs(lo), std::fabs(hi)});
-    if (!std::isfinite(hi - lo)) {
+    if (hi > lo && !std::isfinite(hi - lo)) {
       // The window overlaps but is wider than the largest double, so neither it nor its tolerance
       // can be formed.
       throw value_error("overlay(): the overlap of the domains on axis " + std::to_string(d) +

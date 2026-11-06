@@ -52,9 +52,10 @@
   `ValueError` ("tol must be positive and finite"). With `tol=inf`, `find_roots`
   returned no roots and `find_monotone_root` a value, without a warning; with NaN, `find_roots`
   could report one root several times.
-- **`THBSplineSpace.refine` and `refine_region` on a `float32` knot vector spanning more than the
-  `float32` range** (for example knots on `[-2e38, 2e38]`) raise `OverflowError`: the two-scale
-  matrix between the levels overflows. The previous release built the refined space, and its
+- **`THBSplineSpace.refine` and `refine_region` on a `float32` knot vector whose knots within one
+  refinement window lie more than the `float32` range apart** (for example degree 2 on
+  `[-2e38, 0, 2e38]`) raise `OverflowError`, as does a space built on such a refined grid: the
+  two-scale matrix between the levels overflows. The previous release built the refined space, and its
   `prolongation_to` returned NaN entries without a warning.
 - **`pantr.bezier.find_roots` and `find_monotone_root`, single and batch, with a NaN or infinite
   coefficient** raise `ValueError` ("coefficients must be finite", naming the first such row in
@@ -66,6 +67,8 @@
 - **`pantr.bspline.find_roots` with `tol=nan` or `tol=inf`** raises `ValueError` ("tol must be
   positive and finite"); the previous release returned no roots for NaN, and for `inf` raised that
   the spline vanishes identically.
+- **A raw `BVH` whose internal node has a `node_cell` below `-1`** raises `ValueError`; the
+  documented encoding is `-1`, and the previous release accepted any negative value.
 - **`THBSplineSpace` whose grid's root bounds miss a small axis of the root space's domain**
   raises `ValueError` ("grid root bounds must match root_space domain"). Each axis is now held to
   its own knot tolerance; the previous release used the largest over the axes, so beside a
@@ -468,11 +471,13 @@
   over it, with the names, signatures and defaults it had. The reduction operators are
   assembled in exact rationals as before (now Boost.Multiprecision) and are the same bits.
   `reduce_degree` reproduces the previous release's values bit for bit on `float32` and
-  `float64`; `find_monotone_root` moves within `tol` of them, since its Newton/bisection solve
-  now has a bisection safeguard (under "Fixed"), and so does `find_roots` when the largest coefficient magnitude is 1 (otherwise its roots can
+  `float64`, and so does `find_roots` when the largest coefficient magnitude is 1 (otherwise its roots can
   move within the change of the zero floor, under "Changed"), except where
   Bezier clipping used to drop roots or report a multiple root more than once (under "Fixed") and
-  in the depth-cap case below (measured over random, constructed and special-value inputs). `degree_reduction_error` sums its Gram contraction in another order and
+  in the depth-cap case below (measured over random, constructed and special-value inputs).
+  `find_monotone_root` moves within `tol` of the previous release's roots where that release's
+  solve converged, its Newton/bisection solve now having a bisection safeguard (under "Fixed").
+  `degree_reduction_error` sums its Gram contraction in another order and
   moves within that contraction's rounding, which grows with the degree: from the last bits at
   low degree, to about `1e-6` relative at degree 20 for random coefficients (`1e-1` for smooth
   ones), `1e-3` at degree 25 and tens of percent and more near degree 30, where the
@@ -1412,9 +1417,10 @@
   relative to its span** find the interfaces there are. The knots are compared after mapping
   each vector onto `[0, 1]`, whose rounding grows with that ratio, against the bare relative
   tolerance: two patches sharing an edge exactly, one knot vector shifted by `64` or more, had no
-  interface. Each matched direction now adds its space's knot tolerance over its knot span, which
-  is also the comparison's resolution: an interior knot moved by less than about `16 eps` times
-  the knot magnitude over the span is not seen. Inherited from the previous release.
+  interface. Each matched direction now adds its space's knot tolerance over its knot span (`8
+  eps` times the knot magnitude over the span), which is also the comparison's resolution: a
+  normalized knot moved by less than the sum of the two patches' is not seen. Inherited from the
+  previous release.
 - **`partition_graph` bisects graphs above 512 vertices along their Fiedler vector.** It asked
   ARPACK for the two smallest eigenpairs of the Laplacian and took the second, which is the
   Fiedler pair only if the first is the constant vector's (eigenvalue 0). The start vector is

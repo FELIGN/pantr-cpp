@@ -205,6 +205,11 @@ TEST_CASE("grid: overlay: errors carry the Python messages") {
                        "overlay(): the overlap of the domains on axis 0, [-1.7e+308, 1.7e+308], is "
                        "wider than the largest double.",
                        pantr::value_error);
+  // Disjoint domains more than the largest double apart do not overlap.
+  const TensorProductGrid low = tpg({{-1.7e308, -1e308}});
+  const TensorProductGrid high = tpg({{1e308, 1.7e308}});
+  CHECK_THROWS_WITH_AS(static_cast<void>(overlay(low, high)),
+                       doctest::Contains("domains do not overlap on axis 0"), pantr::value_error);
 }
 
 TEST_CASE("grid: cell_quadrature: exact mapping on a dyadic grid") {

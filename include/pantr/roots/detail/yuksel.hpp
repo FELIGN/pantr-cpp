@@ -30,7 +30,7 @@ namespace pantr::roots::detail {
 /// root, so the cap ends a loop whose bracket has not narrowed to the tolerance: a tolerance below
 /// the spacing of doubles never does. The bisection safeguard of `safeguarded_newton` halves the
 /// bracket at least every two iterations, so 64 iterations reach a width of `2^-32` whatever the
-/// Newton steps do; a finer tolerance (the strict float64 one is `2^-49`) also relies on Newton's
+/// Newton steps do; a finer tolerance (the strict float64 one is `2^-50`) also relies on Newton's
 /// progress, which a multiple root of the polynomial (as in `(t - 1/3)^3`) slows to a linear rate
 /// and its evaluation's rounding blurs. The bracket's midpoint can then be far from the root, so
 /// the solvers say that the cap was reached (`Bracketed::converged`) and their callers report it.
@@ -82,11 +82,11 @@ template <class S>
 /// Algorithms for Minimization without Derivatives, 1973, chapter 4), recalled and not re-read:
 ///
 /// - **Bisection**: the midpoint is taken
-///   when the Newton step leaves the bracket or the derivative there is zero, and when the
-///   iteration just made, not itself a bisection, failed to halve the bracket. A Newton sequence
-///   that stays on one side of the root, which a `float32` evaluation's rounding produces near a
-///   simple root and a multiple root produces in any precision, otherwise never moves the far end.
-///   With it the bracket at least halves every two iterations.
+///   when the Newton step leaves the bracket or the derivative there is zero or not finite, and
+///   when the iteration just made, not itself a bisection, failed to halve the bracket. A Newton
+///   sequence that stays on one side of the root, which a `float32` evaluation's rounding produces
+///   near a simple root and a multiple root produces in any precision, otherwise never moves the
+///   far end. With it the bracket at least halves every two iterations.
 /// - **Minimum step**: a Newton point is kept at least `tol / 2` inside both ends. Once
 ///   that end is within `tol / 2` of the sign change, the point is then on its far side and
 ///   the bracket closes to `tol`, where a Newton step of its own length would leave the far end
@@ -135,8 +135,11 @@ template <StorageFloat S>
     const std::size_t best =
         evaluated[other] && std::abs(f_end[other]) < std::abs(f_end[side]) ? other : side;
     const double at = best == 1 ? hi : lo;
-    const double newton = std::abs(df_end[best]) > 0.0 ? at - f_end[best] / df_end[best]
-                                                       : std::numeric_limits<double>::quiet_NaN();
+    // A zero or non-finite derivative (an overflowing coefficient difference) gives no step.
+    const double df = df_end[best];
+    const double newton = std::isfinite(df) && std::abs(df) > 0.0
+                              ? at - f_end[best] / df
+                              : std::numeric_limits<double>::quiet_NaN();
     const bool stalled = !bisected && (hi - lo) > 0.5 * width;
     if (stalled || !(lo <= newton && newton <= hi)) {
       x = 0.5 * (lo + hi);
@@ -198,9 +201,11 @@ template <StorageFloat S>
 /// It places the roots and the critical points of `find_roots`' Yuksel walk, and has no
 /// `safeguarded_newton` safeguard: the walk's guard against reporting a root twice at a critical
 /// point (`roots_at_level`) relies on where this hybrid ends near a multiple root, and the
-/// safeguarded steps end elsewhere within the root's rounding band, which reports a triple root
-/// twice where the previous release reported it once. A one-sided stall here reaches the cap,
-/// which the walk reports as a gap.
+/// safeguarded steps end elsewhere within the root's rounding band: with them the triple root of
+/// `(t - 37/64)^3 (t - 7/8) (t + 2)` is reported twice at `param_tol = 1e-10`, where this hybrid
+/// reports it once (at the default tolerance both report it twice: the single call's missing
+/// merge, a known defect). A one-sided stall here reaches the cap, which the walk reports as a
+/// gap; so `find_roots` can still warn on a `float32` simple root `find_monotone_root` solves.
 ///
 /// Args:
 ///     coeff (std::span<const S>): Coefficients on `[0, 1]`.

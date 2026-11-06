@@ -268,8 +268,8 @@ namespace detail {
     throw index_error("tuple index out of range");
   }
   // No factorization fits more parts than cells (each `blocks[d] <= cells_per_axis[d]`). Refused
-  // here, before the divisor search, which is `O(sqrt(n_parts))` and so held the caller for tens
-  // of seconds at `n_parts = 2^62`. `n_parts <= prod(cells)` is tested as `ceil(n_parts / prod)
+  // here, before the divisor search, which is `O(sqrt(n_parts))` and so held the caller for a long
+  // time at a huge `n_parts`. `n_parts <= prod(cells)` is tested as `ceil(n_parts / prod)
   // <= 1`, by nested ceiling divisions, without forming the product.
   std::int64_t rest = n_parts;
   for (const std::int64_t c : cells_per_axis) {

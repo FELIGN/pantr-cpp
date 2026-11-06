@@ -69,8 +69,9 @@ struct TwoScale1D {
 ///
 /// Raises:
 ///     std::overflow_error: An entry is not finite. A space's knots are finite, so the overflow is
-///         the ratios' own: a knot difference beyond the range of `T` (a float32 knot vector
-///         spanning more than `FLT_MAX`) gives `inf / inf`.
+///         the ratios' own: a knot difference within one Oslo window beyond the range of `T`
+///         (float32 knots at most `degree + 1` apart in index and more than `FLT_MAX` apart in
+///         value) gives `inf / inf`.
 ///
 /// Note:
 ///     Inputs are assumed to be correct (no validation performed): `fine`'s knots contain

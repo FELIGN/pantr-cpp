@@ -9,8 +9,10 @@ success on non-finite data). ``minimize_degree(tol=inf)`` reduced anything to de
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 import pytest
 
 from pantr.bezier import Bezier, find_monotone_root, find_roots
@@ -30,7 +32,7 @@ _SOLVERS: dict[str, Callable[[list[Bezier]], object]] = {
 @pytest.mark.parametrize("solver", list(_SOLVERS), ids=str)
 def test_non_finite_coefficients_raise(solver: str, bad: float, dtype: type) -> None:
     """One NaN or infinite coefficient in any row raises ``ValueError``."""
-    good = np.array([-1.0, 0.5, 1.0], dtype=dtype)
+    good: npt.NDArray[np.floating[Any]] = np.array([-1.0, 0.5, 1.0], dtype=dtype)
     poisoned = good.copy()
     poisoned[1] = bad
     rows = [Bezier(poisoned)] if "batch" not in solver else [Bezier(good), Bezier(poisoned)]

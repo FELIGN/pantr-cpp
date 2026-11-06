@@ -113,9 +113,12 @@ struct Rotation {
 /// infinity failing it); the computed `R` is the exact factor of `A + E` (`A P + E` for the dense
 /// path's pivoting) with `||E||_2 <= gamma ||A||_F` and **`gamma + rcond <= tau / 4`**; each column
 /// of the computed `R^-1` is the exact solution of a perturbed system `(R + dR_j) x_j = e_j`,
-/// `|dR_j|
-/// <= gamma_{n+1} |R|`; and `n + 1 <= 1e7`, `m n + n^2 <= 1e13`, which keep the rounding of the
-/// test itself and of the inverse within `tau / 8` each. Then the test passing gives `s_min(R) >
+/// `|dR_j| <= gamma_{n+1} |R|`; and `n + 1 <= 1e7`, `m n + n^2 <= 1e13`. The size bounds keep the
+/// test's own relative rounding `delta` and the factor `beta = gamma_{n+1} (1 + ||E||_F / ||A||_F)`
+/// small enough that `delta tau + beta <= tau / 4`. The inverse's rounding is not small by itself:
+/// it enters as a relative error of at most `beta X` in `||R^-1||_F`, `X = ||R^-1||_F ||A||_F` the
+/// certificate's own product, and the passing test then bounds `X` by self-consistency, `X (tau (1
+/// - delta) - beta) < 1`. Then the test passing gives `s_min(R) >
 /// (3 tau / 4) ||A||_F` and, by Weyl's inequality, `s_min(A) > (tau / 2 + rcond) ||A||_F >= rcond
 /// s_max(A)` plus a margin of `(tau / 2) ||A||_F`: the SVD would keep every singular value, its
 /// minimum-norm solution is the unique least-squares solution the QR computes, and the two differ
@@ -128,12 +131,12 @@ struct Rotation {
 /// eq. 19.25); the row-sequential order of this code is one, its rotations falling in at most `m +
 /// n - 2` disjoint stages. The `4 m n eps` term of `tau` gives `gamma + rcond <= tau / 4` once `m n
 /// >= 4.3 (m + n - 2)`, that is `(m - 4.3) (n - 4.3) >= 9.9`, which holds for all `m >= n >= 8`
-/// and never for `n <= 4`. Wherever it does not, the floor `sqrt(eps)` does, while `4.3 (m + n -
-/// 2) eps + rcond <= sqrt(eps) / 4`: with the default `rcond = max(m, n) eps`, for `m` up to about
-/// `3.1e6` (no fit or product in this library reaches such a system). The rotations come from
-/// `std::hypot`, and a rotation is skipped only on an exact zero, so no part of a column is dropped
-/// below the normal range; that `hypot` is accurate enough for Higham's rotation model is assumed,
-/// not checked.
+/// and for `n <= 4` only at `m = n = 1`. Wherever it does not, the floor `sqrt(eps)` does, while
+/// `4.3 (m + n - 2) eps + rcond <= sqrt(eps) / 4`: with the default `rcond = max(m, n) eps`, for
+/// `m` up to about `3.1e6` (no fit or product in this library reaches such a system). The rotations
+/// come from `std::hypot`, and a rotation is skipped only on an exact zero, so no part of a column
+/// is dropped below the normal range; that `hypot` is accurate enough for Higham's rotation model
+/// is assumed, not checked.
 ///
 /// No answer is given for a non-finite `A` or `B` (the SVD path spreads a NaN or an infinity in
 /// its own way), for fewer rows than columns, or where the test fails. Everything is computed in

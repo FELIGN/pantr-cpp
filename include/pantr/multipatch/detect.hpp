@@ -418,8 +418,8 @@ template <StorageFloat T>
 /// roundings (three per knot, and one for a flip) stay below the `8 u` of the strict `tol` (`4
 /// eps`). Without the resolution term two patches sharing an edge exactly were not matched once one
 /// knot vector sat 64 or more away from the origin relative to its span. The price is the
-/// resolution itself: a move of an interior knot below about `16 eps` times the knot magnitude over
-/// the span is not seen.
+/// resolution itself: a normalized knot moved by less than `r_a + r_b` (each `8 eps` times its
+/// patch's knot magnitude over its knot span) is not seen.
 ///
 /// Args:
 ///     a (const PatchData<T>&): First patch.

@@ -41,3 +41,8 @@ def test_linspace_grids_are_uniform(breakpoints: np.ndarray) -> None:
 def test_unequal_spacings_are_not_uniform(breakpoints: np.ndarray) -> None:
     """Spacings ``0.1`` and ``0.9`` of the span are not uniform, however small the span."""
     assert not TensorProductGrid([breakpoints]).is_uniform
+
+
+def test_an_axis_whose_spacings_overflow_is_not_uniform() -> None:
+    """A spread of spacings (and a tolerance) beyond the double range grades nothing."""
+    assert not TensorProductGrid([np.array([-1.7e308, -1.6e308, 1.7e308])]).is_uniform

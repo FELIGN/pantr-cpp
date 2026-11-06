@@ -248,6 +248,9 @@ class THBSplineSpace:
             ValueError: If ``grid`` and ``root_space`` disagree on dimension or on
                 the root knot-span grid, if ``regularity`` has the wrong length, or
                 if any per-direction regularity value is out of range.
+            OverflowError: If a two-scale matrix between two levels overflows the
+                knots' dtype (a float32 knot difference within one refinement window
+                beyond the float32 range).
         """
         if not isinstance(root_space, BsplineSpace):
             raise TypeError(
@@ -1022,7 +1025,7 @@ class THBSplineSpace:
             ValueError: If ``admissible_class`` is an integer ``< 2``.
             RuntimeError: If the grid has been modified since construction.
             OverflowError: If a two-scale matrix overflows the knots' dtype (a float32
-                knot vector spanning more than the float32 range).
+                knot difference within one refinement window beyond the float32 range).
         """
         self._check_not_stale()
         adm = self._admissible_class(admissible_class)
@@ -1074,7 +1077,7 @@ class THBSplineSpace:
                 level domain.
             RuntimeError: If the grid has been modified since construction.
             OverflowError: If a two-scale matrix overflows the knots' dtype (a float32
-                knot vector spanning more than the float32 range).
+                knot difference within one refinement window beyond the float32 range).
         """
         self._check_not_stale()
         adm = self._admissible_class(admissible_class)

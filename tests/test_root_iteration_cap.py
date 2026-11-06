@@ -53,9 +53,6 @@ def _bernstein(roots: list[Fraction]) -> npt.NDArray[np.float64]:
 _TRIPLE = _bernstein([Fraction(1, 3)] * 3)
 """``(t - 1/3)^3``: the previous release's monotone solver returned about ``2/3``."""
 
-_STALLED_IN_FLOAT32 = _bernstein([Fraction(5, 8)] + [Fraction(-1)] * 3).astype(np.float32)
-"""``(t - 5/8)(t + 1)^3`` in ``float32``: the previous release returned about ``0.606``."""
-
 _SIMPLE = _bernstein([Fraction(3, 20)] + [Fraction(-1)] * 3)
 """``(t - 3/20)(t + 1)^3``: a simple root, which a ``tol`` of ``1e-20`` cannot bracket."""
 

@@ -2,7 +2,7 @@
 
 The Newton/bisection hybrid keeps a bracket around the root and stops when it is narrower than
 ``tol``. A ``float32`` evaluation can leave every Newton iterate on one side of the root, so the
-far end of the bracket never moves and the iteration cap was reached on a few percent of ordinary
+far end of the bracket never moves and the iteration cap was reached on ordinary
 simple-root inputs. A step that fails to halve the bracket is now followed by a bisection.
 
 Oracle: a second implementation, the ``float64`` solve of the same coefficients widened exactly to
@@ -67,3 +67,18 @@ def test_float32_batch_converges() -> None:
     np.testing.assert_allclose(
         roots, reference, rtol=0.0, atol=get_strict(np.float32) + get_strict(np.float64)
     )
+
+
+@pytest.mark.parametrize(
+    ("coeffs", "root"),
+    [([1.7e308, -1.7e308], 0.5), ([-1.7e308, -8.5e307, 1.7e308], (np.sqrt(5.0) - 1.0) / 2.0)],
+    ids=["line", "quadratic"],
+)
+def test_overflowing_coefficient_spread_still_converges(coeffs: list[float], root: float) -> None:
+    """A derivative that overflows gives no Newton step; the solve bisects to the root.
+
+    The end spread overflows ``float64`` (``1.7e308 - (-1.7e308)``), so the derivative is infinite
+    and a Newton step from it does not move; taking that step made the solve reach its cap.
+    """
+    got = find_monotone_root(Bezier(np.array(coeffs)))
+    assert abs(got - root) <= 2.0 * get_strict(np.float64)

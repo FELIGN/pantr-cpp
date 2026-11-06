@@ -94,9 +94,9 @@ def find_roots(
     Raises:
         TypeError: If ``bezier`` is not a :class:`Bezier` instance (or sequence
             thereof).
-        ValueError: If any Bezier has ``dim != 1`` or ``rank != 1``, or ``tol``
-            is not positive and finite. In batch mode, also raised if degrees
-            are not uniform.
+        ValueError: If any Bezier has ``dim != 1`` or ``rank != 1``, a NaN or
+            infinite coefficient, or ``tol`` is not positive and finite. In batch
+            mode, also raised if degrees are not uniform.
 
     Warns:
         RuntimeWarning: If the root finder gave up on part of [0, 1] before narrowing it
@@ -177,14 +177,15 @@ def find_monotone_root(
     Raises:
         TypeError: If ``bezier`` is not a :class:`Bezier` instance (or sequence
             thereof).
-        ValueError: If any Bezier has ``dim != 1`` or ``rank != 1``, or ``tol``
-            is not positive and finite. In batch mode, also raised if degrees
-            are not uniform.
+        ValueError: If any Bezier has ``dim != 1`` or ``rank != 1``, a NaN or
+            infinite coefficient, or ``tol`` is not positive and finite. In batch
+            mode, also raised if degrees are not uniform.
         RuntimeError: If the Newton/bisection iteration reaches its cap (64
             iterations) before the bracket narrows to ``tol``; its midpoint can then
             be far from the root. A root where the derivative also vanishes, or a
-            ``tol`` below the spacing of doubles at the root, causes it. In batch
-            mode the first such row is named.
+            ``tol`` finer than the polynomial's evaluation resolves there (more
+            often in ``float32``), causes it. In batch mode the first such row is
+            named.
     """
     from pantr.bezier._bezier import Bezier as BezierCls  # noqa: PLC0415
 

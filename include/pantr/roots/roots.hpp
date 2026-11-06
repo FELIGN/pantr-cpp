@@ -270,8 +270,8 @@ inline void check_monotone_converged(const Bracketed& r) {
         "bracket to tol within " +
         std::to_string(max_newton_iter) + " iterations (the root is in [" + py_repr(r.lo) + ", " +
         py_repr(r.hi) +
-        "]); a root where the derivative also vanishes, or a tol below the spacing of "
-        "doubles there, causes this");
+        "]); a root where the derivative also vanishes, or a tol finer than the "
+        "polynomial's evaluation resolves there, causes this");
   }
 }
 
