@@ -267,6 +267,23 @@ namespace detail {
   if (cells_per_axis.empty()) {
     throw index_error("tuple index out of range");
   }
+  // No factorization fits more parts than cells (each `blocks[d] <= cells_per_axis[d]`). Refused
+  // here, before the divisor search, which is `O(sqrt(n_parts))` and so held the caller for tens
+  // of seconds at `n_parts = 2^62`. `n_parts <= prod(cells)` is tested as `ceil(n_parts / prod)
+  // <= 1`, by nested ceiling divisions, without forming the product.
+  std::int64_t rest = n_parts;
+  for (const std::int64_t c : cells_per_axis) {
+    rest = rest / c + (rest % c != 0 ? 1 : 0);
+  }
+  const auto refuse = [&] {
+    return value_error("cannot factor n_parts=" + std::to_string(n_parts) +
+                       " across axes with cells_per_axis=" + py_repr_ints(cells_per_axis) +
+                       " without leaving a rank empty. "
+                       "Use a part count that divides the grid better, or the 'rcb' backend.");
+  };
+  if (rest > 1) {
+    throw refuse();
+  }
   const std::size_t ndim = cells_per_axis.size();
   std::optional<std::vector<std::int64_t>> best;
   double best_score = std::numeric_limits<double>::infinity();
@@ -296,10 +313,7 @@ namespace detail {
   };
   recurse(recurse, 0, n_parts);
   if (!best.has_value()) {
-    throw value_error("cannot factor n_parts=" + std::to_string(n_parts) +
-                      " across axes with cells_per_axis=" + py_repr_ints(cells_per_axis) +
-                      " without leaving a rank empty. "
-                      "Use a part count that divides the grid better, or the 'rcb' backend.");
+    throw refuse();
   }
   return *best;
 }
