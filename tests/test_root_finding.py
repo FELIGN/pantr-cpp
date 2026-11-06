@@ -678,7 +678,10 @@ class TestSignTestUnderflow(unittest.TestCase):
             with self.subTest(dtype=np.dtype(dtype).name):
                 a = self.FRONTIER
                 bez = Bezier(np.array([[a], [0.0], [-a]], dtype=dtype))
-                roots = find_roots(bez, tol=1e-40)
+                # The default tol: tol no longer sets the floor of the zero tests, so these
+                # tiny coefficients need no tiny tol, and a tol below the spacing of doubles at
+                # the root would make the iteration cap report.
+                roots = find_roots(bez)
                 self.assertEqual(len(roots), 1)
                 # The root is exactly 0.5; the finder resolves it to the working
                 # precision. `eps` is two ulps of 0.5 at this dtype: slack for the
@@ -702,7 +705,7 @@ class TestSignTestUnderflow(unittest.TestCase):
                 self.assertTrue(math.isnan(find_monotone_root(positive)))
 
                 crossing = Bezier(np.array([[a], [0.0], [-a]], dtype=np.float32))
-                roots = find_roots(crossing, tol=1e-40)
+                roots = find_roots(crossing)  # the default tol, as above
                 self.assertEqual(len(roots), 1)
                 # Same bound as in `test_root_not_lost_at_frontier`.
                 self.assertLessEqual(abs(roots[0] - 0.5), float(np.finfo(np.float32).eps))
@@ -729,7 +732,7 @@ class TestBoundaryEpsScaleInvariance(unittest.TestCase):
             a = 10.0**exponent
             with self.subTest(a=f"1e{exponent}"):
                 bez = Bezier(np.array([[a], [0.0], [-a]], dtype=np.float64))
-                roots = find_roots(bez, tol=1e-40)
+                roots = find_roots(bez)  # the default tol (see TestSignTestUnderflow)
                 self.assertEqual(len(roots), 1)
                 self.assertAlmostEqual(roots[0], 0.5, places=12)
 
@@ -743,7 +746,7 @@ class TestBoundaryEpsScaleInvariance(unittest.TestCase):
             a = 10.0**exponent
             with self.subTest(a=f"1e{exponent}"):
                 bez = Bezier(np.array([[a], [0.5 * a], [2.0 * a]], dtype=np.float64))
-                self.assertEqual(len(find_roots(bez, tol=1e-40)), 0)
+                self.assertEqual(len(find_roots(bez)), 0)
 
 
 class TestSignPredicateEquivalence(unittest.TestCase):

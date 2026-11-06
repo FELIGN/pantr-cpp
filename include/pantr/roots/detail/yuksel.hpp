@@ -18,17 +18,36 @@
 #include <cstddef>
 #include <limits>
 #include <span>
+#include <utility>
 #include <vector>
 
 namespace pantr::roots::detail {
 
 /// Iteration cap of the Newton/bisection hybrid. Each iteration keeps a bracket that holds the
-/// root, so the cap ends a loop whose bracket has not narrowed to the tolerance (a tolerance below
-/// the spacing of doubles never does) and the bracket's midpoint is returned, a point within the
-/// current bracket of the root: what is lost at the cap is width, not the root. Pure bisection
-/// reaches the strict float64 tolerance in 50 halvings. An admitted bound, kept from the previous
-/// release.
+/// root, so the cap ends a loop whose bracket has not narrowed to the tolerance: a tolerance below
+/// the spacing of doubles never does, nor does a Newton sequence that approaches a flat root
+/// (a multiple root of the polynomial, as in `(t - 1/3)^3`) from one side, since the far end of
+/// the bracket then never moves. The bracket's midpoint can then be far from the root, so the
+/// solvers say that the cap was reached (`Bracketed::converged`) and their callers report it. Pure
+/// bisection reaches the strict float64 tolerance in 50 halvings. An admitted bound, kept from the
+/// previous release.
 inline constexpr int max_newton_iter = 64;
+
+/// The result of the Newton/bisection hybrid.
+///
+/// Attributes:
+///     x (double): The midpoint of the final bracket (NaN for `solve_monotone` without a sign
+///         change).
+///     lo (double): Left end of the final bracket.
+///     hi (double): Right end of the final bracket.
+///     converged (bool): Whether the bracket narrowed to the tolerance; false when the iteration
+///         cap was reached first, and `x` is then only somewhere in `[lo, hi]`.
+struct [[nodiscard]] Bracketed {
+  double x;
+  double lo;
+  double hi;
+  bool converged;
+};
 
 /// Scale-relative zero test factor of Yuksel's endpoint checks: an endpoint value within
 /// `8 * eps * (max - min)` of zero counts as a root. Inherited, not derived (the previous release
@@ -61,13 +80,14 @@ template <class S>
 ///     max_iter (int): Iteration cap.
 ///
 /// Returns:
-///     double: The midpoint of the final bracket, or NaN when the end values do not change sign.
+///     Bracketed: The midpoint of the final bracket (NaN, converged, when the end values do not
+///     change sign), and whether the bracket narrowed to `param_tol` within `max_iter`.
 ///
 /// Note:
 ///     Inputs are assumed to be correct (no validation performed).
 template <StorageFloat S>
-[[nodiscard]] double solve_monotone(std::span<const S> coeff, double param_tol,
-                                    int max_iter = max_newton_iter) {
+[[nodiscard]] Bracketed solve_monotone(std::span<const S> coeff, double param_tol,
+                                       int max_iter = max_newton_iter) {
   double lo = 0.0;
   double hi = 1.0;
   // The end values stay in `S`, and so does the false-position quotient: Numba's `float()` of a
@@ -75,7 +95,8 @@ template <StorageFloat S>
   const S f_lo = coeff[0];
   const S f_hi = coeff.back();
   if (have_same_sign(static_cast<double>(f_lo), static_cast<double>(f_hi))) {
-    return std::numeric_limits<double>::quiet_NaN();
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    return {nan, lo, hi, true};
   }
   double x = 0.5 * (lo + hi);
   const S span_f = f_hi - f_lo;
@@ -94,12 +115,12 @@ template <StorageFloat S>
       lo = x;
     }
     if ((hi - lo) <= param_tol) {
-      break;
+      return {0.5 * (lo + hi), lo, hi, true};
     }
     const double x_new = std::abs(dfx) > 0.0 ? x - fx / dfx : 0.5 * (lo + hi);
     x = (lo < x_new && x_new < hi) ? x_new : 0.5 * (lo + hi);
   }
-  return 0.5 * (lo + hi);
+  return {0.5 * (lo + hi), lo, hi, false};
 }
 
 /// Find the one root of a polynomial on a monotone sub-interval `[lo, hi]` (no reparametrisation),
@@ -114,13 +135,14 @@ template <StorageFloat S>
 ///     max_iter (int): Iteration cap (see `max_newton_iter`).
 ///
 /// Returns:
-///     double: The midpoint of the final bracket.
+///     Bracketed: The midpoint of the final bracket, and whether it narrowed to `tol` within
+///     `max_iter`.
 ///
 /// Note:
 ///     Inputs are assumed to be correct (no validation performed).
 template <StorageFloat S>
-[[nodiscard]] double solve_on_interval(std::span<const S> coeff, double lo, double hi, double f_lo,
-                                       double tol, int max_iter = max_newton_iter) {
+[[nodiscard]] Bracketed solve_on_interval(std::span<const S> coeff, double lo, double hi,
+                                          double f_lo, double tol, int max_iter = max_newton_iter) {
   double x = 0.5 * (lo + hi);
   for (int it = 0; it < max_iter; ++it) {
     const auto [fx, dfx] = eval_and_deriv<S>(coeff, x);
@@ -130,13 +152,41 @@ template <StorageFloat S>
       lo = x;
     }
     if ((hi - lo) <= tol) {
-      return 0.5 * (lo + hi);
+      return {0.5 * (lo + hi), lo, hi, true};
     }
     const double x_new = std::abs(dfx) > 0.0 ? x - fx / dfx : 0.5 * (lo + hi);
     x = (lo < x_new && x_new < hi) ? x_new : 0.5 * (lo + hi);
   }
-  return 0.5 * (lo + hi);
+  return {0.5 * (lo + hi), lo, hi, false};
 }
+
+/// Record a hybrid solve's bracket as a gap when it reached the iteration cap, and get its point.
+///
+/// Args:
+///     r (const Bracketed&): The solve's result.
+///     gaps (std::vector<std::pair<double, double>>&): The gaps, appended to.
+///
+/// Returns:
+///     double: `r.x`.
+[[nodiscard]] inline double take_bracketed(const Bracketed& r,
+                                           std::vector<std::pair<double, double>>& gaps) {
+  if (!r.converged) {
+    gaps.emplace_back(r.lo, r.hi);
+  }
+  return r.x;
+}
+
+/// What Yuksel's algorithm found.
+///
+/// Attributes:
+///     roots (std::vector<double>): The roots, ascending.
+///     gaps (std::vector<std::pair<double, double>>): The brackets of the solves that reached the
+///         iteration cap (of a root, or of a critical point of a derivative, which places the
+///         monotone intervals); a root near one may be misplaced within it, or missed.
+struct YukselResult {
+  std::vector<double> roots;
+  std::vector<std::pair<double, double>> gaps;
+};
 
 /// Walk the monotone intervals cut by the sorted critical points `crit` and collect the roots: an
 /// endpoint whose value is within `boundary_eps` of zero, and one root per interval whose end
@@ -146,6 +196,8 @@ template <StorageFloat S>
 ///     coeff (std::span<const S>): Coefficients, degree `n = coeff.size() - 1 >= 1`.
 ///     crit (std::span<const double>): Sorted critical points.
 ///     tol (double): Bracket width, and the width below which an interval is skipped.
+///     gaps (std::vector<std::pair<double, double>>&): Appended to: the bracket of every solve
+///         that reached the iteration cap.
 ///
 /// Returns:
 ///     std::vector<double>: The roots, ascending.
@@ -154,7 +206,8 @@ template <StorageFloat S>
 ///     Inputs are assumed to be correct (no validation performed).
 template <StorageFloat S>
 [[nodiscard]] std::vector<double> roots_at_level(std::span<const S> coeff,
-                                                 std::span<const double> crit, double tol) {
+                                                 std::span<const double> crit, double tol,
+                                                 std::vector<std::pair<double, double>>& gaps) {
   const std::size_t n = coeff.size() - 1;
   std::vector<double> roots;
   roots.reserve(n);
@@ -191,7 +244,7 @@ template <StorageFloat S>
       }
     }
     if (have_opposite_signs(f_prev, f_curr)) {
-      push(solve_on_interval<S>(coeff, prev_t, curr_t, f_prev, tol));
+      push(take_bracketed(solve_on_interval<S>(coeff, prev_t, curr_t, f_prev, tol), gaps));
     }
     f_prev = f_curr;
     prev_t = curr_t;
@@ -209,12 +262,13 @@ template <StorageFloat S>
 ///     tol (double): Parametric tolerance.
 ///
 /// Returns:
-///     std::vector<double>: The roots, ascending (the order the walk produces them in).
+///     YukselResult: The roots, ascending (the order the walk produces them in), and the brackets
+///     of the solves that reached the iteration cap.
 ///
 /// Note:
 ///     Inputs are assumed to be correct (no validation performed).
 template <StorageFloat S>
-[[nodiscard]] std::vector<double> yuksel_roots(std::span<const S> coeff, double tol) {
+[[nodiscard]] YukselResult yuksel_roots(std::span<const S> coeff, double tol) {
   const std::size_t n = coeff.size() - 1;
   if (n == 0) {
     return {};
@@ -236,11 +290,12 @@ template <StorageFloat S>
     }
     const S root = c0 / (c0 - c1);  // in S, as the Numba kernel divided array elements
     if (0 <= root && root <= 1) {
-      return {static_cast<double>(root)};
+      return {{static_cast<double>(root)}, {}};
     }
     return {};
   }
   // derivs[lev] has degree n - 1 - lev: n - lev coefficients (row length n, padded).
+  YukselResult out;
   std::vector<double> derivs((n - 1) * n, 0.0);
   for (std::size_t i = 0; i < n; ++i) {
     const S diff = coeff[i + 1] - coeff[i];
@@ -285,15 +340,17 @@ template <StorageFloat S>
       if (std::abs(f_lo) <= boundary_eps) {
         crit.push_back(0.0);
       } else if (have_opposite_signs(f_lo, f_hi)) {
-        crit.push_back(solve_on_interval<double>(coeff_lev, 0.0, 1.0, f_lo, tol));
+        crit.push_back(
+            take_bracketed(solve_on_interval<double>(coeff_lev, 0.0, 1.0, f_lo, tol), out.gaps));
       } else if (std::abs(f_hi) <= boundary_eps) {
         crit.push_back(1.0);
       }
       continue;
     }
-    crit = roots_at_level<double>(coeff_lev, crit, tol);
+    crit = roots_at_level<double>(coeff_lev, crit, tol, out.gaps);
   }
-  return roots_at_level<S>(coeff, crit, tol);
+  out.roots = roots_at_level<S>(coeff, crit, tol, out.gaps);
+  return out;
 }
 
 }  // namespace pantr::roots::detail

@@ -100,7 +100,8 @@ def find_roots(
 
     Warns:
         RuntimeWarning: If the root finder gave up on part of [0, 1] before narrowing it
-            to ``tol`` (Bezier clipping's depth cap), so that the result may miss a root
+            to ``tol`` (Bezier clipping's depth cap, or the iteration cap of the
+            Newton/bisection solve on Yuksel's path), so that the result may miss a root
             there or be less accurate than ``tol`` asks for.
 
     Note:
@@ -179,6 +180,11 @@ def find_monotone_root(
         ValueError: If any Bezier has ``dim != 1`` or ``rank != 1``, or ``tol``
             is not positive and finite. In batch mode, also raised if degrees
             are not uniform.
+        RuntimeError: If the Newton/bisection iteration reaches its cap (64
+            iterations) before the bracket narrows to ``tol``; its midpoint can then
+            be far from the root. A root where the derivative also vanishes, or a
+            ``tol`` finer than the evaluation resolves (more often in ``float32``),
+            causes it. In batch mode the first such row is named.
     """
     from pantr.bezier._bezier import Bezier as BezierCls  # noqa: PLC0415
 

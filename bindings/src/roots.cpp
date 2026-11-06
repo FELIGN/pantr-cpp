@@ -170,13 +170,13 @@ void def_internals(nb::module_& m) {
   m.def(
       "solve_monotone_root_kernel",
       [](const Vec<T>& c, double tol, int max_iter) {
-        return rd::solve_monotone<T>(nonempty(c), tol, max_iter);
+        return rd::solve_monotone<T>(nonempty(c), tol, max_iter).x;
       },
       nb::arg("coeff"), nb::arg("param_tol"), nb::arg("max_iter") = rd::max_newton_iter);
   m.def(
       "yuksel_roots",
       [](const Vec<T>& c, double tol) {
-        const std::vector<double> r = rd::yuksel_roots<T>(nonempty(c), tol);
+        const std::vector<double> r = rd::yuksel_roots<T>(nonempty(c), tol).roots;
         return std::make_tuple(vector_to_numpy(r), static_cast<long long>(r.size()));
       },
       nb::arg("coeff"), nb::arg("tol"));

@@ -196,9 +196,9 @@ RootSet<double> dispatch_single(std::span<const T> coeff, double param_tol, doub
     return computed_set(dedup_roots<T>(std::move(clip.candidates), coeff, param_tol, value_rel),
                         std::move(clip.gaps));
   }
-  std::vector<double> r = yuksel_roots<T>(coeff, param_tol);
-  sort_nan_last(r);
-  return computed_set(r, {});
+  YukselResult r = yuksel_roots<T>(coeff, param_tol);
+  sort_nan_last(r.roots);
+  return computed_set(r.roots, std::move(r.gaps));
 }
 
 /// The batch dispatch of the previous release, which differs from the single one in two places it
@@ -236,10 +236,11 @@ RootSet<double> dispatch_batch_row(std::span<const T> coeff, double param_tol, d
     raw = std::move(clip.candidates);
     gaps = std::move(clip.gaps);
   } else {
-    raw = yuksel_roots<T>(coeff, param_tol);
+    YukselResult r = yuksel_roots<T>(coeff, param_tol);
+    raw = std::move(r.roots);
+    gaps = std::move(r.gaps);
   }
-  return computed_set(dedup_roots<T>(std::move(raw), coeff, param_tol, value_rel),
-                      std::move(gaps));
+  return computed_set(dedup_roots<T>(std::move(raw), coeff, param_tol, value_rel), std::move(gaps));
 }
 
 /// Operations per polynomial of degree `n`, for the batch's chunking only: a derivative chain of
@@ -253,6 +254,23 @@ RootSet<double> dispatch_batch_row(std::span<const T> coeff, double param_tol, d
 inline void check_coeffs(std::size_t n_coeff) {
   if (n_coeff < 1) {
     throw value_error("coeff must have at least 1 element");
+  }
+}
+
+/// Refuse a monotone solve that reached the hybrid's iteration cap (see `max_newton_iter`): its
+/// bracket's midpoint can be far from the root, so no value is returned.
+///
+/// Raises:
+///     state_error: `r` did not converge.
+inline void check_monotone_converged(const Bracketed& r) {
+  if (!r.converged) {
+    throw state_error(
+        "find_monotone_root: the Newton/bisection iteration did not narrow the "
+        "bracket to tol within " +
+        std::to_string(max_newton_iter) + " iterations (the root is in [" + py_repr(r.lo) + ", " +
+        py_repr(r.hi) +
+        "]); a root where the derivative also vanishes, or a tol finer than the "
+        "polynomial's evaluation resolves there, causes this");
   }
 }
 
@@ -354,11 +372,14 @@ class Builtin {
   ///
   /// Raises:
   ///     value_error: `coeff` is empty, or `param_tol` is not positive and finite.
+  ///     state_error: The iteration reached its cap before the bracket narrowed to `param_tol`.
   template <StorageFloat T>
   [[nodiscard]] double find_monotone_root(std::span<const T> coeff, double param_tol) const {
     detail::check_coeffs(coeff.size());
     detail::check_tol(param_tol, "param_tol");
-    return detail::solve_monotone<T>(coeff, param_tol);
+    const detail::Bracketed r = detail::solve_monotone<T>(coeff, param_tol);
+    detail::check_monotone_converged(r);
+    return r.x;
   }
 
   /// Find the monotone root of each row, in parallel over rows.
@@ -372,6 +393,8 @@ class Builtin {
   ///
   /// Raises:
   ///     value_error: No column, or `param_tol` is not positive and finite.
+  ///     state_error: A row's iteration reached its cap before its bracket narrowed to
+  ///         `param_tol` (the first such row is named).
   template <StorageFloat T>
   [[nodiscard]] std::vector<double> find_monotone_roots_batch(mdview<const T, 2> coeffs,
                                                               double param_tol) const {
@@ -379,14 +402,23 @@ class Builtin {
     detail::check_tol(param_tol, "param_tol");
     const std::size_t n_polys = coeffs.extent(0);
     const std::size_t n1 = coeffs.extent(1);
-    std::vector<double> out(n_polys);
+    std::vector<detail::Bracketed> solved(n_polys);
     parallel::parallel_for(n_polys, parallel::WorkEstimate{detail::ops_per_polynomial(n1 - 1)},
                            [&](std::size_t begin, std::size_t end) {
                              for (std::size_t i = begin; i < end; ++i) {
-                               out[i] = detail::solve_monotone<T>(
+                               solved[i] = detail::solve_monotone<T>(
                                    std::span<const T>(&coeffs(i, 0), n1), param_tol);
                              }
                            });
+    std::vector<double> out(n_polys);
+    for (std::size_t i = 0; i < n_polys; ++i) {
+      try {
+        detail::check_monotone_converged(solved[i]);
+      } catch (const state_error& e) {
+        throw state_error("row " + std::to_string(i) + ": " + e.what());
+      }
+      out[i] = solved[i].x;
+    }
     return out;
   }
 };

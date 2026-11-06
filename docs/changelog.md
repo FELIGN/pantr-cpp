@@ -1298,6 +1298,15 @@
   unchanged except as under Fixed.
 
 ### Fixed
+- **`pantr.bezier.find_monotone_root` raises `RuntimeError` instead of returning a point far
+  from the root**, and `find_roots` warns there. Their Newton/bisection solve stops after 64
+  iterations, and when a Newton sequence approaches the root from one side the far end of its
+  bracket never moves: the midpoint it returned could be far from the root, silently (about
+  `2/3` for `(t - 1/3)^3`; for `float32` coefficients, where rounding stalls the Newton step,
+  also for simple roots such as that of `(t - 5/8)(t + 1)^3`). `find_monotone_root` now raises,
+  naming the bracket (and in batch mode the row); `find_roots` reports the bracket as a part of
+  `[0, 1]` it did not resolve, with the `RuntimeWarning` it gives for Bézier clipping's depth cap.
+  Inherited from the previous release.
 - **A knot vector whose first domain knot repeats past `knots[degree]`** (a non-clamped vector
   with `knots[degree] == knots[degree + 1]`, or a first knot repeated more than `degree + 1`
   times) gets correct Bézier, Lagrange and cardinal extraction operators, `to_beziers` pieces,

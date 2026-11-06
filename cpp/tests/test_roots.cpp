@@ -884,9 +884,12 @@ TEST_CASE_TEMPLATE("roots scale: the roots are the same bits for c and 2^k c", T
 TEST_CASE("roots scale: each row of a batch is scaled by its own largest coefficient") {
   // Bug caught: a value floor taken from one row, or one floor for the batch, which solves the row
   // at 2^-40 against a floor sized for the row at 2^40.
-  const std::vector<double> c = stored<double>(unit_scale_truth(
-      {{rat(1, 10), 1}, {rat(2, 10), 1}, {rat(3, 10), 1}, {rat(4, 10), 1}, {rat(5, 10), 1},
-       {rat(6, 10), 1}}));
+  const std::vector<double> c = stored<double>(unit_scale_truth({{rat(1, 10), 1},
+                                                                 {rat(2, 10), 1},
+                                                                 {rat(3, 10), 1},
+                                                                 {rat(4, 10), 1},
+                                                                 {rat(5, 10), 1},
+                                                                 {rat(6, 10), 1}}));
   const double strict = 4.0 * std::numeric_limits<double>::epsilon();
   const std::vector<double> ref = root_bits<double>(c, strict, strict, false);
   REQUIRE(ref.size() == 6);
@@ -1118,7 +1121,7 @@ TEST_CASE("roots entry point: the Bezier overload hands a provider the scalar co
 
 // ---- The Newton cap ----------------------------------------------------------------------------
 
-TEST_CASE_TEMPLATE("roots newton cap: an exhausted hybrid returns the midpoint of its bracket", T,
+TEST_CASE_TEMPLATE("roots newton cap: an exhausted hybrid returns its bracket and says so", T,
                    float, double) {
   // p(t) = (t - 4/5)(t + 1) = t^2 + t/5 - 4/5, increasing on [0, 1] with Bernstein coefficients
   // (-4/5, -7/10, 2/5) (b_1 = b_0 + a_1 / 2). Hand-computed iterates, analytic oracle:
@@ -1127,23 +1130,59 @@ TEST_CASE_TEMPLATE("roots newton cap: an exhausted hybrid returns the midpoint o
   //     [0.1, 0.9]), p(2/3) < 0 so the bracket is [2/3, 1] and the midpoint is 5/6;
   //   * 1 iteration of solve_on_interval from the midpoint x = 1/2: p(1/2) = -9/20 < 0, bracket
   //     [1/2, 1], midpoint 3/4;
-  //   * the default cap of 64 reaches the root 4/5.
+  //   * the default cap of 64 reaches the root 4/5, converged.
   // Bug caught: the cap returning NaN, the last iterate, or the root without ever bracketing it;
-  // an off-by-one in the loop count.
+  // an off-by-one in the loop count; a capped result reported as converged.
   const Truth tr = make_truth({{rat(4, 5), 1}, {rat(-1), 1}});
   const std::vector<T> c = stored<T>(tr);
   const double u = unit_roundoff<T>();
   const std::span<const T> s(c);
-  CHECK(prd::solve_monotone<T>(s, 1e-12, 0) == 0.5);
-  CHECK(prd::solve_on_interval<T>(s, 0.0, 1.0, static_cast<double>(c[0]), 1e-12, 0) == 0.5);
-  CHECK(std::fabs(prd::solve_monotone<T>(s, 1e-12, 1) - 5.0 / 6.0) <= 16.0 * u);
-  CHECK(std::fabs(prd::solve_on_interval<T>(s, 0.0, 1.0, static_cast<double>(c[0]), 1e-12, 1) -
-                  0.75) <= 16.0 * u);
+  const prd::Bracketed m0 = prd::solve_monotone<T>(s, 1e-12, 0);
+  CHECK(m0.x == 0.5);
+  CHECK_FALSE(m0.converged);
+  CHECK(m0.lo == 0.0);
+  CHECK(m0.hi == 1.0);
+  const prd::Bracketed i0 =
+      prd::solve_on_interval<T>(s, 0.0, 1.0, static_cast<double>(c[0]), 1e-12, 0);
+  CHECK(i0.x == 0.5);
+  CHECK_FALSE(i0.converged);
+  const prd::Bracketed m1 = prd::solve_monotone<T>(s, 1e-12, 1);
+  CHECK(std::fabs(m1.x - 5.0 / 6.0) <= 16.0 * u);
+  CHECK_FALSE(m1.converged);
+  const prd::Bracketed i1 =
+      prd::solve_on_interval<T>(s, 0.0, 1.0, static_cast<double>(c[0]), 1e-12, 1);
+  CHECK(std::fabs(i1.x - 0.75) <= 16.0 * u);
+  CHECK_FALSE(i1.converged);
   const Frame f = frame_for<T>(tr, c);
   const double rho = position_bound<T>(tr, c, tr.in_unit_interval[0], f);
-  CHECK(std::fabs(prd::solve_monotone<T>(s, f.param_tol) - 0.8) <= rho);
-  CHECK(std::fabs(prd::solve_on_interval<T>(s, 0.0, 1.0, static_cast<double>(c[0]), f.param_tol) -
-                  0.8) <= rho);
+  const prd::Bracketed m = prd::solve_monotone<T>(s, f.param_tol);
+  CHECK(m.converged);
+  CHECK(std::fabs(m.x - 0.8) <= rho);
+  const prd::Bracketed i =
+      prd::solve_on_interval<T>(s, 0.0, 1.0, static_cast<double>(c[0]), f.param_tol);
+  CHECK(i.converged);
+  CHECK(std::fabs(i.x - 0.8) <= rho);
+}
+
+TEST_CASE_TEMPLATE("roots newton cap: a one-sided Newton sequence exhausts the cap, loudly", T,
+                   float, double) {
+  // p(t) = (t - 1/3)^3: Newton approaches the triple root from one side with ratio 2/3, so the far
+  // end of the bracket never moves and 64 iterations leave it wide; its midpoint is near 2/3,
+  // nowhere near the root. Bug caught: the cap returning that midpoint as the root, silently
+  // (the previous release returned about 0.667 for this polynomial).
+  const Truth tr = make_truth({{rat(1, 3), 3}});
+  const std::vector<T> c = stored<T>(tr);
+  const double strict = 4.0 * static_cast<double>(std::numeric_limits<T>::epsilon());
+  const prd::Bracketed r = prd::solve_monotone<T>(std::span<const T>(c), strict);
+  CHECK_FALSE(r.converged);
+  CHECK(r.lo <= 1.0 / 3.0);
+  CHECK(r.hi >= 1.0 / 3.0);
+  CHECK_THROWS_WITH_AS(
+      static_cast<void>(pr::Builtin{}.find_monotone_root<T>(std::span<const T>(c), strict)),
+      doctest::Contains("did not narrow the bracket to tol"), pantr::state_error);
+  CHECK_THROWS_WITH_AS(static_cast<void>(pr::Builtin{}.find_monotone_roots_batch<T>(
+                           pantr::mdview<const T, 2>(c.data(), 1, c.size()), strict)),
+                       doctest::Contains("row 0: find_monotone_root"), pantr::state_error);
 }
 
 // ---- The monotone solver -----------------------------------------------------------------------
@@ -1160,7 +1199,12 @@ TEST_CASE_TEMPLATE(
   for (const long long sign : {1LL, -1LL}) {
     const Truth tr = make_truth({{rat(1, 3), 1}, {rat(-2), 3}}, rat(sign));
     const std::vector<T> c = stored<T>(tr);
-    const Frame f = frame_for<T>(tr, c);
+    // A param_tol the storage type's evaluation resolves at the root (1e-10 is not one for
+    // `float`: the bracket stops narrowing and the cap is reported).
+    const Frame base = frame_for<T>(tr, c);
+    const Frame f{
+        (std::max)(base.param_tol, 4.0 * static_cast<double>(std::numeric_limits<T>::epsilon())),
+        base.value_tol};
     const double rho = position_bound<T>(tr, c, tr.in_unit_interval[0], f);
     CAPTURE(sign);
     CHECK(std::fabs(b.find_monotone_root<T>(std::span<const T>(c), f.param_tol) - 1.0 / 3.0) <=
@@ -1189,22 +1233,27 @@ TEST_CASE_TEMPLATE("roots monotone: batch rows agree with single calls, NaN for 
       stored<T>(make_truth({{rat(1, 3), 1}, {rat(-2), 3}}, rat(-1))),
       {T(1), T(1.5), T(2), T(2.5), T(3)},
       {T(0), T(1), T(2), T(3), T(4)},
-      stored<T>(make_truth({{rat(7, 8), 1}, {rat(-1), 3}})),
+      // (t - 7/8)(t + 1)^3, the row this test used to have, makes the `float` iteration stall short
+      // of its root, which is now reported (the cap tests above); this one converges in both.
+      stored<T>(make_truth({{rat(3, 5), 1}, {rat(-2), 3}})),
   };
   pantr::NdArray<T> m({rows.size(), rows[0].size()});
   for (std::size_t i = 0; i < rows.size(); ++i) {
     std::copy(rows[i].begin(), rows[i].end(), m.data() + i * rows[0].size());
   }
+  // A tolerance the storage type resolves (see the test above): 4 eps of `T`, at least 1e-10.
+  const double tol =
+      (std::max)(1e-10, 4.0 * static_cast<double>(std::numeric_limits<T>::epsilon()));
   const std::vector<double> got = b.find_monotone_roots_batch<T>(
-      pantr::mdview<const T, 2>(m.data(), rows.size(), rows[0].size()), 1e-10);
+      pantr::mdview<const T, 2>(m.data(), rows.size(), rows[0].size()), tol);
   REQUIRE(got.size() == rows.size());
   for (std::size_t i = 0; i < rows.size(); ++i) {
-    const double single = b.find_monotone_root<T>(std::span<const T>(rows[i]), 1e-10);
+    const double single = b.find_monotone_root<T>(std::span<const T>(rows[i]), tol);
     CAPTURE(i);
     if (std::isnan(single)) {
       CHECK(std::isnan(got[i]));
     } else {
-      CHECK(std::fabs(got[i] - single) <= 1e-10);
+      CHECK(std::fabs(got[i] - single) <= tol);
     }
   }
   CHECK(std::isnan(got[2]));  // the positive row has no root: the batch says so too
