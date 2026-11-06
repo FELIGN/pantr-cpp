@@ -40,8 +40,13 @@ def detect_interfaces(
         patches (Sequence[Bspline]): The patches to inspect. All must share the same
             parametric dimension.
         tol (float | None): Dimensionless relative tolerance override. Defaults, per
-            pair, to the strict preset of the two dtypes; it is scaled by the joint
-            bounding-box diagonal for coordinates and used bare for knots.
+            pair, to the strict preset of the two dtypes. For coordinates it is scaled
+            by the larger of the joint bounding-box diagonal and the largest coordinate
+            magnitude. For knots, normalized to ``[0, 1]``, each matched direction of
+            the two patches adds its space's knot tolerance over its knot span, so a
+            knot vector far from the origin relative to its span is compared at the
+            resolution its knots carry (an interior knot moved by less than about
+            ``16 eps`` times the knot magnitude over the span is not seen).
 
     Returns:
         tuple[Interface, ...]: The interfaces found, sorted by

@@ -45,8 +45,9 @@ namespace detail {
 ///     geometric (double): For control-point coordinates. The relative tolerance scaled by
 ///         `max(joint bounding-box diagonal, largest |coordinate|)`, so it tracks both the size of
 ///         the problem and where it sits.
-///     parametric (double): For knot vectors already normalized to `[0, 1]`. Dimensionless, so it
-///         is the bare relative tolerance.
+///     parametric (double): For knot vectors already normalized to `[0, 1]`: the bare relative
+///         tolerance, to which `knots_agree` adds the knot resolution of the two directions it
+///         compares (see there).
 ///     weight (double): For rational weights. Scaled by the largest weight in play rather than by
 ///         any length.
 struct Tolerances {
@@ -132,6 +133,9 @@ template <class T>
 ///     stride (std::vector<std::size_t>): C-order strides of the control-point grid, in points.
 ///     knots (std::vector<std::vector<double>>): Each direction's knots mapped affinely onto
 ///         `[0, 1]` (all zero for a direction whose knots span nothing).
+///     knot_resolution (std::vector<double>): Per direction, the space's absolute knot tolerance
+///         over the knots' span, which bounds how far a normalized knot lies from its exact image
+///         (see `knots_agree`; 0 for a direction whose knots span nothing).
 ///     cps (std::span<const T>): The control points, row-major; views the patch's shared buffer,
 ///         which lives as long as the patch.
 ///     col_min (std::vector<T>): Per coordinate column, the smallest value (NaN if any is).
@@ -147,6 +151,7 @@ struct PatchData {
   std::vector<std::size_t> num_basis;
   std::vector<std::size_t> stride;
   std::vector<std::vector<double>> knots;
+  std::vector<double> knot_resolution;
   std::span<const T> cps;
   std::vector<T> col_min;
   std::vector<T> col_max;
@@ -183,6 +188,7 @@ template <StorageFloat T>
       }
     }
     d.knots.push_back(std::move(norm));
+    d.knot_resolution.push_back(span > 0.0 ? s.tolerance() / span : 0.0);
   }
   d.stride = c_strides(d.num_basis);
   d.cps = b.control_points();
@@ -403,12 +409,25 @@ template <StorageFloat T>
 
 /// Check that the tangential knot vectors agree under the given correspondence.
 ///
+/// A matched pair of directions is compared within `tol + r_a + r_b`, `r` being each direction's
+/// `knot_resolution`. Under the knot layer's route model (`knot_merge_safety`), each knot is within
+/// `delta = 2 eps K` of the value it stands for, `K` the knot scale, so `delta` is a quarter of the
+/// space's tolerance `8 eps K`. A normalized knot `(k - k_0) / (k_N - k_0)` then moves by at most
+/// `2 delta / S` through its numerator and `2 delta / S` through the span `S`, in all `4 delta / S
+/// = r`, and the two knots of a pair differ by at most `r_a + r_b`. The normalization's own
+/// roundings (three per knot, and one for a flip) stay below the `8 u` of the strict `tol` (`4
+/// eps`). Without the resolution term two patches sharing an edge exactly were not matched once one
+/// knot vector sat 64 or more away from the origin relative to its span. The price is the
+/// resolution itself: a move of an interior knot below about `16 eps` times the knot magnitude over
+/// the span is not seen.
+///
 /// Args:
 ///     a (const PatchData<T>&): First patch.
 ///     face_a (long long): Face id on it.
 ///     b (const PatchData<T>&): Second patch.
 ///     orientation (const Orientation&): Candidate axis correspondence.
-///     tol (double): Dimensionless tolerance for knots normalized to `[0, 1]`.
+///     tol (double): Dimensionless tolerance for knots normalized to `[0, 1]`, before the
+///         resolution term.
 ///
 /// Returns:
 ///     bool: True if every matched direction agrees in degree and in normalized knot vector, the
@@ -433,9 +452,10 @@ template <StorageFloat T>
     }
     const std::size_t n = knots_a.size();
     const bool flip = orientation.flips[k];
+    const double axis_tol = tol + a.knot_resolution[axis_a] + b.knot_resolution[axis_b];
     for (std::size_t i = 0; i < n; ++i) {
       const double other = flip ? 1.0 - knots_b[n - 1 - i] : knots_b[i];
-      if (!(std::abs(knots_a[i] - other) <= tol)) {
+      if (!(std::abs(knots_a[i] - other) <= axis_tol)) {
         return false;
       }
     }

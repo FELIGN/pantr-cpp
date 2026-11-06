@@ -1397,6 +1397,13 @@
   took the length of the patches' joint bounding box with `numpy.linalg.norm`, whose sum of
   squares overflowed to `inf`, so the tolerance became infinite and every face was matched with
   every face.
+- **`detect_interfaces` and `MultiPatch` of a patch whose knot vector sits far from the origin
+  relative to its span** find the interfaces there are. The knots are compared after mapping
+  each vector onto `[0, 1]`, whose rounding grows with that ratio, against the bare relative
+  tolerance: two patches sharing an edge exactly, one knot vector shifted by `64` or more, had no
+  interface. Each matched direction now adds its space's knot tolerance over its knot span, which
+  is also the comparison's resolution: an interior knot moved by less than about `16 eps` times
+  the knot magnitude over the span is not seen. Inherited from the previous release.
 - **`partition_graph` bisects graphs above 512 vertices along their Fiedler vector.** It asked
   ARPACK for the two smallest eigenpairs of the Laplacian and took the second, which is the
   Fiedler pair only if the first is the constant vector's (eigenvalue 0). The start vector is
