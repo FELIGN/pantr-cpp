@@ -369,13 +369,16 @@ template <StorageFloat T>
     return false;
   }
   const std::size_t n = corners_a.size() / rank_a;
+  // `hypot` rather than the square root of a sum of squares, as in `joint_tolerances`: the square
+  // of a difference overflows from about 1.3e154, and a pair of corners that coincide to rounding
+  // on patches that large then had no partner.
   const auto distance = [&](std::size_t i, std::size_t j) {
-    double sum = 0.0;
+    double d = 0.0;
     for (std::size_t c = 0; c < rank_a; ++c) {
       const double diff = corners_a[i * rank_a + c] - corners_b[j * rank_a + c];
-      sum += diff * diff;
+      d = c == 0 ? std::abs(diff) : std::hypot(d, diff);
     }
-    return std::sqrt(sum);
+    return d;
   };
   for (std::size_t i = 0; i < n; ++i) {
     bool found = false;
