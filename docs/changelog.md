@@ -66,6 +66,10 @@
 - **`pantr.bspline.find_roots` with `tol=nan` or `tol=inf`** raises `ValueError` ("tol must be
   positive and finite"); the previous release returned no roots for NaN, and for `inf` raised that
   the spline vanishes identically.
+- **`THBSplineSpace` whose grid's root bounds miss a small axis of the root space's domain**
+  raises `ValueError` ("grid root bounds must match root_space domain"). Each axis is now held to
+  its own knot tolerance; the previous release used the largest over the axes, so beside a
+  `[0, 1e6]` axis a `[0, 1e-3]` axis's bound off by `1e-9` was accepted.
 - **`create_distributed_space` and `create_distributed_function` with a duck-typed communicator
   of more than one rank that has no `allgather`** raise `AttributeError`: the partition is now
   sent from rank 0 (see under Changed). The previous release read only `rank` and `size`.

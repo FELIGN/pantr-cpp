@@ -618,14 +618,17 @@ class THBSplineSpace {
                         " must match root_space.num_intervals " +
                         py_repr(std::span<const std::size_t>(intervals)) + ".");
     }
-    // Absolute comparison against the space's own knot tolerance. A relative-and-absolute test
-    // with library defaults would accept a few-percent-of-a-millionth relative domain mismatch at
-    // every scale and, through its absolute leg, `[0, 1e-9]` against `[0, 2e-9]`.
+    // Absolute comparison against each axis's own knot tolerance, not the space's, which is the
+    // largest over the axes and would accept a small axis's bound off by a relative millionth
+    // beside a large one. A relative-and-absolute test with library defaults would accept a
+    // few-percent-of-a-millionth relative domain mismatch at every scale and, through its absolute
+    // leg, `[0, 1e-9]` against `[0, 2e-9]`.
     const std::span<const double> bounds = hierarchy.root().bounds();
     for (std::size_t k = 0; k < d; ++k) {
       const auto [lo, hi] = root.spaces()[k].domain();
-      if (!(std::abs(bounds[2 * k] - static_cast<double>(lo)) <= root.tolerance()) ||
-          !(std::abs(bounds[2 * k + 1] - static_cast<double>(hi)) <= root.tolerance())) {
+      const double axis_tol = root.spaces()[k].tolerance();
+      if (!(std::abs(bounds[2 * k] - static_cast<double>(lo)) <= axis_tol) ||
+          !(std::abs(bounds[2 * k + 1] - static_cast<double>(hi)) <= axis_tol)) {
         throw value_error("grid root bounds must match root_space domain.");
       }
     }
