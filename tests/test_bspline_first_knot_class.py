@@ -90,7 +90,8 @@ def test_to_beziers_matches_evaluate_on_every_interval() -> None:
     """Each Bézier piece of ``to_beziers`` is the spline on its interval.
 
     Bug caught: extraction started at ``knots[degree]``, so the first piece was built from the
-    wrong knots (the reviewer's example gave a constant 4 where the spline is 2.7 to 3.6).
+    wrong knots (for ``[-0.5, -0.25, 0, 0, 0.5, 1, 1.25, 1.5]`` at degree 2 and control points
+    ``1, 2, 4, 3, 5``, a constant 4 where the spline runs from 2.7 to 3.6).
     """
     rng = np.random.default_rng(3)
     longer = BsplineSpace1D([0.0] * 4 + [0.3, 0.7] + [1.0] * 3, 2)  # first class of degree + 2

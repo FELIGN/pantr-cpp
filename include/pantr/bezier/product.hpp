@@ -265,7 +265,8 @@ void check_product_overflow(std::span<const T> a, std::span<const T> b, const Nd
   }
   if (std::all_of(a.begin(), a.end(), finite) && std::all_of(b.begin(), b.end(), finite)) {
     throw std::overflow_error(
-        "The product of these finite control points overflows the range of its dtype");
+        "The product of these finite control points overflows the range of its dtype, or an "
+        "intermediate of the Bernstein product formula overflows float64");
   }
 }
 

@@ -44,14 +44,17 @@ and the merge radii are all multiples of `max|c|`, so `c` and `2^k c` give the s
 nothing under- or overflows.
 
 - Every root is `computed`; no multiplicity is claimed (`-1`).
-- Completeness is `complete` unless clipping gave up on an interval at its depth cap (64): that
-  interval is then listed and the result is `gap_localized`. The Python wrapper turns it into a
+- Completeness is `complete` unless clipping gave up on an interval at its depth cap (64), or a
+  Newton/bisection solve of Yuksel's walk reached its iteration cap (below): that interval (the
+  solve's final bracket) is then listed and the result is `gap_localized`. The Python wrapper turns it into a
   `RuntimeWarning` (QB7). Reaching it needs a polynomial whose clips are exact (some lines
   written at a higher degree, at some roots), a tolerance below the spacing of doubles at its
   root, and a value floor small enough that no interval reads as flat first: at the floor the
   Python layer passes, no input is known to reach it. `gap_unlocalized` is never produced.
-- The Newton/bisection hybrid's iteration cap (64) is not a completeness gap: it keeps a bracket
-  that holds the root and returns its midpoint, so only width is lost, never the root.
+- The Newton/bisection hybrid's iteration cap (64) is a completeness gap: when Newton approaches
+  the root from one side (a root where the derivative also vanishes, or a `float32` evaluation
+  that stalls the step) the far end of the bracket never moves, and its midpoint can be far from
+  the root. Yuksel's walk lists the bracket as a gap; the monotone solver raises (`state_error`).
 - The Numba kernel's fixed buffers are gone: a work stack of 256 (it could not bind, a depth-first
   stack holding at most `depth + 2` entries) and a candidate buffer of `3n + 4`, which did bind
   (polynomials with many exact, evenly spaced roots filled it, and roots were lost) and now grows.

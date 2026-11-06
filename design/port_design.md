@@ -498,10 +498,9 @@ template <class P = Builtin, class T> RootSet<T> find_roots(const Bezier<T>&, Fi
   claim through the options is on the later list (no caller needs it, and a request the provider cannot honour would
   need its own failure mode).
 - **Frames** (*a certified tolerance names its frame*): `param_tol` is absolute on the parameter interval `[0, 1]`;
-  `value_tol` is absolute in the coefficient units. Today's default passes the dimensionless `get_strict(dtype)` into
-  both (found while mapping the Python code). The port keeps the default bit-for-bit (the suite is the oracle) and states the frame at the
-  options struct; whether the default should scale with the coefficient magnitude is routed to the end review's
-  provenance check of tolerances, not changed here.
+  `value_tol` is relative to each polynomial's largest coefficient magnitude (settled at the end review: the user's
+  `tol` is `param_tol` only, and the Python layer passes `get_strict(dtype)` as `value_tol`), so the roots do not
+  change when the coefficients are scaled; `design/root_seam.md` states it.
 - **Python**: `pantr.bezier.find_roots/find_monotone_root` keep their signatures and return arrays. The wrapper calls the
   active provider (`pantr._pantr` or `pantr_berf`) with plain coefficient arrays; a result with
   `completeness != complete` emits `RuntimeWarning` (one shared wording with the B-spline path). Runtime switch:

@@ -39,9 +39,11 @@
   the build finds is this release's wheel (see the distributed guide on build isolation).
 
 ### Rejected where it used to be accepted
-- **`Bezier.multiply` of finite control points whose product overflows the dtype** raises
-  `OverflowError`; the previous release returned `inf` control points with NumPy's
-  "overflow encountered in multiply" `RuntimeWarning`. NaN or infinite control points are not
+- **`Bezier.multiply` and `Bspline.multiply` of finite control points whose product overflows**
+  raise `OverflowError`; the previous release returned `inf` control points with NumPy's
+  "overflow encountered in multiply" `RuntimeWarning`. With two or more parametric directions the
+  formula forms products of binomial coefficients and control points before scaling, so it can
+  overflow (and raise) for `float64` control points near `1e150` whose product is representable. NaN or infinite control points are not
   refused: they propagate to the product control points that read them.
 - **`create_uniform_open_knots` and `create_uniform_periodic_knots` with a NaN or infinite
   domain end** raise `ValueError` ("domain must be finite, ..."); the previous release returned
@@ -444,7 +446,8 @@
   over it, with the names, signatures and defaults it had. The reduction operators are
   assembled in exact rationals as before (now Boost.Multiprecision) and are the same bits.
   `reduce_degree` and `find_monotone_root` reproduce the previous release's values bit for bit
-  on `float32` and `float64`, and so does `find_roots` for coefficients of order one, except where
+  on `float32` and `float64` (except where `find_monotone_root` now raises at its iteration cap,
+  under "Fixed"), and so does `find_roots` for coefficients of order one, except where
   Bezier clipping used to drop roots or report a multiple root more than once (under "Fixed") and
   in the depth-cap case below (measured over random, constructed and special-value inputs). `degree_reduction_error` sums its Gram contraction in another order and
   moves within that contraction's rounding, which grows with the degree: from the last bits at
@@ -455,7 +458,8 @@
   previous release's decisions up to degree about 23, and above that its final degree can differ
   (neither is reliably the exact greedy answer there). `degree_reduction_error` and
   `minimize_degree` no longer emit NumPy's `RuntimeWarning`s (invalid value, overflow) on
-  non-finite or overflowing control points; the results are the same. The fits' singular value
+  non-finite or overflowing control points; the results are the same, except `minimize_degree`
+  of non-finite control points (under "Fixed"). The fits' singular value
   decomposition is Eigen's instead of LAPACK's, so a fit moves within the bound the Vandermonde
   matrix's conditioning gives (a few units in the last place on a small well-conditioned grid,
   growing with the node count and the conditioning). Batch root finding runs on pantr's thread
@@ -1330,7 +1334,8 @@
   also for simple roots such as that of `(t - 5/8)(t + 1)^3`). `find_monotone_root` now raises,
   naming the bracket (and in batch mode the row); `find_roots` reports the bracket as a part of
   `[0, 1]` it did not resolve, with the `RuntimeWarning` it gives for Bézier clipping's depth cap.
-  Inherited from the previous release.
+  A `tol` below the spacing of doubles at the root reaches the cap too, and raises there, where
+  the previous release's value was as close as doubles allow. Inherited from the previous release.
 - **A knot vector whose first domain knot repeats past `knots[degree]`** (a non-clamped vector
   with `knots[degree] == knots[degree + 1]`, or a first knot repeated more than `degree + 1`
   times) gets correct Bézier, Lagrange and cardinal extraction operators, `to_beziers` pieces,

@@ -695,7 +695,9 @@ class Bezier:
             ValueError: If the operands have different dimensions, dtypes,
                 or ranks.
             OverflowError: If finite control points give a non-finite product
-                control point (the product exceeds the dtype's range).
+                control point: the product exceeds the dtype's range or, with two or
+                more directions, an intermediate of the formula (products of binomial
+                coefficients and control points) exceeds the range of ``float64``.
 
         Example:
             >>> import numpy as np

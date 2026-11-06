@@ -57,7 +57,9 @@ struct ClipResult {
 /// whose largest coefficient magnitude is `scale`.
 [[nodiscard]] inline double zero_tolerance(double scale, std::size_t n,
                                            double value_floor) noexcept {
-  const double bound = scale * static_cast<double>(n + 1) * clip_eval_error_factor * dbl_epsilon;
+  // The dimensionless factor first: `scale * (n + 1)` would overflow for a `scale` near the
+  // largest double whose bound is representable.
+  const double bound = scale * (static_cast<double>(n + 1) * clip_eval_error_factor * dbl_epsilon);
   return (std::max)(bound, value_floor);
 }
 

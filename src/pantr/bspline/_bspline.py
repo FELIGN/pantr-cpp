@@ -1254,6 +1254,8 @@ class Bspline:
             ValueError: If the operands have different dtypes.
             ValueError: If the operands have different ranks.
             ValueError: If the operands have different parametric domains.
+            OverflowError: If finite control points give a non-finite product
+                control point (see :meth:`pantr.bezier.Bezier.multiply`).
 
         Note:
             The boundary structure of the operands is preserved per direction:

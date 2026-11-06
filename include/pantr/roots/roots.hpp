@@ -284,7 +284,7 @@ inline void check_tol(double tol, const char* name) {
 
 /// pantr's own provider: Yuksel's algorithm, Bezier clipping and the derivative-aware merge,
 /// ported from the previous release. It claims `computed` for every root and reports a gap where
-/// clipping gave up at its depth cap.
+/// clipping gave up at its depth cap or a Newton/bisection solve reached its iteration cap.
 class Builtin {
  public:
   /// Get the provider's capabilities.
@@ -302,7 +302,8 @@ class Builtin {
   ///     o (FindRootsOptions): Tolerances.
   ///
   /// Returns:
-  ///     RootSet<double>: Ascending computed roots; `gap_localized` when clipping gave up.
+  ///     RootSet<double>: Ascending computed roots; `gap_localized` when clipping gave up or a
+  ///     solve reached its iteration cap.
   ///
   /// Raises:
   ///     value_error: `coeff` is empty, or a tolerance is not positive and finite.

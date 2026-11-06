@@ -93,8 +93,8 @@ def test_degree6_roots_at_any_value_scale(scale: float) -> None:
 def test_power_of_two_scaling_leaves_the_roots_bitwise(tol: float | None, batch: bool) -> None:
     """``c`` and ``2^k c`` give the same bits for every ``k`` in [-900, 900].
 
-    Covers the clipping path (degree 6, and degree 6 with a double root) and the Yuksel path
-    (degree 2), at the default and at an explicit ``tol``.
+    Covers the clipping path (degree 6) and the Yuksel path (degree 2, and degree 5 with a
+    double root), at the default and at an explicit ``tol``.
     """
     cases = [
         _DEG6_ROOTS,
@@ -174,3 +174,18 @@ def test_non_finite_tol_raises(tol: float) -> None:
         find_roots([b, b], tol=tol)
     with pytest.raises(ValueError, match="tol must be positive and finite"):
         find_monotone_root(Bezier([1.0, -1.0]), tol=tol)
+
+
+@pytest.mark.parametrize("batch", [False, True])
+def test_coefficients_near_the_largest_double(batch: bool) -> None:
+    """Coefficients near ``2^1023`` keep the roots of the same polynomial at scale 1.
+
+    Bug caught: the zero tolerance formed as ``scale * (n + 1) * 4 * eps`` left to right, whose
+    first product overflowed to ``inf`` although the bound itself is representable, so every
+    value read as zero (spurious roots at 0 and 1).
+    """
+    c = _bernstein(_DEG6_ROOTS)
+    ref = _batch_row(c) if batch else find_roots(Bezier(c))
+    big = np.ldexp(c, 1020)
+    got = _batch_row(big) if batch else find_roots(Bezier(big))
+    assert np.array_equal(got, ref)
