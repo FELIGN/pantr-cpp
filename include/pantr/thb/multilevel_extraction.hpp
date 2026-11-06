@@ -183,7 +183,6 @@ class MultiLevelExtraction {
     std::fill(out.data_handle(), out.data_handle() + k * n_single, 0.0);
     const FunctionBoxes& boxes = boxes_->get([this] { return build_boxes(); });
 
-    std::vector<std::size_t> at(d);
     for (std::size_t row = 0; row < k; ++row) {
       const std::int64_t origin = cell.levels[row];
       const std::span<const std::int64_t> multi = cell.multi_index(row);

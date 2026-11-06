@@ -466,8 +466,7 @@ class THBSplineSpace {
   /// Args:
   ///     cell_ids (std::span<const std::int64_t>): Active cell ids to refine; repeats are ignored.
   ///     admissible_class (std::optional<std::int64_t>): The class `m >= 2` to maintain, or no
-  ///     value
-  ///         for ungraded refinement.
+  ///         value for ungraded refinement.
   ///
   /// Returns:
   ///     THBSplineSpace: A space on the refined grid with the same root, truncation and
@@ -498,8 +497,7 @@ class THBSplineSpace {
   ///     lo (std::span<const std::int64_t>): Per-direction start (inclusive).
   ///     hi (std::span<const std::int64_t>): Per-direction end (exclusive).
   ///     admissible_class (std::optional<std::int64_t>): The class `m >= 2` to maintain, or no
-  ///     value
-  ///         for ungraded refinement.
+  ///         value for ungraded refinement.
   ///
   /// Returns:
   ///     THBSplineSpace: A space on the refined grid with the same root, truncation and

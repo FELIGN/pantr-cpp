@@ -69,8 +69,8 @@ struct CellBlock {
 ///     level_spaces (std::vector<bspline::BsplineSpace<T>>): Per-level tensor-product spaces.
 ///     num_basis (std::vector<std::vector<std::int64_t>>): `[level][direction]` function count.
 ///     support (std::vector<std::vector<bspline::detail::Support1D>>): `[level][direction]`
-///     function supports. active (std::vector<std::vector<std::int64_t>>): Per-level sorted flat
-///     (row-major) indices
+///         function supports.
+///     active (std::vector<std::vector<std::int64_t>>): Per-level sorted flat (row-major) indices
 ///         of the active tensor-product functions.
 ///     func_offset (std::vector<std::int64_t>): Per-level global dof base, `num_levels + 1`
 ///         cumulative active counts.
