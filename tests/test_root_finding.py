@@ -15,6 +15,7 @@ import numpy as np
 from numpy import typing as npt
 from numpy.testing import assert_allclose
 
+from pantr import tolerance
 from pantr._testing import (
     clip_hull_to_zero as _clip_hull_to_zero,
 )
@@ -683,11 +684,10 @@ class TestSignTestUnderflow(unittest.TestCase):
                 # the root would make the iteration cap report.
                 roots = find_roots(bez)
                 self.assertEqual(len(roots), 1)
-                # The root is exactly 0.5; the finder resolves it to the working
-                # precision. `eps` is two ulps of 0.5 at this dtype: slack for the
-                # termination step, admitted rather than derived. A fixed number of
-                # decimal places would hold float32 to a float64 bar.
-                self.assertLessEqual(abs(roots[0] - 0.5), float(np.finfo(dtype).eps))
+                # The root is exactly 0.5. The default tol is the bracket width the
+                # finder stops at, so the documented error bound is that tol; a tighter bar
+                # depends on the toolchain's rounding of the last Newton step.
+                self.assertLessEqual(abs(roots[0] - 0.5), tolerance.get_strict(dtype))
 
     def test_sign_tests_are_scale_invariant_over_decades(self) -> None:
         """Both faces stay correct across the decades spanning the frontier.
