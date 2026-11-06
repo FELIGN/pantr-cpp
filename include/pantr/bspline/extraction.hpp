@@ -77,8 +77,8 @@ void bezier_extraction_core(std::span<const T> knots, int degree, double tol,
   };
 
   // The first interval starts at the last knot of the first domain knot's class, which is past
-  // `knots[degree]` when that class continues beyond it (a non-clamped vector with `knots[degree] ==
-  // knots[degree + 1]`). The interval's functions and the knots they depend on are then those of
+  // `knots[degree]` when that class continues beyond it (a non-clamped vector with `knots[degree]
+  // == knots[degree + 1]`). The interval's functions and the knots they depend on are then those of
   // the vector with its first `shift` knots dropped, whose own `knots[degree]` is that last knot.
   const std::size_t shift =
       last_index_of_first_domain_class<T>(knots, degree, tol) - static_cast<std::size_t>(degree);
