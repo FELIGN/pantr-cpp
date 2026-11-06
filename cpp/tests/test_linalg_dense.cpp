@@ -230,6 +230,54 @@ TEST_CASE("try_lstsq_full_rank_qr: the certificate declines below s_min = sqrt(e
   CHECK(std::abs(svd_answer(1, 0) - 1e10) <= 1e-9 * 1e10);
 }
 
+TEST_CASE("try_lstsq_full_rank_qr: an exactly rank-1 matrix below the normal range is declined") {
+  // Oracle: exact rank. A = [[a, a], [b, b]] with a = 2^-500, b = 1.5 * 2^-512 has rank 1. Eigen
+  // skips a Householder reflector whose tail's squared norm is at most DBL_MIN (here b^2 = 0.5625
+  // DBL_MIN), leaving R = [[a, a], [0, b]], whose certificate then held: the QR answer for the
+  // right-hand side (a, b) was (0, 1), where the minimum-norm one is (1/2, 1/2). The same for s
+  // times the 2 x 2 all-ones matrix at s = 2^-511, where the squared tail is DBL_MIN exactly.
+  const double a = std::ldexp(1.0, -500);
+  const double b = 1.5 * std::ldexp(1.0, -512);
+  const la::RowMatrix<double> skew = matrix_of<double>(2, 2, {a, a, b, b});
+  CHECK_FALSE(
+      la::try_lstsq_full_rank_qr<double>(skew, matrix_of<double>(2, 1, {a, b})).has_value());
+  const double s = std::ldexp(1.0, -511);
+  const la::RowMatrix<double> ones = matrix_of<double>(2, 2, {s, s, s, s});
+  CHECK_FALSE(
+      la::try_lstsq_full_rank_qr<double>(ones, matrix_of<double>(2, 1, {s, s})).has_value());
+}
+
+TEST_CASE(
+    "try_lstsq_full_rank_qr: a well-conditioned matrix is certified at any power-of-two scale") {
+  // Oracle: a metamorphic relation. Scaling A by 2^k scales the solution by 2^-k exactly, and the
+  // certificate, which measures kappa_F(A), does not depend on k. Bug caught: certification only
+  // for |k| <= 511 (a sum of squares overflowing or underflowing past it), and the one-column case
+  // near sqrt(DBL_MAX), whose squared norm overflows.
+  const la::RowMatrix<double> base = matrix_of<double>(3, 2, {2, 1, 1, 3, 0, 1});
+  const la::RowMatrix<double> rhs = matrix_of<double>(3, 1, {1, 2, 3});
+  const std::optional<NdArray<double>> ref = la::try_lstsq_full_rank_qr<double>(base, rhs);
+  REQUIRE(ref.has_value());
+  for (const int k : {-1000, -600, -511, 0, 511, 600, 1000}) {
+    INFO("k = " << k);
+    const la::RowMatrix<double> scaled = base.unaryExpr([k](double v) { return std::ldexp(v, k); });
+    const std::optional<NdArray<double>> got = la::try_lstsq_full_rank_qr<double>(scaled, rhs);
+    REQUIRE(got.has_value());
+    for (std::size_t i = 0; i < 2; ++i) {
+      CHECK(std::ldexp(got->data()[i], k) == ref->data()[i]);
+    }
+  }
+  // One column whose norm is about sqrt(DBL_MAX), the same relation against the unit column.
+  const auto one_column = [](double c) {
+    return la::try_lstsq_full_rank_qr<double>(matrix_of<double>(2, 1, {c, c}),
+                                              matrix_of<double>(2, 1, {1, 1}));
+  };
+  const std::optional<NdArray<double>> unit = one_column(1.0);
+  const std::optional<NdArray<double>> huge = one_column(std::ldexp(1.0, 511));
+  REQUIRE(unit.has_value());
+  REQUIRE(huge.has_value());
+  CHECK(std::ldexp(huge->data()[0], 511) == unit->data()[0]);
+}
+
 TEST_CASE("try_lstsq_full_rank_qr: a matrix with no columns has an empty solution") {
   const la::RowMatrix<double> a(3, 0);
   const la::RowMatrix<double> b = matrix_of<double>(3, 2, {1, 2, 3, 4, 5, 6});

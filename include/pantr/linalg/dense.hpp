@@ -129,16 +129,13 @@ template <StorageFloat T, class Svd>
 /// backward error.
 ///
 /// The certificate (the argument is made at `try_lstsq_banded`) keeps the QR path when `1 /
-/// ||R^-1||_F > tau ||A||_F`. `tau = max(sqrt(eps), 4 (growth + cutoff))`: the floor `sqrt(eps)`
-/// bounds the conditioning of `R` that the computed `||R^-1||_F` can be trusted at, and `growth`
-/// stands for the factorization's normwise backward error, `||A + E - Q R||_F <= growth * eps *
-/// ||A||_F` with `E` the rounding of the factorization. Then `tau / 2 - growth * eps - cutoff > 0`
-/// whichever of the two terms of the maximum binds, which is what makes `s_min(A)` exceed
-/// `cutoff * s_max(A)`.
+/// ||R^-1||_F > tau ||A||_F`. `tau = max(sqrt(eps), 4 (growth eps + cutoff))`: where `growth eps`
+/// bounds the factorization's backward error `gamma` (`||E||_2 <= gamma ||A||_F`), the second term
+/// gives the argument's hypothesis `gamma + cutoff <= tau / 4`; the floor `sqrt(eps)` gives it
+/// where `growth` does not bound `gamma` (see `try_lstsq_banded` for where that holds).
 ///
 /// Args:
-///     growth (double): The backward-error bound in units of `eps`; at least `m n` (the accuracy of
-///         the computed `||R^-1||_F` needs `tau >= 4 m n eps`).
+///     growth (double): The backward-error bound in units of `eps`.
 ///     cutoff (double): The relative singular-value cutoff of the dense path the answer stands for.
 ///
 /// Returns:
@@ -252,17 +249,33 @@ template <StorageFloat T>
 ///
 /// The cost is `2 m n^2 - 2 n^3 / 3` operations (Golub and Van Loan, Matrix Computations, 4th ed.,
 /// section 5.2.1), against the several sweeps of `lstsq_min_norm_jacobi`. The answer is given when
-/// `A` and `B` are finite, `m >= n`, and `1 / ||R^-1||_F > tau ||A||_F` for the computed factor
-/// `R`, with `tau` from `detail::rank_certificate_tau`: the argument of `try_lstsq_banded`, to
-/// which the only change is the factorization's backward error. The computed `R` of `A P` (`P` the
-/// pivoting) is the exact factor of `A P + E` with `||E||_F <= gamma ||A||_F`, `gamma = c m n u`
-/// for a small constant `c` and `u = eps / 2` (Higham, Accuracy and Stability of Numerical
-/// Algorithms, 2nd ed., Theorem 19.4, columnwise, for `A P`; the pivoting only permutes the
-/// columns). The theorem leaves `c` unspecified and the explicit constant was not re-read for this
-/// header, so `growth = 24 m n` is assumed, that is `gamma <= 24 m n eps` (`c <= 48`); the older
-/// explicit statement of the result, recalled and not re-read, is `(6 m - 3 n + 41) n u <= 23.5 m n
-/// eps`. Under that assumption `tau / 2 - gamma - rcond > 0` by construction of `tau`, and the rest
-/// of the argument is `try_lstsq_banded`'s unchanged: asserted under the assumption, not proved.
+/// `A` and `B` are finite, `m >= n`, and the certificate of `try_lstsq_banded` holds, `||R^-1||_F
+/// tau ||A'||_F < 1` with `tau` from `detail::rank_certificate_tau` and `growth = 24 m n`, for the
+/// computed factor `R` of `A' = 2^-e A`. That is `A` scaled exactly by the power of two bringing
+/// its largest entry into `[1/2, 1)`; the solution is scaled back by `2^-e`. In the normal range
+/// every operation of the factorization commutes with that scaling, so the answer is the unscaled
+/// one bit for bit; what the scaling changes is below it.
+///
+/// The argument is `try_lstsq_banded`'s, with Householder QR's backward error for `gamma`. Higham,
+/// Accuracy and Stability of Numerical Algorithms, 2nd ed., Theorem 19.4, gives `||da_j||_2 <=
+/// gamma~_{m n} ||a_j||_2` columnwise; it is stated for unpivoted QR and carries over to the
+/// pivoted `A' P` because its Lemma 19.3 holds for Householder matrices that "need have no
+/// connection to the matrix to which [they are] applied". The theorem leaves the constant
+/// unspecified; a first-order count of Eigen's own construction and update gives `(6 m - 3 n + 34)
+/// n u <= 24 m n eps` for all `m >= n >= 1` (`u = eps / 2`), whence `growth`: a hand count checked
+/// against an emulation of Eigen's sequence, not a published constant, so this is argued and not
+/// proved. So is the inverse's backward error: Eigen's triangular solve multiplies by reciprocals,
+/// where Higham's Lemma 8.4 assumes division.
+///
+/// Higham's model ignores underflow, and Eigen's Householder construction does not: a reflector
+/// whose tail has a squared norm at most `DBL_MIN` is skipped, the tail deleted rather than
+/// annihilated. That perturbs `A` by up to `sqrt(DBL_MIN)` per column, outside `gamma ||A||_F`, and
+/// without the scaling the exactly rank-1 `[[2^-500, 2^-500], [1.5 2^-512, 1.5 2^-512]]` was
+/// certified. After it `||A'||_F >= 1/2`, and the skip's perturbation (at most `sqrt(n DBL_MIN)`)
+/// and the scaling's own rounding of an entry it carries below the normal range (at most `2^-1075`
+/// each) lie far inside the argument's margin `(tau / 2) ||A'||_F`. The scaling also keeps the
+/// squared norms of the test from overflowing or underflowing, which declined well-conditioned
+/// matrices beyond `2^511` or below `2^-511`.
 ///
 /// Everything is computed in `double` and the solution rounded to `T`, as `lstsq_min_norm` does.
 /// No answer is given for a non-finite `A` or `B`, for fewer rows than columns, or where the test
@@ -296,7 +309,10 @@ template <StorageFloat T>
     // first pivot of an empty matrix.
     return NdArray<T>({std::size_t{0}, static_cast<std::size_t>(b.cols())}, for_overwrite);
   }
-  const MatD ad = a.template cast<double>();
+  // `A' = 2^-e A` with the largest `|a'_ij|` in `[1/2, 1)` (exact, `ldexp`); see above.
+  int e = 0;
+  static_cast<void>(std::frexp(static_cast<double>(a.cwiseAbs().maxCoeff()), &e));
+  const MatD ad = a.template cast<double>().unaryExpr([e](double v) { return std::ldexp(v, -e); });
   const Eigen::ColPivHouseholderQR<MatD> qr(ad);
   const auto r = qr.matrixQR().topLeftCorner(n, n).template triangularView<Eigen::Upper>();
   const MatD r_inv = r.solve(MatD::Identity(n, n));
@@ -307,7 +323,8 @@ template <StorageFloat T>
   MatD y = qr.householderQ().adjoint() * b.template cast<double>();
   MatD top = y.topRows(n);
   r.solveInPlace(top);
-  const MatD x = qr.colsPermutation() * top;
+  const MatD x =
+      (qr.colsPermutation() * top).unaryExpr([e](double v) { return std::ldexp(v, -e); });
   NdArray<T> out({static_cast<std::size_t>(n), static_cast<std::size_t>(b.cols())}, for_overwrite);
   Eigen::Map<RowMatrix<T>>(out.data(), n, b.cols()) = x.template cast<T>();
   return out;
