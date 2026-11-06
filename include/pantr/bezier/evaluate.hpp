@@ -59,6 +59,17 @@ struct DirBasis {
 
 /// Tabulate one direction: the Bernstein basis for `order == 0`, else the derivatives of orders
 /// `0..order`.
+///
+/// Args:
+///     degree (std::size_t): The direction's degree.
+///     pts (std::span<const T>): The direction's coordinates.
+///     order (long long): The highest derivative order, `>= 0`.
+///
+/// Returns:
+///     DirBasis<T>: The table, `degree + 1` functions per row and `order + 1` rows per point.
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed).
 template <StorageFloat T>
 [[nodiscard]] DirBasis<T> tabulate_direction(std::size_t degree, std::span<const T> pts,
                                              long long order) {
@@ -91,6 +102,15 @@ struct EvalPoints {
 };
 
 /// Gather the columns of a `(n, dim)` point array.
+///
+/// Args:
+///     pts (mdview<const T, 2>): The points, one per row.
+///
+/// Returns:
+///     EvalPoints<T>: An arbitrary point set owning a copy of each column.
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed).
 template <StorageFloat T>
 [[nodiscard]] EvalPoints<T> make_points(mdview<const T, 2> pts) {
   EvalPoints<T> e;
@@ -108,6 +128,15 @@ template <StorageFloat T>
 }
 
 /// View a lattice's coordinate arrays.
+///
+/// Args:
+///     lattice (const quad::PointsLattice<T>&): The lattice, which must outlive the result.
+///
+/// Returns:
+///     EvalPoints<T>: A lattice point set viewing the lattice's coordinates.
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed).
 template <StorageFloat T>
 [[nodiscard]] EvalPoints<T> make_points(const quad::PointsLattice<T>& lattice) {
   EvalPoints<T> e;
@@ -293,6 +322,15 @@ void contract_lattice(std::span<const T> ctrl, std::span<const std::size_t> shap
 }
 
 /// Contract the control points with the basis matrices at the given points.
+///
+/// Args:
+///     b (const Bezier<T>&): The Bézier.
+///     pts (const EvalPoints<T>&): The points.
+///     bases (const std::vector<BasisRef<T>>&): One basis table per direction, at `pts`.
+///     dst (T*): `(pts.count, cp_size)` values.
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed).
 template <StorageFloat T>
 void contract(const Bezier<T>& b, const EvalPoints<T>& pts, const std::vector<BasisRef<T>>& bases,
               T* dst) {
@@ -309,6 +347,15 @@ void contract(const Bezier<T>& b, const EvalPoints<T>& pts, const std::vector<Ba
 
 /// Divide the coordinates of homogeneous values by their weight: `out(j, r) = raw(j, r) /
 /// raw(j, rank)`.
+///
+/// Args:
+///     raw (const T*): `(count, rank + 1)` homogeneous values.
+///     count (std::size_t): The number of points.
+///     rank (std::size_t): The number of coordinates.
+///     out (T*): `(count, rank)` values.
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed).
 template <StorageFloat T>
 void project_rational(const T* raw, std::size_t count, std::size_t rank, T* out) {
   const std::size_t cp = rank + 1;
@@ -321,6 +368,14 @@ void project_rational(const T* raw, std::size_t count, std::size_t rank, T* out)
 }
 
 /// Evaluate at arbitrary points or on a lattice for `dim >= 2`, into `out` (`(count, rank)`).
+///
+/// Args:
+///     b (const Bezier<T>&): The Bézier.
+///     pts (const EvalPoints<T>&): The points, one coordinate array per direction.
+///     out (T*): `(pts.count, rank)` values.
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed).
 template <StorageFloat T>
 void evaluate_nd_into(const Bezier<T>& b, const EvalPoints<T>& pts, T* out) {
   const std::size_t dim = b.dim();
@@ -341,6 +396,14 @@ void evaluate_nd_into(const Bezier<T>& b, const EvalPoints<T>& pts, T* out) {
 }
 
 /// Evaluate a 1D Bezier at the points `pts` into `out` (`(pts.size(), rank)`).
+///
+/// Args:
+///     b (const Bezier<T>&): A curve.
+///     pts (std::span<const T>): The parameters.
+///     out (T*): `(pts.size(), rank)` values.
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed).
 template <StorageFloat T>
 void evaluate_1d_into(const Bezier<T>& b, std::span<const T> pts, T* out) {
   const std::size_t cp = b.cp_size();
@@ -394,16 +457,27 @@ void polynomial_derivative_1d_into(const Bezier<T>& b, std::span<const T> pts, s
                         mdview<T, 2>(out, pts.size(), cp));
 }
 
-/// Write the derivative of an order above the degree of a polynomial Bezier: zero at a point whose
-/// coordinates are finite, NaN at one with a NaN or infinite coordinate (where the derivative
-/// cannot be evaluated, so the result says so rather than reading as an exact zero; the
-/// previous release's table gave NaN there too, from `0 * NaN` and `0 * inf`).
+/// Write the derivative of an order above the degree of a polynomial Bezier: zero where it can be
+/// evaluated, NaN where it cannot, so that a non-finite input never reads as an exact zero. A
+/// component is NaN at a point with a NaN or infinite coordinate, and at every point when its
+/// column of control points holds a NaN or an infinity.
+///
+/// Args:
+///     ctrl (std::span<const T>): The control points, `cp` values per row.
+///     pts (const EvalPoints<T>&): The points.
+///     cp (std::size_t): Values per control point (the rank).
+///     out (T*): `(pts.count, cp)` values.
 ///
 /// Note:
 ///     Inputs are assumed to be correct (no validation performed).
 template <StorageFloat T>
-void zero_derivative_into(const EvalPoints<T>& pts, std::size_t cp, T* out) {
+void zero_derivative_into(std::span<const T> ctrl, const EvalPoints<T>& pts, std::size_t cp,
+                          T* out) {
   using std::isfinite;
+  std::vector<bool> column_finite(cp, true);
+  for (std::size_t i = 0; i < ctrl.size(); ++i) {
+    column_finite[i % cp] = column_finite[i % cp] && isfinite(ctrl[i]);
+  }
   const std::size_t dim = pts.dirs.size();
   std::vector<std::vector<bool>> finite(dim);
   for (std::size_t d = 0; d < dim; ++d) {
@@ -418,8 +492,10 @@ void zero_derivative_into(const EvalPoints<T>& pts, std::size_t cp, T* out) {
     for (std::size_t d = 0; d < dim; ++d) {
       ok = ok && finite[d][pts.lattice ? idx[d] : j];
     }
-    const T value = ok ? static_cast<T>(0) : std::numeric_limits<T>::quiet_NaN();
-    std::fill(out + j * cp, out + (j + 1) * cp, value);
+    for (std::size_t c = 0; c < cp; ++c) {
+      out[j * cp + c] =
+          ok && column_finite[c] ? static_cast<T>(0) : std::numeric_limits<T>::quiet_NaN();
+    }
     if (pts.lattice) {
       for (std::size_t d = dim; d-- > 0;) {
         if (++idx[d] < pts.dirs[d].size()) {
@@ -536,7 +612,7 @@ void derivatives_into(const Bezier<T>& b, const EvalPoints<T>& pts,
     for (std::size_t d = 0; d < dim; ++d) {
       if (static_cast<std::size_t>(orders[d]) > b.degree(d)) {
         // Exactly zero, with no table built (an order of a billion would ask for gigabytes).
-        zero_derivative_into<T>(pts, cp, out);
+        zero_derivative_into<T>(b.control_points(), pts, cp, out);
         return;
       }
     }

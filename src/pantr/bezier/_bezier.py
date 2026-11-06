@@ -328,6 +328,10 @@ class Bezier:
             out (npt.NDArray[np.float32 | np.float64] | None): Optional
                 pre-allocated output array. Defaults to None.
 
+        An order above the degree of a non-rational Bézier gives zero, or NaN
+        in a component whose control points hold a NaN or an infinity and at a
+        point with a NaN or infinite coordinate.
+
         Returns:
             npt.NDArray[np.float32 | np.float64]: Mixed partial derivative
             values.

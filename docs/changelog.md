@@ -358,7 +358,8 @@
   refused as "derivative order N is too large" (`ValueError`), where the table used to be
   allocated and fail with a `MemoryError` past memory. At a point with a NaN or infinite
   coordinate it is NaN; the previous release gave NaN only when such a coordinate lay in a
-  direction whose derivative order was below its degree, and zero otherwise.
+  direction whose derivative order was below its degree, and zero otherwise. A component whose
+  control points hold a NaN or an infinity is NaN there too, as in the previous release.
 - At a point with an infinite coordinate, derivatives within the degree can be NaN where the
   previous release gave `inf` or `-inf` (or the reverse), since the evaluation order differs.
 - **A `Bezier` is immutable**, as the C++ values are (they are shared rather than copied, which
