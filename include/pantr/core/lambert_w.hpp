@@ -10,6 +10,7 @@
 #include "pantr/config.hpp"
 #include "pantr/core/errors.hpp"
 #include "pantr/core/format.hpp"
+#include "pantr/tolerance.hpp"
 
 #include <cmath>
 #include <limits>
@@ -37,7 +38,7 @@ namespace detail {
   // Starting point: log1p(x) bounds W(x) from above on [0, inf) and is close for small x; past e,
   // the asymptotic log(x) - log(log(x)) is within a few percent.
   double w = x < std::numbers::e ? std::log1p(x) : std::log(x) - std::log(std::log(x));
-  constexpr double tol = 4.0 * std::numeric_limits<double>::epsilon();
+  constexpr double tol = tolerance::get_strict<double>();  // `strict_eps_factor * eps`
   for (int it = 0; it < max_iterations; ++it) {
     // Halley on f(w) = w e^w - x, written with g = f e^-w = w - x e^-w: the same step, but no
     // intermediate overflows (w e^w and its derivative pass the largest double for x near it).

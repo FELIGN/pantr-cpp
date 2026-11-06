@@ -74,11 +74,12 @@ inline std::pair<double, double> legendre_pair(std::size_t n, double x) {
 /// loop, an admitted heuristic rather than a derived count.
 inline constexpr int newton_max_iterations = 100;
 
-/// Newton's stopping test on `[-1, 1]`: a step below `4 eps (1 + |x|)`, both terms present (the
+/// Newton's stopping test on `[-1, 1]`: a step below `4 eps (1 + |x|)` (the strict tier,
+/// `tolerance::strict_eps_factor`), both terms present (the
 /// nodes have unit scale, and the middle node of an odd rule is 0, where a relative test alone
 /// never terminates). Four roundings of the update is the admitted margin.
 inline bool newton_converged(double dx, double x) {
-  return std::fabs(dx) <= 4.0 * std::numeric_limits<double>::epsilon() * (1.0 + std::fabs(x));
+  return std::fabs(dx) <= tolerance::get_strict<double>() * (1.0 + std::fabs(x));
 }
 
 [[noreturn]] inline void newton_failed(const char* rule, std::size_t n, int max_iterations) {
