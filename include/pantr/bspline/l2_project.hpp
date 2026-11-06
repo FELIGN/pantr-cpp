@@ -326,10 +326,10 @@ class L2Projection {
     std::vector<T> w;
     for (std::size_t e = 0; e + 1 < breaks.size(); ++e) {
       const T lo = breaks[e];
+      // `h > 0`: the breakpoints are distinct knot classes, and the difference of two distinct
+      // floats is never zero under gradual underflow (and they are at least the knot tolerance
+      // apart, far above the subnormal range a flush to zero would touch).
       const T h = breaks[e + 1] - lo;
-      if (!(h > T(0))) {
-        continue;  // a class of equal knots has no length (kept from the previous loop's guard)
-      }
       for (std::size_t k = 0; k < nr; ++k) {
         const T hx = h * ref.nodes.data()[k];
         x.push_back(lo + hx);
