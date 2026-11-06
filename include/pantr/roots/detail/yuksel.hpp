@@ -10,6 +10,7 @@
 #pragma once
 
 #include "pantr/config.hpp"
+#include "pantr/core/errors.hpp"
 #include "pantr/core/scalar.hpp"
 #include "pantr/roots/detail/scalar.hpp"
 
@@ -18,6 +19,7 @@
 #include <cstddef>
 #include <limits>
 #include <span>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -294,7 +296,13 @@ template <StorageFloat S>
     }
     return {};
   }
-  // derivs[lev] has degree n - 1 - lev: n - lev coefficients (row length n, padded).
+  // derivs[lev] has degree n - 1 - lev: n - lev coefficients (row length n, padded). `(n - 1) * n`
+  // wraps `size_t` for `n` above 2^32 on a 64-bit target (a coefficient array of 16 GiB of
+  // `float`), and the writes below would then overrun the buffer: refused instead.
+  if (n - 1 > (std::numeric_limits<std::size_t>::max)() / n) {
+    throw capacity_error("degree " + std::to_string(n) +
+                         " is too large for the derivative table of Yuksel's algorithm");
+  }
   YukselResult out;
   std::vector<double> derivs((n - 1) * n, 0.0);
   for (std::size_t i = 0; i < n; ++i) {
