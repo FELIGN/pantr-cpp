@@ -682,12 +682,17 @@ class Bezier:
             other (Bezier): The second Bézier operand. Must have the same
                 dimension, dtype, and rank as ``self``.
 
+        NaN or infinite control points propagate: every product control point
+        whose formula reads one is NaN or infinite.
+
         Returns:
             Bezier: A new Bézier representing ``self * other``.
 
         Raises:
             ValueError: If the operands have different dimensions, dtypes,
                 or ranks.
+            OverflowError: If finite control points give a non-finite product
+                control point (the product exceeds the dtype's range).
 
         Example:
             >>> import numpy as np

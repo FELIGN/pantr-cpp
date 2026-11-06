@@ -11,8 +11,10 @@
 #include "pantr/core/scalar.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -63,8 +65,10 @@ template <StorageFloat T>
 ///
 ///     d_k = 1 / C(p + q, k) sum_i C(p, i) C(q, k - i) f_i g_{k - i},
 ///
-/// with the coefficient `C(p, i) C(q, j) / C(p + q, i + j)` formed in `T`, multiplied by `f_i` and
-/// then `g_j`, and the terms added in `T` in the order of `i`, then `j`.
+/// with the coefficient `C(p, i) C(q, j) / C(p + q, i + j)` formed in `double` and rounded to `T`
+/// (it is at most 1; formed in `float` its intermediate `C(p, i) C(q, j)` overflowed near degree
+/// 66), multiplied by `f_i` and then `g_j`, and the terms added in `T` in the order of `i`, then
+/// `j`. For `T = double` this is the previous release's arithmetic.
 ///
 /// Args:
 ///     f (std::span<const T>): Control points `(p + 1, rank)`.
@@ -81,14 +85,14 @@ template <StorageFloat T>
 template <StorageFloat T>
 [[nodiscard]] NdArray<T> product_1d_formula(std::span<const T> f, std::span<const T> g,
                                             std::size_t p, std::size_t q, std::size_t rank) {
-  const std::vector<T> cp = binomials_as<T>(p);
-  const std::vector<T> cq = binomials_as<T>(q);
-  const std::vector<T> inv_cr = inverse_binomials_as<T>(p + q);
+  const std::vector<double> cp = binomials_as<double>(p);
+  const std::vector<double> cq = binomials_as<double>(q);
+  const std::vector<double> inv_cr = inverse_binomials_as<double>(p + q);
   NdArray<T> out({p + q + 1, rank});
   T* d = out.data();
   for (std::size_t i = 0; i <= p; ++i) {
     for (std::size_t j = 0; j <= q; ++j) {
-      const T coeff = cp[i] * cq[j] * inv_cr[i + j];
+      const auto coeff = static_cast<T>(cp[i] * cq[j] * inv_cr[i + j]);
       T* row = d + (i + j) * rank;
       for (std::size_t c = 0; c < rank; ++c) {
         row[c] = row[c] + coeff * f[i * rank + c] * g[j * rank + c];
@@ -102,7 +106,10 @@ template <StorageFloat T>
 /// operands are weighted by the outer product of their per-direction binomials, convolved by
 /// accumulating, for each index `alpha` of `f`, the product with the whole of `g` at the offset
 /// `alpha`, and the result scaled by the outer product of the inverse binomials of the summed
-/// degrees. Every operation is in `T`; `alpha` runs in row-major order.
+/// degrees. Every operation is in `double` and the result is rounded to `T` once: the weighted
+/// operands carry binomial coefficients, whose products overflow `float` at moderate degrees
+/// although the result is in range. `alpha` runs in row-major order. For `T = double` this is the
+/// previous release's arithmetic.
 ///
 /// Args:
 ///     f (std::span<const T>): Control points `(p_0 + 1, ..., p_{D-1} + 1, rank)`.
@@ -121,29 +128,29 @@ template <StorageFloat T>
                                             std::span<const T> g, std::span<const std::size_t> q,
                                             std::size_t rank) {
   const std::size_t ndim = p.size();
-  std::vector<std::vector<T>> binom_p(ndim);
-  std::vector<std::vector<T>> binom_q(ndim);
-  std::vector<std::vector<T>> inv_binom_r(ndim);
+  std::vector<std::vector<double>> binom_p(ndim);
+  std::vector<std::vector<double>> binom_q(ndim);
+  std::vector<std::vector<double>> inv_binom_r(ndim);
   std::vector<std::size_t> r_ext(ndim);
   for (std::size_t d = 0; d < ndim; ++d) {
-    binom_p[d] = binomials_as<T>(p[d]);
-    binom_q[d] = binomials_as<T>(q[d]);
-    inv_binom_r[d] = inverse_binomials_as<T>(p[d] + q[d]);
+    binom_p[d] = binomials_as<double>(p[d]);
+    binom_q[d] = binomials_as<double>(q[d]);
+    inv_binom_r[d] = inverse_binomials_as<double>(p[d] + q[d]);
     r_ext[d] = p[d] + q[d] + 1;
   }
-  const std::vector<T> w_f = outer_product(binom_p);
-  const std::vector<T> w_g = outer_product(binom_q);
-  const std::vector<T> inv_w_r = outer_product(inv_binom_r);
-  std::vector<T> weighted_f(f.size());
+  const std::vector<double> w_f = outer_product(binom_p);
+  const std::vector<double> w_g = outer_product(binom_q);
+  const std::vector<double> inv_w_r = outer_product(inv_binom_r);
+  std::vector<double> weighted_f(f.size());
   for (std::size_t a = 0; a < w_f.size(); ++a) {
     for (std::size_t c = 0; c < rank; ++c) {
-      weighted_f[a * rank + c] = w_f[a] * f[a * rank + c];
+      weighted_f[a * rank + c] = w_f[a] * static_cast<double>(f[a * rank + c]);
     }
   }
-  std::vector<T> weighted_g(g.size());
+  std::vector<double> weighted_g(g.size());
   for (std::size_t a = 0; a < w_g.size(); ++a) {
     for (std::size_t c = 0; c < rank; ++c) {
-      weighted_g[a * rank + c] = w_g[a] * g[a * rank + c];
+      weighted_g[a * rank + c] = w_g[a] * static_cast<double>(g[a * rank + c]);
     }
   }
   // Row-major strides of the result grid, and the offset of every index of `g` in it.
@@ -174,7 +181,7 @@ template <StorageFloat T>
   shape.push_back(rank);
   NdArray<T> out(std::move(shape), for_overwrite);
   const std::size_t n_out = inv_w_r.size();
-  std::vector<T> h(n_out * rank, static_cast<T>(0));
+  std::vector<double> h(n_out * rank, 0.0);
   std::vector<std::size_t> p_ext(ndim);
   for (std::size_t d = 0; d < ndim; ++d) {
     p_ext[d] = p[d] + 1;
@@ -186,7 +193,7 @@ template <StorageFloat T>
       base += idx[d] * stride[d];
     }
     for (std::size_t bf = 0; bf < beta_off.size(); ++bf) {
-      T* row = h.data() + (base + beta_off[bf]) * rank;
+      double* row = h.data() + (base + beta_off[bf]) * rank;
       for (std::size_t c = 0; c < rank; ++c) {
         row[c] = row[c] + weighted_f[af * rank + c] * weighted_g[bf * rank + c];
       }
@@ -201,7 +208,7 @@ template <StorageFloat T>
   T* dst = out.data();
   for (std::size_t g_i = 0; g_i < n_out; ++g_i) {
     for (std::size_t c = 0; c < rank; ++c) {
-      dst[g_i * rank + c] = inv_w_r[g_i] * h[g_i * rank + c];
+      dst[g_i * rank + c] = static_cast<T>(inv_w_r[g_i] * h[g_i * rank + c]);
     }
   }
   return out;
@@ -243,6 +250,25 @@ void check_product_operands(std::span<const T> a, std::span<const std::size_t> a
   return p;
 }
 
+/// Refuse a product that overflowed: finite operands whose product has a non-finite control point.
+///
+/// Non-finite operands propagate instead (NaN or an infinity in, non-finite out where the formula
+/// reads it), so the check runs only when both operands are finite.
+///
+/// Raises:
+///     std::overflow_error: `a` and `b` are finite and `out` is not.
+template <StorageFloat T>
+void check_product_overflow(std::span<const T> a, std::span<const T> b, const NdArray<T>& out) {
+  const auto finite = [](T v) { return std::isfinite(v); };
+  if (std::all_of(out.flat().begin(), out.flat().end(), finite)) {
+    return;
+  }
+  if (std::all_of(a.begin(), a.end(), finite) && std::all_of(b.begin(), b.end(), finite)) {
+    throw std::overflow_error(
+        "The product of these finite control points overflows the range of its dtype");
+  }
+}
+
 }  // namespace detail
 
 /// Multiply two arrays of Bernstein coefficients with the tensor-product formula, in every case
@@ -263,7 +289,8 @@ void check_product_operands(std::span<const T> a, std::span<const std::size_t> a
 ///     value_error: The shapes differ in length or rank, an extent is zero, or a span does not
 ///         hold the product of its shape.
 ///     std::overflow_error: A binomial coefficient of the product degree exceeds the `double`
-///         range.
+///         range, or finite operands give a non-finite product (an overflow; non-finite operands
+///         propagate instead).
 template <StorageFloat T>
 [[nodiscard]] NdArray<T> bernstein_product_nd(std::span<const T> a,
                                               std::span<const std::size_t> a_shape,
@@ -272,7 +299,9 @@ template <StorageFloat T>
   detail::check_product_operands<T>(a, a_shape, b, b_shape);
   const std::vector<std::size_t> p = detail::degrees_of(a_shape);
   const std::vector<std::size_t> q = detail::degrees_of(b_shape);
-  return detail::product_nd_formula<T>(a, p, b, q, a_shape.back());
+  NdArray<T> out = detail::product_nd_formula<T>(a, p, b, q, a_shape.back());
+  detail::check_product_overflow<T>(a, b, out);
+  return out;
 }
 
 /// Multiply two arrays of Bernstein coefficients (the Bernstein product formula), the columns of
@@ -303,12 +332,16 @@ template <StorageFloat T>
                                            std::span<const T> b,
                                            std::span<const std::size_t> b_shape) {
   detail::check_product_operands<T>(a, a_shape, b, b_shape);
-  if (a_shape.size() == 2) {
-    return detail::product_1d_formula<T>(a, b, a_shape[0] - 1, b_shape[0] - 1, a_shape[1]);
-  }
-  const std::vector<std::size_t> p = detail::degrees_of(a_shape);
-  const std::vector<std::size_t> q = detail::degrees_of(b_shape);
-  return detail::product_nd_formula<T>(a, p, b, q, a_shape.back());
+  NdArray<T> out = [&] {
+    if (a_shape.size() == 2) {
+      return detail::product_1d_formula<T>(a, b, a_shape[0] - 1, b_shape[0] - 1, a_shape[1]);
+    }
+    const std::vector<std::size_t> p = detail::degrees_of(a_shape);
+    const std::vector<std::size_t> q = detail::degrees_of(b_shape);
+    return detail::product_nd_formula<T>(a, p, b, q, a_shape.back());
+  }();
+  detail::check_product_overflow<T>(a, b, out);
+  return out;
 }
 
 /// Compute the pointwise product of two Beziers.
@@ -328,7 +361,9 @@ template <StorageFloat T>
 /// Raises:
 ///     value_error: The operands differ in dimension, or in rank (checked in that order).
 ///     std::overflow_error: A binomial coefficient of the product degree exceeds the `double`
-///         range.
+///         range, or finite control points give a non-finite product (an overflow). NaN or
+///         infinite control points are not refused: they propagate to every product control point
+///         whose formula reads them.
 template <StorageFloat T>
 [[nodiscard]] Bezier<T> multiply(const Bezier<T>& a, const Bezier<T>& b) {
   if (a.dim() != b.dim()) {

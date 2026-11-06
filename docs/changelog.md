@@ -39,6 +39,10 @@
   the build finds is this release's wheel (see the distributed guide on build isolation).
 
 ### Rejected where it used to be accepted
+- **`Bezier.multiply` of finite control points whose product overflows the dtype** raises
+  `OverflowError`; the previous release returned `inf` control points with NumPy's
+  "overflow encountered in multiply" `RuntimeWarning`. NaN or infinite control points are not
+  refused: they propagate to the product control points that read them.
 - **`pantr.bezier.find_roots` and `find_monotone_root` with `tol=inf` or `tol=nan`** raise
   `ValueError` ("tol must be positive and finite"). With `tol=inf`, `find_roots`
   returned no roots and `find_monotone_root` a value, without a warning; with NaN, `find_roots`
@@ -1298,6 +1302,13 @@
   unchanged except as under Fixed.
 
 ### Fixed
+- **`Bezier.multiply` of `float32` Béziers of high degree** returns finite control points where
+  the product is finite. It formed each coefficient `C(p, i) C(q, j) / C(p + q, i + j)` in
+  `float32`, whose intermediate product of binomials overflows from about degree 66 per operand,
+  so the product of two constants had infinite or NaN control points. The coefficients are now
+  formed in `double` (and the tensor-product formula runs in `double`), so `float32` products
+  can differ from the previous release's in the last bits; `float64` products are unchanged.
+  Inherited from the previous release.
 - **`pantr.bezier.find_monotone_root` raises `RuntimeError` instead of returning a point far
   from the root**, and `find_roots` warns there. Their Newton/bisection solve stops after 64
   iterations, and when a Newton sequence approaches the root from one side the far end of its
