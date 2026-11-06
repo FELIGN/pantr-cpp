@@ -549,6 +549,17 @@ TEST_CASE("grid: BVH constructor: shape and structure errors carry the Python me
                        "leaves. A node is a leaf iff node_cell >= 0, and exactly then must "
                        "node_left and node_right both be -1.",
                        pantr::value_error);
+  // An internal node whose node_cell is below -1, which the encoding does not have.
+  std::vector<I64> below = cell;
+  for (std::size_t i = 0; i < below.size(); ++i) {
+    if (below[i] == -1) {
+      below[i] = -2;
+      break;
+    }
+  }
+  CHECK_THROWS_WITH_AS(static_cast<void>(make(shape, shape, left, right, below, 3)),
+                       doctest::Contains("node_cell must be -1 on an internal node"),
+                       pantr::value_error);
   // A child index past the node array.
   std::vector<I64> far_left = left;
   far_left[0] = 5;

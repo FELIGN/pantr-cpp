@@ -77,12 +77,18 @@ struct BVHRep {
 ///     rep (const BVHRep&): The arrays to check.
 ///
 /// Raises:
-///     value_error: `node_cell` and the child pointers disagree about which nodes are leaves, an
-///         internal node's child index lies outside `[0, n_nodes)`, or a leaf's cell id is
-///         `>= n_cells`.
+///     value_error: An internal node's `node_cell` is not `-1`, `node_cell` and the child pointers
+///         disagree about which nodes are leaves, an internal node's child index lies outside `[0,
+///         n_nodes)`, or a leaf's cell id is `>= n_cells`.
 inline void check_tree_structure(const BVHRep& rep) {
   const auto n = static_cast<std::size_t>(rep.n_nodes);
   for (std::size_t i = 0; i < n; ++i) {
+    if (rep.node_cell[i] < -1) {
+      throw value_error(
+          "BVH: node_cell must be -1 on an internal node or a cell id on a leaf; "
+          "got " +
+          std::to_string(rep.node_cell[i]) + " at node " + std::to_string(i) + ".");
+    }
     const bool is_leaf = rep.node_cell[i] >= 0;
     if (is_leaf != (rep.node_left[i] == -1 && rep.node_right[i] == -1)) {
       throw value_error(
