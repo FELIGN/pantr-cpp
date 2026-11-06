@@ -299,6 +299,11 @@ class ToleranceInfo(TypedDict):
 
     The three tolerance entries are the **dimensionless relative** presets, not
     absolute bounds; see the module docstring.
+
+    ``precision_bits`` holds NumPy's ``finfo.precision``, the approximate number of
+    *decimal* digits (6 for ``float32``, 15 for ``float64``), not the significand's
+    bit count (24 and 53), despite its name; ``precision_decimals`` holds the same
+    number. The key is kept as it is for compatibility.
     """
 
     dtype: npt.DTypeLike
@@ -324,7 +329,9 @@ def get_info(
     Returns:
         ToleranceInfo: Dictionary containing tolerance information including
             machine epsilon, the default/strict/conservative *relative*
-            tolerances, precision bits, and min/max values for the dtype.
+            tolerances, the decimal precision (under both ``precision_bits`` and
+            ``precision_decimals``; see :class:`ToleranceInfo`), and min/max values
+            for the dtype.
 
     Raises:
         ValueError: If dtype is not a supported floating-point type.
