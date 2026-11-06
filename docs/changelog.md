@@ -60,10 +60,11 @@
 - **`pantr.bezier.find_roots` and `find_monotone_root`, single and batch, with a NaN or infinite
   coefficient** raise `ValueError` ("coefficients must be finite", naming the first such row in
   batch mode). The previous release answered: `find_monotone_root` of three NaN coefficients
-  returned about `1`, and `find_roots` returned no roots.
+  returned about `1`, and `find_roots` returned no roots for it, or roots for a polynomial with one
+  NaN or infinite coefficient among finite ones.
 - **`Bezier.minimize_degree` with `tol=inf` or `tol=nan`** raises `ValueError` ("tol must be
   finite"); the previous release reduced any Bézier to degree 0 with either, without a warning. A
-  zero or negative `tol` still keeps the input.
+  finite zero or negative `tol` still keeps the input; `tol=-inf`, which kept it, now raises too.
 - **`pantr.bspline.find_roots` with `tol=nan` or `tol=inf`** raises `ValueError` ("tol must be
   positive and finite"); the previous release returned no roots for NaN, and for `inf` raised that
   the spline vanishes identically.
@@ -224,8 +225,8 @@
 ### Changed
 - **`TensorProductGrid.is_uniform` judges an axis's spacings relative to its scale**: uniform when
   their spread is at most `16 eps max(span, |b[0]|, |b[-1]|)`, where the previous release took an
-  absolute `1e-10`. That read spacings of `1e-13` and `9e-13` as uniform, and `linspace` grids of
-  span `1e6` or offset by `1e6` as not; both now read the other way.
+  absolute `1e-10`. That read spacings of `1e-13` and `9e-13` as uniform, and most `linspace`
+  grids of span `1e6` or offset by `1e6` as not; both now read the other way.
 - **pantr needs Python 3.12 or later.** pantr is becoming a C++ library with a compiled
   Python extension, built for CPython's stable ABI so that one wheel per platform serves
   every Python from 3.12 on; the binding library's stable-ABI support starts at 3.12.
@@ -475,8 +476,10 @@
   move within the change of the zero floor, under "Changed"), except where
   Bezier clipping used to drop roots or report a multiple root more than once (under "Fixed") and
   in the depth-cap case below (measured over random, constructed and special-value inputs).
-  `find_monotone_root` moves within `tol` of the previous release's roots where that release's
-  solve converged, its Newton/bisection solve now having a bisection safeguard (under "Fixed").
+  `find_monotone_root`'s solve now has a bisection safeguard (under "Fixed"): at a simple root
+  it moves within `tol` of the previous release's root wherever that release's solve converged;
+  at a root of odd multiplicity three or more the two agree only within the root's rounding band,
+  which is far wider than `tol`.
   `degree_reduction_error` sums its Gram contraction in another order and
   moves within that contraction's rounding, which grows with the degree: from the last bits at
   low degree, to about `1e-6` relative at degree 20 for random coefficients (`1e-1` for smooth
@@ -1374,9 +1377,10 @@
   value far from the root). Its solve now bisects whenever a step fails to halve the bracket,
   takes the Newton step from the bracket's end with the smaller value, keeps each Newton point at
   least `tol / 2` inside the bracket, and returns a point where the polynomial evaluates to an
-  exact zero; its roots move within `tol` of the previous release's elsewhere. A multiple root,
-  such as that of `(t - 1/3)^3` in `float64`, can still reach the cap and raise. `find_roots`
-  keeps the previous solve, so a `float32` stall there still warns.
+  exact zero; at a simple root it moves within `tol` of the previous release's root wherever that
+  release converged. A multiple root can reach the cap and raise in `float64`: `(t - 1/3)^3`, as
+  before, and some the previous release's solve did converge on, such as `(t - 5/8)^3`.
+  `find_roots` keeps the previous solve, so a `float32` stall there warns as described above.
 - **A knot vector whose first domain knot repeats past `knots[degree]`** (a non-clamped vector
   with `knots[degree] == knots[degree + 1]`, or a first knot repeated more than `degree + 1`
   times) gets correct Bézier, Lagrange and cardinal extraction operators, `to_beziers` pieces,
@@ -1416,8 +1420,8 @@
 - **`detect_interfaces` and `MultiPatch` of a patch whose knot vector sits far from the origin
   relative to its span** find the interfaces there are. The knots are compared after mapping
   each vector onto `[0, 1]`, whose rounding grows with that ratio, against the bare relative
-  tolerance: two patches sharing an edge exactly, one knot vector shifted by `64` or more, had no
-  interface. Each matched direction now adds its space's knot tolerance over its knot span (`8
+  tolerance: two patches sharing an edge exactly, one knot vector shifted by a few tens of its
+  span or more (from `16` for knots at thirds of `[0, 1]`), had no interface. Each matched direction now adds its space's knot tolerance over its knot span (`8
   eps` times the knot magnitude over the span), which is also the comparison's resolution: a
   normalized knot moved by less than the sum of the two patches' is not seen. Inherited from the
   previous release.
