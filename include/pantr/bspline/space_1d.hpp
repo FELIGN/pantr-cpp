@@ -147,12 +147,18 @@ class BsplineSpace1D {
   ///     BsplineSpace1D: The space.
   ///
   /// Raises:
-  ///     value_error: `tol` is negative or NaN (no space has such a tolerance: a corrupt state),
-  ///         or as the constructor, but for the snapping check.
+  ///     value_error: `tol` is negative or NaN (no space has such a tolerance: a corrupt state);
+  ///         a knot is infinite (the constructor refuses one, through its snapping check, which a
+  ///         stored state skips); or as the constructor otherwise.
   [[nodiscard]] static BsplineSpace1D from_state(std::span<const T> knots, int degree,
                                                  bool periodic, double tol) {
     if (!(tol >= 0.0)) {
       throw value_error("a stored tolerance must be non-negative, got " + py_repr(tol));
+    }
+    for (const T k : knots) {
+      if (std::isinf(k)) {
+        throw value_error("a stored knot vector must be finite, got the knot " + py_repr(k));
+      }
     }
     return BsplineSpace1D(build(knots, degree, periodic, false, &tol));
   }
@@ -325,8 +331,9 @@ class BsplineSpace1D {
   ///
   /// Returns:
   ///     bool: True when every point was evaluated; false when the derivative recurrence met a zero
-  ///     divisor, which a basis function of empty support produces (a knot repeated more than
-  ///     `degree + 1` times in a point's support). `out` is then incomplete. A2.3 divides there
+  ///     divisor, which happens only on an empty span the span search assigns a point to at an end
+  ///     of the domain (`knots[degree] == knots[degree + 1]` at the start, `knots[size - degree -
+  ///     2] == knots[size - degree - 1]` at the end). `out` is then incomplete. A2.3 divides there
   ///     unguarded; the previous implementation raised `ZeroDivisionError`.
   ///
   /// Raises:

@@ -605,15 +605,23 @@ TEST_CASE(
                            s, sp3, bs::BoundaryDerivatives{0, 3})),
                        "could not broadcast input array from shape (3,7) into shape (2,7)",
                        pantr::value_error);
-  // A single node has no row to replace.
+  // A single node has no row to replace: one derivative row onto none is NumPy's broadcast of a
+  // size-1 axis onto 0, a no-op (the previous release returned the plain collocation row), while
+  // two rows onto none is the broadcast error.
   const std::vector<double> one = {0.5};
+  const std::span<const double> sp1(one);
+  const pantr::NdArray<double> plain =
+      bs::collocation_matrix<double, double>(s, sp1, bs::BoundaryDerivatives{0, 0});
+  for (const bs::BoundaryDerivatives bd :
+       {bs::BoundaryDerivatives{1, 0}, bs::BoundaryDerivatives{0, 1},
+        bs::BoundaryDerivatives{1, 1}}) {
+    const pantr::NdArray<double> got = bs::collocation_matrix<double, double>(s, sp1, bd);
+    REQUIRE(got.size() == plain.size());
+    CHECK(std::equal(got.flat().begin(), got.flat().end(), plain.flat().begin()));
+  }
   CHECK_THROWS_WITH_AS(static_cast<void>(bs::collocation_matrix<double, double>(
-                           s, std::span<const double>(one), bs::BoundaryDerivatives{1, 0})),
-                       "could not broadcast input array from shape (1,7) into shape (0,7)",
-                       pantr::value_error);
-  CHECK_THROWS_WITH_AS(static_cast<void>(bs::collocation_matrix<double, double>(
-                           s, std::span<const double>(one), bs::BoundaryDerivatives{0, 1})),
-                       "could not broadcast input array from shape (1,7) into shape (0,7)",
+                           s, sp1, bs::BoundaryDerivatives{2, 0})),
+                       "could not broadcast input array from shape (2,7) into shape (0,7)",
                        pantr::value_error);
 }
 

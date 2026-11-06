@@ -685,8 +685,8 @@ def l2_project_bspline(  # noqa: PLR0913
 
     Raises:
         TypeError: If ``space`` is not a :class:`BsplineSpace`.
-        ValueError: If ``n_quad`` or ``boundary_interpolation`` is
-            inconsistent with ``space``.
+        ValueError: If ``space`` has no direction, or ``n_quad`` or
+            ``boundary_interpolation`` is inconsistent with ``space``.
 
     Example:
         >>> import numpy as np
@@ -700,6 +700,9 @@ def l2_project_bspline(  # noqa: PLR0913
 
     if not isinstance(space, BsplineSpace):
         raise TypeError(f"Expected BsplineSpace, got {type(space).__name__}")
+    if space.dim == 0:
+        # The previous release's message (its lattice constructor raised it here).
+        raise ValueError("Points lattice must have at least 1 dimension")
 
     projection, _, _ = _l2_projection(space, n_quad, quadrature, boundary_interpolation)
 

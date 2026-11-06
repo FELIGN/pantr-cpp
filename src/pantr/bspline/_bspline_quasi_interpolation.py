@@ -117,8 +117,9 @@ def quasi_interpolate_bspline(
 
     Raises:
         TypeError: If ``space`` is not a :class:`~pantr.bspline.BsplineSpace`.
-        ValueError: If ``kind`` is not recognized, or if ``func`` returns an output
-            with an invalid shape (0-D, more than 2-D, or wrong leading dimension).
+        ValueError: If ``kind`` is not recognized, ``space`` has no direction, or
+            ``func`` returns an output with an invalid shape (0-D, more than 2-D, or
+            wrong leading dimension).
 
     Note:
         All internal computation uses ``float64``.  The returned control points are
@@ -138,6 +139,9 @@ def quasi_interpolate_bspline(
     if kind not in get_args(QIKind):
         valid = ", ".join(repr(v) for v in get_args(QIKind))
         raise ValueError(f"Unknown kind {kind!r}; expected one of {valid}.")
+    if space.dim == 0:
+        # The previous release's message (NumPy's, from stacking no direction's points).
+        raise ValueError("need at least one array to stack")
 
     cls = _cpp.QuasiInterpolationF32 if space.dtype == np.float32 else _cpp.QuasiInterpolationF64
     qi = cls(space._h)  # the local functionals, built before func is sampled

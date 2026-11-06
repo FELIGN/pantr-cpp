@@ -112,8 +112,12 @@ struct RowRange {
 
 /// Overwrite rows `range` of `mat` with the derivatives of orders `1..count` of the basis at `x`.
 ///
+/// One derivative row into an empty range (a direction with a single node) writes nothing, as
+/// NumPy's assignment broadcasts one row onto zero.
+///
 /// Raises:
-///     value_error: `count` differs from the number of rows in `range` (NumPy's broadcast message).
+///     value_error: `count` differs from the number of rows in `range`, and is not one row
+///         assigned to none (NumPy's broadcast message).
 ///     std::domain_error: The derivative recurrence met a zero divisor (an empty clamped span at
 ///         that domain end, as an unclamped knot vector repeating its end knot has); the binding
 ///         raises `ZeroDivisionError`, as the previous implementation's float division did.
@@ -122,9 +126,12 @@ void put_derivative_rows(const BsplineSpace1D<T>& space, P x, long long count, R
                          NdArray<P>& mat) {
   const std::size_t n = mat.shape()[1];
   const std::size_t slots = range.stop - range.start;
-  if (static_cast<unsigned long long>(count) != slots) {
+  const bool one_onto_none = count == 1 && slots == 0;
+  if (static_cast<unsigned long long>(count) != slots && !one_onto_none) {
     broadcast_rows_error(static_cast<unsigned long long>(count), slots, n);
   }
+  // Evaluated even when nothing is written: the previous release formed the row before assigning
+  // it, so a zero divisor raised there too.
   const BasisDerivatives<P> d = space.template tabulate_basis_derivatives<P>(
       std::span<const P>(&x, 1), static_cast<int>(count));
   if (!d.complete) {
@@ -708,7 +715,8 @@ class TensorCollocation {
   [[nodiscard]] NdArray<C> solve(std::span<const C> values, std::size_t rank, double tol) const {
     const std::vector<std::size_t> grid = grid_shape();
     const std::size_t points = checked_product(grid);
-    if (rank == 0 || values.size() != points * rank) {
+    // Divided rather than multiplied: `points * rank` can wrap for sizes past the `size_t` range.
+    if (rank == 0 || values.size() % rank != 0 || values.size() / rank != points) {
       throw value_error("TensorCollocation::solve: expected " + std::to_string(points) + " x " +
                         std::to_string(rank) + " values, got " + std::to_string(values.size()) +
                         ".");
