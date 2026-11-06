@@ -1035,8 +1035,11 @@
   arrays.
 - **`HierarchicalGrid.locate` of a point in a zero-width cell** (a root cell one unit in the last
   place wide, refined) returns the cell's id, as `locate_many` does; the previous release raised
-  `ValueError` or `OverflowError` with a `RuntimeWarning`. A `TensorProductGrid` whose width
-  overflows (`[[-1.7e308, 1.7e308]]`) no longer warns "overflow encountered in subtract".
+  `ValueError` or `OverflowError` with a `RuntimeWarning`. `locate_many` of a point in such a cell
+  can return another child than the previous release did: refining `[0, 5e-324, 1e-323]` by 2 and
+  locating `0`, `5e-324` and `1e-323` gives `[0, 1, 3]`, the cells the same grid scaled by `2^1074`
+  (`[0, 1, 2]`) gives, where the previous release gave `[0, 0, 2]`. A `TensorProductGrid` whose
+  width overflows (`[[-1.7e308, 1.7e308]]`) no longer warns "overflow encountered in subtract".
 - **`Bspline.locate` runs in C++**, candidate search and Newton solve alike, with the previous
   release's thresholds, line search and iteration budgets; the default thresholds agree to within a
   few units in the last place (up to 2.6e-16 relative in the sample). A batch is solved one point at
