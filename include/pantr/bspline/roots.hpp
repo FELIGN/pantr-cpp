@@ -1075,14 +1075,29 @@ inline void check_connected(std::span<const double> coeffs, std::span<const doub
       continue;
     }
     bool vanishing = true;
+    bool exactly_zero = true;
     for (std::int64_t j = span - degree; j <= span; ++j) {
-      vanishing = vanishing && std::abs(coeffs[static_cast<std::size_t>(j)]) <= zero_tol;
+      const double c = coeffs[static_cast<std::size_t>(j)];
+      vanishing = vanishing && std::abs(c) <= zero_tol;
+      exactly_zero = exactly_zero && c == 0.0;
     }
-    if (vanishing) {
+    if (vanishing && exactly_zero) {
       throw value_error("The spline vanishes identically on the knot interval [" +
                         py_repr(knots[lo]) + ", " + py_repr(knots[lo + 1]) +
                         "], so its zero set is not a set of isolated points. Split the spline to "
                         "exclude that interval.");
+    }
+    if (vanishing) {
+      // Not zero, only within the zero tolerance, which `tol` sets once it exceeds the evaluation
+      // floor: the cause may be the tolerance rather than the spline.
+      throw value_error(
+          "The spline vanishes identically, to within the zero tolerance "
+          "max((degree + 1) * 4 * eps, tol) times its largest coefficient, on the "
+          "knot interval [" +
+          py_repr(knots[lo]) + ", " + py_repr(knots[lo + 1]) +
+          "], so its zero set is not a set of isolated points. Lower tol if it is "
+          "what makes the coefficients there read as zero, or split the spline to "
+          "exclude that interval.");
     }
   }
 }
@@ -1172,8 +1187,8 @@ inline Bspline<double> scalar_numerator(std::span<const double> knots,
 /// Evaluate the `order`-th derivative of a scalar spline at the roots, in absolute value.
 ///
 /// Raises:
-///     value_error: The basis derivative recurrence met a zero divisor (a knot repeated more than
-///         `degree + 1` times within a root's support); Python raises `ZeroDivisionError` there.
+///     value_error: The basis derivative recurrence met a zero divisor (a root on an empty span
+///         at an end of the domain); Python raises `ZeroDivisionError` there.
 inline std::vector<double> abs_derivative_at(const Bspline<double>& numerator,
                                              std::span<const double> roots, int order) {
   const mdview<const double, 2> points(roots.data(), roots.size(), 1);
@@ -1182,8 +1197,8 @@ inline std::vector<double> abs_derivative_at(const Bspline<double>& numerator,
       numerator, points, std::span<const int>(orders));
   if (!derived.complete) {
     throw value_error(
-        "division by zero in the basis derivative recurrence: a knot is repeated more than "
-        "degree + 1 times in the support of a root");
+        "division by zero in the basis derivative recurrence: a root lies on an empty span at an "
+        "end of the domain");
   }
   std::vector<double> out(roots.size());
   for (std::size_t i = 0; i < out.size(); ++i) {

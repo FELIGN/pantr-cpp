@@ -713,7 +713,8 @@ class BsplineSpace1D:
                 output arrays. Defaults to None.
             validate (bool): If True (default), check that every point lies inside
                 the spline domain. Pass False only when the caller guarantees
-                in-domain points; out-of-domain points are then undefined behavior.
+                in-domain points; an out-of-domain point is then evaluated on the
+                nearest end span, and its values carry no guarantee.
                 Defaults to True.
 
         Returns:
@@ -813,7 +814,8 @@ class BsplineSpace1D:
                 Defaults to None.
             validate (bool): If True (default), check that every point lies inside
                 the spline domain. Pass False only when the caller guarantees
-                in-domain points; out-of-domain points are then undefined behavior.
+                in-domain points; an out-of-domain point is then evaluated on the
+                nearest end span, and its values carry no guarantee.
                 Defaults to True.
 
         Returns:

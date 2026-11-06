@@ -248,8 +248,10 @@ def _evaluate_Bspline_deriv(
         ValueError: On a bad order (the orders are checked before the points), point, lattice or
             ``out``, or a point outside the domain.
         TypeError: If an order is not an integer.
-        ZeroDivisionError: If the basis derivative recurrence divides by zero, which a knot
-            repeated more than ``degree + 1`` times within a point's support produces.
+        ZeroDivisionError: If the basis derivative recurrence divides by zero, which happens
+            only on an empty span a point at an end of the domain is assigned to
+            (``knots[degree] == knots[degree + 1]`` at the start,
+            ``knots[-degree - 2] == knots[-degree - 1]`` at the end).
     """
     orders_list = [operator.index(o) for o in orders]
     _check_orders(spline.dim, orders_list)

@@ -1121,7 +1121,8 @@ template <StorageFloat T, StorageFloat P>
 
 /// Evaluate a partial derivative of a B-spline at arbitrary parametric points into `out`.
 ///
-/// `orders[d]` is the derivative order in direction `d`; an order above the degree gives zero.
+/// `orders[d]` is the derivative order in direction `d`; for a non-rational B-spline an order above
+/// the degree gives zero (a rational one's derivatives of every order are in general nonzero).
 /// For a rational B-spline the homogeneous derivatives of every multi-index up to `orders` are
 /// formed and the generalised quotient rule (Piegl and Tiller A4.2 in several variables) gives the
 /// derivative of the projected map; the weight column does not appear in `out`.
@@ -1146,8 +1147,9 @@ template <StorageFloat T, StorageFloat P>
 ///
 /// Returns:
 ///     bool: True when every point was evaluated; false when the basis derivative recurrence met a
-///     zero divisor (a knot repeated more than `degree + 1` times within a point's support), and
-///     `out` is then unwritten.
+///     zero divisor, which happens only on an empty span the span search assigns a point to at an
+///     end of the domain (`knots[degree] == knots[degree + 1]` at the start, `knots[size - degree
+///     - 2] == knots[size - degree - 1]` at the end), and `out` is then unwritten.
 ///
 /// Raises:
 ///     value_error: `orders` has the wrong length or a negative entry (checked first); `pts` has

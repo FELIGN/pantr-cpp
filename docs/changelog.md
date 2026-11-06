@@ -472,6 +472,11 @@
   an interval whose polynomial is flat within that floor, and no input is known to reach the cap
   through `find_roots`; the warning stays for the case, and for a provider that reports a gap.
   A root found there can differ from the previous release's by a unit in the last place.
+- **`pantr.bspline.find_roots` names the tolerance when a knot interval vanishes within it but
+  not exactly**: "The spline vanishes identically, to within the zero tolerance ... Lower tol if
+  it is what makes the coefficients there read as zero, ...". A `tol` near 1 or above makes every
+  coefficient read as zero, and the previous message blamed the spline. The message for
+  coefficients that are exactly zero is unchanged.
 - **`pantr.bezier.find_roots`'s `tol` bounds the error in a root's parameter only.** An explicit
   `tol` also served as an absolute floor on the coefficient values, so a polynomial whose
   coefficients all lay below `tol` had no roots; it now has its roots, within `tol` in the

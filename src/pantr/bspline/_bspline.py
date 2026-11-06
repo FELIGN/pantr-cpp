@@ -472,8 +472,10 @@ class Bspline:
             TypeError: If an order is not an integer (anything without
                 ``__index__``).
             ZeroDivisionError: If the basis derivative recurrence divides by zero,
-                which a knot repeated more than ``degree + 1`` times within a
-                point's support produces; ``out`` is then unwritten.
+                which happens only on an empty span a point at an end of the domain
+                is assigned to (``knots[degree] == knots[degree + 1]`` at the start,
+                ``knots[-degree - 2] == knots[-degree - 1]`` at the end); ``out`` is
+                then unwritten.
 
         Note:
             Special values are not guarded. The quotient rule of a rational B-spline
