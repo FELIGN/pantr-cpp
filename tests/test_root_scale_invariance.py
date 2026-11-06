@@ -189,3 +189,20 @@ def test_coefficients_near_the_largest_double(batch: bool) -> None:
     big = np.ldexp(c, 1020)
     got = _batch_row(big) if batch else find_roots(Bezier(big))
     assert np.array_equal(got, ref)
+
+
+@pytest.mark.parametrize("tol", [1e-3, 1e-5, 1e-6, 1e-8])
+@pytest.mark.parametrize("batch", [False, True])
+def test_coarse_tol_keeps_every_simple_root(tol: float, batch: bool) -> None:
+    """A coarse ``tol`` still returns every simple root, each within ``tol``.
+
+    Bug caught: with the value floor no longer set by ``tol``, a candidate from an interval
+    narrowed to ``tol`` was accepted only if its residual was under the evaluation floor, which a
+    point up to ``tol`` from a simple root does not meet; roots were dropped without a warning
+    (0.1 at ``tol=1e-6``, four of six at ``1e-3``). The residual allowed is now the floor plus
+    ``|f'|`` times the interval's width.
+    """
+    c = _bernstein(_DEG6_ROOTS)
+    got = _batch_row(c, tol) if batch else find_roots(Bezier(c), tol=tol)
+    assert got.shape == (6,)
+    np.testing.assert_allclose(got, [float(r) for r in _DEG6_ROOTS], rtol=0.0, atol=tol)

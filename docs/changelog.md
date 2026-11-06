@@ -447,7 +447,8 @@
   assembled in exact rationals as before (now Boost.Multiprecision) and are the same bits.
   `reduce_degree` and `find_monotone_root` reproduce the previous release's values bit for bit
   on `float32` and `float64` (except where `find_monotone_root` now raises at its iteration cap,
-  under "Fixed"), and so does `find_roots` for coefficients of order one, except where
+  under "Fixed"), and so does `find_roots` when the largest coefficient magnitude is 1 (otherwise its roots can
+  move within the change of the zero floor, under "Changed"), except where
   Bezier clipping used to drop roots or report a multiple root more than once (under "Fixed") and
   in the depth-cap case below (measured over random, constructed and special-value inputs). `degree_reduction_error` sums its Gram contraction in another order and
   moves within that contraction's rounding, which grows with the degree: from the last bits at
@@ -468,13 +469,12 @@
   empty results of `find_roots([])` and `find_monotone_root([])`.
 - **`find_roots` warns when Bézier clipping gives up on part of `[0, 1]`** (`RuntimeWarning`,
   "... exhausted the root finder's subdivision budget ..."). Clipping abandons an interval that
-  is still wider than `tol` after 64 levels of subdivision; it used to do so silently. It is
-  rare: it needs a polynomial whose clips are exact (such as some straight lines written at a
-  higher degree) and a `tol` below the spacing of doubles at its root, so that no interval can narrow to
-  `tol`; whether a run of clips that each remove little can reach it as well is not established.
-  Since `tol` no longer sets the floor of the zero tests (under "Changed"), clipping stops first on
-  an interval whose polynomial is flat within that floor, and no input is known to reach the cap
-  through `find_roots`; the warning stays for the case, and for a provider that reports a gap.
+  is still wider than `tol` after 64 levels of subdivision; it used to do so silently. Before
+  `tol` stopped setting the floor of the zero tests (under "Changed"), some straight lines written
+  at a higher degree reached it with a `tol` below the spacing of doubles at the root; now
+  clipping stops first on an interval whose polynomial is flat within the floor, and no input is
+  known to reach the cap through `find_roots`. The warning stays for that case, for the iteration
+  cap of Yuksel's path (under "Fixed"), and for a provider that reports a gap.
   A root found there can differ from the previous release's by a unit in the last place.
 - **`pantr.bspline.find_roots` names the tolerance when a knot interval vanishes within it but
   not exactly**: "The spline vanishes identically, to within the zero tolerance ... Lower tol if
@@ -485,8 +485,9 @@
   `tol` also served as an absolute floor on the coefficient values, so a polynomial whose
   coefficients all lay below `tol` had no roots; it now has its roots, within `tol` in the
   parameter. The zero tests use a floor of `get_strict(dtype)` times the polynomial's largest
-  coefficient, whatever `tol` is. A root provider (`set_root_provider`) receives that relative
-  `get_strict(dtype)` as `value_tol`, where it received the user's `tol`.
+  coefficient, whatever `tol` is, and a root found within `tol` in the parameter is accepted when
+  its residual is within that floor plus the slope times the bracket's width. A root provider
+  (`set_root_provider`) receives the relative `get_strict(dtype)` as `value_tol`.
 - **`fit_bezier` and `interpolate_bezier` with `float16`, `longdouble` or byte-swapped values
   compute in `float64`** (nodes included) and return a `float64` Bézier (also for byte-swapped
   `float32`, which `Bezier` itself would store as native `float32`). `fit_bezier` failed in the previous release's Numba basis kernel
@@ -1317,17 +1318,19 @@
 ### Fixed
 - **`Bezier.multiply` of `float32` Béziers of high degree** returns finite control points where
   the product is finite. It formed each coefficient `C(p, i) C(q, j) / C(p + q, i + j)` in
-  `float32`, whose intermediate product of binomials overflows from about degree 66 per operand,
+  `float32`, whose intermediate product of binomials overflows from about degree 66 per operand for
+  a curve (lower per direction for a surface or a volume),
   so the product of two constants had infinite or NaN control points. The coefficients are now
   formed in `double` (and the tensor-product formula runs in `double`), so `float32` products
-  can differ from the previous release's in the last bits; `float64` products are unchanged.
+  can differ from the port's earlier build in the last bits; `float64` products do not (they differ
+  from the previous release's in the last bits, as other Bézier operations do).
   Inherited from the previous release.
 - **`Bezier.minimize_degree` keeps the degree of a Bézier with a NaN or infinite control point.**
   A trial reduction was rejected when its error reached `tol`, and a NaN error never does, so
   such a Bézier was reduced as far as it went (to degree 0 for a curve). Inherited from the
   previous release.
 - **`pantr.bezier.find_monotone_root` raises `RuntimeError` instead of returning a point far
-  from the root**, and `find_roots` warns there. Their Newton/bisection solve stops after 64
+  from the root**, and `find_roots` warns where its own solve reaches that cap. Their Newton/bisection solve stops after 64
   iterations, and when a Newton sequence approaches the root from one side the far end of its
   bracket never moves: the midpoint it returned could be far from the root, silently (about
   `2/3` for `(t - 1/3)^3`; for `float32` coefficients, where rounding stalls the Newton step,
@@ -1353,7 +1356,9 @@
   coefficient (each row's, for a sequence of Béziers), and scaling the coefficients by a power of
   two leaves the roots unchanged to the bit wherever nothing underflows or overflows. A multiple
   root that clipping reached from two sides is now reported once in more cases (a triple root
-  beside a small cofactor was reported twice). Inherited from the previous release.
+  beside a small cofactor was reported twice). With an explicit `tol`, each simple root is
+  reported within `tol` of it (the previous release could miss by more than `tol`, as it did
+  for the root `0.1` of that polynomial at `tol=1e-5`). Inherited from the previous release.
 - **`quasi_interpolate_bspline_distributed` leaves a coefficient that no rank owns at `0`.** Such
   a DOF exists when `cell_active` excludes every cell of its support; the previous release
   assembled the global field with `numpy.empty` and left that coefficient uninitialized.

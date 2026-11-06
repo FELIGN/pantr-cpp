@@ -159,7 +159,11 @@ template <StorageFloat S>
       }
       const Polished p = newton_polish<S>(root_coeff, mid, lo, hi, param_tol, deriv_floor);
       mid = p.t;
-      if (std::abs(p.f) <= zero_tol) {
+      // A point within `span` of a simple root leaves up to `|f'| * span` behind, however exactly
+      // it is evaluated: the interval was narrowed to `param_tol`, not to the zero test. Both terms
+      // are values, so the test scales with the coefficients (bspline/roots.hpp's `root_tol`).
+      const double accept = zero_tol + std::abs(p.df) * span;
+      if (std::abs(p.f) <= accept) {
         if (std::abs(p.df) <= deriv_floor) {
           // f' near zero (a multiple root): bisection on |f|.
           double a = lo;
@@ -187,7 +191,7 @@ template <StorageFloat S>
           }
           mid = 0.5 * (a + b);
         }
-        if (std::abs(eval<S>(root_coeff, mid)) <= zero_tol) {
+        if (std::abs(eval<S>(root_coeff, mid)) <= accept) {
           res.candidates.push_back(mid);
         }
       }
@@ -281,7 +285,9 @@ template <StorageFloat S>
     if (new_span <= param_tol) {
       const Polished p = newton_polish<S>(root_coeff, 0.5 * (new_lo + new_hi), new_lo, new_hi,
                                           param_tol, deriv_floor);
-      if (std::abs(p.f) <= zero_tol) {
+      // As at convergence above: within `new_span` of a simple root the residual is `|f'|` times
+      // it.
+      if (std::abs(p.f) <= zero_tol + std::abs(p.df) * new_span) {
         res.candidates.push_back(p.t);
       }
       continue;
