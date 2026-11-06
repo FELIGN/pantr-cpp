@@ -103,29 +103,37 @@ struct Rotation {
 /// correctly; the cost is low only when that run is short.
 ///
 /// The QR path is kept when `A` and `B` are finite, `A` has at least as many rows as columns,
-/// every column reaches a nonzero pivot, and `L = 1 / ||R^-1||_F > tau ||A||_F = tau U` for the
-/// computed factor `R`, with `tau = max(sqrt(eps), 4 (m n eps + rcond))`. The argument, made
-/// here and not proved formally: `L <= s_min(R)` and `U >= s_max(A)`. The computed `R` is the
-/// exact factor of `A + E` with `||E||_F <= gamma U`, `gamma` below `4.3 (m + n - 2) eps`
-/// (Higham, Accuracy and Stability of Numerical Algorithms, 2nd ed., Theorem 19.10 and
-/// eq. 19.25), so
-/// `s_min(A) >= s_min(R) - gamma U`. Each column of the computed inverse is backward stable, so
-/// `L` is off from `1 / ||R^-1||_F` by a relative `n eps kappa_F(R) < n eps / tau <= 1 / (4 m)`,
-/// at most a half. Then `s_min(A) >= U (tau / 2 - gamma) > rcond U >= rcond s_max(A)` with
+/// every column reaches a nonzero pivot, and `||R^-1||_F tau ||A||_F < 1` for the computed factor
+/// `R`, with `tau = max(sqrt(eps), 4 (m n eps + rcond))` (`detail::rank_certificate_tau`) and
 /// `rcond = lstsq_rcond(m, n)` by default, the cutoff below which `lstsq_min_norm` drops a singular
-/// value (a caller whose dense path truncates at another relative cutoff passes that one): the
-/// SVD would keep all of them, its minimum-norm solution is the unique least-squares solution
-/// the QR computes, and the two differ by rounding, not by rank. The steps bound exact singular
-/// values; the SVD thresholds computed ones, which the margin above the cutoff also covers.
-/// `tau / 2 - gamma - rcond > 0` follows from the `2 m n eps` part of the `4 (m n eps + rcond)`
-/// term from three columns on, at every size; with two columns it needs `rcond >= 0.3 m eps`.
-/// Otherwise it rests on the floor `sqrt(eps)`, which closes it while
-/// `4.3 (m + n - 2) eps + rcond` stays below `sqrt(eps) / 2`: for `rcond` up to `1e-10` that is
-/// `m + n` up to about `7.7e6`; a single column ends at about `6.3e6` rows with the default
-/// `rcond` and `5.1e6` with the largest `rcond` the floor admits, and two columns at `7.3e6`
-/// (argued here, not proved; no fit or product in this library reaches such a system). The
-/// SVD's own error constant is not quantified by LAPACK; the margin is observed, not proved, to
-/// cover it.
+/// value (a caller whose dense path truncates at another relative cutoff passes that one).
+///
+/// The argument (argued, not proved formally). Hypotheses: IEEE binary64 with round to nearest
+/// and gradual underflow, and no fast-math or flush-to-zero (the test relies on a NaN or an
+/// infinity failing it); the computed `R` is the exact factor of `A + E` (`A P + E` for the dense
+/// path's pivoting) with `||E||_2 <= gamma ||A||_F` and **`gamma + rcond <= tau / 4`**; each column
+/// of the computed `R^-1` is the exact solution of a perturbed system `(R + dR_j) x_j = e_j`,
+/// `|dR_j|
+/// <= gamma_{n+1} |R|`; and `n + 1 <= 1e7`, `m n + n^2 <= 1e13`, which keep the rounding of the
+/// test itself and of the inverse within `tau / 8` each. Then the test passing gives `s_min(R) >
+/// (3 tau / 4) ||A||_F` and, by Weyl's inequality, `s_min(A) > (tau / 2 + rcond) ||A||_F >= rcond
+/// s_max(A)` plus a margin of `(tau / 2) ||A||_F`: the SVD would keep every singular value, its
+/// minimum-norm solution is the unique least-squares solution the QR computes, and the two differ
+/// by rounding, not by rank. The margin also covers the SVD's thresholding of computed rather than
+/// exact singular values (its own error constant is not quantified by LAPACK; observed, not proved,
+/// to fit). A zero pivot makes `||R^-1||_F` infinite or NaN, which fails the test.
+///
+/// Here `gamma` is that of Givens QR, below `4.3 (m + n - 2) eps` for any standard ordering of the
+/// rotations (Higham, Accuracy and Stability of Numerical Algorithms, 2nd ed., Theorem 19.10 and
+/// eq. 19.25); the row-sequential order of this code is one, its rotations falling in at most `m +
+/// n - 2` disjoint stages. The `4 m n eps` term of `tau` gives `gamma + rcond <= tau / 4` once `m n
+/// >= 4.3 (m + n - 2)`, that is `(m - 4.3) (n - 4.3) >= 9.9`, which holds for all `m >= n >= 8`
+/// and never for `n <= 4`. Wherever it does not, the floor `sqrt(eps)` does, while `4.3 (m + n -
+/// 2) eps + rcond <= sqrt(eps) / 4`: with the default `rcond = max(m, n) eps`, for `m` up to about
+/// `3.1e6` (no fit or product in this library reaches such a system). The rotations come from
+/// `std::hypot`, and a rotation is skipped only on an exact zero, so no part of a column is dropped
+/// below the normal range; that `hypot` is accurate enough for Higham's rotation model is assumed,
+/// not checked.
 ///
 /// No answer is given for a non-finite `A` or `B` (the SVD path spreads a NaN or an infinity in
 /// its own way), for fewer rows than columns, or where the test fails. Everything is computed in
