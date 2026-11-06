@@ -1021,6 +1021,8 @@ class THBSplineSpace:
             IndexError: If any id is outside ``[0, grid.num_cells)``.
             ValueError: If ``admissible_class`` is an integer ``< 2``.
             RuntimeError: If the grid has been modified since construction.
+            OverflowError: If a two-scale matrix overflows the knots' dtype (a float32
+                knot vector spanning more than the float32 range).
         """
         self._check_not_stale()
         adm = self._admissible_class(admissible_class)
@@ -1071,6 +1073,8 @@ class THBSplineSpace:
                 ``lo[k] >= hi[k]``, or any part of ``[lo, hi)`` lies outside the
                 level domain.
             RuntimeError: If the grid has been modified since construction.
+            OverflowError: If a two-scale matrix overflows the knots' dtype (a float32
+                knot vector spanning more than the float32 range).
         """
         self._check_not_stale()
         adm = self._admissible_class(admissible_class)

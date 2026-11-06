@@ -302,6 +302,21 @@ template <StorageFloat T>
   return out;
 }
 
+/// The larger of `acc` and `v`, NaN when either is.
+///
+/// `std::max(acc, NaN)` returns `acc`, which would let a NaN residual through the gate as a small
+/// one.
+///
+/// Args:
+///     acc (double): The running maximum.
+///     v (double): The next value.
+///
+/// Returns:
+///     double: `max(acc, v)`, or NaN where `acc` or `v` is NaN.
+[[nodiscard]] inline double nan_propagating_max(double acc, double v) {
+  return std::isnan(v) ? v : (std::max)(acc, v);
+}
+
 /// One column of the prolongation, as solved.
 ///
 /// Attributes:
@@ -461,7 +476,7 @@ template <StorageFloat T>
   // `HierarchicalGrid::from_blocks` takes its blocks as a valid tiling without checking it. The
   // column is then empty and its whole right-hand side is residual.
   if (candidates.empty()) {
-    col.residual = rhs.cwiseAbs().maxCoeff();
+    col.residual = rhs.cwiseAbs().template maxCoeff<Eigen::PropagateNaN>();
     return col;
   }
   const auto n_cols = static_cast<Eigen::Index>(candidates.size());
@@ -481,7 +496,7 @@ template <StorageFloat T>
     for (Eigen::Index cj = 0; cj < n_cols; ++cj) {
       acc += amat(r, cj) * col.values[static_cast<std::size_t>(cj)];
     }
-    col.residual = (std::max)(col.residual, std::abs(acc - rhs(r, 0)));
+    col.residual = nan_propagating_max(col.residual, std::abs(acc - rhs(r, 0)));
   }
   return col;
 }
@@ -571,11 +586,12 @@ template <StorageFloat T>
   double max_residual = 0.0;
   double max_coarse_val = 0.0;
   for (const ProlongationColumn& c : columns) {
-    max_residual = (std::max)(max_residual, c.residual);
+    max_residual = nan_propagating_max(max_residual, c.residual);
     max_coarse_val = (std::max)(max_coarse_val, c.coarse_val);
   }
   const double residual_tol = prolongation_residual_tolerance(max_coarse_val);
-  if (max_residual > residual_tol) {
+  // Written so that a NaN residual fails the gate: a NaN column must not pass as a refinement.
+  if (!(max_residual <= residual_tol)) {
     throw value_error("fine is not a refinement of this space (prolongation residual " +
                       py_format_exp(max_residual, 2) + ", above " + py_format_exp(residual_tol, 2) +
                       ").");

@@ -20,9 +20,11 @@
 #include "pantr/core/scalar.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -65,6 +67,11 @@ struct TwoScale1D {
 /// Returns:
 ///     TwoScale1D: The matrix.
 ///
+/// Raises:
+///     std::overflow_error: An entry is not finite. A space's knots are finite, so the overflow is
+///         the ratios' own: a knot difference beyond the range of `T` (a float32 knot vector
+///         spanning more than `FLT_MAX`) gives `inf / inf`.
+///
 /// Note:
 ///     Inputs are assumed to be correct (no validation performed): `fine`'s knots contain
 ///     `coarse`'s.
@@ -83,6 +90,12 @@ template <StorageFloat T>
   const T* src = rows.alphas.data();
   for (std::size_t i = 0; i < count; ++i) {
     out.alphas[i] = static_cast<double>(src[i]);
+  }
+  if (!std::all_of(out.alphas.begin(), out.alphas.end(),
+                   [](double v) { return std::isfinite(v); })) {
+    throw std::overflow_error(
+        "the two-scale matrix between two levels overflows the knots' dtype (a knot span beyond "
+        "its range)");
   }
   return out;
 }

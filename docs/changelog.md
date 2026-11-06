@@ -52,6 +52,10 @@
   `ValueError` ("tol must be positive and finite"). With `tol=inf`, `find_roots`
   returned no roots and `find_monotone_root` a value, without a warning; with NaN, `find_roots`
   could report one root several times.
+- **`THBSplineSpace.refine` and `refine_region` on a `float32` knot vector spanning more than the
+  `float32` range** (for example knots on `[-2e38, 2e38]`) raise `OverflowError`: the two-scale
+  matrix between the levels overflows. The previous release built the refined space, and its
+  `prolongation_to` returned NaN entries without a warning.
 - **`create_distributed_space` and `create_distributed_function` with a duck-typed communicator
   of more than one rank that has no `allgather`** raise `AttributeError`: the partition is now
   sent from rank 0 (see under Changed). The previous release read only `rank` and `size`.

@@ -341,6 +341,7 @@ void compute_truncated_coeffs(THBSpaceRep<T>& rep,
 ///
 /// Raises:
 ///     value_error, state_error: See the steps above.
+///     std::overflow_error: A two-scale matrix overflows `T` (see `make_two_scale`).
 template <StorageFloat T>
 [[nodiscard]] std::shared_ptr<const THBSpaceRep<T>> build_rep(
     bspline::BsplineSpace<T> root, grid::HierarchicalGrid hier_grid, bool truncate,

@@ -1063,4 +1063,26 @@ TEST_CASE("refine and coarsen leave the space they are called on unchanged") {
   CHECK(b.grid().num_cells() != s.grid().num_cells());
 }
 
+TEST_CASE("prolongation: a NaN residual is the gate's maximum, wherever it occurs") {
+  // The residual gate is `!(max <= tol)`; with `std::max` a NaN after a finite residual was
+  // dropped and the column passed.
+  using pantr::thb::detail::nan_propagating_max;
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  CHECK(std::isnan(nan_propagating_max(0.0, nan)));
+  CHECK(std::isnan(nan_propagating_max(1.0, nan)));
+  CHECK(std::isnan(nan_propagating_max(nan, 1.0)));
+  CHECK(nan_propagating_max(1.0, 2.0) == 2.0);
+  CHECK(nan_propagating_max(2.0, 1.0) == 2.0);
+}
+
+TEST_CASE("refine_region: a float32 two-scale matrix that overflows raises") {
+  // Degree 2 on [-2e38, 2e38]: the knot differences of the level-1 refinement exceed FLT_MAX and
+  // a ratio of them is inf / inf. Control: the same knots on [-1, 1].
+  const auto space_on = [](double s) {
+    return make_thb_space<float>({{-s, -s, -s, 0.0, s, s, s}}, {2}, {2}, {std::nullopt}, true);
+  };
+  CHECK_THROWS_AS((void)space_on(2e38).refine_region(0, Ivec{0}, Ivec{2}, 2), std::overflow_error);
+  CHECK_NOTHROW((void)space_on(1.0).refine_region(0, Ivec{0}, Ivec{2}, 2));
+}
+
 }  // namespace
