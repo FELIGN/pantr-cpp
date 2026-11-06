@@ -10,6 +10,7 @@
 
 #include "pantr/config.hpp"
 #include "pantr/core/errors.hpp"
+#include "pantr/core/format.hpp"
 #include "pantr/core/scalar.hpp"
 
 #include <algorithm>
@@ -58,11 +59,17 @@ template <StorageFloat T>
 /// Refuse knot-factory arguments that describe no knot vector.
 ///
 /// Raises:
-///     value_error: `start >= end`, `num_intervals < 1`, `degree < 0`, or the continuity outside
-///         `[-1, degree - 1]`, checked in that order with the messages the suite matches.
+///     value_error: `start` or `end` NaN or infinite; `start >= end`, `num_intervals < 1`,
+///         `degree < 0`, or the continuity outside `[-1, degree - 1]`, checked in that order with
+///         the messages the suite matches.
 template <StorageFloat T>
 void validate_knot_input(long long num_intervals, long long degree, long long continuity, T start,
                          T end) {
+  // A NaN fails every comparison, so `start >= end` alone let it through, and an infinite end
+  // made NaN knots: both are refused, as a knot vector holding them is.
+  if (!std::isfinite(start) || !std::isfinite(end)) {
+    throw value_error("domain must be finite, got [" + py_repr(start) + ", " + py_repr(end) + "]");
+  }
   if (start >= end) {
     throw value_error("domain[0] must be less than domain[1]");
   }

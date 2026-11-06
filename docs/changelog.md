@@ -43,6 +43,9 @@
   `OverflowError`; the previous release returned `inf` control points with NumPy's
   "overflow encountered in multiply" `RuntimeWarning`. NaN or infinite control points are not
   refused: they propagate to the product control points that read them.
+- **`create_uniform_open_knots` and `create_uniform_periodic_knots` with a NaN or infinite
+  domain end** raise `ValueError` ("domain must be finite, ..."); the previous release returned
+  NaN or infinite knots.
 - **`pantr.bezier.find_roots` and `find_monotone_root` with `tol=inf` or `tol=nan`** raise
   `ValueError` ("tol must be positive and finite"). With `tol=inf`, `find_roots`
   returned no roots and `find_monotone_root` a value, without a warning; with NaN, `find_roots`
@@ -1310,6 +1313,10 @@
   formed in `double` (and the tensor-product formula runs in `double`), so `float32` products
   can differ from the previous release's in the last bits; `float64` products are unchanged.
   Inherited from the previous release.
+- **`Bezier.minimize_degree` keeps the degree of a Bézier with a NaN or infinite control point.**
+  A trial reduction was rejected when its error reached `tol`, and a NaN error never does, so
+  such a Bézier was reduced as far as it went (to degree 0 for a curve). Inherited from the
+  previous release.
 - **`pantr.bezier.find_monotone_root` raises `RuntimeError` instead of returning a point far
   from the root**, and `find_roots` warns there. Their Newton/bisection solve stops after 64
   iterations, and when a Newton sequence approaches the root from one side the far end of its

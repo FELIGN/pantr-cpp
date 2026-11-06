@@ -877,7 +877,9 @@ template <StorageFloat T>
           rel_error /= std::sqrt(orig_norm2);
         }
       }
-      if (rel_error >= t) {
+      // Written as a negation so that a NaN error (NaN or infinite control points) rejects the
+      // trial: a reduction of non-finite data is not accepted on a comparison that NaN fails.
+      if (!(rel_error < t)) {
         break;
       }
       result = std::move(reduced);
