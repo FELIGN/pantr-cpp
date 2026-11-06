@@ -68,7 +68,8 @@ void validate_knot_input(long long num_intervals, long long degree, long long co
   // A NaN fails every comparison, so `start >= end` alone let it through, and an infinite end
   // made NaN knots: both are refused, as a knot vector holding them is.
   if (!std::isfinite(start) || !std::isfinite(end)) {
-    throw value_error("domain must be finite, got [" + py_repr(start) + ", " + py_repr(end) + "]");
+    throw value_error("domain must be finite, got [" + py_repr(static_cast<double>(start)) + ", " +
+                      py_repr(static_cast<double>(end)) + "]");
   }
   if (start >= end) {
     throw value_error("domain[0] must be less than domain[1]");

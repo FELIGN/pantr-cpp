@@ -157,7 +157,8 @@ class BsplineSpace1D {
     }
     for (const T k : knots) {
       if (std::isinf(k)) {
-        throw value_error("a stored knot vector must be finite, got the knot " + py_repr(k));
+        throw value_error("a stored knot vector must be finite, got the knot " +
+                          py_repr(static_cast<double>(k)));
       }
     }
     return BsplineSpace1D(build(knots, degree, periodic, false, &tol));
