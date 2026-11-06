@@ -219,6 +219,10 @@
   previous release accepted it.
 
 ### Changed
+- **`TensorProductGrid.is_uniform` judges an axis's spacings relative to its scale**: uniform when
+  their spread is at most `16 eps max(span, |b[0]|, |b[-1]|)`, where the previous release took an
+  absolute `1e-10`. That read spacings of `1e-13` and `9e-13` as uniform, and `linspace` grids of
+  span `1e6` or offset by `1e6` as not; both now read the other way.
 - **pantr needs Python 3.12 or later.** pantr is becoming a C++ library with a compiled
   Python extension, built for CPython's stable ABI so that one wheel per platform serves
   every Python from 3.12 on; the binding library's stable-ABI support starts at 3.12.

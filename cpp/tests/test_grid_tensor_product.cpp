@@ -174,14 +174,19 @@ TEST_CASE("grid: TensorProductGrid: metadata of a three-dimensional grid") {
 }
 
 TEST_CASE(
-    "grid: TensorProductGrid: uniform spacing is judged by an absolute tolerance on the spread") {
+    "grid: TensorProductGrid: uniform spacing is judged by the spread relative to the axis scale") {
   CHECK(tpg({{0.0, 1.0, 2.0, 3.0}, {5.0, 6.0}}).is_uniform());
   // Two breakpoints are uniform whatever the width; spacings 1 and 3 are not.
   CHECK(tpg({{0.0, 1e6}}).is_uniform());
   CHECK_FALSE(tpg({{0.0, 1.0, 4.0}}).is_uniform());
-  // Spread 5e-11 is below the absolute tolerance 1e-10; spread 2e-10 is not.
-  CHECK(tpg({{0.0, 1.0, 2.00000000005}}).is_uniform());
-  CHECK_FALSE(tpg({{0.0, 1.0, 2.0000000002}}).is_uniform());
+  // The tolerance is 16 eps max(span, |b_0|, |b_N|), 32 eps for an axis on [0, 2]: a spread of
+  // 4 eps is uniform, one of 64 eps is not, and the same at any power-of-two scale.
+  const double eps = std::numeric_limits<double>::epsilon();
+  for (const double scale : {std::ldexp(1.0, -40), 1.0, std::ldexp(1.0, 40)}) {
+    INFO("scale " << scale);
+    CHECK(tpg({{0.0, scale, scale * (2.0 + 4.0 * eps)}}).is_uniform());
+    CHECK_FALSE(tpg({{0.0, scale, scale * (2.0 + 64.0 * eps)}}).is_uniform());
+  }
   // One non-uniform axis makes the grid non-uniform.
   CHECK_FALSE(tpg({{0.0, 1.0, 2.0}, {0.0, 1.0, 5.0}}).is_uniform());
 }
