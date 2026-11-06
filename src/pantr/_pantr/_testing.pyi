@@ -174,6 +174,7 @@ def newton_polish_scalar(
     lo: float,
     hi: float,
     param_tol: float,
+    deriv_floor: float = ...,
 ) -> tuple[float, float, float]: ...
 @overload
 def newton_polish_scalar(
@@ -184,6 +185,7 @@ def newton_polish_scalar(
     lo: float,
     hi: float,
     param_tol: float,
+    deriv_floor: float = ...,
 ) -> tuple[float, float, float]: ...
 @overload
 def solve_monotone_root_kernel(
@@ -221,7 +223,7 @@ def clip_roots_core(
         NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
     ],
     param_tol: float,
-    geom_tol: float,
+    value_rel: float,
     max_depth: int = ...,
 ) -> tuple[NDArray[numpy.float64], int]: ...
 @overload
@@ -230,7 +232,7 @@ def clip_roots_core(
         NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
     ],
     param_tol: float,
-    geom_tol: float,
+    value_rel: float,
     max_depth: int = ...,
 ) -> tuple[NDArray[numpy.float64], int]: ...
 @overload
@@ -243,7 +245,7 @@ def dedup_roots(
         NDArray[numpy.float64], dict(shape=(None,), order="C", device="cpu", writable=False)
     ],
     param_tol: float,
-    geom_tol: float,
+    value_rel: float,
 ) -> NDArray[numpy.float64]: ...
 @overload
 def dedup_roots(
@@ -255,7 +257,7 @@ def dedup_roots(
         NDArray[numpy.float32], dict(shape=(None,), order="C", device="cpu", writable=False)
     ],
     param_tol: float,
-    geom_tol: float,
+    value_rel: float,
 ) -> NDArray[numpy.float64]: ...
 def interpolating_reduction_operator(
     degree: int, decrement: int

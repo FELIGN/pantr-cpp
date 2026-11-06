@@ -161,11 +161,12 @@ void def_internals(nb::module_& m) {
       nb::arg("coeff"), nb::arg("t_min"), nb::arg("t_max"));
   m.def(
       "newton_polish_scalar",
-      [](const Vec<T>& c, double mid, double lo, double hi, double tol) {
-        const rd::Polished p = rd::newton_polish<T>(nonempty(c), mid, lo, hi, tol);
+      [](const Vec<T>& c, double mid, double lo, double hi, double tol, double deriv_floor) {
+        const rd::Polished p = rd::newton_polish<T>(nonempty(c), mid, lo, hi, tol, deriv_floor);
         return std::make_tuple(p.t, p.f, p.df);
       },
-      nb::arg("coeff"), nb::arg("mid"), nb::arg("lo"), nb::arg("hi"), nb::arg("param_tol"));
+      nb::arg("coeff"), nb::arg("mid"), nb::arg("lo"), nb::arg("hi"), nb::arg("param_tol"),
+      nb::arg("deriv_floor") = rd::dbl_epsilon);
   m.def(
       "solve_monotone_root_kernel",
       [](const Vec<T>& c, double tol, int max_iter) {
@@ -181,25 +182,25 @@ void def_internals(nb::module_& m) {
       nb::arg("coeff"), nb::arg("tol"));
   m.def(
       "clip_roots_core",
-      [](const Vec<T>& c, double param_tol, double geom_tol, int max_depth) {
-        const rd::ClipResult r = rd::clip_roots<T>(nonempty(c), param_tol, geom_tol, max_depth);
+      [](const Vec<T>& c, double param_tol, double value_rel, int max_depth) {
+        const rd::ClipResult r = rd::clip_roots<T>(nonempty(c), param_tol, value_rel, max_depth);
         return std::make_tuple(vector_to_numpy(r.candidates),
                                static_cast<long long>(r.candidates.size()));
       },
-      nb::arg("root_coeff"), nb::arg("param_tol"), nb::arg("geom_tol"),
+      nb::arg("root_coeff"), nb::arg("param_tol"), nb::arg("value_rel"),
       nb::arg("max_depth") = rd::clip_max_depth);
   m.def(
       "dedup_roots",
       [](const Vec<double>& raw, long long n_roots, const Vec<T>& c, double param_tol,
-         double geom_tol) {
+         double value_rel) {
         if (n_roots < 0 || static_cast<std::size_t>(n_roots) > raw.shape(0)) {
           throw value_error("n_roots must be in [0, len(raw_roots)]");
         }
         std::vector<double> v(raw.data(), raw.data() + n_roots);
-        return vector_to_numpy(rd::dedup_roots<T>(std::move(v), nonempty(c), param_tol, geom_tol));
+        return vector_to_numpy(rd::dedup_roots<T>(std::move(v), nonempty(c), param_tol, value_rel));
       },
       nb::arg("raw_roots"), nb::arg("n_roots"), nb::arg("coeff"), nb::arg("param_tol"),
-      nb::arg("geom_tol"));
+      nb::arg("value_rel"));
 }
 
 }  // namespace

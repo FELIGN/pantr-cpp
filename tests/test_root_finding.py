@@ -275,15 +275,15 @@ class TestClipRootsCore(unittest.TestCase):
         self,
         c: npt.NDArray[np.float64],
         param_tol: float = 1e-12,
-        geom_tol: float = 1e-12,
+        value_rel: float = 1e-12,
     ) -> npt.NDArray[np.float64]:
-        """Helper: run clipping + dedup."""
+        """Helper: run clipping + dedup (``value_rel`` is relative to ``max |c|``)."""
         if len(c) < 2:
             return np.empty(0, dtype=np.float64)
-        if np.all(np.abs(c) <= geom_tol):
+        if np.all(c == 0.0):
             return np.empty(0, dtype=np.float64)
-        raw, n = _clip_roots_core(c, param_tol, geom_tol)
-        return _dedup_roots(raw, n, c, param_tol, geom_tol)
+        raw, n = _clip_roots_core(c, param_tol, value_rel)
+        return _dedup_roots(raw, n, c, param_tol, value_rel)
 
     def test_linear_single_root(self) -> None:
         """Degree-1: root at t = 0.2."""

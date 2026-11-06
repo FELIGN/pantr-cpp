@@ -432,9 +432,9 @@
   over it, with the names, signatures and defaults it had. The reduction operators are
   assembled in exact rationals as before (now Boost.Multiprecision) and are the same bits.
   `reduce_degree` and `find_monotone_root` reproduce the previous release's values bit for bit
-  on `float32` and `float64`, and so does `find_roots` except where Bezier clipping used to drop
-  roots (under "Fixed") and in the depth-cap case below (measured over random, constructed and
-  special-value inputs). `degree_reduction_error` sums its Gram contraction in another order and
+  on `float32` and `float64`, and so does `find_roots` for coefficients of order one, except where
+  Bezier clipping used to drop roots or report a multiple root more than once (under "Fixed") and
+  in the depth-cap case below (measured over random, constructed and special-value inputs). `degree_reduction_error` sums its Gram contraction in another order and
   moves within that contraction's rounding, which grows with the degree: from the last bits at
   low degree, to about `1e-6` relative at degree 20 for random coefficients (`1e-1` for smooth
   ones), `1e-3` at degree 25 and tens of percent and more near degree 30, where the
@@ -456,7 +456,16 @@
   rare: it needs a polynomial whose clips are exact (such as some straight lines written at a
   higher degree) and a `tol` below the spacing of doubles at its root, so that no interval can narrow to
   `tol`; whether a run of clips that each remove little can reach it as well is not established.
+  Since `tol` no longer sets the floor of the zero tests (under "Changed"), clipping stops first on
+  an interval whose polynomial is flat within that floor, and no input is known to reach the cap
+  through `find_roots`; the warning stays for the case, and for a provider that reports a gap.
   A root found there can differ from the previous release's by a unit in the last place.
+- **`pantr.bezier.find_roots`'s `tol` bounds the error in a root's parameter only.** An explicit
+  `tol` also served as an absolute floor on the coefficient values, so a polynomial whose
+  coefficients all lay below `tol` had no roots; it now has its roots, within `tol` in the
+  parameter. The zero tests use a floor of `get_strict(dtype)` times the polynomial's largest
+  coefficient, whatever `tol` is. A root provider (`set_root_provider`) receives that relative
+  `get_strict(dtype)` as `value_tol`, where it received the user's `tol`.
 - **`fit_bezier` and `interpolate_bezier` with `float16`, `longdouble` or byte-swapped values
   compute in `float64`** (nodes included) and return a `float64` Bézier (also for byte-swapped
   `float32`, which `Bezier` itself would store as native `float32`). `fit_bezier` failed in the previous release's Numba basis kernel
@@ -1285,6 +1294,15 @@
   unchanged except as under Fixed.
 
 ### Fixed
+- **`pantr.bezier.find_roots` gives the same roots when the coefficients are scaled.** Its zero
+  tests, its flatness test, two tests on the derivative and the radius within which it merges
+  duplicate roots were absolute, in the units of the coefficients: a polynomial with six simple
+  roots lost some of them once its coefficients were small enough, and merged distinct roots into
+  one once they were large enough. Each bound is now relative to the polynomial's largest
+  coefficient (each row's, for a sequence of Béziers), and scaling the coefficients by a power of
+  two leaves the roots unchanged to the bit wherever nothing underflows or overflows. A multiple
+  root that clipping reached from two sides is now reported once in more cases (a triple root
+  beside a small cofactor was reported twice). Inherited from the previous release.
 - **`quasi_interpolate_bspline_distributed` leaves a coefficient that no rank owns at `0`.** Such
   a DOF exists when `cell_active` excludes every cell of its support; the previous release
   assembled the global field with `numpy.empty` and left that coefficient uninitialized.

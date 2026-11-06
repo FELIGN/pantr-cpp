@@ -53,11 +53,37 @@ struct ClipResult {
   std::vector<std::pair<double, double>> gaps;
 };
 
-/// The zero tolerance `max(scale * (n + 1) * 4 * eps, geom_tol)` of a polynomial of degree `n`
+/// The zero tolerance `max(scale * (n + 1) * 4 * eps, value_floor)` of a polynomial of degree `n`
 /// whose largest coefficient magnitude is `scale`.
-[[nodiscard]] inline double zero_tolerance(double scale, std::size_t n, double geom_tol) noexcept {
+[[nodiscard]] inline double zero_tolerance(double scale, std::size_t n,
+                                           double value_floor) noexcept {
   const double bound = scale * static_cast<double>(n + 1) * clip_eval_error_factor * dbl_epsilon;
-  return (std::max)(bound, geom_tol);
+  return (std::max)(bound, value_floor);
+}
+
+/// The zero tolerance of a degree-`n` polynomial relative to its largest coefficient magnitude,
+/// `max((n + 1) * 4 * eps, value_rel)`: `zero_tolerance` divided by the scale, formed without the
+/// division (finite for an infinite or zero scale), a length on `[0, 1]` for the merge radii.
+[[nodiscard]] inline double relative_zero_tolerance(std::size_t n, double value_rel) noexcept {
+  const double bound = static_cast<double>(n + 1) * clip_eval_error_factor * dbl_epsilon;
+  return (std::max)(bound, value_rel);
+}
+
+/// The largest coefficient magnitude, NaN skipped (the scale every value-frame bound of the
+/// provider is relative to).
+///
+/// Args:
+///     coeff (std::span<const S>): Coefficients.
+///
+/// Returns:
+///     double: `max |c_i|` over the non-NaN coefficients, 0 when there are none.
+template <StorageFloat S>
+[[nodiscard]] double coefficient_scale(std::span<const S> coeff) noexcept {
+  double scale = 0.0;
+  for (const S c : coeff) {
+    scale = (std::max)(scale, std::abs(static_cast<double>(c)));  // NaN: kept the left operand
+  }
+  return scale;
 }
 
 /// Find root candidates of a Bernstein polynomial by Bezier clipping.
@@ -67,10 +93,14 @@ struct ClipResult {
 /// so it never holds more than `clip_max_depth + 2` entries; the previous release's fixed 256
 /// could not bind.
 ///
+/// Every bound in the value frame (the zero tolerances, the flatness floor, the derivative test of
+/// a multiple root) is a multiple of the largest coefficient magnitude, so the candidates are the
+/// same bits for `c` and `2^k * c` wherever neither under- nor overflows.
+///
 /// Args:
 ///     root_coeff (std::span<const S>): Coefficients on `[0, 1]`, degree `n >= 1`.
 ///     param_tol (double): Interval width at which an interval counts as converged.
-///     geom_tol (double): Floor of the zero tolerances.
+///     value_rel (double): Floor of the zero tolerances, relative to the largest `|c|`.
 ///     max_depth (int): Depth cap (see `clip_max_depth`).
 ///
 /// Returns:
@@ -80,15 +110,14 @@ struct ClipResult {
 ///     Inputs are assumed to be correct (no validation performed).
 template <StorageFloat S>
 [[nodiscard]] ClipResult clip_roots(  // NOLINT(readability-function-cognitive-complexity)
-    std::span<const S> root_coeff, double param_tol, double geom_tol,
+    std::span<const S> root_coeff, double param_tol, double value_rel,
     int max_depth = clip_max_depth) {
   const std::size_t n = root_coeff.size() - 1;
   ClipResult res;
-  double coeff_scale = 0.0;
-  for (const S c : root_coeff) {
-    coeff_scale = (std::max)(coeff_scale, static_cast<double>(std::abs(c)));
-  }
-  const double zero_tol = zero_tolerance(coeff_scale, n, geom_tol);
+  const double coeff_scale = coefficient_scale(root_coeff);
+  const double value_floor = value_rel * coeff_scale;
+  const double deriv_floor = dbl_epsilon * coeff_scale;
+  const double zero_tol = zero_tolerance(coeff_scale, n, value_floor);
   if (std::abs(static_cast<double>(root_coeff[0])) <= zero_tol) {
     res.candidates.push_back(0.0);
   }
@@ -126,10 +155,10 @@ template <StorageFloat S>
       } else if (lo >= 1.0 - param_tol && hi >= 1.0) {
         mid = 1.0;
       }
-      const Polished p = newton_polish<S>(root_coeff, mid, lo, hi, param_tol);
+      const Polished p = newton_polish<S>(root_coeff, mid, lo, hi, param_tol, deriv_floor);
       mid = p.t;
       if (std::abs(p.f) <= zero_tol) {
-        if (std::abs(p.df) <= dbl_epsilon) {
+        if (std::abs(p.df) <= deriv_floor) {
           // f' near zero (a multiple root): bisection on |f|.
           double a = lo;
           double b = hi;
@@ -169,7 +198,7 @@ template <StorageFloat S>
     for (const double v : local) {
       local_scale = (std::max)(local_scale, std::abs(v));
     }
-    const double local_zero_tol = zero_tolerance(local_scale, n, geom_tol);
+    const double local_zero_tol = zero_tolerance(local_scale, n, value_floor);
 
     // Step 3: coefficient range.
     double c_min = local[0];
@@ -183,7 +212,7 @@ template <StorageFloat S>
     if (c_min > local_zero_tol || c_max < -local_zero_tol) {
       const double rejection_margin = c_min > local_zero_tol ? c_min : -c_max;
       if (rejection_margin <= zero_tol) {
-        const Polished p = newton_polish<S>(root_coeff, 0.5 * (lo + hi), lo, hi, 0.0);
+        const Polished p = newton_polish<S>(root_coeff, 0.5 * (lo + hi), lo, hi, 0.0, deriv_floor);
         if (std::abs(p.f) <= zero_tol) {
           res.candidates.push_back(p.t);
         }
@@ -192,7 +221,7 @@ template <StorageFloat S>
     }
 
     // Step 5: a polynomial flat within the noise.
-    if (c_max - c_min <= geom_tol) {
+    if (c_max - c_min <= value_floor) {
       if (std::abs(c_min) <= local_zero_tol || std::abs(c_max) <= local_zero_tol ||
           have_opposite_signs(c_min, c_max)) {
         const double mid = 0.5 * (lo + hi);
@@ -248,8 +277,8 @@ template <StorageFloat S>
     const double new_span = new_hi - new_lo;
 
     if (new_span <= param_tol) {
-      const Polished p =
-          newton_polish<S>(root_coeff, 0.5 * (new_lo + new_hi), new_lo, new_hi, param_tol);
+      const Polished p = newton_polish<S>(root_coeff, 0.5 * (new_lo + new_hi), new_lo, new_hi,
+                                          param_tol, deriv_floor);
       if (std::abs(p.f) <= zero_tol) {
         res.candidates.push_back(p.t);
       }
@@ -278,17 +307,19 @@ template <StorageFloat S>
 ///
 /// The same root reached from several intervals lands within `O(zero_tol / |f'(root)|)` of
 /// itself, so a candidate is merged into the last kept root when the gap is at most
-/// `max(base, min(4 * zero_tol / max(|f'|, eps), zero_tol^(1/3)))`, `base = max(2 * param_tol, 4 *
-/// zero_tol)`. The cube root caps the radius at a multiple root, where it would diverge: within
-/// `O(zero_tol^(1/m))` of a root of multiplicity `m` the residual is under `zero_tol`, so the cap
-/// covers multiplicities up to three (the design note's pair-class table says which duplicate
-/// classes this layer removes).
+/// `max(base, min(4 * zero_tol / max(|f'|, eps * scale), z^(1/3)))`, `base = max(2 * param_tol,
+/// 4 * z)`, with `scale = max|c|` and `z = zero_tol / scale` the relative zero tolerance. Each term
+/// is a length on `[0, 1]`: `zero_tol / |f'|` is a value over a slope, and `z` is dimensionless,
+/// so the merge is the same for `c` and `2^k * c`. The cube root caps the radius at a multiple
+/// root, where it would diverge: within `O(z^(1/m))` of a root of multiplicity `m` the residual is
+/// under `zero_tol`, so the cap covers multiplicities up to three (the design note's pair-class
+/// table says which duplicate classes this layer removes).
 ///
 /// Args:
 ///     raw (std::vector<double>): The candidates; consumed.
 ///     coeff (std::span<const S>): Coefficients, for the derivative.
 ///     param_tol (double): Parametric tolerance.
-///     geom_tol (double): Floor of the zero tolerance.
+///     value_rel (double): Floor of the zero tolerance, relative to the largest `|c|`.
 ///
 /// Returns:
 ///     std::vector<double>: The kept roots, ascending.
@@ -297,18 +328,17 @@ template <StorageFloat S>
 ///     Inputs are assumed to be correct (no validation performed).
 template <StorageFloat S>
 [[nodiscard]] std::vector<double> dedup_roots(std::vector<double> raw, std::span<const S> coeff,
-                                              double param_tol, double geom_tol) {
+                                              double param_tol, double value_rel) {
   if (raw.empty()) {
     return raw;
   }
   const std::size_t n = coeff.size() - 1;
-  double coeff_scale = 0.0;
-  for (const S c : coeff) {
-    coeff_scale = (std::max)(coeff_scale, std::abs(static_cast<double>(c)));
-  }
-  const double zero_tol = zero_tolerance(coeff_scale, n, geom_tol);
-  const double base_dedup = (std::max)(param_tol * 2.0, zero_tol * 4.0);
-  const double radius_cap = std::pow(zero_tol, 1.0 / 3.0);
+  const double coeff_scale = coefficient_scale(coeff);
+  const double zero_tol = zero_tolerance(coeff_scale, n, value_rel * coeff_scale);
+  const double zero_rel = relative_zero_tolerance(n, value_rel);
+  const double base_dedup = (std::max)(param_tol * 2.0, zero_rel * 4.0);
+  const double radius_cap = std::pow(zero_rel, 1.0 / 3.0);
+  const double slope_floor = dbl_epsilon * coeff_scale;
   // Insertion sort, as the previous release: stable, and the order of equal keys is moot.
   for (std::size_t i = 1; i < raw.size(); ++i) {
     const double key = raw[i];
@@ -326,7 +356,7 @@ template <StorageFloat S>
       continue;
     }
     const double df = eval_and_deriv<S>(coeff, raw[count - 1]).second;
-    const double local_tol = zero_tol / (std::max)(std::abs(df), dbl_epsilon);
+    const double local_tol = zero_tol / (std::max)(std::abs(df), slope_floor);
     if (gap <= (std::max)(base_dedup, (std::min)(local_tol * 4.0, radius_cap))) {
       continue;
     }

@@ -349,12 +349,17 @@ struct Polished {
 /// Polish a root candidate with one Newton step, kept only if it stays within `param_tol` of
 /// `[lo, hi]` (then clamped to `[0, 1]`) and does not increase the residual.
 ///
+/// No step is taken where `|f'| <= deriv_floor`. The floor is a derivative, so it scales with the
+/// coefficients: the caller passes `eps * max|c|`, which keeps the decision invariant under a
+/// scaling of the polynomial.
+///
 /// Args:
 ///     coeff (std::span<const S>): Coefficients on `[0, 1]`.
 ///     mid (double): The candidate.
 ///     lo (double): Left end of its interval.
 ///     hi (double): Right end of its interval.
 ///     param_tol (double): Width of the acceptance margin around `[lo, hi]`.
+///     deriv_floor (double): Largest `|f'(mid)|` at which no Newton step is taken.
 ///
 /// Returns:
 ///     Polished: The candidate, its value and the derivative at the original `mid`.
@@ -363,9 +368,9 @@ struct Polished {
 ///     Inputs are assumed to be correct (no validation performed).
 template <StorageFloat S>
 [[nodiscard]] Polished newton_polish(std::span<const S> coeff, double mid, double lo, double hi,
-                                     double param_tol) {
+                                     double param_tol, double deriv_floor) {
   const auto [f_mid, df_mid] = eval_and_deriv<S>(coeff, mid);
-  if (std::abs(df_mid) > dbl_epsilon) {
+  if (std::abs(df_mid) > deriv_floor) {
     double newton = mid - f_mid / df_mid;
     if (lo - param_tol <= newton && newton <= hi + param_tol) {
       newton = (std::max)(0.0, (std::min)(1.0, newton));

@@ -98,9 +98,10 @@ struct [[nodiscard]] RootSet {
 /// Attributes:
 ///     param_tol (double): Absolute, on the parameter interval `[0, 1]`: the bracket width at
 ///         which a root counts as found.
-///     value_tol (double): Absolute, in the units of the coefficients: the floor of every zero
-///         test. The Python default passes the dimensionless `get_strict(dtype)` into both, as the
-///         previous release did (whether it should scale with the coefficients is left to review).
+///     value_tol (double): Relative to each polynomial's largest coefficient magnitude: the floor
+///         of every zero test is `value_tol * max|c|`, so the roots do not change when the
+///         coefficients are scaled. The Python layer passes `get_strict(dtype)`, whatever `tol`
+///         the user gave (which is `param_tol` alone).
 struct FindRootsOptions {
   double param_tol;
   double value_tol;
@@ -157,22 +158,17 @@ inline RootSet<double> computed_set(const std::vector<double>& xs,
 
 /// The single-polynomial dispatch of the previous release: Yuksel below `clip_min_degree` or past
 /// the coefficient range limit (sorted, not merged), clipping otherwise (merged).
+///
+/// The zero polynomial has no roots to report. Its test is exact: with a floor relative to
+/// `max|c|`, "every coefficient within the floor" holds only when every coefficient is zero.
 template <StorageFloat T>
-RootSet<double> dispatch_single(std::span<const T> coeff, double param_tol, double geom_tol) {
+RootSet<double> dispatch_single(std::span<const T> coeff, double param_tol, double value_rel) {
   const std::size_t n = coeff.size() - 1;
   if (n < 1) {
     return computed_set({}, {});
   }
-  // The previous release compared in NumPy, which rounds the tolerance (a Python float) to the
-  // array's dtype first (NEP 50): in `T` here, a tolerance past `T`'s range reading as infinite.
-  const T tol_t = std::abs(geom_tol) > static_cast<double>((std::numeric_limits<T>::max)())
-                      ? std::numeric_limits<T>::infinity()
-                      : static_cast<T>(geom_tol);
-  bool all_zero = true;
-  for (const T c : coeff) {
-    all_zero = all_zero && std::abs(c) <= tol_t;  // NaN: not zero
-  }
-  if (all_zero) {
+  // NaN is not zero here (the previous release's single path).
+  if (std::all_of(coeff.begin(), coeff.end(), [](T c) { return c == T(0); })) {
     return computed_set({}, {});
   }
   bool use_clipping = false;
@@ -196,8 +192,8 @@ RootSet<double> dispatch_single(std::span<const T> coeff, double param_tol, doub
     use_clipping = range <= clip_coeff_range_limit;
   }
   if (use_clipping) {
-    pantr::roots::detail::ClipResult clip = clip_roots<T>(coeff, param_tol, geom_tol);
-    return computed_set(dedup_roots<T>(std::move(clip.candidates), coeff, param_tol, geom_tol),
+    pantr::roots::detail::ClipResult clip = clip_roots<T>(coeff, param_tol, value_rel);
+    return computed_set(dedup_roots<T>(std::move(clip.candidates), coeff, param_tol, value_rel),
                         std::move(clip.gaps));
   }
   std::vector<double> r = yuksel_roots<T>(coeff, param_tol);
@@ -206,21 +202,15 @@ RootSet<double> dispatch_single(std::span<const T> coeff, double param_tol, doub
 }
 
 /// The batch dispatch of the previous release, which differs from the single one in two places it
-/// kept: Yuksel's roots are merged too, and the all-zero test passes a NaN coefficient.
+/// kept: Yuksel's roots are merged too, and the zero-polynomial test passes a NaN coefficient.
 template <StorageFloat T>
-RootSet<double> dispatch_batch_row(std::span<const T> coeff, double param_tol, double geom_tol) {
+RootSet<double> dispatch_batch_row(std::span<const T> coeff, double param_tol, double value_rel) {
   const std::size_t n = coeff.size() - 1;
   if (n < 1) {
     return computed_set({}, {});
   }
-  bool all_zero = true;
-  for (const T c : coeff) {
-    if (std::abs(static_cast<double>(c)) > geom_tol) {
-      all_zero = false;
-      break;
-    }
-  }
-  if (all_zero) {
+  if (std::all_of(coeff.begin(), coeff.end(),
+                  [](T c) { return !(std::abs(c) > T(0)); })) {  // zero or NaN
     return computed_set({}, {});
   }
   bool use_clipping = false;
@@ -242,13 +232,14 @@ RootSet<double> dispatch_batch_row(std::span<const T> coeff, double param_tol, d
   std::vector<double> raw;
   std::vector<std::pair<double, double>> gaps;
   if (use_clipping) {
-    pantr::roots::detail::ClipResult clip = clip_roots<T>(coeff, param_tol, geom_tol);
+    pantr::roots::detail::ClipResult clip = clip_roots<T>(coeff, param_tol, value_rel);
     raw = std::move(clip.candidates);
     gaps = std::move(clip.gaps);
   } else {
     raw = yuksel_roots<T>(coeff, param_tol);
   }
-  return computed_set(dedup_roots<T>(std::move(raw), coeff, param_tol, geom_tol), std::move(gaps));
+  return computed_set(dedup_roots<T>(std::move(raw), coeff, param_tol, value_rel),
+                      std::move(gaps));
 }
 
 /// Operations per polynomial of degree `n`, for the batch's chunking only: a derivative chain of

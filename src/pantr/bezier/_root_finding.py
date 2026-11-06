@@ -73,8 +73,12 @@ def find_roots(
             (``rank == 1``) Bezier curve, or a sequence of such curves (all with
             the same degree). For rational Beziers, roots are found on the
             numerator polynomial (first homogeneous component).
-        tol (float | None): Root-finding tolerance (bracket-width
-            termination). Defaults to ``tolerance.get_strict(bezier.dtype)``.
+        tol (float | None): Parametric tolerance: the bracket width on [0, 1]
+            at which a root counts as found. It bounds the error in the root's
+            parameter only; the zero tests on the polynomial's values are
+            relative to each polynomial's largest coefficient, so scaling the
+            coefficients does not change the roots. Defaults to
+            ``tolerance.get_strict(bezier.dtype)``.
 
     Returns:
         npt.NDArray[np.float64]: *(single mode)* Sorted array of root

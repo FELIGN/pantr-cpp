@@ -309,7 +309,7 @@ def _extract_batch_coeffs(
 
 
 def _resolve_tol(dtype: np.dtype[Any], tol: float | None) -> float:
-    """Resolve the tolerance: the user's, or ``get_strict`` of the coefficients' dtype.
+    """Resolve the parametric tolerance: the user's, or ``get_strict`` of the coefficients' dtype.
 
     Args:
         dtype (np.dtype[Any]): The coefficients' dtype.
@@ -329,11 +329,28 @@ def _resolve_tol(dtype: np.dtype[Any], tol: float | None) -> float:
     return tol
 
 
+def _value_tol(dtype: np.dtype[Any]) -> float:
+    """Get the provider's value tolerance, relative to each polynomial's largest ``|c|``.
+
+    It is not the user's ``tol``, which bounds the parametric error only: a zero test in the
+    units of the coefficients would change the roots when the coefficients are scaled.
+
+    Args:
+        dtype (np.dtype[Any]): The coefficients' dtype.
+
+    Returns:
+        float: ``get_strict(dtype)``.
+    """
+    return float(get_strict(dtype))
+
+
 def _find_roots_impl(bezier: Bezier, *, tol: float | None = None) -> npt.NDArray[np.float64]:
     """L2 implementation of :func:`pantr.bezier.find_roots` for one Bézier."""
     coeff = _extract_coeff(_validate_bezier_for_roots(bezier))
     resolved = float(_resolve_tol(coeff.dtype, tol))
-    roots, completeness = _function("find_roots", coeff.dtype)(coeff, resolved, resolved)
+    roots, completeness = _function("find_roots", coeff.dtype)(
+        coeff, resolved, _value_tol(coeff.dtype)
+    )
     if completeness != _COMPLETE:
         _warn_incomplete(1, 1)
     return np.asarray(roots, dtype=np.float64)
@@ -349,7 +366,7 @@ def _find_roots_batch_impl(
         return np.empty((0, max(n_coeff - 1, 1)), dtype=np.float64), np.empty(0, dtype=np.intp)
     resolved = float(_resolve_tol(coeffs.dtype, tol))
     roots, counts, completeness = _function("find_roots_batch", coeffs.dtype)(
-        coeffs, resolved, resolved
+        coeffs, resolved, _value_tol(coeffs.dtype)
     )
     n_incomplete = int(np.count_nonzero(completeness != _COMPLETE))
     if n_incomplete:

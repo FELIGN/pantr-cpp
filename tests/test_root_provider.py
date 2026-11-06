@@ -36,6 +36,7 @@ from pantr._testing import (
 )
 from pantr.bezier import (
     Bezier,
+    _find_roots,
     find_monotone_root,
     find_roots,
     get_root_provider,
@@ -372,14 +373,16 @@ def test_switching_routes_every_entry_point_to_the_provider_and_back(
 def test_provider_receives_contiguous_coefficients_and_the_resolved_tolerance(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A provider gets C-contiguous arrays of the dtype and one resolved tolerance for both uses.
+    """A provider gets C-contiguous arrays of the dtype, the user's ``tol`` and the value tolerance.
 
     The arrays are ``(degree + 1,)`` for one polynomial and ``(n, degree + 1)`` for a batch;
-    ``param_tol`` and ``value_tol`` are the same number.
+    ``param_tol`` is the user's ``tol`` (or the default) and ``value_tol`` is always
+    ``get_strict(dtype)``, relative to each polynomial's largest coefficient.
 
     Bug caught: a strided view of the control points passed through (a rank-1 slice of a
     ``(degree + 1, 1)`` array is contiguous only by accident of the column count), the user's
-    ``tol`` replaced by the default, or the two tolerances differing.
+    ``tol`` replaced by the default, or the user's ``tol`` passed as the value tolerance (an
+    absolute floor on the coefficients, which changes the roots when they are scaled).
     """
     fake = _FakeBerf()
     _install_fake(monkeypatch, fake)
@@ -394,21 +397,35 @@ def test_provider_receives_contiguous_coefficients_and_the_resolved_tolerance(
     by_name = {c[0]: c for c in fake.calls}
     assert all(c[3] for c in fake.calls)  # C-contiguous
     assert all(c[1] == np.float64 for c in fake.calls)
-    assert fake.calls[0][2:5] == ((4,), True, (1e-9, 1e-9))
     default = float(get_strict(np.float64))
+    assert fake.calls[0][2:5] == ((4,), True, (1e-9, default))
     assert fake.calls[1][4] == (default, default)
     assert by_name["find_roots_batch"][2] == (2, 4)
-    assert by_name["find_roots_batch"][4] == (2e-9, 2e-9)
+    assert by_name["find_roots_batch"][4] == (2e-9, default)
     assert by_name["find_monotone_root"][4] == (3e-9,)
     # The rational curve's first homogeneous column reaches the provider, as a (3,) array.
     assert fake.calls[-1][2] == (3,)
-    assert fake.calls[-1][4] == (4e-9, 4e-9)
+    assert fake.calls[-1][4] == (4e-9, default)
 
 
 # --- The incompleteness warning (QB7) ------------------------------------------------------------
 
 
-def test_depth_cap_input_warns_and_still_returns_the_root() -> None:
+def _cap_value_tol(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the wrapper pass ``_CAP_TOL`` as the value tolerance, as it passed the user's ``tol``.
+
+    The value tolerance is ``get_strict(dtype)`` relative to ``max |c|`` whatever ``tol`` is, and
+    at that floor clipping stops on an interval flat within it before the depth cap; no input a
+    search of a few thousand polynomials tried reaches the cap through the public functions. A
+    1e-52 floor keeps the real cap, the real provider and the real wrapper in the test.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The fixture.
+    """
+    monkeypatch.setattr(_find_roots, "_value_tol", lambda _dtype: _CAP_TOL)
+
+
+def test_depth_cap_input_warns_and_still_returns_the_root(monkeypatch: pytest.MonkeyPatch) -> None:
     """The real depth-cap path: the root is found, and the result says it is not complete.
 
     Bug caught: the previous release dropped such work without a word. A tolerance of 1e-52 is below
@@ -416,6 +433,7 @@ def test_depth_cap_input_warns_and_still_returns_the_root() -> None:
     ``RuntimeWarning`` naming the subdivision budget, attributed to the caller (``stacklevel``),
     and the root must still be reported.
     """
+    _cap_value_tol(monkeypatch)
     with pytest.warns(RuntimeWarning, match="subdivision budget") as record:
         roots = find_roots(Bezier(_CAP_COEFFS), tol=_CAP_TOL)
     assert len(record) == 1
@@ -438,12 +456,15 @@ def test_depth_cap_input_reports_its_gap_through_the_detailed_interface() -> Non
     assert claims.tolist() == [ext.roots.CLAIM_COMPUTED]
 
 
-def test_batch_with_one_capped_polynomial_warns_once_for_that_one() -> None:
+def test_batch_with_one_capped_polynomial_warns_once_for_that_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A batch warns once, counting the polynomials with a gap (here 1 of 3).
 
     The other rows have no root in [0, 1] (all coefficients positive), which the tolerance cannot
     push to the cap: clipping rejects them at the first test.
     """
+    _cap_value_tol(monkeypatch)
     positive = [Bezier(np.linspace(1.0, 2.0 + k, 9)) for k in range(2)]
     with pytest.warns(RuntimeWarning, match="subdivision budget") as record:
         roots, counts = find_roots([Bezier(_CAP_COEFFS), *positive], tol=_CAP_TOL)

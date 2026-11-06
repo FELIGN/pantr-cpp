@@ -18,8 +18,8 @@
 //     included, and the Bernstein basis is a partition of unity);
 //   * de Casteljau in the storage type evaluates p to within 3 n u B (each step is a convex
 //     combination of two values within B, with three roundings in double and one in float);
-//   * the zero test of clipping accepts |f| <= max(4 (n + 1) eps_double B, value_tol)
-//     (clipping.hpp, `zero_tolerance`).
+//   * the zero test of clipping accepts |f| <= max(4 (n + 1) eps_double, value_tol) B, `value_tol`
+//     being relative to B (clipping.hpp, `zero_tolerance`).
 // A returned root x therefore has |p(x)| <= band, the sum of the three, and the bracket or interval
 // it came from adds param_tol to its position. On the ball |t - r| <= clearance / 10, |g| >= G / 3
 // (at most ten other roots counted with multiplicity: 0.9^10 > 1/3), so
@@ -158,8 +158,7 @@ Truth make_truth(const std::vector<Factor>& factors, const Rational& lead = 1) {
   return tr;
 }
 
-// The same polynomial scaled by a power of two so that its largest coefficient is in [0.5, 1): rows
-// of a batch share one value_tol, so they need one scale.
+// The same polynomial scaled by a power of two so that its largest coefficient is in [0.5, 1).
 Truth unit_scale_truth(const std::vector<Factor>& factors) {
   double big = 0.0;
   for (const Rational& q : make_truth(factors).bernstein) {
@@ -205,12 +204,12 @@ struct Frame {
   double value_tol;
 };
 
-// value_tol: twice the evaluation-plus-rounding band, so that the zero test accepts a true root's
-// own rounding noise in the storage type (a bare 1e-12 would reject every float root at the
-// zero test, whose floor scales with eps_double only).
+// value_tol (relative to the largest coefficient): twice the evaluation-plus-rounding band, so that
+// the zero test accepts a true root's own rounding noise in the storage type (a bare 1e-12 would
+// reject every float root at the zero test, whose floor scales with eps_double only).
 template <class T>
-Frame frame_for(const Truth& tr, const std::vector<T>& coeff) {
-  return {1e-10, 4.0 * (3.0 * tr.degree + 4.0) * unit_roundoff<T>() * largest_magnitude(coeff)};
+Frame frame_for(const Truth& tr, const std::vector<T>& /*coeff*/) {
+  return {1e-10, 4.0 * (3.0 * tr.degree + 4.0) * unit_roundoff<T>()};
 }
 
 template <class T>
@@ -218,18 +217,17 @@ double band_of(const Truth& tr, const std::vector<T>& coeff, Frame f) {
   const double big = largest_magnitude(coeff);
   const double n = tr.degree;
   const double u = unit_roundoff<T>();
-  const double zero_floor = (std::max)(4.0 * (n + 1.0) * eps_double * big, f.value_tol);
+  const double zero_floor = (std::max)(4.0 * (n + 1.0) * eps_double, f.value_tol) * big;
   return zero_floor + 3.0 * n * u * big + 4.0 * u * big;
 }
 
-// The base merge radius of design/root_seam.md's pair-class table, max(2 param_tol, 4 zero_tol),
-// with zero_tol = max(4 (n + 1) eps_double B, value_tol).
+// The base merge radius of design/root_seam.md's pair-class table, max(2 param_tol, 4 z), with
+// z = max(4 (n + 1) eps_double, value_tol) the zero tolerance relative to the largest coefficient.
 template <class T>
-double merge_base_radius(const Truth& tr, const std::vector<T>& c, Frame f) {
-  const double zero_tol =
-      (std::max)(4.0 * (static_cast<double>(tr.degree) + 1.0) * eps_double * largest_magnitude(c),
-                 f.value_tol);
-  return (std::max)(2.0 * f.param_tol, 4.0 * zero_tol);
+double merge_base_radius(const Truth& tr, const std::vector<T>& /*c*/, Frame f) {
+  const double zero_rel =
+      (std::max)(4.0 * (static_cast<double>(tr.degree) + 1.0) * eps_double, f.value_tol);
+  return (std::max)(2.0 * f.param_tol, 4.0 * zero_rel);
 }
 
 template <class T>
@@ -543,7 +541,7 @@ TEST_CASE("roots dedup (b): a double root reached by several clip branches is re
   const Truth tr =
       make_truth({{rat(2, 5), 2}, {rat(-1), 1}, {rat(2), 1}, {rat(3), 1}, {rat(-2), 1}});
   const std::vector<double> c = stored<double>(tr);
-  const Frame f{1e-10, 1e-12};
+  const Frame f{1e-10, 1e-12 / largest_magnitude(c)};  // the absolute floor 1e-12
   REQUIRE(takes_clipping(c));
   const ExpectedRoot& e = tr.in_unit_interval[0];
   const double rho = position_bound<double>(tr, c, e, f);
@@ -572,7 +570,7 @@ TEST_CASE("roots dedup (b): a triple root reached by several clip branches is re
   const Truth tr =
       make_truth({{rat(2, 5), 3}, {rat(-1), 1}, {rat(2), 1}, {rat(3), 1}, {rat(-2), 1}});
   const std::vector<double> c = stored<double>(tr);
-  const Frame f{1e-10, 1e-12};
+  const Frame f{1e-10, 1e-12 / largest_magnitude(c)};  // the absolute floor 1e-12
   REQUIRE(takes_clipping(c));
   const ExpectedRoot& e = tr.in_unit_interval[0];
   const double rho = position_bound<double>(tr, c, e, f);
@@ -598,7 +596,7 @@ TEST_CASE("roots dedup (b): a triple root at 1/2 with distant simple roots is re
   const Truth tr = make_truth(
       {{rat(1, 2), 3}, {rat(1, 5), 1}, {rat(4, 5), 1}, {rat(1, 10), 1}, {rat(9, 10), 1}});
   const std::vector<double> c = stored<double>(tr);
-  const Frame f{1e-10, 1e-12};
+  const Frame f{1e-10, 1e-12 / largest_magnitude(c)};  // the absolute floor 1e-12
   REQUIRE(takes_clipping(c));
   const ExpectedRoot& e = tr.in_unit_interval[2];
   const double rho = position_bound<double>(tr, c, e, f);
@@ -608,17 +606,14 @@ TEST_CASE("roots dedup (b): a triple root at 1/2 with distant simple roots is re
   check_roots_match<double>(rs, tr, c, f);
 }
 
-TEST_CASE("roots dedup (b) frontier: a triple root with a small leading factor is reported once" *
-          doctest::should_fail()) {
-  // KNOWN DEFECT, inherited bit for bit from the previous (Numba) release, which reports the
-  // triple root twice for this input: the merge radius at a triple root,
-  // min(4 zero_tol / |f'|, zero_tol^(1/3)), is smaller than the spread of the candidates when
-  // G = |g(r)| is small, because the first kept candidate sits near the edge of the band |f| <=
-  // zero_tol and the next on the other side. design/root_seam.md claims the class covered for m <=
-  // 3. Remove `should_fail` when the merge is repaired; this test then pins the repair.
+TEST_CASE("roots dedup (b): a triple root with a small leading factor is reported once") {
+  // Inherited from the previous (Numba) release, which reported this triple root twice: its merge
+  // radius cap was zero_tol^(1/3) with zero_tol in coefficient units, smaller than the spread of
+  // the candidates when the coefficients are small (here max|c| < 1). The cap is now the cube root
+  // of the relative zero tolerance zero_tol / max|c|, a length on [0, 1].
   const Truth tr = make_truth({{rat(2, 5), 3}, {rat(1, 10), 1}, {rat(9, 10), 1}, {rat(-1), 1}});
   const std::vector<double> c = stored<double>(tr);
-  const Frame f{1e-10, 1e-12};
+  const Frame f{1e-10, 1e-12 / largest_magnitude(c)};  // the absolute floor 1e-12
   REQUIRE(takes_clipping(c));
   const ExpectedRoot& e = tr.in_unit_interval[1];
   const double rho = position_bound<double>(tr, c, e, f);
@@ -707,7 +702,7 @@ TEST_CASE("roots dedup: two distinct simple roots 1e-5 apart are not merged") {
 TEST_CASE("roots dedup (c)+(b): a double root at 0 and a triple root at 1 are reported once each") {
   const Truth tr = make_truth({{rat(0), 2}, {rat(1), 3}, {rat(1, 2), 1}, {rat(-1), 1}});
   const std::vector<double> c = stored<double>(tr);
-  const Frame f{1e-10, 1e-12};
+  const Frame f{1e-10, 1e-12 / largest_magnitude(c)};  // the absolute floor 1e-12
   REQUIRE(takes_clipping(c));
   const pr::RootSet<double> rs = builtin_roots<double>(c, f);
   CHECK(rs.roots.size() == 3);
@@ -739,7 +734,7 @@ TEST_CASE("roots dedup (d): a double root at a critical point of Yuksel's walk i
     const Truth tr = make_truth(cs.factors);
     const std::vector<double> c = stored<double>(tr);
     REQUIRE_FALSE(takes_clipping(c));
-    const Frame f{1e-10, 1e-12};
+    const Frame f{1e-10, 1e-12 / largest_magnitude(c)};  // the absolute floor 1e-12
     check_roots_match<double>(builtin_roots<double>(c, f), tr, c, f);
   }
 }
@@ -755,7 +750,7 @@ TEST_CASE(
   const Truth tr = make_truth({{rat(3, 16), 2}, {rat(-1), 1}, {rat(2), 1}});
   const std::vector<double> c = stored<double>(tr);
   REQUIRE_FALSE(takes_clipping(c));
-  const Frame f{1e-10, 1e-12};
+  const Frame f{1e-10, 1e-12 / largest_magnitude(c)};  // the absolute floor 1e-12
   const pr::RootSet<double> rs = builtin_roots<double>(c, f);
   CHECK(rs.roots.size() == 1);
 }
@@ -771,7 +766,7 @@ TEST_CASE(
   const Truth tr = make_truth({{rat(1, 2), 3}, {rat(1, 8), 1}, {rat(7, 8), 1}});
   const std::vector<double> c = stored<double>(tr);
   REQUIRE_FALSE(takes_clipping(c));
-  const Frame f{1e-10, 1e-12};
+  const Frame f{1e-10, 1e-12 / largest_magnitude(c)};  // the absolute floor 1e-12
   const pr::RootSet<double> rs = builtin_roots<double>(c, f);
   CHECK(rs.roots.size() == 3);
 }
@@ -791,43 +786,139 @@ TEST_CASE("roots dedup (d): the batch dispatch merges Yuksel's roots that the si
 // ---- Scale
 // ---------------------------------------------------------------------------------------
 
-TEST_CASE("roots scale: distinct roots survive coefficients of order 1e9") {
-  // Metamorphic (ST-rotate-shift-and-scale): scaling a polynomial leaves its roots alone.
-  // 2^30 is the largest scale the merge radius max(2 param_tol, 4 zero_tol) still handles with
-  // roots 1/16 apart; see the frontier test below for where it stops.
-  const Truth tr = make_truth({{rat(2, 16), 1},
-                               {rat(3, 16), 1},
-                               {rat(5, 16), 1},
-                               {rat(8, 16), 1},
-                               {rat(11, 16), 1},
-                               {rat(13, 16), 1},
-                               {rat(14, 16), 1}},
-                              pow2(30));
-  const std::vector<double> c = stored<double>(tr);
-  const Frame f = frame_for<double>(tr, c);
-  check_roots_match<double>(builtin_roots<double>(c, f), tr, c, f);
+// The degree-7 polynomial of the scale tests: roots 1/16 apart at the closest, all simple.
+std::vector<Factor> scale_case_factors() {
+  return {{rat(2, 16), 1},  {rat(3, 16), 1},  {rat(5, 16), 1}, {rat(8, 16), 1},
+          {rat(11, 16), 1}, {rat(13, 16), 1}, {rat(14, 16), 1}};
 }
 
-TEST_CASE("roots scale frontier: distinct roots are not merged at coefficient scale 2^50" *
-          doctest::should_fail()) {
-  // KNOWN DEFECT, inherited from the previous release, which also loses most of these roots at
-  // this scale: the merge radius `max(2 param_tol, 4 zero_tol)` compares a gap in the parameter
-  // with `zero_tol`, a quantity in coefficient units (scale * (n + 1) * 4 * eps), so for
-  // coefficients near 1e12 and above, roots 1/16 apart merge, silently and with completeness
-  // `complete`. Remove `should_fail` when the radius is made scale-free (for example by dividing
-  // the zero tolerance by the derivative, as the second radius does).
-  const Truth tr = make_truth({{rat(2, 16), 1},
-                               {rat(3, 16), 1},
-                               {rat(5, 16), 1},
-                               {rat(8, 16), 1},
-                               {rat(11, 16), 1},
-                               {rat(13, 16), 1},
-                               {rat(14, 16), 1}},
-                              pow2(50));
-  const std::vector<double> c = stored<double>(tr);
-  const Frame f = frame_for<double>(tr, c);
-  const pr::RootSet<double> rs = builtin_roots<double>(c, f);
-  CHECK(rs.roots.size() == 7);
+TEST_CASE("roots scale: distinct roots survive coefficients of order 1e9 and 1e15") {
+  // Metamorphic (ST-rotate-shift-and-scale): scaling a polynomial leaves its roots alone. Bug
+  // caught: a merge radius in coefficient units, which at 2^50 merged roots 1/16 apart.
+  for (const int k : {30, 50}) {
+    const Truth tr = make_truth(scale_case_factors(), pow2(k));
+    const std::vector<double> c = stored<double>(tr);
+    const Frame f = frame_for<double>(tr, c);
+    INFO("scale 2^" << k);
+    const pr::RootSet<double> rs = builtin_roots<double>(c, f);
+    CHECK(rs.roots.size() == 7);
+    check_roots_match<double>(rs, tr, c, f);
+  }
+}
+
+namespace {
+
+// The roots of `c` as their bits, single (`batch` false) or as row 0 of a one-row batch.
+template <class T>
+std::vector<double> root_bits(const std::vector<T>& c, double param_tol, double value_rel,
+                              bool batch) {
+  if (!batch) {
+    const pr::RootSet<double> rs =
+        pr::Builtin{}.find_roots<T>(std::span<const T>(c), {param_tol, value_rel});
+    std::vector<double> x;
+    for (const auto& r : rs.roots) {
+      x.push_back(r.x);
+    }
+    return x;
+  }
+  const pr::BatchRootSet br = pr::Builtin{}.find_roots_batch<T>(
+      pantr::mdview<const T, 2>(c.data(), 1, c.size()), {param_tol, value_rel});
+  return {br.roots.data(), br.roots.data() + br.counts[0]};
+}
+
+template <class T>
+pantr::NdArray<T> stack_rows(const std::vector<std::vector<T>>& rows) {
+  pantr::NdArray<T> m({rows.size(), rows.front().size()});
+  for (std::size_t i = 0; i < rows.size(); ++i) {
+    std::copy(rows[i].begin(), rows[i].end(), m.data() + i * rows.front().size());
+  }
+  return m;
+}
+
+template <class T>
+std::vector<T> scaled_by_pow2(const std::vector<T>& c, int k) {
+  std::vector<T> out;
+  for (const T v : c) {
+    out.push_back(std::ldexp(v, k));
+  }
+  return out;
+}
+
+}  // namespace
+
+TEST_CASE_TEMPLATE("roots scale: the roots are the same bits for c and 2^k c", T, float, double) {
+  // Metamorphic, exact: scaling by a power of two is exact where nothing under- or overflows, and
+  // every value-frame bound of the provider is a multiple of max|c|, so the result must not move
+  // by one bit. Bug caught: any absolute floor in the value frame (the zero test, the flatness
+  // test, the Newton and multiple-root derivative tests, the merge radii), each of which flips the
+  // result at some scale. Degree 6 takes clipping and the merge, degree 2 Yuksel; both modes, the
+  // strict tolerance and an explicit param_tol.
+  const int k_max = std::is_same_v<T, float> ? 100 : 900;
+  const std::vector<std::vector<Factor>> cases = {
+      {{rat(1, 10), 1},
+       {rat(2, 10), 1},
+       {rat(3, 10), 1},
+       {rat(4, 10), 1},
+       {rat(5, 10), 1},
+       {rat(6, 10), 1}},
+      {{rat(3, 10), 1}, {rat(7, 10), 1}},
+      {{rat(1, 10), 1}, {rat(2, 5), 2}, {rat(1, 2), 1}, {rat(3, 5), 1}, {rat(7, 10), 1}},
+  };
+  const double strict = 4.0 * static_cast<double>(std::numeric_limits<T>::epsilon());
+  for (const auto& factors : cases) {
+    const std::vector<T> c = stored<T>(unit_scale_truth(factors));
+    for (const double param_tol : {strict, 1e-9}) {
+      for (const bool batch : {false, true}) {
+        const std::vector<double> ref = root_bits<T>(c, param_tol, strict, batch);
+        REQUIRE_FALSE(ref.empty());
+        for (int k = -k_max; k <= k_max; ++k) {
+          CAPTURE(k);
+          CAPTURE(batch);
+          CHECK(root_bits<T>(scaled_by_pow2(c, k), param_tol, strict, batch) == ref);
+        }
+      }
+    }
+  }
+}
+
+TEST_CASE("roots scale: each row of a batch is scaled by its own largest coefficient") {
+  // Bug caught: a value floor taken from one row, or one floor for the batch, which solves the row
+  // at 2^-40 against a floor sized for the row at 2^40.
+  const std::vector<double> c = stored<double>(unit_scale_truth(
+      {{rat(1, 10), 1}, {rat(2, 10), 1}, {rat(3, 10), 1}, {rat(4, 10), 1}, {rat(5, 10), 1},
+       {rat(6, 10), 1}}));
+  const double strict = 4.0 * std::numeric_limits<double>::epsilon();
+  const std::vector<double> ref = root_bits<double>(c, strict, strict, false);
+  REQUIRE(ref.size() == 6);
+  std::vector<std::vector<double>> rows;
+  for (const int k : {-40, 0, 40, -900, 900}) {
+    rows.push_back(scaled_by_pow2(c, k));
+  }
+  const pantr::NdArray<double> m = stack_rows(rows);
+  const pr::BatchRootSet br = pr::Builtin{}.find_roots_batch<double>(
+      pantr::mdview<const double, 2>(m.data(), rows.size(), c.size()), {strict, strict});
+  for (std::size_t i = 0; i < rows.size(); ++i) {
+    CAPTURE(i);
+    REQUIRE(br.counts[i] == 6);
+    const double* row = br.roots.data() + i * br.roots.shape()[1];
+    CHECK(std::vector<double>(row, row + 6) == ref);
+  }
+}
+
+TEST_CASE_TEMPLATE("roots scale: the zero polynomial has no roots, a tiny one keeps its roots", T,
+                   float, double) {
+  // Bug caught: the zero-polynomial short-circuit replaced by a relative test that lets the zero
+  // polynomial through (every point a candidate), or the old absolute one, which dropped a
+  // polynomial whose coefficients are all below the tolerance.
+  const double strict = 4.0 * static_cast<double>(std::numeric_limits<T>::epsilon());
+  for (const std::size_t n1 : {2U, 4U, 8U}) {
+    const std::vector<T> zero(n1, T(0));
+    CHECK(root_bits<T>(zero, strict, strict, false).empty());
+    CHECK(root_bits<T>(zero, strict, strict, true).empty());
+  }
+  const std::vector<T> tiny = {std::ldexp(T(1), -100), std::ldexp(T(-1), -100)};
+  CHECK(root_bits<T>(tiny, strict, strict, false) == std::vector<double>{0.5});
+  CHECK(root_bits<T>(tiny, strict, strict, true) == std::vector<double>{0.5});
 }
 
 // ---- Completeness ------------------------------------------------------------------------------
@@ -1106,19 +1197,6 @@ TEST_CASE_TEMPLATE("roots monotone: batch rows agree with single calls, NaN for 
 }
 
 // ---- The batch ---------------------------------------------------------------------------------
-
-namespace {
-
-template <class T>
-pantr::NdArray<T> stack_rows(const std::vector<std::vector<T>>& rows) {
-  pantr::NdArray<T> m({rows.size(), rows.front().size()});
-  for (std::size_t i = 0; i < rows.size(); ++i) {
-    std::copy(rows[i].begin(), rows[i].end(), m.data() + i * rows.front().size());
-  }
-  return m;
-}
-
-}  // namespace
 
 TEST_CASE_TEMPLATE(
     "roots batch: rows agree with single calls on the clipping path and pad with "
