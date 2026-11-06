@@ -11,6 +11,7 @@
 #include "pantr/bezier/detail/net_ops.hpp"
 #include "pantr/bspline/bspline.hpp"
 #include "pantr/bspline/detail/refine_common.hpp"
+#include "pantr/bspline/knots.hpp"
 #include "pantr/bspline/space.hpp"
 #include "pantr/bspline/space_1d.hpp"
 #include "pantr/config.hpp"
@@ -64,7 +65,9 @@ template <StorageFloat T>
   const double u_left = static_cast<double>(knots[p]);
   const double u_right = static_cast<double>(knots[n_basis]);
   if (value <= u_left + tol) {
-    return {p, u_left};
+    // The span starting at the last knot of the first domain knot's class (past `p` when the
+    // class continues beyond it, a non-clamped vector with `knots[p] == knots[p + 1]`).
+    return {last_index_of_first_domain_class<T>(knots, degree, tol), u_left};
   }
   if (value >= u_right - tol) {
     return {n_basis - 1, u_right};

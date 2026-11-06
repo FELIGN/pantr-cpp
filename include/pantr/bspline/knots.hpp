@@ -203,6 +203,28 @@ template <StorageFloat T>
   return count;
 }
 
+/// The index of the last knot in the class of the first domain knot `knots[degree]`: the knot the
+/// first in-domain interval starts at.
+///
+/// It is `degree` when `knots[degree + 1]` starts another class, and larger when the class holding
+/// `knots[degree]` continues past it (a non-clamped vector with `knots[degree] == knots[degree +
+/// 1]`, or a first class longer than `degree + 1`). The first interval's functions are then
+/// `index - degree .. index`, as `BsplineSpace1D::first_basis_per_interval` says. Classes are cut
+/// as `classify_knots` cuts them.
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed).
+template <StorageFloat T>
+[[nodiscard]] std::size_t last_index_of_first_domain_class(std::span<const T> knots, int degree,
+                                                           double tol) {
+  auto i = static_cast<std::size_t>(degree);
+  while (i + 1 < knots.size() &&
+         !(static_cast<double>(static_cast<T>(knots[i + 1] - knots[i])) > tol)) {
+    ++i;
+  }
+  return i;
+}
+
 /// Number of basis functions: `size - degree - 1`, less `regularity + 1` for a periodic space,
 /// where the regularity at the domain start is `degree` minus the first domain knot's multiplicity.
 ///
@@ -258,7 +280,7 @@ void cardinal_intervals(std::span<const T> knots, int degree, double tol, std::s
     return;
   }
   const std::size_t num_intervals = mult.size() - 1;
-  auto knot_id = static_cast<std::size_t>(degree);
+  std::size_t knot_id = last_index_of_first_domain_class<T>(knots, degree, tol);
   for (std::size_t e = 0; e < num_intervals; ++e) {
     if (mult[e] == 1 && mult[e + 1] == 1) {
       if (degree == 0) {

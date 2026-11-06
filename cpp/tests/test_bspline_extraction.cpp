@@ -71,6 +71,13 @@ std::vector<Space1> spaces_1d() {
        3},
       {"periodic-style ghost knots", periodic_knots(4, 3), 3},
       {"degree 4, off-mesh", clamped(4, {0.1, 0.35, 0.6}), 4},
+      // The first domain knot's class continues past knots[degree]: the first interval starts at
+      // its last copy (an extraction that started at knots[degree] built the wrong operator).
+      {"unclamped, knots[p] == knots[p + 1]", {-0.5, -0.25, 0.0, 0.0, 0.5, 1.0, 1.25, 1.5}, 2},
+      {"unclamped cubic, first knot thrice",
+       {-0.75, -0.5, 0.0, 0.0, 0.0, 0.5, 1.0, 1.25, 1.5, 1.75},
+       3},
+      {"a first class of degree + 2", {0.0, 0.0, 0.0, 0.0, 0.25, 0.75, 1.0, 1.0, 1.0}, 2},
   };
 }
 

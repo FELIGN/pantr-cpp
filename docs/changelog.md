@@ -1298,6 +1298,15 @@
   unchanged except as under Fixed.
 
 ### Fixed
+- **A knot vector whose first domain knot repeats past `knots[degree]`** (a non-clamped vector
+  with `knots[degree] == knots[degree + 1]`, or a first knot repeated more than `degree + 1`
+  times) gets correct Bézier, Lagrange and cardinal extraction operators, `to_beziers` pieces,
+  cardinal-interval flags (`get_cardinal_intervals`), and `slice` at the start of the domain. Each assumed the first interval started at
+  `knots[degree]` rather than at the last copy of that knot, so the first interval's operator and
+  Bézier piece were wrong (for the knots `[-0.5, -0.25, 0, 0, 0.5, 1, 1.25, 1.5]` at degree 2, a
+  constant piece where the spline varies), the cardinal flags of the interior intervals were
+  shifted, and `slice` at the domain start returned a control point the spline does not take
+  there. Inherited from the previous release.
 - **`pantr.bezier.find_roots` gives the same roots when the coefficients are scaled.** Its zero
   tests, its flatness test, two tests on the derivative and the radius within which it merges
   duplicate roots were absolute, in the units of the coefficients: a polynomial with six simple
