@@ -198,6 +198,13 @@ TEST_CASE("grid: overlay: errors carry the Python messages") {
                        "overlay(): domains do not overlap on axis 1; grid_a extent [0.0, 1.0] vs "
                        "grid_b extent [5.0, 6.0].",
                        pantr::value_error);
+  // Domains that overlap over more than the largest double: the window cannot be formed, which
+  // was reported as no overlap (its width and tolerance both infinite).
+  const TensorProductGrid widest = tpg({{-1.7e308, 1.7e308}});
+  CHECK_THROWS_WITH_AS(static_cast<void>(overlay(widest, widest)),
+                       "overlay(): the overlap of the domains on axis 0, [-1.7e+308, 1.7e+308], is "
+                       "wider than the largest double.",
+                       pantr::value_error);
 }
 
 TEST_CASE("grid: cell_quadrature: exact mapping on a dyadic grid") {

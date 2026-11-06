@@ -110,6 +110,13 @@ namespace detail {
     // length 1 sitting at 1e6 resolves its breakpoints no better than eps * 1e6, however short the
     // window is.
     const double atol = relative * (std::max)({hi - lo, std::fabs(lo), std::fabs(hi)});
+    if (!std::isfinite(hi - lo)) {
+      // The window overlaps but is wider than the largest double, so neither it nor its tolerance
+      // can be formed.
+      throw value_error("overlay(): the overlap of the domains on axis " + std::to_string(d) +
+                        ", [" + py_repr(lo) + ", " + py_repr(hi) +
+                        "], is wider than the largest double.");
+    }
     if (hi - lo <= atol) {
       throw value_error("overlay(): domains do not overlap on axis " + std::to_string(d) +
                         "; grid_a extent [" + py_repr(ba.front()) + ", " + py_repr(ba.back()) +
