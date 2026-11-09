@@ -135,7 +135,7 @@ def _multiply() -> Callable[[], object]:
 SETUPS: dict[str, Callable[[], Callable[[], object]]] = {
     "split": _on(_rng().random(_NET), lambda b: b.split(0, 0.3)),
     "slice": _on(_rng().random(_NET), lambda b: b.slice(0, 0.3)),
-    "slice_point": _on(_rng().random((801, 3000)), lambda b: b.slice(0, 0.3)),
+    "slice_point": _on(_rng().random((1201, 3000)), lambda b: b.slice(0, 0.3)),
     "restrict": _on(_rng().random(_NET), lambda b: b.restrict([(0.2, 0.7), None])),
     "multiply": _multiply,
     "compose": _compose,
@@ -152,7 +152,14 @@ SETUPS: dict[str, Callable[[], Callable[[], object]]] = {
 @pytest.mark.slow
 @pytest.mark.parametrize("name", list(SETUPS))
 def test_long_call_lets_other_threads_run(name: str) -> None:
-    """Another Python thread is never blocked for more than half of the call."""
-    duration, gap = _largest_gap(SETUPS[name]())
-    assert duration >= _MIN_DURATION, f"{name} took {duration:.4f} s: too short to tell"
-    assert gap < 0.5 * duration, f"{name}: blocked {gap:.4f} s of {duration:.4f} s"
+    """Another Python thread is not blocked for more than half of the call, in one of three tries.
+
+    A held GIL blocks the ticker for the whole call on every try, so it cannot pass; a released
+    one can still show a long gap when an oversubscribed machine deschedules the ticker, which is
+    why one clean try of three suffices.
+    """
+    call = SETUPS[name]()
+    tries = [_largest_gap(call) for _ in range(3)]
+    for duration, _gap in tries:
+        assert duration >= _MIN_DURATION, f"{name} took {duration:.4f} s: too short to tell"
+    assert any(gap < 0.5 * duration for duration, gap in tries), f"{name}: blocked {tries}"
