@@ -17,8 +17,10 @@ built and tested:
   under its rungs, and the sdist;
 - pantr-mpi: one wheel per platform (Linux x86_64 and aarch64 against MPICH,
   whose `libmpi.so.12` is the MPICH ABI; macOS arm64 against Open MPI; no
-  Windows wheel), with `PANTR_MPI_FAMILY` set explicitly and the MPI library not
-  bundled, and the sdist, which CI also builds into a wheel against the pantr
+  Windows wheel), with `PANTR_MPI_FAMILY` set explicitly and no MPI library
+  bundled (the module links the MPI C API alone, so not even MPICH's `libmpicxx`
+  is vendored; `tools/wheel_test.py --mpi-wheel` fails the build on a vendored
+  library or a missing licence file), and the sdist, which CI also builds into a wheel against the pantr
   wheel (the route of a user with no matching wheel). pantr-mpi requires
   `mpi4py>=4` (its stable-ABI C API).
 
@@ -69,7 +71,11 @@ that rule in place the per-release RTD steps below become automatic.
 1. **Land all changes on `main`** with CI green.
 2. **Bump the version**, in every place that states it (CMake and the test
    suite refuse a disagreement, so a missed one fails the checks):
-   - `__version__` in `src/pantr/__init__.py`, the single source;
+   - `__version__` in `src/pantr/__init__.py`, the single source
+     (`tests/test_metadata.py` reads it and hard-codes no version);
+   - `version:` in `CITATION.cff`
+     (`tests/test_metadata.py::test_citation_file_states_the_package_version`
+     checks it) and `date-released` beside it, which nothing checks;
    - `PANTR_VERSION_MAJOR`, `_MINOR` and `_PATCH` in `include/pantr/version.hpp`
      (the root `CMakeLists.txt` refuses to configure when they differ);
    - the `pantr-mpi==<version>` pin of the `mpi` extra in `pyproject.toml`, and
@@ -79,11 +85,16 @@ that rule in place the per-release RTD steps below become automatic.
      version; in the release run, the pantr wheels of the same run satisfy it.
 3. **Update the changelog**: add the new `## <version> (<date>)` section to
    `docs/changelog.md` (Keep a Changelog style — `### Added` / `### Changed` /
-   …). This exact section becomes the GitHub Release notes.
+   …). The release run refuses a tag with no `## <version>` header here, before
+   anything is uploaded, and the GitHub Release body links to it.
 4. Open a PR with the bump + changelog, run the checks, and merge it.
-5. *(Optional) Rehearse.* Trigger the workflow manually from *Actions → Release →
-   Run workflow*. This builds and publishes to **TestPyPI only** — production
-   PyPI is never touched on a manual run. Verify the install:
+5. **Rehearse; do not tag before it has passed.** Trigger the workflow manually
+   from *Actions → Release → Run workflow*, on the commit to be tagged. This
+   builds and publishes to **TestPyPI only** — production PyPI is never touched
+   on a manual run — and exercises the `collect` job (`twine check --strict`
+   over every distribution) that only this workflow runs. The tag-only steps
+   (the version-against-tag check, the Release notes, PyPI, the GitHub Release)
+   are skipped on a manual run. Verify the install:
 
    ```bash
    pip install --index-url https://test.pypi.org/simple/ \
@@ -108,8 +119,8 @@ that rule in place the per-release RTD steps below become automatic.
 
 - PyPI project page shows the new version, and `pip install "pantr==<version>"`
   works from a clean environment.
-- The GitHub Release exists with the changelog section as its notes and every
-  wheel and both sdists attached; `pip install "pantr[mpi]==<version>"` installs
+- The GitHub Release exists, its notes linking to the changelog section, with
+  every wheel and both sdists attached; `pip install "pantr[mpi]==<version>"` installs
   pantr-mpi on Linux and macOS.
 - `https://pantr.readthedocs.io` serves the new version's docs.
 
@@ -121,12 +132,15 @@ that rule in place the per-release RTD steps below become automatic.
   both distributions, each wheel tested.
 - **collect** — splits the artifacts into `dist-pantr` and `dist-pantr-mpi`,
   runs `twine check --strict`, and on a tag asserts every wheel's version equals
-  the tag.
+  the tag and writes the GitHub Release notes (the version, a link to the
+  changelog and the file names), failing if `docs/changelog.md` has no section
+  for the version. It runs before every upload, so a failure here releases
+  nothing.
 - **testpypi** — publishes both to TestPyPI (`skip-existing`, so re-runs are
   safe). Runs on both a tag push and a manual dispatch.
 - **pypi** — publishes both to PyPI. Gated to tag pushes only.
-- **github-release** — creates the GitHub Release with notes extracted from the
-  matching section of `docs/changelog.md`.
+- **github-release** — creates the GitHub Release with the notes `collect`
+  wrote.
 
 Permissions are least-privilege: the publish jobs request only the OIDC
 `id-token` they need, and the third-party publish action is pinned to a commit
