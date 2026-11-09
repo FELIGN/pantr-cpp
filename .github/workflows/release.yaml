@@ -4,8 +4,9 @@ name: Release
 #
 # Triggers:
 #   * Pushing a `v*` tag  -> build and test the wheels and sdists of pantr and
-#     pantr-mpi (wheels.yaml, the workflow CI runs), publish them to TestPyPI, then
-#     PyPI, then cut a GitHub Release. This is the real release path.
+#     pantr-mpi (wheels.yaml, the workflow CI runs), check them and write the Release
+#     notes (`collect`, before anything is uploaded), publish to TestPyPI, then PyPI,
+#     then cut a GitHub Release. This is the real release path.
 #   * Manual `workflow_dispatch` -> build and publish to TestPyPI only. A safe
 #     end-to-end rehearsal that never touches the real index.
 #
@@ -34,6 +35,8 @@ jobs:
     needs: [wheels]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v7
+
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
@@ -73,6 +76,42 @@ jobs:
             fi
           done
 
+      # The Release body is short on purpose: the version, a link to the changelog and the
+      # attached files. A copy of the changelog section can exceed GitHub's limit on a release
+      # body, and that would fail `github-release` after PyPI had the files. It is written here
+      # so that a missing changelog section stops the run before any upload.
+      - name: Write the GitHub Release notes
+        if: github.event_name == 'push'
+        env:
+          TAG: ${{ github.ref_name }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          # The exact version header ("## 0.7.0 (date)"), not a prefix, so v0.7 / v0.7.0 /
+          # v0.7.0-rc1 never collide.
+          if ! grep -Eq "^## ${version//./\\.}( |$)" docs/changelog.md; then
+            echo "::error::docs/changelog.md has no '## $version' section"
+            exit 1
+          fi
+          {
+            echo "pantr and pantr-mpi $version."
+            echo
+            echo "Changes: [section $version of the changelog]($REPO_URL/blob/$TAG/docs/changelog.md)."
+            echo
+            echo "Distributions attached:"
+            for file in dist-pantr/* dist-pantr-mpi/*; do echo "- \`$(basename "$file")\`"; done
+          } > release-notes.md
+          cat release-notes.md
+
+      - name: Keep the Release notes
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-notes
+          path: release-notes.md
+          if-no-files-found: error
+
       - uses: actions/upload-artifact@v7
         with:
           name: dist-pantr
@@ -108,10 +147,10 @@ jobs:
         # This pin has to keep up with the core metadata version the build emits. The
         # action verifies the distributions with the twine it ships, and twine rejects a
         # metadata version its `packaging` does not know: the 2026-02-18 pin carried
-        # twine 6.1.0 / packaging 25.0, which know up to 2.4, so it refused the 0.7.0
-        # wheel with `InvalidDistribution: '2.5' is not a valid metadata version` once
-        # hatchling 1.32.0 made 2.5 its default. v1.14.2 ships twine 7.0.0 /
-        # packaging 26.2, and PyPI itself pins packaging 26.2, so the index accepts 2.5.
+        # twine 6.1.0 / packaging 25.0, which know up to 2.4, so it refused a wheel built
+        # by hatchling 1.32.0 (the backend then) with `InvalidDistribution: '2.5' is not a
+        # valid metadata version`. The wheels now come from scikit-build-core and carry
+        # Metadata-Version 2.4; v1.14.2 ships twine 7.0.0 / packaging 26.2.
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2 @ 2026-07-29
         with:
           repository-url: https://test.pypi.org/legacy/
@@ -176,36 +215,11 @@ jobs:
           pattern: dist-*
           path: .
 
-      - name: Extract changelog section
-        env:
-          TAG: ${{ github.ref_name }}
-        run: |
-          python - "$TAG" <<'PY'
-          import pathlib
-          import re
-          import sys
-
-          version = sys.argv[1].lstrip("v")
-          # Match the exact version header (e.g. "## 0.6.0 (date)"), not a prefix,
-          # so v0.6 / v0.6.0 / v0.6.0-rc1 never collide.
-          header = re.compile(rf"^{re.escape(version)}(?:\s|$)")
-          lines = pathlib.Path("docs/changelog.md").read_text().splitlines()
-          section: list[str] = []
-          capturing = False
-          for line in lines:
-              if line.startswith("## "):
-                  if capturing:
-                      break
-                  capturing = bool(header.match(line[3:].strip()))
-                  continue
-              if capturing:
-                  section.append(line)
-          body = "\n".join(section).strip()
-          pathlib.Path("release-notes.md").write_text(body + "\n" if body else "")
-          PY
-          if [ ! -s release-notes.md ]; then
-            echo "No changelog section found; GitHub will auto-generate notes."
-          fi
+      - name: Download the Release notes
+        uses: actions/download-artifact@v8
+        with:
+          name: release-notes
+          path: .
 
       - name: Create GitHub Release
         env:
@@ -213,11 +227,6 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          if [ -s release-notes.md ]; then
-            notes=(--notes-file release-notes.md)
-          else
-            notes=(--generate-notes)
-          fi
           # Idempotent: a re-run after the release already exists uploads/refreshes
           # assets instead of failing.
           if gh release view "$TAG" >/dev/null 2>&1; then
@@ -227,5 +236,5 @@ jobs:
             gh release create "$TAG" dist-pantr/* dist-pantr-mpi/* \
               --title "$TAG" \
               --verify-tag \
-              "${notes[@]}"
+              --notes-file release-notes.md
           fi
