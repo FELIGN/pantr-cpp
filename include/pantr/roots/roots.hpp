@@ -139,12 +139,6 @@ inline constexpr std::size_t clip_min_degree = 6;
 /// by a sweep of clipping against Yuksel (an empirical bound, admitted as such).
 inline constexpr double clip_coeff_range_limit = 1e8;
 
-/// Sort ascending with NaN last (NumPy's order).
-inline void sort_nan_last(std::vector<double>& v) {
-  std::sort(v.begin(), v.end(),
-            [](double a, double b) { return a < b || (!std::isnan(a) && std::isnan(b)); });
-}
-
 /// A `RootSet` of computed roots without multiplicities.
 inline RootSet<double> computed_set(const std::vector<double>& xs,
                                     std::vector<std::pair<double, double>> gaps) {
@@ -162,13 +156,15 @@ inline RootSet<double> computed_set(const std::vector<double>& xs,
 ///
 /// The zero polynomial has no roots to report. Its test is exact: with a floor relative to
 /// `max|c|`, "every coefficient within the floor" holds only when every coefficient is zero.
+///
+/// Note:
+///     The coefficients are finite (`Builtin` refuses the others before it dispatches).
 template <StorageFloat T>
 RootSet<double> dispatch_single(std::span<const T> coeff, double param_tol, double value_rel) {
   const std::size_t n = coeff.size() - 1;
   if (n < 1) {
     return computed_set({}, {});
   }
-  // NaN is not zero here (the previous release's single path).
   if (std::all_of(coeff.begin(), coeff.end(), [](T c) { return c == T(0); })) {
     return computed_set({}, {});
   }
@@ -176,20 +172,16 @@ RootSet<double> dispatch_single(std::span<const T> coeff, double param_tol, doub
   if (n >= clip_min_degree) {
     double c_max = 0.0;
     double c_min = std::numeric_limits<double>::infinity();
-    bool nan = false;
     for (const T c : coeff) {
       const double a = std::abs(static_cast<double>(c));
-      nan = nan || std::isnan(a);
       c_max = (std::max)(c_max, a);
       if (a > 0.0) {
         c_min = (std::min)(c_min, a);
       }
     }
-    // NumPy's max propagates NaN, and NaN <= limit is false: Yuksel.
-    const double range = nan ? std::numeric_limits<double>::quiet_NaN()
-                             : (c_min < std::numeric_limits<double>::infinity()
-                                    ? c_max / c_min
-                                    : std::numeric_limits<double>::infinity());
+    const double range = c_min < std::numeric_limits<double>::infinity()
+                             ? c_max / c_min
+                             : std::numeric_limits<double>::infinity();
     use_clipping = range <= clip_coeff_range_limit;
   }
   if (use_clipping) {
@@ -198,20 +190,19 @@ RootSet<double> dispatch_single(std::span<const T> coeff, double param_tol, doub
                         std::move(clip.gaps));
   }
   YukselResult r = yuksel_roots<T>(coeff, param_tol);
-  sort_nan_last(r.roots);
+  std::sort(r.roots.begin(), r.roots.end());
   return computed_set(r.roots, std::move(r.gaps));
 }
 
-/// The batch dispatch of the previous release, which differs from the single one in two places it
-/// kept: Yuksel's roots are merged too, and the zero-polynomial test passes a NaN coefficient.
+/// The batch dispatch of the previous release, which differs from the single one in a place it
+/// kept: Yuksel's roots are merged too. The coefficients are finite, as for `dispatch_single`.
 template <StorageFloat T>
 RootSet<double> dispatch_batch_row(std::span<const T> coeff, double param_tol, double value_rel) {
   const std::size_t n = coeff.size() - 1;
   if (n < 1) {
     return computed_set({}, {});
   }
-  if (std::all_of(coeff.begin(), coeff.end(),
-                  [](T c) { return !(std::abs(c) > T(0)); })) {  // zero or NaN
+  if (std::all_of(coeff.begin(), coeff.end(), [](T c) { return c == T(0); })) {
     return computed_set({}, {});
   }
   bool use_clipping = false;
