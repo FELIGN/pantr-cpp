@@ -29,7 +29,7 @@ mypy --config-file mypy.ini src tests                       # type check
 make import-lint                                            # import boundaries (core must not import pantr.mpi)
 make dependency-check                                       # no numba/threadpoolctl; scipy only in its boundary modules
 make docs SPHINXOPTS="-W --keep-going -j auto"              # docs build (matches CI)
-pip install -e ".[dev]"                                     # full dev env (pulls all optional extras)
+make install                                                # dev env: every extra + build tools, then make ext (no editable install)
 pip install "pantr[mpi]"                                    # opt in to MPI (pantr.mpi + mpi4py)
 PANTR_RUN_MPI=1 mpiexec -n 2 python -m pytest tests/mpi/    # MPI smoke tests (needs mpi4py + MPI launcher)
 python tools/ac1_ledger.py main..HEAD                       # changed test assertions, for a stage's AC1 ledger
@@ -92,8 +92,8 @@ The local suite passing is necessary but not sufficient. Known traps:
   process — `lint-imports`, a test that spawns a subprocess — resolves the *installed* package
   instead. Two consequences: those commands need `PYTHONPATH=src` to see the current worktree, and a
   stale editable install (one pointing at a deleted worktree) makes them fail with
-  `ModuleNotFoundError` while the rest of the suite passes. Repair it with
-  `pip install -e ".[dev]"` **from the main checkout**, never from a worktree.
+  `ModuleNotFoundError` while the rest of the suite passes. Repair it with `pip uninstall pantr`:
+  the C++ port has no editable install to point anywhere else.
 - **The local suite cannot see a result that depends on the BLAS implementation.** macOS
   links numpy against Accelerate while CI runs OpenBLAS, so any quantity round-off
   dominates can differ between them by orders of magnitude. Measured here: the relative

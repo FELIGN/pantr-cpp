@@ -9,8 +9,15 @@ extension in the wheel, and the serial core depends only on NumPy and SciPy:
 pip install pantr
 ```
 
-Building from source needs a C++20 compiler and CMake 3.28 or later. To use PaNTr from C++
-rather than Python, see {doc}`/guide/cpp`.
+A source build (`pip install .`, or pip building the sdist) needs a C++20 compiler, CMake 3.28 or
+later and git: at configure time CMake clones five header-only dependencies, each pinned to a
+commit (Eigen, Spectra, Kokkos mdspan, Boost.Multiprecision and Boost.Config; see
+`THIRD_PARTY_NOTICES.md`). To build offline, clone them first and pass
+`-DFETCHCONTENT_SOURCE_DIR_PANTR_EIGEN=<checkout>` (likewise `_PANTR_SPECTRA`, `_PANTR_MDSPAN`,
+`_PANTR_BOOST_MULTIPRECISION`, `_PANTR_BOOST_CONFIG`) with `-DFETCHCONTENT_FULLY_DISCONNECTED=ON`,
+for example through pip's `--config-settings=cmake.define.<NAME>=<value>`.
+
+To use PaNTr from C++ rather than Python, see {doc}`/guide/cpp`.
 
 ### Optional features
 

@@ -5,15 +5,22 @@ development setup and the conventions the project follows.
 
 ## Development setup
 
-PaNTr targets Python 3.12–3.14. Clone the repository and install the package
-with all development and optional-feature dependencies:
+PaNTr targets Python 3.12–3.14. Clone the repository, install the development
+and optional-feature dependencies, and build the extension:
 
 ```bash
 git clone https://github.com/FELIGN/pantr.git
 cd pantr
-pip install -e ".[dev]"
+make install          # the dev extra and the build tools, then make ext
 pre-commit install
 ```
+
+There is no editable install (`pip install -e .` is not supported): `make ext`
+compiles the C++ extension into `src/pantr`, where `pytest.ini`'s
+`pythonpath = src` finds it. It needs a C++20 compiler, CMake 3.28 or later and
+Ninja. Run `make ext` again after changing anything under `include/`,
+`bindings/` or `providers/`; the test session refuses a module older than those
+sources.
 
 The `dev` extra pulls in every optional feature (`mpi`, `metis`, `viz`, `docs`)
 so the full test suite runs with nothing silently skipped.

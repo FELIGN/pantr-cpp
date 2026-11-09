@@ -98,10 +98,12 @@ coverage:
 clean:
 	rm -rf .pytest_cache .coverage coverage.xml htmlcov/
 
-# Install project with development dependencies
+# Install the development dependencies (every extra and the build requirements, not pantr itself:
+# there is no editable install, design/packaging.md), then build the extension into src/pantr
 install:
 	python -m pip install --upgrade pip
-	pip install -e ".[dev]"
+	python tools/requirements.py dev build | python -m pip install -r /dev/stdin
+	$(MAKE) ext
 
 # Ruff linting
 ruff-lint:

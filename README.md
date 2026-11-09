@@ -52,6 +52,14 @@ cd pantr
 pip install .
 ```
 
+A source build (`pip install .`, or pip building the sdist) needs a C++20 compiler, CMake 3.28 or
+later and git: at configure time CMake clones five header-only dependencies, each pinned to a
+commit (Eigen, Spectra, Kokkos mdspan, Boost.Multiprecision and Boost.Config; see
+`THIRD_PARTY_NOTICES.md`). To build offline, clone them first and pass
+`-DFETCHCONTENT_SOURCE_DIR_PANTR_EIGEN=<checkout>` (likewise `_PANTR_SPECTRA`, `_PANTR_MDSPAN`,
+`_PANTR_BOOST_MULTIPRECISION`, `_PANTR_BOOST_CONFIG`) with `-DFETCHCONTENT_FULLY_DISCONNECTED=ON`,
+for example through pip's `--config-settings=cmake.define.<NAME>=<value>`.
+
 ## Quick start
 
 A geometry is a **function space** plus **control points**; build one and evaluate it:
@@ -95,13 +103,17 @@ pantr's own MPI glue, built for one MPI family, which an `mpi4py` communicator n
 The serial core (`pantr.grid`, `pantr.bspline`, …) never imports `pantr.mpi`, so a plain
 `pip install pantr` behaves identically with or without these backends. Contributors can
 grab everything — including the docs toolchain ([Sphinx](https://www.sphinx-doc.org)) —
-with `pip install -e ".[dev]"`.
+with `make install` in a clone (see below).
 
 ## Development
 
 ```bash
-pip install -e ".[dev]"   # includes all optional feature extras
+make install   # every optional extra and the build tools, then `make ext`
 ```
+
+There is no editable install: `make ext` compiles the extension (a C++20 compiler, CMake 3.28
+or later and Ninja are needed) into `src/pantr`, where the test suite imports it. Run it again
+after changing C++ code; the test session refuses a module older than its sources.
 
 ## License
 
