@@ -221,8 +221,8 @@ class THBSpline {
   ///     value_error: `pts` or `out` has another shape; a point lies outside the grid domain (the
   ///         first in input order is named); `orders` has the wrong length or a negative entry, or
   ///         a point lies outside its cell up to the membership tolerance.
-  ///     state_error: A cell has no active function; a 1D derivative recurrence met a zero
-  ///         divisor.
+  ///     state_error: A cell has no active function (a backstop for an invariant no known input
+  ///         violates); a 1D derivative recurrence met a zero divisor.
   void evaluate(mdview<const double, 2> pts, std::span<const std::int64_t> orders,
                 mdview<double, 2> out) const {
     const std::size_t d = dim();
@@ -287,9 +287,10 @@ class THBSpline {
         const detail::CellTask& task = tasks[t];
         const std::size_t n = task.end - task.begin;
         const std::size_t k = space().num_active_on(task.cid);
-        // `HierarchicalGrid::from_blocks` does not validate its tiling, so a space can hold a cell
-        // that no active function meets. Without this check the contraction would sum nothing and
-        // the point would silently evaluate to zero.
+        // Backstop for an invariant: every leaf cell of a space is covered by at least one active
+        // function. No known input violates it (an exhaustive search over small 1D leaf sets and a
+        // random one in 2D found none), so this is untested. It stays because, were it violated,
+        // the contraction below would sum nothing and the point would silently evaluate to zero.
         if (k == 0) {
           throw state_error("cell " + std::to_string(task.cid) +
                             " has no active basis functions; the THBSplineSpace may be "

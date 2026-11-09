@@ -252,8 +252,9 @@ class THBSpline:
             ValueError: If ``pts`` does not have trailing dimension ``dim``, any point
                 lies outside the grid domain, or ``out`` has the wrong shape/dtype or
                 is not writeable.
-            RuntimeError: If the grid has been modified since construction, or a cell
-                has no active basis functions (inconsistent space).
+            RuntimeError: If the grid has been modified since construction. A cell with
+                no active basis function also raises it, as a backstop for an invariant
+                (every leaf cell has an active function) that no known input violates.
         """
         return self._evaluate_orders(pts, (0,) * self.dim, out)
 
@@ -286,8 +287,9 @@ class THBSpline:
                 ``pts`` does not have trailing dimension ``dim``, any point lies
                 outside the grid domain, or ``out`` has the wrong shape/dtype or is
                 not writeable.
-            RuntimeError: If the grid has been modified since construction, or a cell
-                has no active basis functions (inconsistent space).
+            RuntimeError: If the grid has been modified since construction. A cell with
+                no active basis function also raises it, as a backstop for an invariant
+                (every leaf cell has an active function) that no known input violates.
         """
         return self._evaluate_orders(pts, orders, out)
 
@@ -312,7 +314,8 @@ class THBSpline:
         Raises:
             ValueError: If ``pts``/``orders``/``out`` are invalid (see the public
                 methods).
-            RuntimeError: If the grid is stale or a cell has no active functions.
+            RuntimeError: If the grid is stale. A cell with no active function also raises
+                it, as a backstop for an invariant that no known input violates.
         """
         self._space._check_not_stale()
         arr = np.asarray(pts, dtype=np.float64)
