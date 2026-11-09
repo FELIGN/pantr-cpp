@@ -24,8 +24,11 @@ the Python suite stay the oracle across thread counts. Architecture: `design/por
   algorithm), `grain = max(1, ceil(chunk_ops / ops_per_item))`, raised for a loop that states the
   bytes each item writes to `ceil(chunk_bytes / bytes_per_item)` so a cheap, memory-bound item still
   gets a chunk that streams enough to amortize its claim, and a loop below `parallel_min_ops` total
-  operations runs serially, on the same chunks. No parallel loop reduces across chunks, so a
-  result does not depend on the thread count. A future reduction must fix its chunk order.
+  operations runs serially: `parallel_for` runs the same chunks in order, and a kernel may instead
+  run the whole range as one chunk (`basis/detail/tabulate_1d.hpp` does). Either is exact because
+  a chunk body gives each item the same result whatever chunk holds it. No parallel loop reduces
+  across chunks, so a result does not depend on the thread count. A future reduction must fix its
+  chunk order.
 - **The constants are admitted heuristics**, reasoned from orders of magnitude (an atomic claim on a
   contended cache line against the work of a chunk; a futex wake-and-join against the work of a
   job; an L2-sized stream against a chunk's start-up) and stated at their definition in `work_model.hpp`. They are never fitted on a particular
@@ -42,6 +45,16 @@ the Python suite stay the oracle across thread counts. Architecture: `design/por
   initialization (a failed registration is reported when the pool is first needed), so a child never inherits it locked by a thread it does not have. The pool's holder and
   the cached capacity are constant-initialized rather than function-local statics: a static's
   initialization guard, inherited mid-initialization, would block the child forever.
+- **Fork safety of lazy blocks** (`core/lazy.hpp`): each `Lazy` block has its own mutex, held by
+  the thread building the block, so a child forked during that build would inherit it locked by a
+  thread it lacks and block forever on first use. A build registers its mutex before locking it and
+  unregisters after unlocking, in a registry whose own mutex is held across `fork`; a
+  `pthread_atfork` child handler, which runs before the child has a second thread, replaces every
+  registered mutex with a fresh one and empties the registry, so the child builds the block itself.
+  The old mutex is neither unlocked nor destroyed, since its owner does not exist. A compute
+  function must therefore not fork. Each extension module has its own registry, and a block built
+  from two modules at once is registered in both, so every handler that runs resets it. Windows has
+  no `fork`, and the registry is compiled out there.
 
 ## Consequences
 
@@ -49,10 +62,11 @@ the Python suite stay the oracle across thread counts. Architecture: `design/por
   per-thread settings are inline variables of header-only code, so shared objects that each include
   the headers and keep their symbols local (every Python extension module: hidden visibility, and
   separate DLLs on Windows) would each get their own pool and setting. pantr's `_pantr` owns them
-  and exports a table of functions over them (`pantr/parallel/shared.hpp`) in a capsule; every
-  other pantr module (`_pantr_mpi`, `_pantr_berf`) attaches that table when imported, after which
-  its `parallel_for`, `max_threads` and thread settings act on the owner's pool, and its own
-  `Pool::instance()` refuses. The table's functions are `noexcept` and report failure by status and
+  and exports a table of functions over them (`pantr/parallel/shared.hpp`) in a capsule; another
+  pantr module that runs parallel loops attaches that table when imported, after which its
+  `parallel_for`, `max_threads` and thread settings act on the owner's pool, and its own
+  `Pool::instance()` refuses. Today only the test module `_pantr_twin` attaches: `_pantr_mpi` runs
+  no parallel loop and includes no pool header, and `_pantr_berf` does not exist yet. The table's functions are `noexcept` and report failure by status and
   message, since an exception thrown in one module may not match a handler in another, and its
   layout carries a version so modules from different headers refuse to share. A program that never
   attaches, every plain C++ consumer, is unchanged. Rejected: GNU unique symbols (ELF and GCC only)

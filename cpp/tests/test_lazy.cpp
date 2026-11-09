@@ -10,6 +10,19 @@
 #include <thread>
 #include <vector>
 
+#if !defined(_WIN32)
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
+
+#if defined(__SANITIZE_THREAD__)
+#define PANTR_TEST_TSAN 1
+#elif defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+#define PANTR_TEST_TSAN 1
+#endif
+#endif
+
 namespace {
 
 struct Block {
@@ -113,3 +126,41 @@ TEST_CASE("Lazy: a copy starts empty") {
   CHECK_FALSE(b.ready());
   CHECK(b.get([] { return 2; }) == 2);
 }
+
+#if !defined(_WIN32) && !defined(PANTR_TEST_TSAN)
+// Not under TSan: its runtime does not support a multi-threaded fork whose child keeps working.
+TEST_CASE("Lazy: a fork during another thread's build leaves the child able to build the block") {
+  const pantr::detail::Lazy<Block> lazy;
+  std::atomic<bool> building{false};
+  std::atomic<bool> forked{false};
+  std::thread builder([&] {
+    static_cast<void>(lazy.get([&] {
+      building = true;
+      while (!forked.load()) {  // holds the block's mutex until the fork has happened
+        std::this_thread::yield();
+      }
+      return Block{std::vector<double>(4, 1.0), 1};
+    }));
+  });
+  while (!building.load()) {
+    std::this_thread::yield();
+  }
+  const pid_t child = ::fork();
+  REQUIRE(child >= 0);
+  if (child == 0) {
+    // The builder does not exist here. Without the fork handler the child inherits the block's
+    // mutex locked by it and blocks forever; SIGALRM ends that instead of stalling the suite.
+    ::alarm(30);
+    const Block& b = lazy.get([] { return Block{std::vector<double>(4, 2.0), 2}; });
+    ::_exit(b.id == 2 && lazy.ready() ? 0 : 1);
+  }
+  forked = true;
+  builder.join();
+  int wstatus = 0;
+  REQUIRE(::waitpid(child, &wstatus, 0) == child);
+  REQUIRE(WIFEXITED(wstatus));
+  CHECK(WEXITSTATUS(wstatus) == 0);
+  CHECK(lazy.get([] { return Block{{}, 3}; }).id == 1);  // the parent keeps its builder's block
+  CHECK(pantr::detail::lazy_builds.empty());             // every registration was released
+}
+#endif
