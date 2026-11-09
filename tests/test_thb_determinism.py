@@ -18,6 +18,8 @@ on fresh spaces, so a lazily built table is built under the setting being tested
 
 from __future__ import annotations
 
+import importlib.util
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -27,6 +29,7 @@ import numpy as np
 import pytest
 
 import pantr
+from pantr import _isa
 from pantr._ext import ext
 from pantr.tolerance import get_conservative
 from tests import _thb_snapshot as snap
@@ -116,10 +119,57 @@ class TestThreadCount:
         _assert_same("prolongation", parallel_prolongation, serial_prolongation)
 
 
+def _a_tuned_rung_is_installed_and_runnable() -> bool:
+    """Say whether a rung other than the generic one is installed and this CPU can run it.
+
+    The CPU is read through the probe module directly and the modules through the import system,
+    not through the ladder in ``pantr._isa`` that chose this process's rung, so a ladder that
+    picks the wrong rung cannot make this say there is nothing better.
+
+    Returns:
+        bool: ``True`` when a ``v3`` or ``v4`` module is installed and the probe supports its level
+        (x86-64), or the ``neon`` module is installed (arm64).
+    """
+    from pantr import _pantr_cpu  # noqa: PLC0415
+
+    def installed(rung: str) -> bool:
+        return importlib.util.find_spec(_isa.module_name("pantr", "_pantr", rung)) is not None
+
+    if _pantr_cpu.arch == "x86_64":
+        return any(installed(r) and _pantr_cpu.supports(r) for r in _isa.X86_RUNGS)
+    return any(installed(r) for r in _isa.ARM_RUNGS)
+
+
 class TestGenericRung:
     """A fresh process on the generic rung gives the same discrete outputs and the same values."""
 
+    @staticmethod
+    def _require_another_rung_here() -> None:
+        """Make sure this process runs a different compiled rung than the generic child will.
+
+        Skips where there is no other rung to be on (a single-rung build, or ``PANTR_ISA`` pinning
+        this process to the generic rung); fails where there is one and this process is not on it.
+
+        Raises:
+            pytest.skip.Exception: This process cannot be on a rung other than the generic one.
+        """
+        if ext.isa == _isa.GENERIC:
+            if os.environ.get(_isa.ENV_VAR, "").strip():
+                pytest.skip(f"{_isa.ENV_VAR} pins this process to the generic rung")
+            if not _a_tuned_rung_is_installed_and_runnable():
+                pytest.skip("no tuned rung is installed and runnable: generic would meet itself")
+            pytest.fail("this process runs the generic rung although a tuned one is runnable here")
+        assert ext.isa != _isa.GENERIC
+        assert ext.simd_isa != "scalar", f"the {ext.isa} rung was compiled without its ISA flag"
+
     def test_the_generic_rung_agrees_with_this_process(self, tmp_path: Path) -> None:
+        """The generic child and a different rung here agree, discretely and within the bound.
+
+        Bug caught: a rung-dependent discrete output (an active set, an owner, a sparsity pattern)
+        or a float output outside the bound; and, in the test itself, a comparison of the generic
+        rung with the generic rung, which passes whatever the tuned code does.
+        """
+        self._require_another_rung_here()
         env = subprocess_env()
         env["PANTR_ISA"] = "generic"
         out = tmp_path / "generic.npz"
