@@ -43,9 +43,9 @@ void check_out(const mdview<T, Rank>& out, const std::array<std::size_t, Rank>& 
 
 /// Run `chunk(begin, end)` over the chunks of `[0, n)`, in parallel when the work warrants it.
 ///
-/// The chunks hold `parallel::grain_for(ops, bytes)` items (a function of the problem only), and
-/// run on the pool when `parallel::worth_parallel` says the operations pay for it, else in order
-/// on the calling thread.
+/// When `parallel::worth_parallel` says the operations pay for it, the chunks hold
+/// `parallel::grain_for(ops, bytes)` items (a function of the problem only) and run on the pool;
+/// else `chunk(0, n)` is called once, on the calling thread.
 ///
 /// Args:
 ///     n (std::size_t): Number of items.
