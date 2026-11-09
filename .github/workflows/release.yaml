@@ -3,8 +3,9 @@ name: Release
 # Release automation for PaNTr.
 #
 # Triggers:
-#   * Pushing a `v*` tag  -> build, publish to TestPyPI, then PyPI, then cut a
-#     GitHub Release. This is the real release path.
+#   * Pushing a `v*` tag  -> build and test the wheels and sdists of pantr and
+#     pantr-mpi (wheels.yaml, the workflow CI runs), publish them to TestPyPI, then
+#     PyPI, then cut a GitHub Release. This is the real release path.
 #   * Manual `workflow_dispatch` -> build and publish to TestPyPI only. A safe
 #     end-to-end rehearsal that never touches the real index.
 #
@@ -22,52 +23,66 @@ permissions:
   contents: read
 
 jobs:
-  build:
-    name: Build distributions
+  # The same reusable workflow ci.yaml runs as leg 11: cibuildwheel wheels for every platform,
+  # each tested against the suite, and the sdists, for pantr and pantr-mpi.
+  wheels:
+    name: Build and test the distributions
+    uses: ./.github/workflows/wheels.yaml
+
+  collect:
+    name: Collect and check the distributions
+    needs: [wheels]
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - name: Download every wheel and sdist
+        uses: actions/download-artifact@v8
         with:
-          python-version: "3.12"
+          path: all
+          merge-multiple: true
 
-      - name: Build sdist and wheel
+      - name: Split by distribution and check the metadata
         run: |
-          python -m pip install --upgrade pip build twine
-          python -m build
-          python -m twine check dist/*
+          set -euo pipefail
+          mkdir -p dist-pantr dist-pantr-mpi
+          mv all/pantr_mpi-* dist-pantr-mpi/
+          mv all/pantr-* dist-pantr/
+          ls -l dist-pantr dist-pantr-mpi
+          test -z "$(ls -A all)" || { echo "::error::unexpected files: $(ls all)"; exit 1; }
+          python -m pip install twine
+          python -m twine check --strict dist-pantr/* dist-pantr-mpi/*
 
-      - name: Verify built version matches tag
-        # On a tag push the wheel that ships MUST carry the tagged version, so we
-        # check the actual built artifact rather than re-parsing the source. The
-        # rehearsal (workflow_dispatch) skips this on purpose: it may build from
-        # an untagged branch and only ever reaches TestPyPI.
+      - name: Verify the built versions match the tag
+        # On a tag push what ships MUST carry the tagged version, so we check the built
+        # artifacts rather than re-parsing the source. The rehearsal (workflow_dispatch) skips
+        # this on purpose: it may build from an untagged branch and only ever reaches TestPyPI.
         if: github.event_name == 'push'
         env:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          version=$(basename dist/*.whl | cut -d- -f2)
-          echo "Built version: $version"
-          echo "Git tag:       $TAG"
-          if [ "$TAG" != "v$version" ]; then
-            echo "::error::Tag '$TAG' does not match built package version 'v$version'"
-            exit 1
-          fi
+          for whl in dist-pantr/*.whl dist-pantr-mpi/*.whl; do
+            version=$(basename "$whl" | cut -d- -f2)
+            if [ "$TAG" != "v$version" ]; then
+              echo "::error::Tag '$TAG' does not match $(basename "$whl") (version 'v$version')"
+              exit 1
+            fi
+          done
 
-      - name: Upload distributions
-        uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v7
         with:
-          name: dist
-          path: dist/
+          name: dist-pantr
+          path: dist-pantr/
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist-pantr-mpi
+          path: dist-pantr-mpi/
           if-no-files-found: error
 
   testpypi:
     name: Publish to TestPyPI (rehearsal)
-    needs: [build]
+    needs: [collect]
     runs-on: ubuntu-latest
     environment:
       name: testpypi
@@ -76,10 +91,10 @@ jobs:
       id-token: write
     steps:
       - name: Download distributions
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
-          name: dist
-          path: dist/
+          pattern: dist-*
+          path: .
 
       - name: Publish to TestPyPI
         # Pinned to the release/v1 commit SHA (third-party action handling an OIDC
@@ -95,8 +110,16 @@ jobs:
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2 @ 2026-07-29
         with:
           repository-url: https://test.pypi.org/legacy/
+          packages-dir: dist-pantr/
           # Re-running a tag (or a dispatch on the same version) must not fail
           # because the files already exist on TestPyPI.
+          skip-existing: true
+
+      - name: Publish pantr-mpi to TestPyPI
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2 @ 2026-07-29
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          packages-dir: dist-pantr-mpi/
           skip-existing: true
 
   pypi:
@@ -112,14 +135,21 @@ jobs:
       id-token: write
     steps:
       - name: Download distributions
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
-          name: dist
-          path: dist/
+          pattern: dist-*
+          path: .
 
       - name: Publish to PyPI
         # Pinned to the release/v1 commit SHA; see the TestPyPI step above.
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2 @ 2026-07-29
+        with:
+          packages-dir: dist-pantr/
+
+      - name: Publish pantr-mpi to PyPI
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2 @ 2026-07-29
+        with:
+          packages-dir: dist-pantr-mpi/
 
   github-release:
     name: Create GitHub Release
@@ -133,10 +163,10 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Download distributions
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
-          name: dist
-          path: dist/
+          pattern: dist-*
+          path: .
 
       - name: Extract changelog section
         env:
@@ -184,9 +214,9 @@ jobs:
           # assets instead of failing.
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG already exists; refreshing assets."
-            gh release upload "$TAG" dist/* --clobber
+            gh release upload "$TAG" dist-pantr/* dist-pantr-mpi/* --clobber
           else
-            gh release create "$TAG" dist/* \
+            gh release create "$TAG" dist-pantr/* dist-pantr-mpi/* \
               --title "$TAG" \
               --verify-tag \
               "${notes[@]}"

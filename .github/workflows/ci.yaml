@@ -25,9 +25,13 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 env:
-  # The compiler of the Linux C++ legs and extension builds. GCC 14 is the first GCC whose
-  # -ffp-contract=on contracts within expressions (design section 1.3).
+  # The compiler of the Linux C++ legs and extension builds (the manylinux wheel builds use their
+  # container's, wheels.yaml). GCC 14 is the first GCC whose -ffp-contract=on contracts within
+  # expressions (design section 1.3).
   CC: gcc-14
   CXX: g++-14
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
@@ -55,9 +59,12 @@ jobs:
         run: python tools/check_dependencies.py
       - name: clang-format check
         run: |
-          git ls-files -- 'include/*.hpp' 'cpp/*.hpp' 'cpp/*.cpp' 'bindings/*.hpp' 'bindings/*.cpp' \
-            'providers/*.hpp' 'providers/*.cpp' \
+          git ls-files -- 'include/*.h' 'include/*.hpp' 'cpp/*.h' 'cpp/*.hpp' 'cpp/*.cpp' \
+            'bindings/*.h' 'bindings/*.hpp' 'bindings/*.cpp' 'providers/*.h' 'providers/*.hpp' \
+            'providers/*.cpp' \
             | xargs clang-format --dry-run --Werror
+      - name: The C ABI header compiles as C
+        run: gcc -std=c11 -Wall -Wextra -Wpedantic -Werror -fsyntax-only -x c include/pantr/mpi/comm_capsule.h
 
   # --- 2 ------------------------------------------------------------------------------------------
   type-check:
@@ -212,14 +219,16 @@ jobs:
             gcc-14) preset=gcc-release; cxx=g++-14 ;;
             clang-18) preset=clang-release; cxx=clang++-18 ;;
           esac
+          # PANTR_TEST_EXPECT_ISA, read by test_simd.cpp at run time, pins the SIMD level each leg
+          # must reach, so a build that lost its -march would fail rather than run scalar.
           case "${{ matrix.isa }}" in
-            baseline) extra=() ;;
-            x86-64-v3) extra=(-DCMAKE_CXX_FLAGS=-march=x86-64-v3) ;;
-            scalar) extra=(-DPANTR_FORCE_SCALAR=ON) ;;
+            baseline) extra=(); expect=scalar ;;
+            x86-64-v3) extra=(-DCMAKE_CXX_FLAGS=-march=x86-64-v3); expect=avx2 ;;
+            scalar) extra=(-DPANTR_FORCE_SCALAR=ON); expect=scalar ;;
           esac
           cmake --preset "$preset" -DCMAKE_CXX_COMPILER="$cxx" "${extra[@]}"
           cmake --build --preset "$preset"
-          ctest --preset "$preset"
+          PANTR_TEST_EXPECT_ISA="$expect" ctest --preset "$preset"
 
   # --- 6 ------------------------------------------------------------------------------------------
   cpp-asan-ubsan:
@@ -290,7 +299,7 @@ jobs:
         run: |
           cmake --preset gcc-release -DCMAKE_CXX_COMPILER=g++-14 -DPANTR_WITH_METIS=ON
           cmake --build --preset gcc-release
-          ctest --preset gcc-release -R "install|header|notices|metis|mpi"
+          ctest --preset gcc-release -R "install|header|notices|metis|mpi" --no-tests=error
 
   # --- 9 ------------------------------------------------------------------------------------------
   mpi:
@@ -388,59 +397,10 @@ jobs:
           python -m pytest -m slow -n 4 -p no:cacheprovider
 
   # --- 11 -----------------------------------------------------------------------------------------
+  # The wheels and sdists of pantr and pantr-mpi, the very artifacts release.yaml publishes.
   wheels:
-    name: "11 wheels (${{ matrix.label }})"
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 120
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { os: ubuntu-24.04, label: linux-x86_64, archs: x86_64 }
-          - { os: ubuntu-24.04-arm, label: linux-aarch64, archs: aarch64 }
-          # On macOS the workflow's gcc-14 is Homebrew's GCC, whose libstdc++ delocate would bundle
-          # (and which needs a newer macOS than the wheel targets): build with Apple Clang.
-          - { os: macos-15, label: macos-arm64, archs: arm64, cc: clang, cxx: clang++ }
-          - { os: windows-2022, label: windows-amd64, archs: AMD64 }
-    steps:
-      - uses: actions/checkout@v7
-      # Builds the cp312-abi3 wheel, repairs it, installs it in a clean environment and runs the
-      # suite against it once per rung the runner can execute ([tool.cibuildwheel] in
-      # pyproject.toml, tools/wheel_test.py).
-      - uses: pypa/cibuildwheel@v4.3.5
-        env:
-          CIBW_ARCHS: ${{ matrix.archs }}
-          CC: ${{ matrix.cc || env.CC }}
-          CXX: ${{ matrix.cxx || env.CXX }}
-      - name: The wheel carries no BeRF-FR file
-        shell: bash
-        run: |
-          for wheel in wheelhouse/*.whl; do python -m zipfile -l "$wheel"; done | tee wheel-contents.txt
-          if grep -i berf wheel-contents.txt; then exit 1; fi
-      # What the pantr-mpi sdist builds against: the installed wheel's headers and CMake package.
-      # cpp/tests/consumer finds COMPONENTS mpi-capsule through pantr.cmake_dir(), the package
-      # refuses pantr::pantr (the wheel has no third-party headers), and no header but the two
-      # MPI ones includes mpi.h. tests/test_cmake_dir.py checks the files on every platform.
-      - name: The wheel's CMake package serves find_package(pantr COMPONENTS mpi-capsule)
-        if: matrix.label == 'linux-x86_64'
-        run: |
-          python3 -m venv wheel-env
-          wheel-env/bin/pip install wheelhouse/*.whl
-          pantr_dir="$(wheel-env/bin/python -c 'import pantr; print(pantr.cmake_dir())')"
-          include="$(wheel-env/bin/python -c 'import pantr, pathlib; print(pathlib.Path(pantr.__file__).parent / "include")')"
-          cmake -DINCLUDE_DIR="$include" "-DALLOWED=pantr/mpi/mpi_table.hpp|pantr/mpi/mpi_communicator.hpp" \
-            -P cpp/tests/header_rules/check_no_mpi.cmake
-          cmake -S cpp/tests/consumer -B build/wheel-capsule -Dpantr_DIR="$pantr_dir" -DCONSUMER_CAPSULE_ONLY=ON
-          if cmake -S cpp/tests/consumer -B build/wheel-core -Dpantr_DIR="$pantr_dir" > wheel-core.log 2>&1; then
-            echo "pantr::pantr was found in the wheel's package, which has no third-party headers"; exit 1
-          fi
-          tr -s ' \n' ' ' < wheel-core.log | grep -q "provides COMPONENTS mpi-capsule only" \
-            || { cat wheel-core.log; exit 1; }
-      - uses: actions/upload-artifact@v7
-        with:
-          name: wheel-${{ matrix.label }}
-          path: wheelhouse/*.whl
-          if-no-files-found: error
+    name: "11 wheels"
+    uses: ./.github/workflows/wheels.yaml
 
   # --- 12 -----------------------------------------------------------------------------------------
   no-mpi:

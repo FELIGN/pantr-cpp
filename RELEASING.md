@@ -2,14 +2,30 @@
 
 Maintainer runbook for cutting a release. Publishing is automated by
 [`.github/workflows/release.yaml`](.github/workflows/release.yaml): pushing a
-`v*` tag builds the distributions and publishes them to TestPyPI and then PyPI
-via [PyPI Trusted Publishing](https://docs.pypi.org/trusted-publishers/) (OIDC —
-no API tokens are stored anywhere), then cuts a GitHub Release.
+`v*` tag builds the distributions of **pantr** and **pantr-mpi** and publishes
+them to TestPyPI and then PyPI via
+[PyPI Trusted Publishing](https://docs.pypi.org/trusted-publishers/) (OIDC — no
+API tokens are stored anywhere), then cuts a GitHub Release.
+
+The distributions are built by
+[`.github/workflows/wheels.yaml`](.github/workflows/wheels.yaml), the same
+reusable workflow CI runs as leg 11 on every push, so what ships is what CI
+built and tested:
+
+- pantr: one cp312-abi3 wheel per platform (Linux x86_64 and aarch64, macOS
+  arm64, Windows amd64), each built by cibuildwheel and tested against the suite
+  under its rungs, and the sdist;
+- pantr-mpi: one wheel per platform (Linux x86_64 and aarch64 against MPICH,
+  whose `libmpi.so.12` is the MPICH ABI; macOS arm64 against Open MPI; no
+  Windows wheel), with `PANTR_MPI_FAMILY` set explicitly and the MPI library not
+  bundled, and the sdist, which CI also builds into a wheel against the pantr
+  wheel (the route of a user with no matching wheel). pantr-mpi requires
+  `mpi4py>=4` (its stable-ABI C API).
 
 The version is single-sourced from `__version__` in `src/pantr/__init__.py`
-(hatchling reads it as the package version). **The git tag must be
-`v<version>`** — the pipeline rebuilds the wheel and fails the release if the
-built version does not match the tag.
+(scikit-build-core reads it with a regex, for pantr and for pantr-mpi). **The
+git tag must be `v<version>`** — the pipeline fails the release if any built
+wheel's version does not match the tag.
 
 ## One-time setup
 
@@ -24,7 +40,7 @@ each account first), add a *pending publisher*:
 
 | Field             | Value          |
 | ----------------- | -------------- |
-| PyPI Project Name | `pantr`        |
+| PyPI Project Name | `pantr`, and a second publisher for `pantr-mpi` |
 | Owner             | `FELIGN`       |
 | Repository name   | `pantr`        |
 | Workflow name     | `release.yaml` |
@@ -51,7 +67,16 @@ that rule in place the per-release RTD steps below become automatic.
 ## Cutting a release
 
 1. **Land all changes on `main`** with CI green.
-2. **Bump the version** in `src/pantr/__init__.py` (`__version__`).
+2. **Bump the version**, in every place that states it (CMake and the test
+   suite refuse a disagreement, so a missed one fails the checks):
+   - `__version__` in `src/pantr/__init__.py`, the single source;
+   - `PANTR_VERSION_MAJOR`, `_MINOR` and `_PATCH` in `include/pantr/version.hpp`
+     (the root `CMakeLists.txt` refuses to configure when they differ);
+   - the `pantr-mpi==<version>` pin of the `mpi` extra in `pyproject.toml`, and
+     the `pantr==<version>` build requirement in `bindings/mpi/pyproject.toml`
+     (`tests/test_mpi.py::test_mpi_extra_pins_pantr_mpi_at_this_version` checks
+     both). pantr-mpi's sdist builds against an installed pantr of that exact
+     version; in the release run, the pantr wheels of the same run satisfy it.
 3. **Update the changelog**: add the new `## <version> (<date>)` section to
    `docs/changelog.md` (Keep a Changelog style — `### Added` / `### Changed` /
    …). This exact section becomes the GitHub Release notes.
@@ -83,19 +108,23 @@ that rule in place the per-release RTD steps below become automatic.
 
 - PyPI project page shows the new version, and `pip install "pantr==<version>"`
   works from a clean environment.
-- The GitHub Release exists with the changelog section as its notes and the
-  sdist + wheel attached.
+- The GitHub Release exists with the changelog section as its notes and every
+  wheel and both sdists attached; `pip install "pantr[mpi]==<version>"` installs
+  pantr-mpi on Linux and macOS.
 - `https://pantr.readthedocs.io` serves the new version's docs.
 
 ## How the pipeline is wired
 
-`release.yaml` runs four jobs:
+`release.yaml` runs five jobs:
 
-- **build** — `python -m build` (sdist + wheel) and `twine check`; on a tag,
-  asserts the built version equals the tag.
-- **testpypi** — publishes to TestPyPI (`skip-existing`, so re-runs are safe).
-  Runs on both a tag push and a manual dispatch.
-- **pypi** — publishes to PyPI. Gated to tag pushes only.
+- **wheels** — calls `wheels.yaml`: the cibuildwheel wheels and the sdists of
+  both distributions, each wheel tested.
+- **collect** — splits the artifacts into `dist-pantr` and `dist-pantr-mpi`,
+  runs `twine check --strict`, and on a tag asserts every wheel's version equals
+  the tag.
+- **testpypi** — publishes both to TestPyPI (`skip-existing`, so re-runs are
+  safe). Runs on both a tag push and a manual dispatch.
+- **pypi** — publishes both to PyPI. Gated to tag pushes only.
 - **github-release** — creates the GitHub Release with notes extracted from the
   matching section of `docs/changelog.md`.
 

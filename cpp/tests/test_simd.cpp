@@ -3,6 +3,7 @@
 #include <doctest/doctest.h>
 
 #include <pantr/core/simd.hpp>
+#include <pantr/parallel/affinity.hpp>
 
 #include <cstddef>
 #include <string>
@@ -49,4 +50,13 @@ TEST_CASE("simd: one level, its name, and its lane counts") {
   CHECK(pantr::simd::lanes<double> == 1);
   CHECK(pantr::simd::lanes<float> == 1);
 #endif
+}
+
+TEST_CASE("simd: the level a CI leg pins through PANTR_TEST_EXPECT_ISA") {
+  // Read at run time, from a channel the compiler flags cannot drop along with -march. Unset
+  // outside the CI legs that pin a level, where there is nothing to compare against.
+  const char* expected = pantr::parallel::detail::env_value("PANTR_TEST_EXPECT_ISA");
+  if (expected != nullptr) {
+    CHECK(std::string(pantr::simd::isa_name) == std::string(expected));
+  }
 }
