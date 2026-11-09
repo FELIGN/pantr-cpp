@@ -24,7 +24,7 @@ configure time.
 cmake_minimum_required(VERSION 3.28)
 project(my_app LANGUAGES CXX)
 
-find_package(pantr 0.7 REQUIRED)            # or: COMPONENTS mpi
+find_package(pantr REQUIRED)                # or: COMPONENTS mpi
 add_executable(my_app main.cpp)
 target_compile_features(my_app PRIVATE cxx_std_20)
 target_link_libraries(my_app PRIVATE pantr::pantr)   # and pantr::mpi for the MPI layer

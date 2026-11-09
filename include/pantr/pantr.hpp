@@ -1,12 +1,15 @@
 /// @file pantr.hpp
 /// @brief Umbrella header: every public header of `pantr::pantr`.
 ///
-/// Never includes an MPI header; the distributed layer (`pantr::mpi`) is included separately.
+/// Every header under `include/pantr` outside `detail/` and `mpi/`; the test
+/// `header_rules.umbrella_complete` keeps the list complete. Never includes an MPI header: the
+/// distributed layer (`pantr::mpi`) is included separately.
 #pragma once
 
 #include "pantr/config.hpp"
 #include "pantr/version.hpp"
 
+#include "pantr/core/binomial.hpp"
 #include "pantr/core/errors.hpp"
 #include "pantr/core/exact_rational.hpp"
 #include "pantr/core/format.hpp"
@@ -14,12 +17,20 @@
 #include "pantr/core/lazy.hpp"
 #include "pantr/core/mdspan.hpp"
 #include "pantr/core/ndarray.hpp"
+#include "pantr/core/scalar.hpp"
 #include "pantr/core/simd.hpp"
 
 #include "pantr/parallel/affinity.hpp"
 #include "pantr/parallel/parallel_for.hpp"
 #include "pantr/parallel/pool.hpp"
+#include "pantr/parallel/shared.hpp"
 #include "pantr/parallel/work_model.hpp"
+
+#include "pantr/linalg/banded_lstsq.hpp"
+#include "pantr/linalg/dense.hpp"
+
+#include "pantr/geometry/aabb.hpp"
+#include "pantr/transform/affine_transform.hpp"
 
 #include "pantr/tolerance.hpp"
 
@@ -34,6 +45,19 @@
 #include "pantr/basis/legendre.hpp"
 #include "pantr/basis/tabulate.hpp"
 
+#include "pantr/roots/roots.hpp"
+
+#include "pantr/bezier/bezier.hpp"
+#include "pantr/bezier/compose.hpp"
+#include "pantr/bezier/derivative.hpp"
+#include "pantr/bezier/elevate.hpp"
+#include "pantr/bezier/evaluate.hpp"
+#include "pantr/bezier/fit.hpp"
+#include "pantr/bezier/product.hpp"
+#include "pantr/bezier/reduce.hpp"
+#include "pantr/bezier/reparametrize.hpp"
+#include "pantr/bezier/subdivide.hpp"
+
 #include "pantr/bspline/blossom.hpp"
 #include "pantr/bspline/bspline.hpp"
 #include "pantr/bspline/convert.hpp"
@@ -43,13 +67,17 @@
 #include "pantr/bspline/derivative_rational.hpp"
 #include "pantr/bspline/evaluate.hpp"
 #include "pantr/bspline/extraction.hpp"
+#include "pantr/bspline/fit.hpp"
 #include "pantr/bspline/knot_factories.hpp"
 #include "pantr/bspline/knot_insertion.hpp"
 #include "pantr/bspline/knot_removal.hpp"
 #include "pantr/bspline/knots.hpp"
+#include "pantr/bspline/l2_project.hpp"
 #include "pantr/bspline/local_space.hpp"
+#include "pantr/bspline/locate.hpp"
 #include "pantr/bspline/periodic.hpp"
 #include "pantr/bspline/product.hpp"
+#include "pantr/bspline/quasi_interpolate.hpp"
 #include "pantr/bspline/reparametrize.hpp"
 #include "pantr/bspline/restrict.hpp"
 #include "pantr/bspline/roots.hpp"

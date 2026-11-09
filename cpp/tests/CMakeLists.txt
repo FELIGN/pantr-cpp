@@ -220,6 +220,11 @@ add_test(NAME notices.pins_listed
                  -DNOTICES_FILE=${PROJECT_SOURCE_DIR}/THIRD_PARTY_NOTICES.md
                  -P "${CMAKE_CURRENT_SOURCE_DIR}/header_rules/check_notices.cmake")
 
+# The umbrella header includes every public header of pantr::pantr.
+add_test(NAME header_rules.umbrella_complete
+         COMMAND "${CMAKE_COMMAND}" -DINCLUDE_DIR=${PROJECT_SOURCE_DIR}/include
+                 -P "${CMAKE_CURRENT_SOURCE_DIR}/header_rules/check_umbrella.cmake")
+
 # Every script the tests run with `cmake -P` sets its policies, so it behaves alike on every CMake.
 add_test(NAME header_rules.scripts_set_policies
          COMMAND "${CMAKE_COMMAND}" -DSCRIPT_DIR=${CMAKE_CURRENT_SOURCE_DIR}

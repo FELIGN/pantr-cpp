@@ -6,13 +6,23 @@ project(pantr_consumer LANGUAGES CXX)
 # below cannot find.
 set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
+# The version requested of find_package: this tree's own MAJOR.MINOR, read from the header the
+# root CMakeLists.txt also reads, so a version bump needs no edit here.
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/../../../include/pantr/version.hpp" _version_lines
+     REGEX "^#define PANTR_VERSION_(MAJOR|MINOR) [0-9]+$")
+string(REGEX REPLACE ".*MAJOR ([0-9]+).*MINOR ([0-9]+).*" "\\1.\\2" PANTR_CONSUMER_VERSION
+                     "${_version_lines}")
+if(NOT PANTR_CONSUMER_VERSION MATCHES "^[0-9]+\\.[0-9]+$")
+  message(FATAL_ERROR "could not read MAJOR.MINOR from include/pantr/version.hpp")
+endif()
+
 option(CONSUMER_WITH_MPI "Also request the mpi component" OFF)
 option(CONSUMER_CAPSULE_ONLY "Request only the mpi-capsule component and check what it loads" OFF)
 
 if(CONSUMER_CAPSULE_ONLY)
   # What the pantr-mpi extension build does against a pantr that carries no third-party headers:
   # the capsule target alone, without the core target or its dependencies.
-  find_package(pantr 0.7 REQUIRED COMPONENTS mpi-capsule)
+  find_package(pantr ${PANTR_CONSUMER_VERSION} REQUIRED COMPONENTS mpi-capsule)
   if(NOT TARGET pantr::mpi_capsule OR TARGET pantr::pantr)
     message(FATAL_ERROR "COMPONENTS mpi-capsule must define pantr::mpi_capsule and not pantr::pantr")
   endif()
@@ -25,9 +35,9 @@ if(CONSUMER_CAPSULE_ONLY)
   endif()
   return()
 elseif(CONSUMER_WITH_MPI)
-  find_package(pantr 0.7 REQUIRED COMPONENTS mpi)
+  find_package(pantr ${PANTR_CONSUMER_VERSION} REQUIRED COMPONENTS mpi)
 else()
-  find_package(pantr 0.7 REQUIRED)
+  find_package(pantr ${PANTR_CONSUMER_VERSION} REQUIRED)
 endif()
 
 # The package must come from the prefix under test, not from any other installation.

@@ -125,7 +125,7 @@ path in the build tree and in the install tree is the same string.
 | `PANTR_FORCE_SCALAR` | OFF | defines `PANTR_SIMD_FORCE_SCALAR`. |
 | `PANTR_USE_STD_MDSPAN` | OFF | ON is a configure error: `std::mdspan` has no `operator()`, so the port uses Kokkos mdspan 0.6.0 only (DR-21, 2.6); the `<mdspan>` probe stays informational. |
 | `PANTR_WITH_BERF` / `PANTR_WITH_METIS` | OFF | build, test and export the provider target. Never changes a core header. |
-| `PANTR_BUILD_TESTS` / `PANTR_BUILD_PYTHON` / `PANTR_BUILD_PYTHON_MPI` / `PANTR_BUILD_BENCHMARKS` | ON (top level) / OFF / OFF / OFF | as named. |
+| `PANTR_BUILD_TESTS` / `PANTR_BUILD_PYTHON` / `PANTR_BUILD_MPI_MODULE` | ON (top level) / OFF / AUTO | as named; `PANTR_BUILD_MPI_MODULE` (ON, OFF or AUTO: built where an MPI and mpi4py 4 or later are found) builds `_pantr_mpi` (`bindings/CMakeLists.txt`), which pantr's wheel turns OFF. No benchmarks option: the benchmarks are Python (`benchmarks/`). |
 | `PANTR_MULTI_ISA` | OFF | the per-ISA module variants (wheels). `PANTR_NATIVE_ARCH` never reaches an extension module, so the two are independent. |
 | `PANTR_BUILD_PYTHON` / `PANTR_STABLE_ABI` / `PANTR_BUILD_PYTHON_TEST_MODULES` | OFF / ON / OFF | the extension modules (`bindings/`); built for the stable ABI unless OFF (the version-specific build exists to measure the difference, 9.4); the test-only twin modules (DR-20's test), installed in the `testing` component that no wheel installs. |
 | `PANTR_WARNINGS_AS_ERRORS` | OFF (ON in CI) | on `pantr_cxx_warnings` only. |
