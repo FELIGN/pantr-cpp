@@ -88,6 +88,24 @@ def test_a_relative_import_of_a_local_name_is_not_reported(tmp_path: pathlib.Pat
     assert check.violations(tree) == []
 
 
+@pytest.mark.parametrize(
+    "source",
+    ["from .numba import kernel\n", "from ..threadpoolctl import f\n"],
+    ids=["one-dot", "two-dots"],
+)
+def test_a_relative_import_of_a_module_named_like_a_retired_one_is_not_reported(
+    tmp_path: pathlib.Path, source: str
+) -> None:
+    """``from .numba import x`` names a sibling module of the package, not the retired library.
+
+    Bug caught: a ``node.level == 0`` guard that lets a relative import through (``>= 0``, or a
+    bound on the dots), which reports the package's own ``numba`` or ``threadpoolctl`` module as
+    the retired dependency. The test above has ``module`` unset, so it never reaches the guard.
+    """
+    tree = _tree(tmp_path, {"src/pantr/geometry.py": source})
+    assert check.violations(tree) == []
+
+
 def test_a_stub_is_scanned(tmp_path: pathlib.Path) -> None:
     found = check.violations(_tree(tmp_path, {"src/pantr/_pantr/x.pyi": "import numba\n"}))
     assert found == ["src/pantr/_pantr/x.pyi:1: imports numba"]
@@ -117,6 +135,20 @@ def test_a_retired_requirement_is_reported(tmp_path: pathlib.Path, table: str) -
     found = check.violations(_tree(tmp_path, {"pyproject.toml": pyproject}))
     assert len(found) == 1
     assert found[0].startswith("pyproject.toml: requires ")
+
+
+def test_a_retired_build_requirement_is_reported(tmp_path: pathlib.Path) -> None:
+    """The scan covers ``[build-system] requires``, which the module docstring promises.
+
+    Bug caught: a scan that reads the runtime dependencies and the extras but not the build
+    requirements, so a retired package named only there passes the gate.
+    """
+    pyproject = _CLEAN_PYPROJECT.replace(
+        'requires = ["scikit-build-core"]', 'requires = ["scikit-build-core", "numba"]'
+    )
+    assert pyproject != _CLEAN_PYPROJECT
+    found = check.violations(_tree(tmp_path, {"pyproject.toml": pyproject}))
+    assert found == ["pyproject.toml: requires 'numba'"]
 
 
 def test_a_sibling_distribution_and_a_dependency_group_are_checked(tmp_path: pathlib.Path) -> None:
