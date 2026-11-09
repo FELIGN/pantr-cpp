@@ -267,6 +267,38 @@ class TestSelection:
                 assert subdomain[box].all(), (level, multi)
                 assert not refined[box].all(), (level, multi)
 
+    @pytest.mark.parametrize("degree", [1, 2, 3])
+    def test_every_leaf_of_any_leaf_set_is_met_by_an_active_function(self, degree: int) -> None:
+        """No leaf set, valid tiling or not, leaves a leaf cell that no active function meets.
+
+        A grid rebuilt from its blocks (``HierarchicalGrid._from_state``, which unpickling uses)
+        does not check that the leaves tile the domain, so overlapping leaves and holes reach the
+        space. This enumerates every non-empty leaf set of a two-cell root refined twice (factor 2,
+        14 cells: all 16383 subsets) and requires each leaf to have an active function.
+
+        Why it matters: ``THBSpline.evaluate`` raises when a cell has none (the guard in
+        ``include/pantr/thb/spline.hpp``, whose comment names this input as its cause), and
+        without the guard that cell would silently evaluate to zero. No leaf set tried reaches the
+        guard, so it is untested; this pins the selection rule that keeps it out of reach.
+        Bug caught: a selection rule (or a window of candidate functions) that drops the functions
+        covering a leaf next to coarser leaves. Enumeration, not sampling, so a rare leaf set is not
+        missed. Coverage of the invariant only: no input found makes the guard itself fire.
+        """
+        root = uniform_grid([[0.0, 1.0]], [2])
+        space = create_uniform_space(degree, 2)
+        levels = 3
+        cells = [(level, c) for level in range(levels) for c in range(2 * 2**level)]
+        assert len(cells) == 14
+        for mask in range(1, 2 ** len(cells)):
+            blocks: list[list[tuple[list[int], list[int]]]] = [[] for _ in range(levels)]
+            for bit, (level, c) in enumerate(cells):
+                if mask >> bit & 1:
+                    blocks[level].append(([c], [c + 1]))
+            grid = HierarchicalGrid._from_state((root, (2,), blocks, 1))
+            thb = THBSplineSpace(space, grid)
+            for cid in range(grid.num_cells):
+                assert len(thb.active_basis(cid)) > 0, f"no active function on leaf {cid}: {blocks}"
+
     def test_active_indices_returns_copy(self) -> None:
         thb = THBSplineSpace(_root_1d(), _grid_1d(), truncate=False)
         idx = thb.active_function_indices(0)
