@@ -744,3 +744,31 @@ class TestDtypesOutsideTheTwoStorageTypes:
         pts = np.random.default_rng(0).random((6, 1))
         with pytest.raises(ValueError, match="degree must be non-negative"):
             fit_bezier(np.ones(6), pts, degree=-1)
+
+
+_NON_FINITE = [float("nan"), float("inf"), -float("inf")]
+
+
+@pytest.mark.parametrize("tol", _NON_FINITE)
+@pytest.mark.parametrize("layout", ["tensor", "scattered"])
+def test_fit_bezier_refuses_a_non_finite_tol(tol: float, layout: str) -> None:
+    """A NaN or infinite tol truncates every singular value: refused, not a zero fit."""
+    x = np.linspace(0.0, 1.0, 8)
+    nodes: Any = [x] if layout == "tensor" else x[:, np.newaxis]
+    with pytest.raises(ValueError, match=r"^tol must be finite, got "):
+        fit_bezier(x**2, nodes, degree=3, tol=tol)
+
+
+@pytest.mark.parametrize("tol", _NON_FINITE)
+def test_interpolate_bezier_refuses_a_non_finite_tol(tol: float) -> None:
+    """The callable path shares the fit's tolerance check."""
+    with pytest.raises(ValueError, match=r"^tol must be finite, got "):
+        interpolate_bezier(lambda lat: lat.pts_per_dir[0] ** 2, 8, degree=3, tol=tol)
+
+
+def test_fit_bezier_keeps_accepting_a_zero_tol() -> None:
+    """Zero truncates nothing: the plain pseudo-inverse, exact on a degree-3 polynomial."""
+    x = np.linspace(0.0, 1.0, 8)
+    b = fit_bezier(x**3, [x], degree=3, tol=0.0)
+    # Separates a fit from the all-zero result of a full truncation; not a precision claim.
+    nptest.assert_allclose(b.control_points.ravel(), [0.0, 0.0, 0.0, 1.0], atol=1e-8)

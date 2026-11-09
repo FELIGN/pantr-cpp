@@ -26,6 +26,7 @@ import numpy as np
 import numpy.typing as npt
 
 from .._ext import ext
+from .._interpolation_utils import check_svd_tolerance
 from ..quad import PointsLattice, get_modified_chebyshev_nodes_1d
 
 if TYPE_CHECKING:
@@ -72,6 +73,7 @@ def _fit_tensor(
     """
     from . import Bezier as BezierCls  # noqa: PLC0415
 
+    check_svd_tolerance(tol)
     stacked = values if values.ndim == len(node_arrays) + 1 else values[..., np.newaxis]
     vals = np.ascontiguousarray(stacked, dtype=dtype)
     nodes = [np.ascontiguousarray(a, dtype=dtype) for a in node_arrays]
@@ -268,6 +270,7 @@ def interpolate_bezier(
         approximates ``func``.
 
     Raises:
+        ValueError: If ``tol`` is NaN or infinite.
         ValueError: If ``n_pts`` values are < 1, *degree* >= *n_pts*, *nodes*
             is inconsistent with *n_pts*, or the callable returns an
             unexpected shape; or ("SVD did not converge") if a custom node is
@@ -445,6 +448,7 @@ def fit_bezier(  # noqa: PLR0912
         ~pantr.bezier.Bezier: A non-rational Bézier.
 
     Raises:
+        ValueError: If ``tol`` is NaN or infinite.
         ValueError: If *nodes* are inconsistent with *values*, *degree* is
             invalid, or *degree* is missing for scattered nodes; or ("SVD did not
             converge") if a node in a direction with more than one node, or a
@@ -495,6 +499,7 @@ def fit_bezier(  # noqa: PLR0912
                 f"(vector), got {values_arr.ndim}D."
             )
 
+        check_svd_tolerance(tol)
         compute = _compute_dtype(dtype_obj)
         vals2d = values_arr if values_arr.ndim == 2 else values_arr[:, np.newaxis]  # noqa: PLR2004
         fit = _cpp.fit_scattered_f32 if compute == np.float32 else _cpp.fit_scattered

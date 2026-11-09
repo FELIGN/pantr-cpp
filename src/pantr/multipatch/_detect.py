@@ -13,6 +13,7 @@ matches that are simply wrong.
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING
 
 from .._ext import ext
@@ -54,6 +55,7 @@ def detect_interfaces(
         ``(patch_a, face_a, patch_b, face_b)``.
 
     Raises:
+        ValueError: If ``tol`` is NaN or infinite.
         ValueError: If the patches do not all share the same parametric dimension, or a
             patch has fewer control-point coordinates per point than the rank of an
             earlier one (patches of different ranks are otherwise tolerated, and never
@@ -68,6 +70,9 @@ def detect_interfaces(
         >>> detect_interfaces([left, right])
         (Interface(patch_a=0, face_a=1, patch_b=1, face_b=0, axis_map=(1,), flips=(False,)),)
     """
+    if tol is not None and not math.isfinite(tol):  # NaN included
+        msg = f"tol must be finite, got {tol}"
+        raise ValueError(msg)
     if not patches:
         return ()
     found = ext.multipatch.detect_interfaces([patch._h for patch in patches], tol)

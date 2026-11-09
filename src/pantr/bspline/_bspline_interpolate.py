@@ -400,6 +400,7 @@ def interpolate_bspline(
         ``func``.
 
     Raises:
+        ValueError: If ``tol`` is NaN or infinite.
         TypeError: If ``space`` is not a :class:`BsplineSpace`.
         ValueError: If ``nodes`` is inconsistent with ``space``, or the
             callable returns an unexpected shape.
@@ -485,6 +486,7 @@ def fit_bspline(
         Bspline: A non-rational B-spline.
 
     Raises:
+        ValueError: If ``tol`` is NaN or infinite.
         TypeError: If ``space`` is not a :class:`BsplineSpace`.
         ValueError: If *nodes* are inconsistent with *space*, or the
             system is underdetermined for scattered nodes.
@@ -684,6 +686,7 @@ def l2_project_bspline(  # noqa: PLR0913
         best approximation of ``func`` in the given space.
 
     Raises:
+        ValueError: If ``tol`` is NaN or infinite.
         TypeError: If ``space`` is not a :class:`BsplineSpace`.
         ValueError: If ``space`` has no direction, or ``n_quad`` or
             ``boundary_interpolation`` is inconsistent with ``space``.

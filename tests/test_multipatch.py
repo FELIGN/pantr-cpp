@@ -230,6 +230,17 @@ def test_detect_translated_1d() -> None:
     )
 
 
+@pytest.mark.parametrize("tol", [float("nan"), float("inf"), -float("inf")])
+def test_detect_refuses_a_non_finite_tol(tol: float) -> None:
+    """A NaN tol matched nothing and an infinite one matched every face: both refused."""
+    space = BsplineSpace([_open_space_1d(2, 1)])
+    patches = [_lattice_patch(space), _lattice_patch(space, offset=[1.0])]
+    with pytest.raises(ValueError, match=r"^tol must be finite, got "):
+        detect_interfaces(patches, tol=tol)
+    with pytest.raises(ValueError, match=r"^tol must be finite, got "):
+        detect_interfaces([], tol=tol)  # checked before the empty-input shortcut
+
+
 def test_detect_translated_2d() -> None:
     """Side-by-side 2D patches give the interface stated in the specification."""
     space = _anisotropic_space_2d()
