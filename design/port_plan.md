@@ -198,7 +198,8 @@ Boost.Multiprecision for exact rationals. · QB10 new public API set_root_provid
 
 ## Changelog entries expected (AC9), each with its reason
 - Python >= 3.12: R0 (numpy/scipy floors, abi3 cp312).
-- Wheels need macOS >= 13.4: floating `std::to_chars` (DR-8).
+- Wheels need macOS >= 14.0: floating `std::to_chars` needs 13.4, and 14.0 is the lowest target whose
+  wheel tag says so (DR-8).
 - Grid cannot be subclassed from Python: R1 (C++ grids have no runtime polymorphism).
 - Constructors copy; control_points and numeric views read-only; reverse() no longer a view; arrays
   taken before an in-place operation keep old values: R5 (immutable C++ values).
@@ -245,7 +246,8 @@ kernels, precompiled instantiation, musllinux, Windows pantr-mpi, speed-ups beyo
 - DR-6 MPI family check before loading `_pantr_mpi`: the build writes `pantr_mpi/_build_info.py`,
   compared with `mpi4py.MPI.Get_library_version()` first.
 - DR-7 `EIGEN_DONT_PARALLELIZE` on `pantr::pantr` (never EIGEN_GEMM_THREADPOOL).
-- DR-8 macOS deployment target >= 13.4 (floating `std::to_chars`), changelog line; arm64 Linux on
+- DR-8 macOS deployment target 14.0 (floating `std::to_chars` needs 13.4, which a wheel tag cannot
+  express), changelog line; arm64 Linux on
   `ubuntu-24.04-arm`, not QEMU; a scratch branch may trigger single legs for MSVC/macOS iteration
   (the port branch still runs full CI on every push).
 - DR-9 `-march=native` decided in `pantrConfig.cmake` from a consumer-settable variable, not frozen

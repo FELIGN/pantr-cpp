@@ -252,9 +252,8 @@ pantr's collectives release the GIL while a rank waits for the others, as mpi4py
 Python threads keep running. Two threads that each make distributed calls can then be inside MPI at
 the same time, which `MPI_THREAD_SERIALIZED` forbids: keep MPI at `MPI_THREAD_MULTIPLE` for that.
 mpi4py asks for it by default; setting `mpi4py.rc.thread_level` to `"serialized"` or lower before
-importing `mpi4py.MPI` gives it up. One
-thread making distributed calls needs only `MPI_THREAD_FUNNELED`, from the thread that initialized
-MPI.
+importing `mpi4py.MPI` gives it up. One thread making distributed calls needs only
+`MPI_THREAD_FUNNELED`, from the thread that initialized MPI.
 
 ## Testing distributed code
 
