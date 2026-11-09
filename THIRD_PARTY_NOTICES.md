@@ -14,6 +14,22 @@ unmodified and with their license files, under `include/pantr/third_party/<name>
 | Boost.Config | Boost 1.90.0 | `a7d5a9b05d70c9cfea980dc3539ca3d3461411b3` | https://github.com/boostorg/config | `BSL-1.0` | required by standalone Boost.Multiprecision | installed |
 | doctest | 2.5.3 | `2d0a9359a60c51affe2a9bebb1be1dca47868151` | https://github.com/doctest/doctest | `MIT` | C++ test framework | tests only, never installed |
 
+The Python extension modules are also compiled against two libraries that the build environment
+supplies rather than `cmake/PantrDependencies.cmake`; neither is installed by `cmake --install`.
+
+| Dependency | Version | Source | Upstream | License (SPDX) | Use | Distribution |
+|---|---|---|---|---|---|---|
+| nanobind | 3.1.0 | PyPI, pinned in `pyproject.toml` `[build-system]` | https://github.com/wjakob/nanobind | `BSD-3-Clause` | Python bindings | compiled into every extension module (`pantr`, `pantr-mpi` wheels) |
+| robin_map | as bundled by nanobind 3.1.0 | inside the nanobind distribution | https://github.com/Tessil/robin-map | `MIT` | hash map inside nanobind | compiled into every extension module |
+
+## In the wheels
+
+The `pantr` wheel's extension modules contain code compiled from Eigen, Spectra, Kokkos mdspan,
+Boost.Multiprecision and Boost.Config, nanobind and robin_map; the `pantr-mpi` wheel's, from
+nanobind and robin_map. Each wheel ships its licence texts in its `.dist-info/licenses/` (from
+`licenses/` and `bindings/mpi/licenses/`), and the `pantr` wheel also this file. The source of every
+dependency listed here is available at its upstream URL and commit.
+
 ## Notes
 
 - **Eigen** is primarily MPL-2.0. Some of its files carry code under other MPL-2.0-compatible

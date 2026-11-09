@@ -129,3 +129,33 @@ def test_a_sibling_distribution_and_a_dependency_group_are_checked(tmp_path: pat
         "bindings/mpi/pyproject.toml: requires 'numba'",
         "pyproject.toml: requires 'threadpoolctl'",
     ]
+
+
+_PINNED = '[build-system]\nrequires = ["scikit-build-core==1.1.1", "nanobind==3.1.0"]\n'
+
+
+def test_a_sibling_build_pin_that_drifts_is_reported(tmp_path: pathlib.Path) -> None:
+    sibling = '[build-system]\nrequires = ["scikit-build-core==1.1.1", "nanobind==3.0.0"]\n'
+    files = {"pyproject.toml": _PINNED, "bindings/mpi/pyproject.toml": sibling}
+    assert check.violations(_tree(tmp_path, files)) == [
+        "bindings/mpi/pyproject.toml: build requirement 'nanobind==3.0.0' differs from "
+        "pyproject.toml's 'nanobind==3.1.0'"
+    ]
+
+
+def test_a_sibling_that_repeats_the_pins_passes(tmp_path: pathlib.Path) -> None:
+    files = {"pyproject.toml": _PINNED, "bindings/mpi/pyproject.toml": _PINNED}
+    assert check.violations(_tree(tmp_path, files)) == []
+
+
+def test_a_missing_or_changed_licence_copy_is_reported(tmp_path: pathlib.Path) -> None:
+    files = {
+        "LICENSE": "MIT\n",
+        "licenses/nanobind-LICENSE": "BSD\n",
+        "bindings/mpi/LICENSE": "MIT, edited\n",
+    }
+    assert check.violations(_tree(tmp_path, files)) == [
+        "bindings/mpi/LICENSE: not a byte-identical copy of LICENSE",
+        "bindings/mpi/licenses/nanobind-LICENSE: not a byte-identical copy of "
+        "licenses/nanobind-LICENSE",
+    ]

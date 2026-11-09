@@ -1,10 +1,10 @@
-"""Fail when a retired dependency returns, or scipy is imported outside its boundary modules.
+"""Fail when a retired dependency returns, scipy leaves its boundary, or a mirrored file drifts.
 
 Usage::
 
     python tools/check_dependencies.py
 
-Two checks, over this source tree only (no installed package is consulted, so it runs with no
+Four checks, over this source tree only (no installed package is consulted, so it runs with no
 dependency installed):
 
 - **Retired dependencies.** ``numba`` and ``threadpoolctl`` are named by no requirement in any
@@ -14,6 +14,13 @@ dependency installed):
 - **scipy at the boundary.** scipy is imported only by the modules in :data:`SCIPY_MODULES`,
   each of which builds a scipy object a public function returns. Everything else computes in
   the compiled extension and NumPy.
+- **Mirrored build pins.** Each distribution in :data:`MIRRORED_PINS` that pantr's
+  ``pyproject.toml`` pins exactly (``==``) is required with the same string by every sibling
+  ``pyproject.toml``: every pantr extension module builds against one nanobind ABI and one build
+  backend, and the sibling repeats the pin because its sdist builds without pantr's tree.
+- **Mirrored licence files.** Each file of :data:`MIRRORED_FILES` whose original exists has a
+  byte-identical copy in the sibling distribution, which cannot reach outside its own directory
+  for ``license-files``.
 
 An import is any ``import`` or absolute ``from ... import`` statement, or a call of
 ``importlib.import_module`` or ``__import__`` with a string literal, wherever it sits in a
@@ -44,6 +51,17 @@ a ``scipy.sparse.csr_array``)."""
 
 PYPROJECTS: Final[tuple[str, ...]] = ("pyproject.toml", "bindings/*/pyproject.toml")
 """The distributions' manifests, relative to :data:`ROOT`: pantr's and its siblings' (pantr-mpi)."""
+
+MIRRORED_PINS: Final[tuple[str, ...]] = ("scikit-build-core", "nanobind")
+"""Build requirements every sibling distribution repeats from pantr's ``pyproject.toml``."""
+
+MIRRORED_FILES: Final[dict[str, str]] = {
+    "bindings/mpi/LICENSE": "LICENSE",
+    "bindings/mpi/licenses/nanobind-LICENSE": "licenses/nanobind-LICENSE",
+    "bindings/mpi/licenses/robin_map-LICENSE": "licenses/robin_map-LICENSE",
+}
+"""Copy, relative to :data:`ROOT`, mapped to its original: the licences pantr-mpi's wheel ships
+(its own, and those of the nanobind code compiled into its module)."""
 
 _NAME: Final[re.Pattern[str]] = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
 """The distribution name at the start of a requirement string."""
@@ -124,8 +142,62 @@ def _called_name(func: ast.expr) -> str | None:
     return None
 
 
+def _build_pins(pyproject: Path) -> dict[str, str]:
+    """Map each build requirement of a ``pyproject.toml`` from its normalized name.
+
+    Args:
+        pyproject (Path): The file.
+
+    Returns:
+        dict[str, str]: The requirement strings of ``[build-system] requires``, by name.
+    """
+    data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    pins: dict[str, str] = {}
+    for req in data.get("build-system", {}).get("requires", []):
+        match = _NAME.match(req)
+        if match:
+            pins[_normalized(match.group(1))] = req
+    return pins
+
+
+def _mirror_violations(root: Path) -> list[str]:
+    """List the mirrored build pins and licence files that differ from their originals.
+
+    Args:
+        root (Path): The tree's root.
+
+    Returns:
+        list[str]: One line per difference, ``path: message``.
+    """
+    found: list[str] = []
+    main = root / "pyproject.toml"
+    pinned: dict[str, str] = {}
+    if main.is_file():
+        main_pins = _build_pins(main)
+        pinned = {
+            name: main_pins[name]
+            for name in map(_normalized, MIRRORED_PINS)
+            if "==" in main_pins.get(name, "")
+        }
+    for sibling in sorted(root.glob(PYPROJECTS[1])):
+        pins = _build_pins(sibling)
+        for name, req in pinned.items():
+            if pins.get(name) != req:
+                found.append(
+                    f"{sibling.relative_to(root).as_posix()}: build requirement "
+                    f"{pins.get(name)!r} differs from pyproject.toml's {req!r}"
+                )
+    for copy, original in MIRRORED_FILES.items():
+        if (root / original).is_file() and (
+            not (root / copy).is_file()
+            or (root / copy).read_bytes() != (root / original).read_bytes()
+        ):
+            found.append(f"{copy}: not a byte-identical copy of {original}")
+    return found
+
+
 def violations(root: Path = ROOT) -> list[str]:
-    """List every violation of the two checks in a source tree.
+    """List every violation of the four checks in a source tree.
 
     Args:
         root (Path): The tree's root. Defaults to :data:`ROOT`.
@@ -148,6 +220,7 @@ def violations(root: Path = ROOT) -> list[str]:
                 found.append(f"{rel}:{line}: imports {module}")
             elif module == "scipy" and rel not in SCIPY_MODULES:
                 found.append(f"{rel}:{line}: imports scipy outside the boundary modules")
+    found.extend(_mirror_violations(root))
     return found
 
 
@@ -163,7 +236,7 @@ def main() -> int:
     if found:
         print(f"{len(found)} dependency violation(s)", file=sys.stderr)
         return 1
-    print("dependencies: no retired dependency, scipy only at the boundary")
+    print("dependencies: no retired dependency, scipy only at the boundary, mirrors in step")
     return 0
 
 

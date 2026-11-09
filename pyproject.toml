@@ -11,7 +11,9 @@ description = "Polynomial And NURBS Toolkit"
 readme = "README.md"
 requires-python = ">=3.12, <3.15"
 license = "MIT"
-license-files = ["LICENSE"]
+# The wheel carries compiled code from the dependencies THIRD_PARTY_NOTICES.md lists; their
+# licence texts (licenses/) ship with it, in the wheel's .dist-info/licenses.
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md", "licenses/*"]
 authors = [{ name = "Pablo Antolin", email = "pablo.antolin@epfl.ch" }]
 keywords = [
   "nurbs",
@@ -41,7 +43,10 @@ classifiers = [
 # visualization) live in `[project.optional-dependencies]` and are opt-in.
 dependencies = [
   "numpy>=1.26,<3",
-  "scipy>=1.15,<2",  # 1.15 added BarycentricInterpolator's `rng`, which Lagrange tabulation needs to be reproducible
+  # Only to return a scipy.sparse.csr_array (THB prolongation_to_sparse). The 1.15 floor is the
+  # previous release's (its Python Lagrange tabulation needed BarycentricInterpolator's `rng`),
+  # kept rather than re-derived for that one use.
+  "scipy>=1.15,<2",
 ]
 
 [project.optional-dependencies]
@@ -81,8 +86,8 @@ docs = [
   "trame-vuetify>=2,<4",
   "nest-asyncio2>=1,<2",
 ]
-# `dev` pulls in every optional feature extra so a single
-# `pip install -e ".[dev]"` yields a complete contributor environment and CI runs
+# `dev` pulls in every optional feature extra so that `make install` (these requirements, then
+# `make ext`; there is no editable install) yields a complete contributor environment and CI runs
 # the full suite (no silently skipped viz/MPI/METIS tests).
 dev = [
   "pytest>=7.4,<9",
@@ -144,6 +149,9 @@ PANTR_STABLE_ABI = "ON"
 PANTR_MULTI_ISA = "ON"
 # _pantr_mpi ships in its own distribution (bindings/mpi/pyproject.toml), never in this wheel.
 PANTR_BUILD_MPI_MODULE = "OFF"
+# Nor pantr::mpi's CMake export: without this an MPI found on the build host would put
+# pantrMpiTargets in the wheel's package, so the wheel's contents would depend on the host.
+CMAKE_DISABLE_FIND_PACKAGE_MPI = "ON"
 
 [tool.cibuildwheel]
 # One cp312-abi3 wheel per platform (R8: Linux x86_64 and aarch64, macOS arm64, Windows amd64),
@@ -159,9 +167,16 @@ manylinux-aarch64-image = "manylinux_2_28"
 test-requires = ["pytest>=7.4,<9", "pytest-xdist>=3,<4"]
 test-command = "python {project}/tools/wheel_test.py {project} -n 4"
 
+[tool.cibuildwheel.linux]
+# The manylinux container builds with its own GCC, not the workflow's CC: refuse one older than 14,
+# the first whose -ffp-contract=on contracts within expressions (design section 1.3).
+before-build = "test \"$(gcc -dumpversion | cut -d. -f1)\" -ge 14"
+
 [tool.cibuildwheel.macos]
-# Floating-point std::to_chars needs macOS 13.4 (design DR-8).
-environment = { MACOSX_DEPLOYMENT_TARGET = "13.4" }
+# Floating-point std::to_chars needs macOS 13.4 (design DR-8), and a wheel tag for macOS 11 or later
+# carries no minor version: a 13.4 target is tagged macosx_13_0, which pip would install on 13.0-13.3,
+# where the binary cannot load. 14.0 is the lowest target whose tag says what the binary needs.
+environment = { MACOSX_DEPLOYMENT_TARGET = "14.0" }
 
 [tool.importlinter]
 root_package = "pantr"

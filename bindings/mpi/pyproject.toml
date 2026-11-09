@@ -13,6 +13,9 @@ name = "pantr-mpi"
 description = "The MPI glue of pantr's pantr.mpi (install with pip install \"pantr[mpi]\")"
 requires-python = ">=3.12, <3.15"
 license = "MIT"
+# Copies of pantr's LICENSE and of the licences of the nanobind code compiled into _pantr_mpi
+# (tools/check_dependencies.py keeps them identical to the originals).
+license-files = ["LICENSE", "licenses/*"]
 authors = [{ name = "Pablo Antolin", email = "pablo.antolin@epfl.ch" }]
 dynamic = ["version"]
 # The MPI library itself is not bundled: install one (a system MPI, or the mpich / openmpi wheels)
