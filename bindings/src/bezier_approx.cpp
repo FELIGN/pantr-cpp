@@ -55,6 +55,9 @@ NumpyView<double> operator_view(std::shared_ptr<const NdArray<double>> op) {
   return view_of<double>(raw->data(), raw->shape(), std::move(op));
 }
 
+// The reductions and fits run without the GIL: none touches a Python object (the arguments are
+// already C++ values or buffers the call keeps alive, and the result is converted after the guard
+// ends), and an exact operator build or a least-squares solve can run for seconds.
 template <class T>
 void def_reduction(nb::module_& m) {
   m.def(
@@ -62,17 +65,20 @@ void def_reduction(nb::module_& m) {
       [](const Bezier<T>& b, const std::vector<long long>& decrements) {
         return bezier::reduce_degree(b, decrements);
       },
-      nb::arg("bezier"), nb::arg("decrements"), "Endpoint-interpolating L2 degree reduction.");
+      nb::call_guard<nb::gil_scoped_release>(), nb::arg("bezier"), nb::arg("decrements"),
+      "Endpoint-interpolating L2 degree reduction.");
   m.def(
       "degree_reduction_error",
       [](const Bezier<T>& b, const std::vector<long long>& decrements) {
         return bezier::degree_reduction_error(b, decrements);
       },
-      nb::arg("bezier"), nb::arg("decrements"), "The exact L2 error of reduce_degree.");
+      nb::call_guard<nb::gil_scoped_release>(), nb::arg("bezier"), nb::arg("decrements"),
+      "The exact L2 error of reduce_degree.");
   m.def(
       "minimize_degree",
       [](const Bezier<T>& b, std::optional<double> tol) { return bezier::minimize_degree(b, tol); },
-      nb::arg("bezier"), nb::arg("tol").none(), "The lowest degree within a relative tolerance.");
+      nb::call_guard<nb::gil_scoped_release>(), nb::arg("bezier"), nb::arg("tol").none(),
+      "The lowest degree within a relative tolerance.");
 }
 
 template <class T>
@@ -89,7 +95,8 @@ void def_fit(nb::module_& m, const std::string& sfx) {
           return bezier::fit_tensor<T>(std::span<const T>(values.data(), values.size()), shape,
                                        spans, degrees, tol);
         },
-        nb::arg("values"), nb::arg("nodes"), nb::arg("degrees").none(), nb::arg("tol").none(),
+        nb::call_guard<nb::gil_scoped_release>(), nb::arg("values"), nb::arg("nodes"),
+        nb::arg("degrees").none(), nb::arg("tol").none(),
         "Fit on a tensor grid: values (*n_pts, rank), one node array per direction.");
   m.def(("fit_scattered" + sfx).c_str(),
         [](const Mat<T>& values, const Mat<T>& pts, const std::vector<long long>& degrees,
@@ -98,7 +105,8 @@ void def_fit(nb::module_& m, const std::string& sfx) {
               mdview<const T, 2>(values.data(), values.shape(0), values.shape(1)),
               mdview<const T, 2>(pts.data(), pts.shape(0), pts.shape(1)), degrees, tol);
         },
-        nb::arg("values"), nb::arg("pts"), nb::arg("degrees"), nb::arg("tol").none(),
+        nb::call_guard<nb::gil_scoped_release>(), nb::arg("values"), nb::arg("pts"),
+        nb::arg("degrees"), nb::arg("tol").none(),
         "Fit at scattered points: values (n_pts, rank), points (n_pts, dim).");
 }
 

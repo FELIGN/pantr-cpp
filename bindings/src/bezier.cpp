@@ -24,6 +24,7 @@
 #include <nanobind/stl/tuple.h>
 #include <nanobind/stl/vector.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <optional>
 #include <span>
@@ -76,6 +77,20 @@ mdview<const T, 2> view_of_points(const Points<T>& p) {
 template <class T>
 double ops_per_point(const Bezier<T>& b) {
   return static_cast<double>(b.size());
+}
+
+/// Work per control point of an operation that runs de Casteljau over the net (`split`, `slice`,
+/// `slice_point`, `restrict`), for the GIL decision only: one multiply-add per step of the widest
+/// direction. A column of `p + 1` points costs about `p^2` operations, so this is that column's
+/// order spread over its points; an underestimate only keeps the GIL over a short parallel call,
+/// which `ops_per_point` explains is safe.
+template <class T>
+double ops_per_control_point(const Bezier<T>& b) {
+  std::size_t widest = 0;
+  for (std::size_t d = 0; d < b.dim(); ++d) {
+    widest = (std::max)(widest, b.degree(d));
+  }
+  return static_cast<double>(widest + 1);
 }
 
 template <class T>
@@ -155,30 +170,50 @@ void def_bezier(nb::module_& m, const char* name) {
           },
           nb::arg("increments"), "Degree elevation per direction.")
       .def(
-          "multiply", [](const B& a, const B& b) { return bezier::multiply(a, b); },
+          "multiply",
+          [](const B& a, const B& b) {
+            // Every pair of control points meets once: at least `a.size() * b.size()` products.
+            const ReleaseIfParallel release(a.size(), static_cast<double>(b.size()));
+            return bezier::multiply(a, b);
+          },
           nb::arg("other"), "The pointwise product.")
       .def(
-          "compose", [](const B& outer, const B& inner) { return bezier::compose(outer, inner); },
+          "compose",
+          [](const B& outer, const B& inner) {
+            // Always without the GIL: the work multiplies powers of `inner` up to the outer degree,
+            // which no estimate from the two sizes bounds from below closely enough to gate on.
+            const nb::gil_scoped_release release;
+            return bezier::compose(outer, inner);
+          },
           nb::arg("inner"), "self(inner(t)).")
       .def(
           "split",
           [](const B& b, long long direction, double value) {
+            const ReleaseIfParallel release(b.size(), ops_per_control_point(b));
             return bezier::split(b, direction, value);
           },
           nb::arg("direction"), nb::arg("value"), "Split at a parameter value: (left, right).")
       .def(
           "slice",
-          [](const B& b, long long axis, double value) { return bezier::slice(b, axis, value); },
+          [](const B& b, long long axis, double value) {
+            const ReleaseIfParallel release(b.size(), ops_per_control_point(b));
+            return bezier::slice(b, axis, value);
+          },
           nb::arg("axis"), nb::arg("value"), "Fix one direction (dim >= 2).")
       .def(
           "slice_point",
           [](const B& b, long long axis, double value) {
-            return to_numpy(bezier::slice_point(b, axis, value));
+            NdArray<T> out = [&] {
+              const ReleaseIfParallel release(b.size(), ops_per_control_point(b));
+              return bezier::slice_point(b, axis, value);
+            }();
+            return to_numpy(std::move(out));  // with the GIL: it builds a Python object
           },
           nb::arg("axis"), nb::arg("value"), "The point of a curve at a parameter (projected).")
       .def(
           "restrict",
           [](const B& b, const std::vector<std::optional<std::pair<double, double>>>& bounds) {
+            const ReleaseIfParallel release(b.size(), ops_per_control_point(b));
             return bezier::restrict(b, bounds);
           },
           nb::arg("bounds"), "The restriction to a sub-box, reparametrised to [0, 1]^dim.")

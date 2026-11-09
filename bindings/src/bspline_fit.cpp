@@ -2,7 +2,9 @@
 // projection, Lee-Lyche-Mørken quasi-interpolation). Each callable-based fit is bound in its staged
 // form (design §3.6): a class built before any value is known says what to sample, and the Python
 // wrapper calls the user's function and hands the values back. Reaches Eigen's LU and SVD (the
-// solves' dense paths).
+// solves' dense paths). The builds and solves run without the GIL: they touch no Python object
+// (the arguments are C++ values or buffers the call keeps alive), and a dense solve can run for
+// seconds; results are converted to NumPy after the guard ends.
 #include "arrays.hpp"
 #include "interface.hpp"
 
@@ -112,10 +114,18 @@ void def_tensor_collocation(nb::module_& m, const char* name) {
       .def_prop_ro(
           "grid_shape", [](const TC& t) { return t.grid_shape(); }, "The node grid's extents.");
   const auto solve = [](const TC& t, const Any<double>& values, std::size_t rank, double tol) {
-    return to_numpy(t.template solve<double>(flat_of(values), rank, tol));
+    NdArray<double> out = [&] {
+      const nb::gil_scoped_release release;
+      return t.template solve<double>(flat_of(values), rank, tol);
+    }();
+    return to_numpy(std::move(out));
   };
   const auto solve32 = [](const TC& t, const Any<float>& values, std::size_t rank, double tol) {
-    return to_numpy(t.template solve<float>(flat_of(values), rank, tol));
+    NdArray<float> out = [&] {
+      const nb::gil_scoped_release release;
+      return t.template solve<float>(flat_of(values), rank, tol);
+    }();
+    return to_numpy(std::move(out));
   };
   cls.def("solve_f64", solve, nb::arg("values").noconvert(), nb::arg("rank"), nb::arg("tol"),
           "The coefficients `(n_0, ..., n_{d-1}, rank)` of float64 values on the node grid.")
@@ -134,6 +144,8 @@ void def_tensor_collocation_factory(nb::module_& m) {
             spans.emplace_back(v.data(), v.shape(0));
           }
           try {
+            // The guard ends before the handler runs, which sets a Python error.
+            const nb::gil_scoped_release release;
             return bspline::TensorCollocation<P>(space, spans, to_derivs(derivatives));
           } catch (const std::domain_error&) {
             raise_zero_division();
@@ -148,9 +160,13 @@ void def_fit_scattered(nb::module_& m) {
   m.def(("fit_scattered_" + tag<P>() + "_" + tag<C>()).c_str(),
         [](const bspline::BsplineSpace<T>& space, const Mat<P>& pts, const Mat<C>& values,
            double tol) {
-          return to_numpy(bspline::fit_scattered_coefficients<T, P, C>(
-              space, mdview<const P, 2>(pts.data(), pts.shape(0), pts.shape(1)),
-              mdview<const C, 2>(values.data(), values.shape(0), values.shape(1)), tol));
+          auto out = [&] {
+            const nb::gil_scoped_release release;
+            return bspline::fit_scattered_coefficients<T, P, C>(
+                space, mdview<const P, 2>(pts.data(), pts.shape(0), pts.shape(1)),
+                mdview<const C, 2>(values.data(), values.shape(0), values.shape(1)), tol);
+          }();
+          return to_numpy(std::move(out));
         },
         nb::arg("space"), nb::arg("pts").noconvert(), nb::arg("values").noconvert(), nb::arg("tol"),
         "The coefficients `(n_0, ..., n_{d-1}, rank)` fitted to values at scattered points.");
@@ -164,6 +180,7 @@ void def_l2(nb::module_& m, const char* name) {
          "__init__",
          [](L2* self, const bspline::BsplineSpace<T>& space, const std::vector<long long>& n_quad,
             bool lobatto, const std::vector<std::pair<bool, bool>>& boundary_interpolation) {
+           const nb::gil_scoped_release release;
            new (self) L2(space, n_quad,
                          lobatto ? bspline::L2Quadrature::gauss_lobatto
                                  : bspline::L2Quadrature::gauss_legendre,
@@ -207,7 +224,11 @@ void def_l2(nb::module_& m, const char* name) {
     for (const Any<double>& t : traces) {
       spans.push_back(flat_of(t));
     }
-    return to_numpy(p.template project<double>(flat_of(values), spans, tol));
+    NdArray<double> out = [&] {
+      const nb::gil_scoped_release release;
+      return p.template project<double>(flat_of(values), spans, tol);
+    }();
+    return to_numpy(std::move(out));
   };
   const auto project32 = [](const L2& p, const Any<float>& values,
                             const std::vector<Any<float>>& traces, double tol) {
@@ -215,7 +236,11 @@ void def_l2(nb::module_& m, const char* name) {
     for (const Any<float>& t : traces) {
       spans.push_back(flat_of(t));
     }
-    return to_numpy(p.template project<float>(flat_of(values), spans, tol));
+    NdArray<float> out = [&] {
+      const nb::gil_scoped_release release;
+      return p.template project<float>(flat_of(values), spans, tol);
+    }();
+    return to_numpy(std::move(out));
   };
   cls.def("project_f64", project, nb::arg("values").noconvert(), nb::arg("traces").noconvert(),
           nb::arg("tol"), "The coefficients of one component from its lattice and trace values.")
@@ -227,15 +252,27 @@ template <class T>
 void def_qi(nb::module_& m, const char* name) {
   using QI = bspline::QuasiInterpolation<T>;
   nb::class_<QI>(m, name, "The staged Lee-Lyche-Mørken quasi-interpolant (points, then weights).")
-      .def(nb::init<const bspline::BsplineSpace<T>&>(), nb::arg("space"))
+      .def(nb::init<const bspline::BsplineSpace<T>&>(), nb::call_guard<nb::gil_scoped_release>(),
+           nb::arg("space"))
       .def(
-          "points", [](const QI& q) { return to_numpy(q.points()); },
+          "points",
+          [](const QI& q) {
+            auto out = [&] {
+              const nb::gil_scoped_release release;
+              return q.points();
+            }();
+            return to_numpy(std::move(out));
+          },
           "Every sample point, `(M, dim)` float64.")
       .def(
           "coefficients",
           [](const QI& q, const Mat<double>& values) {
-            return to_numpy(q.coefficients(
-                mdview<const double, 2>(values.data(), values.shape(0), values.shape(1))));
+            NdArray<double> out = [&] {
+              const nb::gil_scoped_release release;
+              return q.coefficients(
+                  mdview<const double, 2>(values.data(), values.shape(0), values.shape(1)));
+            }();
+            return to_numpy(std::move(out));
           },
           nb::arg("values").noconvert(),
           "The coefficients `(n_0, ..., n_{d-1}, rank)` float64 from `(M, rank)` samples.");
