@@ -43,6 +43,11 @@ bounds mattered: the zero tests, the flatness test, the Newton and multiple-root
 and the merge radii are all multiples of `max|c|`, so `c` and `2^k c` give the same bits wherever
 nothing under- or overflows.
 
+- Every entry (single, batch, monotone, monotone batch) refuses a NaN or an infinite coefficient
+  (`value_error`, the first such row named in a batch) and a `param_tol` or `value_tol` that is not
+  positive and finite (NaN included), before anything is computed: for non-finite coefficients no
+  root, and no "no root", is an answer, and the previous release gave either. The dispatch beneath
+  the entries therefore sees finite coefficients only, and carries no NaN handling of its own.
 - Every root is `computed`; no multiplicity is claimed (`-1`).
 - Completeness is `complete` unless clipping gave up on an interval at its depth cap (64), or a
   Newton/bisection solve of Yuksel's walk reached its iteration cap (below): that interval (the
@@ -51,16 +56,31 @@ nothing under- or overflows.
   written at a higher degree, at some roots), a tolerance below the spacing of doubles at its
   root, and a value floor small enough that no interval reads as flat first: at the floor the
   Python layer passes, no input is known to reach it. `gap_unlocalized` is never produced.
-- The Newton/bisection hybrid's iteration cap (64) is a completeness gap: when Newton approaches
-  the root from one side (a root where the derivative also vanishes, or a `float32` evaluation
-  that stalls the step) the far end of the bracket never moves, and its midpoint can be far from
-  the root. Yuksel's walk lists the bracket as a gap; the monotone solver raises (`state_error`).
+- The two Newton/bisection hybrids have an iteration cap (64), and reaching it is a completeness
+  gap. The monotone solver (`find_monotone_root`) bisects where Newton fails: when the step leaves
+  the bracket, when the derivative is zero or not finite, and when the iteration just made, itself
+  not a bisection, failed to halve the bracket. The bracket then at least halves every two
+  iterations, so the cap alone reaches a width of `2^-32` whatever Newton does; it is reached only
+  for a finer `param_tol` (the strict `float64` one is `2^-50`) where Newton's progress is slow, as
+  at a root where the derivative also vanishes. The bracket's midpoint can then be far from the
+  root, so the solver raises (`state_error`) instead of returning it.
+- `find_roots`' interval walk (Yuksel's, per monotone interval) keeps the previous release's hybrid
+  without the bisection safeguard: its guard against reporting a root twice at a critical point
+  relies on where that hybrid ends near a multiple root, and the safeguarded steps end elsewhere
+  within the root's rounding band, so a triple root is then reported twice (see
+  `solve_on_interval`). A one-sided stall there (a `float32` evaluation near a simple root, a
+  multiple root) reaches the cap; the walk lists the final bracket as a gap, so `find_roots` can
+  warn on a `float32` simple root that `find_monotone_root` solves.
+- `find_monotone_root` of end values without a sign change returns NaN, "no root" as a value (a
+  batch row, NaN too); non-finite coefficients never reach it.
 - The Numba kernel's fixed buffers are gone: a work stack of 256 (it could not bind, a depth-first
   stack holding at most `depth + 2` entries) and a candidate buffer of `3n + 4`, which did bind
   (polynomials with many exact, evenly spaced roots filled it, and roots were lost) and now grows.
-- The single and batch dispatches keep the previous release's two differences: the batch merges
-  Yuksel's roots too, and its zero-polynomial test passes a NaN coefficient. The zero-polynomial
-  test is exact (every coefficient zero): with a relative floor, nothing else is within it.
+- The single and batch dispatches keep the previous release's one difference: the batch merges
+  Yuksel's roots too. The previous release's other, a batch zero-polynomial test that passed a NaN
+  coefficient, went with the refusal of non-finite coefficients, as did the single path's NaN
+  ordering of Yuksel's roots and its NaN range flag. The zero-polynomial test is exact (every
+  coefficient zero): with a relative floor, nothing else is within it.
 
 ## Duplicate pair classes
 
