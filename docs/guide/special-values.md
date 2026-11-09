@@ -2,11 +2,15 @@
 
 PaNTr has one policy for non-finite numbers (NaN and ±infinity): **propagate, never hide.**
 
-- Non-finite data in gives non-finite data out.
-- No function returns a finite value, or reports success (a root count, a convergence, a rank, a
-  residual, a passed validation), on non-finite data.
+- Non-finite data in gives non-finite data out, at every value that reads it. A value that does
+  not read the non-finite entry stays finite: a B-spline value reads only the control points of
+  its knot span, and a Bézier evaluated at `t = 1` is its last control point.
+- No function returns a finite value computed from a non-finite entry it reads, or reports success
+  (a root count, a convergence, a rank, a residual, a passed validation) on non-finite data.
 - A non-finite value that is born from finite input, by an internal overflow, is an error: it
-  raises, and does not reach you as a NaN.
+  raises, and does not reach you as a NaN. The one NaN a function returns from finite input is
+  {func}`~pantr.bezier.find_monotone_root`'s "no root" sentinel, which is documented and not a
+  failure (see "Root finding refuses" below).
 - The fast paths add no validation for this. A function that evaluates at many points does not
   scan its inputs first; it lets the arithmetic carry the NaN to the values that read it.
 
@@ -43,20 +47,33 @@ print(curve.evaluate(np.array([0.5, 1.5, 3.0])).ravel())
 [nan  2.  4.]
 ```
 
-A Bézier curve carries an infinite control point the same way. In the 1-D cases tried here, a
-Bézier evaluated at `t = 1` returned its last control point whatever the others held, including
-a NaN or an infinity:
+A Bézier curve carries an infinite control point the same way, with one asymmetry between its
+ends. The 1-D evaluation sums each control point times its Bernstein value, and at `t = 0` the
+Bernstein values of all but the first control point are exactly zero. A zero times an infinity or a
+NaN is NaN, so a non-finite control point other than the first makes the value at `t = 0` NaN,
+although its weight there is zero. At `t = 1` the evaluation does not sum: it returns the last
+control point, so the value is the last control point whatever the others hold, finite or not:
 
 ```python
 from pantr.bezier import Bezier
 
 bezier = Bezier(np.array([0.0, np.inf, 1.0]))
 print(bezier.evaluate(np.array([0.0, 0.25, 0.5, 1.0])))
+
+# The infinity is now the last control point: `t = 1` returns it, and `t = 0` is still NaN.
+print(Bezier(np.array([0.0, 1.0, np.inf])).evaluate(np.array([0.0, 1.0])))
+# A non-finite *first* control point is the value at `t = 0`, and `t = 1` does not read it.
+print(Bezier(np.array([np.inf, 0.0, 1.0])).evaluate(np.array([0.0, 1.0])))
 ```
 
 ```text
 [nan inf inf  1.]
+[nan inf]
+[inf  1.]
 ```
+
+The finite value at `t = 1` is therefore the last control point alone and not a guarantee that
+the curve is finite: the same curve is NaN at `t = 0`.
 
 A NaN *parameter* is not hidden either. A Bézier returns NaN there, and a B-spline refuses it as
 outside the domain:
@@ -138,6 +155,22 @@ ValueError tol must be positive and finite, got inf
 
 {func}`pantr.bspline.find_roots` refuses a NaN or infinite `tol` in the same way (it raised
 `ValueError` ("tol must be positive and finite, got nan") for both in a run of its own).
+
+One NaN that {func}`~pantr.bezier.find_monotone_root` returns is not a failure. For *finite*
+coefficients with no sign change across `[0, 1]`, there is no root to return, and NaN is its
+documented "no root" sentinel (in batch mode, one entry per polynomial, NaN where none exists).
+It is a statement about a polynomial that exists and has no root there, which is the reverse of
+the NaN-coefficient case above, so it raises nothing and a caller tests for it with `np.isnan`:
+
+```python
+print(find_monotone_root(Bezier(np.array([1.0, 2.0, 3.0]))))
+print(find_monotone_root([Bezier(np.array([-1.0, 0.0, 1.0])), Bezier(np.array([1.0, 2.0, 3.0]))]))
+```
+
+```text
+nan
+[0.5 nan]
+```
 
 ## Fits and interface detection refuse a non-finite `tol`
 
