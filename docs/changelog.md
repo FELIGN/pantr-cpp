@@ -236,6 +236,13 @@
   builds the extension into `src/pantr` (there is no editable install), and importing pantr
   fails with a message saying so when the module is missing or was built from other
   bindings.
+- **The macOS wheel (arm64) needs macOS 14 or later**: the compiled library uses floating-point
+  `std::to_chars`, which macOS 13 provides only from a minor release, and a wheel tag cannot name a
+  minor version, so it is tagged and built for 14.0. pip installs it on no earlier macOS; there a source build is
+  needed. The previous release was pure Python.
+- **The wheels carry the licences of the code compiled into them**, in `.dist-info/licenses`: the
+  `pantr` wheel those of Eigen, Spectra, Kokkos mdspan, Boost, nanobind and robin_map, and
+  `THIRD_PARTY_NOTICES.md`; the `pantr-mpi` wheel those of nanobind and robin_map.
 - `PointsLattice` copies the arrays it is given and freezes the copies, so a later change
   to the caller's arrays no longer alters the lattice. Its arrays are read-only, and
   `pts_per_dir` returns fresh read-only views on each access. Code that wrote through
@@ -290,7 +297,14 @@
   `pantr.num_threads` or `pantr.mpi.configure_threads`, as before, or now by a non-empty
   `PANTR_NUM_THREADS` in the environment, which replaces `NUMBA_NUM_THREADS` there. With
   `PANTR_NUM_THREADS=3` a rank keeps 3 threads where the previous release cut it to 1, and with
-  `NUMBA_NUM_THREADS=3` it is cut to 1 where it kept 3.
+  `NUMBA_NUM_THREADS=3` it is cut to 1 where it kept 3. The policy reads the variable each time it
+  applies, while the capacity is read once: a value set after the first parallel call disables the
+  policy without lowering the capacity.
+- **Long compiled calls release the GIL**, so other Python threads run while they compute:
+  `Bezier.split`, `slice`, `restrict` and `multiply` when their nets are large enough to use the
+  thread pool, and `Bezier.compose`, `reduce_degree`, `degree_reduction_error`, `minimize_degree`,
+  `fit_bezier`, `interpolate_bezier`, `fit_bspline`, `interpolate_bspline`, `l2_project_bspline`
+  and `quasi_interpolate_bspline` in their compiled parts.
 - **numba and threadpoolctl are no longer dependencies**, and `import pantr` imports neither:
   every Numba kernel is replaced by C++ compiled into pantr's extension, and its thread pool
   replaces Numba's. Nor does the import start a background thread to compile kernels, and the
@@ -368,7 +382,11 @@
   before when it is the only invalid argument. The private imports `pantr.quad` and
   `pantr.change_basis` used to re-export by accident (NumPy's `chebyshev` and `legendre`,
   `functools`, `comb`, a few pantr functions; `Callable` from `pantr.change_basis`) are gone from
-  their namespaces.
+  their namespaces. Other names that modules imported for their own use changed too, none in
+  `__all__`: `pantr` no longer has `sys`, `logging`, `threading` or `TYPE_CHECKING`, and
+  `pantr.geometry` no longer has `Final`; `pantr.geometry`, `pantr.transform` and
+  `pantr.bspline.spanwise_element_extraction` gain `ext` and `Any`, and the last also `cast` and
+  `math`.
 - **`AABB`, `AffineTransform` and the `Bezier` value type run in pantr's C++ library**
   (`pantr.geometry`, `pantr.transform` and `pantr.bezier.Bezier` are thin wrappers over it;
   names, signatures and defaults are unchanged, and messages too except as listed below).
@@ -538,6 +556,14 @@
   direction with more than one node, raises `ValueError` ("SVD did not converge"), as before, but
   no longer `numpy.linalg.LinAlgError` (a `ValueError` subclass), since the decomposition is no
   longer NumPy's.
+- **A NaN or infinite `tol`** in `fit_bezier`, `interpolate_bezier`, `fit_bspline`,
+  `interpolate_bspline`, `l2_project_bspline` and `pantr.multipatch.detect_interfaces` raises
+  `ValueError` ("tol must be finite, got nan"), as do the distributed fits in `pantr.mpi`. The
+  Bézier fits, and the B-spline fits whenever their system is rectangular or singular, used to
+  truncate every singular value and return all-zero control points; `interpolate_bspline`,
+  `l2_project_bspline` and `fit_bspline` on a regular square system never read `tol`, so a NaN or
+  infinite one was ignored and now raises. `detect_interfaces` returned no interface for a NaN
+  `tol` and every pair of faces for an infinite one. A zero or negative `tol` is accepted as before.
 - **A negative `degree` for scattered `fit_bezier` nodes** is a `ValueError` ("degree must be
   non-negative"); the previous release raised `IndexError` for `-1` and NumPy's "negative
   dimensions are not allowed" below it. An empty sequence of node arrays is a `ValueError`
@@ -673,6 +699,12 @@
   `BsplineSpace1D.insert_knots`, `subdivide` and its three `tabulate_*_extraction_operators`.
   (`multiply`, `find_roots`, `locate` and the rational `derivative`, which uses `multiply`, run in
   C++ as well, see below.)
+- **`Bspline.control_points` is a cached property**, as `Bezier.control_points` is (it was a
+  plain property); assigning or deleting it is refused as before.
+- **`pantr.bspline.multilevel_extraction` no longer exposes `SpanwiseElementExtraction`**, which it
+  imported for its own use and has no `__all__` to withhold; import it from `pantr.bspline` or
+  `pantr.bspline.spanwise_element_extraction`. The module now also shows `Any`, `copy` and `ext`
+  (the compiled extension).
 - **A `Bspline` is immutable**, as a `Bezier` is: the constructor copies the control points
   (into a C-contiguous array whatever the input layout), so a later write to the array it was
   given no longer changes the B-spline; `control_points` is a read-only view that cannot be made

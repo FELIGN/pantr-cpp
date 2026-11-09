@@ -51,6 +51,11 @@ maximum, which `set_num_threads` cannot exceed, is the pool's capacity: the CPUs
 mask, lowered by the `PANTR_NUM_THREADS` environment variable when it is set. Both are read once,
 on the first call that needs the thread count.
 
+`pantr.mpi`'s one-thread-per-rank default reads `PANTR_NUM_THREADS` differently: it checks the
+environment each time it applies, so a value set after the capacity was read disables the default
+without lowering the capacity. Set the variable before the first pantr call, or call
+`pantr.set_num_threads` instead.
+
 ### BLAS / LAPACK coordination
 
 PaNTr's dense solves are compiled into the extension and start no thread of their own, though a
