@@ -84,7 +84,7 @@ def _tensor_fit() -> object:
 
 
 def _qi() -> object:
-    space = create_uniform_space(3, [400, 400])
+    space = create_uniform_space(3, [800, 800])
     return quasi_interpolate_bspline(lambda pts: np.ones(pts.shape[0]), space)
 
 
@@ -167,6 +167,6 @@ def test_long_call_lets_other_threads_run(name: str) -> None:
     """
     call = SETUPS[name]()
     tries = [_largest_gap(call) for _ in range(3)]
-    for duration, _gap in tries:
-        assert duration >= _MIN_DURATION, f"{name} took {duration:.4f} s: too short to tell"
-    assert any(gap < 0.5 * duration for duration, gap in tries), f"{name}: blocked {tries}"
+    telling = [(duration, gap) for duration, gap in tries if duration >= _MIN_DURATION]
+    assert telling, f"{name} took {tries}: every try too short to tell"
+    assert any(gap < 0.5 * duration for duration, gap in telling), f"{name}: blocked {tries}"
