@@ -571,6 +571,53 @@ class TestFitScatteredOracles:
             fit_bspline(_poly_float(poly, pts[:5]), pts[:5].reshape(-1, 1), space)
 
 
+class TestFitTruncation:
+    """The default truncation tolerance of :func:`fit_bspline`, on a system that needs it."""
+
+    @pytest.mark.parametrize("layout", ["tensor", "scattered"])
+    def test_a_rank_deficient_fit_is_the_exact_minimum_norm_solution(self, layout: str) -> None:
+        """Oracle: the exact minimum-norm solution ``A_u^T (A_u A_u^T)^-1 b_u`` in rationals.
+
+        Degree 2 on five equal intervals (7 functions) and 7 nodes of which only 5 are distinct
+        (0 three times), so the exact collocation matrix has rank 5 and two of its computed
+        singular values are rounding noise. The data are a polynomial of the space, so the system
+        is consistent; its minimum-norm solution is the one the truncated pseudo-inverse returns,
+        computed here from the distinct rows (a full-row-rank matrix) by the normal equations,
+        exactly. The repeated rows make the LU meet an exactly zero pivot, which sends the square
+        system to the truncated SVD. The bound is the file's ``_solve_bound``, with ``kappa`` that
+        of the five distinct rows, which bounds ``s_max / s_min`` of the retained values: the
+        assertion before the call checks that they lie above the default cutoff
+        ``100 eps s_max``. What is pinned is that a default cutoff exists and keeps the retained
+        values; the factor 100 itself is not pinned (a smaller one passes while it stays above the
+        noise).
+
+        Bug caught: the default tolerance not reaching the solve (a zero cutoff), which inverts the
+        two noise-level singular values and inflates the coefficients by the reciprocal of the
+        noise. The scattered route resolves the default on its own, so both layouts are run.
+        """
+        space = create_uniform_space(2, 5)
+        poly = _dyadic_poly(2)
+        nodes = np.array([0.0, 0.0, 0.0, 0.3, 0.5, 0.7, 1.0])
+        distinct = np.unique(nodes)
+        assert len(distinct) == 5
+        a_u = _exact_collocation(space.spaces[0], distinct)
+        a_ut = _transpose(a_u)
+        b_u = [[_poly_exact(poly, bspline_exact.exact(x))] for x in distinct]
+        c_exact = _matmul(a_ut, _solve_exact(_matmul(a_u, a_ut), b_u))
+        bound = _solve_bound(
+            len(nodes) + len(a_u[0]) + 2, _kappa_bound(a_ut), _frobenius(c_exact), space.dtype
+        )
+        assert 1.0 / _kappa_bound(a_ut) > 100 * float(np.finfo(np.float64).eps)  # kept values kept
+
+        where: Any = [nodes] if layout == "tensor" else nodes.reshape(-1, 1)
+        spline = fit_bspline(_poly_float(poly, nodes), where, space)
+
+        ctrl = np.asarray(spline.control_points)
+        assert ctrl.shape == (7, 1)
+        for i in range(7):
+            _assert_within(Fraction(float(ctrl[i, 0])), c_exact[i][0], bound, f"coefficient {i}")
+
+
 # ---------------------------------------------------------------------------
 # l2_project_bspline
 # ---------------------------------------------------------------------------
