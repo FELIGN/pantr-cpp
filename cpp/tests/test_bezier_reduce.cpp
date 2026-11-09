@@ -25,11 +25,13 @@
 #include <algorithm>
 #include <atomic>
 #include <bit>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <span>
@@ -37,6 +39,19 @@
 #include <thread>
 #include <utility>
 #include <vector>
+
+#if !defined(_WIN32)
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
+
+#if defined(__SANITIZE_THREAD__)
+#define PANTR_TEST_TSAN 1
+#elif defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+#define PANTR_TEST_TSAN 1
+#endif
+#endif
 
 namespace pb = pantr::bezier;
 using pantr::NdArray;
@@ -1003,3 +1018,39 @@ TEST_CASE("reduction table: concurrent first use of the same keys yields one ope
   CHECK(largest_size.load() <= n_keys);  // the table never holds more than the distinct keys
   CHECK(pb::reduction_cache_size() == n_keys);
 }
+
+#if !defined(_WIN32) && !defined(PANTR_TEST_TSAN)
+// Not under TSan: its runtime does not support a multi-threaded fork whose child keeps working.
+TEST_CASE("reduce: a fork while another thread holds the table lock leaves the child usable") {
+  static_cast<void>(pb::cached_reduction_operator(pb::ReductionKind::l2, 4, 1));  // table in use
+  std::atomic<bool> held{false};
+  std::thread holder([&] {
+    const std::lock_guard<std::mutex> lock(pb::detail::reduction_table_mutex);
+    held = true;
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  });
+  while (!held.load()) {
+    std::this_thread::yield();
+  }
+  const pid_t child = ::fork();
+  REQUIRE(child >= 0);
+  if (child == 0) {
+    // Without the fork handler the child inherits the lock held by a thread it lacks and blocks
+    // forever; SIGALRM ends that instead of stalling the suite.
+    ::alarm(30);
+    int status = 0;
+    try {
+      const auto m = pb::cached_reduction_operator(pb::ReductionKind::interpolating, 6, 2);
+      status = m->shape()[0] == 5 ? 0 : 1;
+    } catch (...) {
+      status = 4;
+    }
+    ::_exit(status);
+  }
+  holder.join();
+  int wstatus = 0;
+  REQUIRE(::waitpid(child, &wstatus, 0) == child);
+  REQUIRE(WIFEXITED(wstatus));
+  CHECK(WEXITSTATUS(wstatus) == 0);
+}
+#endif

@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -30,6 +31,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -1823,4 +1825,30 @@ TEST_CASE("grid: hierarchical threads: locate_many and collect_cell_bounds at 1 
   CHECK(serial.data()[n_centers] == -1);
   CHECK(serial.data()[n_centers + 1] == -1);
   CHECK(serial.data()[n_centers + 2] == -1);
+}
+
+TEST_CASE("grid: HierarchicalGrid::cell_bvh: threads racing on the first call all see one BVH") {
+  const HierarchicalGrid g = hg(dyadic_root_2d(), {2, 3});
+  CHECK_FALSE(g.bvh_built());
+  constexpr int n_threads = 8;
+  std::vector<const pantr::grid::BVH*> seen(n_threads, nullptr);
+  std::atomic<int> ready{0};
+  std::vector<std::thread> threads;
+  for (int t = 0; t < n_threads; ++t) {
+    threads.emplace_back([&, t] {
+      ready.fetch_add(1);
+      while (ready.load() < n_threads) {
+        std::this_thread::yield();
+      }
+      seen[static_cast<std::size_t>(t)] = &g.cell_bvh();
+    });
+  }
+  for (std::thread& t : threads) {
+    t.join();
+  }
+  for (const auto* p : seen) {
+    CHECK(p == seen[0]);
+  }
+  CHECK(g.bvh_built());
+  CHECK(seen[0]->n_cells() == g.num_cells());
 }
