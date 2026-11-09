@@ -89,6 +89,30 @@ def test_override_loads_exactly_that_rung(
     assert _isa.load("pkg", "_m").__name__ == _isa.module_name("pkg", "_m", rung)
 
 
+@pytest.mark.parametrize("value", ["V3", "  v3\t", " V3 "], ids=["upper", "padded", "both"])
+def test_override_is_read_without_case_or_padding(
+    fake_modules: dict[str, object], monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    """``PANTR_ISA=V3`` and a value with surrounding whitespace name the ``v3`` rung.
+
+    Bug caught: a value used as typed, so ``V3``, or a value with stray whitespace, is refused as
+    an unknown rung.
+    """
+    _install(fake_modules, "generic", "v3", "v4")
+    monkeypatch.setenv(_isa.ENV_VAR, value)
+    assert _isa.load("pkg", "_m").__name__ == "pkg._m_v3"
+    assert fake_modules["imported"] == ["pkg._m_v3"]
+
+
+def test_override_of_the_base_rung_is_case_insensitive_too(
+    fake_modules: dict[str, object], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``GENERIC`` names the base module, the one rung that has no suffix to fold."""
+    _install(fake_modules, "generic", "v3")
+    monkeypatch.setenv(_isa.ENV_VAR, "GENERIC")
+    assert _isa.load("pkg", "_m").__name__ == "pkg._m"
+
+
 @pytest.mark.parametrize("value", ["", "  "])
 def test_empty_override_means_unset(
     fake_modules: dict[str, object], monkeypatch: pytest.MonkeyPatch, value: str
@@ -208,6 +232,34 @@ def test_neon_runs_on_arm64_only(monkeypatch: pytest.MonkeyPatch, arch: str, run
     """NEON is the AArch64 baseline: supported there without a probe, nowhere else."""
     monkeypatch.setattr(_isa, "machine_arch", lambda: arch)
     assert _isa.cpu_supports("neon") is runs
+
+
+@pytest.mark.parametrize(
+    ("machine", "arch"),
+    [
+        ("x86_64", "x86_64"),  # Linux, macOS on Intel
+        ("AMD64", "x86_64"),  # Windows on x86-64
+        ("arm64", "arm64"),  # macOS on Apple silicon
+        ("aarch64", "arm64"),  # Linux on ARM
+        ("ARM64", "arm64"),  # Windows on ARM
+        ("i686", "other"),
+        ("x86", "other"),
+        ("ppc64le", "other"),
+        ("", "other"),
+    ],
+)
+def test_machine_arch_reads_the_name_each_platform_reports(
+    monkeypatch: pytest.MonkeyPatch, machine: str, arch: str
+) -> None:
+    """``platform.machine()`` spells one architecture several ways; each maps to its family.
+
+    Bug caught: a Windows x86-64 interpreter, which reports ``AMD64``, read as an unknown
+    architecture, so every wheel on it loads the generic rung and never the tuned ones, with no
+    message (the same for ``ARM64`` and the NEON rung). A 32-bit or other machine is ``other``,
+    never x86-64.
+    """
+    monkeypatch.setattr(platform, "machine", lambda: machine)
+    assert _isa.machine_arch() == arch
 
 
 # --- The CPU probe ------------------------------------------------------------------------------
@@ -404,6 +456,23 @@ def test_sources_older_than_the_module_are_not_stale(tmp_path: Path) -> None:
     unrelated = tmp_path / "src" / "pantr" / "later.py"
     unrelated.write_text("")
     _set_mtime(unrelated, now)
+    assert stale_sources(module, tmp_path) == []
+
+
+def test_a_source_with_the_modules_own_timestamp_is_not_stale(tmp_path: Path) -> None:
+    """Equal modification times are a fresh build: only a strictly later source is stale.
+
+    Bug caught: a ``>=`` comparison, which refuses to start the session when an edit and a build
+    land in the same timestamp tick (a coarse filesystem clock, or ``make ext`` touching the module
+    right after the last edit), and sends the user to rebuild a module that is current.
+    """
+    module = _fake_tree(tmp_path)
+    header = tmp_path / "include" / "pantr" / "x.hpp"
+    header.write_text("// edited\n")
+    tick = time.time_ns()
+    os.utime(module, ns=(tick, tick))
+    os.utime(header, ns=(tick, tick))
+    assert header.stat().st_mtime_ns == module.stat().st_mtime_ns  # the precondition, as stored
     assert stale_sources(module, tmp_path) == []
 
 
