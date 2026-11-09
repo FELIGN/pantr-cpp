@@ -440,8 +440,7 @@ class TestPeriodicAgainstTheExactDefinition:
         if derivative > degree:
             pytest.skip("identically zero")
         f = _make_periodic_bspline(4, degree, continuity=continuity)
-        if continuity == 0 and derivative > 0:
-            pytest.skip("the derivative jumps at the knots; the points below avoid them")
+        # A C0 spline's derivative jumps at the knots (multiples of 1/4), none of these points.
         pts = np.array([0.03, 0.11, 0.27, 0.4, 0.51, 0.62, 0.77, 0.9, 0.99])
         eps = float(np.finfo(np.float64).eps)
         h = 0.25
