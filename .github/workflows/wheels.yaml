@@ -40,8 +40,9 @@ jobs:
       # Builds the cp312-abi3 wheel, repairs it, installs it in a clean environment, checks its
       # contents and runs the suite against it once per rung the runner can execute
       # ([tool.cibuildwheel] in pyproject.toml, tools/wheel_test.py). The Linux wheels build in
-      # the manylinux container with its own compiler: CC and CXX here reach only macOS and
-      # Windows, and the container's GCC version is asserted by [tool.cibuildwheel.linux].
+      # the manylinux container with its own compiler: CC and CXX here reach only the macOS leg
+      # (the Windows leg builds with MSVC, which ignores them), and the container's GCC version is
+      # asserted by [tool.cibuildwheel.linux].
       - uses: pypa/cibuildwheel@v4.3.5
         env:
           CIBW_ARCHS: ${{ matrix.archs }}
@@ -99,7 +100,9 @@ jobs:
 
   # pantr-mpi links the MPI library of one family. The Linux wheels are built against MPICH
   # (whose libmpi.so.12 is the MPICH ABI that MPICH, Intel MPI and MVAPICH share) and the macOS
-  # wheel against Open MPI; neither library is bundled (the repair step excludes it). The family is
+  # wheel against Open MPI; neither library is bundled (the repair step excludes it, and the module
+  # links the MPI C API alone, so no libmpicxx is vendored either: the test step fails on any
+  # vendored library or missing licence file). The family is
   # set explicitly rather than read from mpi.h, so a runner image that changes its MPI fails the
   # build instead of shipping a wheel of another family.
   pantr-mpi:
@@ -161,7 +164,8 @@ jobs:
           CIBW_TEST_REQUIRES: ${{ matrix.runtime }}
           CIBW_TEST_COMMAND: >-
             pip install {project}/wheelhouse-pantr/*.whl &&
-            python -c "import pantr.mpi as m; m.require_mpi(); import pantr_mpi; print(pantr_mpi.__file__)"
+            python -c "import pantr.mpi as m; m.require_mpi(); import pantr_mpi; print(pantr_mpi.__file__)" &&
+            python {project}/tools/wheel_test.py {project} --mpi-wheel
       - uses: actions/upload-artifact@v7
         with:
           name: wheel-mpi-${{ matrix.label }}
