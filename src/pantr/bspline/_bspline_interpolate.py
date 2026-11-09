@@ -424,13 +424,15 @@ def interpolate_bspline(
 
     # The collocation matrices (with derivative rows) are built before the function is sampled.
     system, mat_dtype = _tensor_collocation(space, node_arrays, boundary_derivatives)
+    # Refuse a bad tol before the callable is sampled: it may be costly or have side effects.
+    resolved = float(resolve_svd_tolerance(mat_dtype, tol))
 
     lattice = PointsLattice(node_arrays)
     grid_shape = tuple(a.shape[0] for a in node_arrays)
     components, out_dtype = _evaluate_func_on_lattice(func, lattice, grid_shape)
 
     values = np.stack(components, axis=-1)
-    ctrl = _solve_tensor(system, mat_dtype, values, out_dtype, tol)
+    ctrl = _solve_tensor(system, mat_dtype, values, out_dtype, resolved)
     return Bspline(space, ctrl)
 
 

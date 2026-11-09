@@ -171,6 +171,8 @@ def l2_project_bspline_distributed(  # noqa: PLR0913
         )
 
     projection, _, _ = _l2_projection(global_space, n_quad, quadrature, boundary_interpolation)
+    # Refuse a bad tol before the callable is sampled: it may be costly or have side effects.
+    resolved_tol = float(resolve_svd_tolerance(global_space.dtype, tol))
 
     # Evaluate func on the whole global quadrature lattice and on every boundary trace; the
     # compiled code masks the lattice values to this rank's owned cells.
@@ -195,7 +197,7 @@ def l2_project_bspline_distributed(  # noqa: PLR0913
         values,
         n_components,
         traces,
-        float(resolve_svd_tolerance(global_space.dtype, tol)),
+        resolved_tol,
     )
     global_cp = np.asarray(coeffs).astype(global_space.dtype, copy=False)
     global_bspline = Bspline(global_space, global_cp)
