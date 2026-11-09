@@ -9,9 +9,17 @@ column is left for the author to fill.
 
 An "assertion line" is a removed or added line, under the given paths, that contains an assertion
 construct: ``assert``, ``pytest.raises``/``pytest.warns``/``pytest.approx``, a ``numpy.testing``
-or ``assert_*`` helper call, or a ``match=``, ``atol=`` or ``rtol=`` argument. A changed line
+or ``assert_*`` helper call, a unittest-style ``self.assertEqual(...)`` (any ``assert`` followed by
+an upper-case letter and a call), or a ``match=``, ``atol=`` or ``rtol=`` argument. A changed line
 shows up twice, once removed and once added. Lines are attributed to the enclosing ``test_*``
 function in the old (removed) or new (added) version of the file.
+
+Blind spots, which the author lists by hand: a line is matched by its text alone, so the tool does
+not see a change that alters what an assertion checks without touching an assertion line. That
+includes a ``pytest.mark.parametrize`` case list (its expected values), a ``skip``/``skipif``/
+``xfail`` mark or call added or removed, a module-level constant or fixture an assertion reads (a
+tolerance named ``_ATOL = ...``), and an assertion helper whose name matches none of the patterns
+above.
 
 Usage::
 
@@ -30,7 +38,8 @@ from dataclasses import dataclass
 from typing import Final, Literal
 
 ASSERTION_RE: Final[re.Pattern[str]] = re.compile(
-    r"\bassert\b|\bpytest\.(?:raises|warns|approx)\b|\bassert_\w+\(|\b(?:match|atol|rtol)\s*="
+    r"\bassert\b|\bpytest\.(?:raises|warns|approx)\b|\bassert_\w+\(|\bassert[A-Z]\w*\("
+    r"|\b(?:match|atol|rtol)\s*="
 )
 """Matches a line that carries an assertion construct."""
 
