@@ -708,6 +708,8 @@ def l2_project_bspline(  # noqa: PLR0913
         raise ValueError("Points lattice must have at least 1 dimension")
 
     projection, _, _ = _l2_projection(space, n_quad, quadrature, boundary_interpolation)
+    # Refuse a bad tol before the callable is sampled: it may be costly or have side effects.
+    resolved = float(resolve_svd_tolerance(space.dtype, tol))
 
     # Sample the function on the quadrature lattice.
     quad_nodes_per_dir = list(projection.nodes)
@@ -716,7 +718,6 @@ def l2_project_bspline(  # noqa: PLR0913
     components, out_dtype = _evaluate_func_on_lattice(func, quad_lattice, quad_grid_shape)
 
     compute = np.result_type(space.dtype, out_dtype)
-    resolved = float(resolve_svd_tolerance(space.dtype, tol))
     n_traces = len(projection.traces)
     n_components = len(components)
     ctrl_components: list[npt.NDArray[np.floating[Any]]] = []
