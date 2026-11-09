@@ -54,8 +54,13 @@ TEST_CASE("simd: one level, its name, and its lane counts") {
 
 TEST_CASE("simd: the level a CI leg pins through PANTR_TEST_EXPECT_ISA") {
   // Read at run time, from a channel the compiler flags cannot drop along with -march. Unset
-  // outside the CI legs that pin a level, where there is nothing to compare against.
+  // outside the CI legs that pin a level, where there is nothing to compare against. The scalar
+  // test binary pins its level by its own definition, whatever the leg's -march says.
+#if defined(PANTR_TEST_EXPECT_SCALAR)
+  const char* expected = "scalar";
+#else
   const char* expected = pantr::parallel::detail::env_value("PANTR_TEST_EXPECT_ISA");
+#endif
   if (expected != nullptr) {
     CHECK(std::string(pantr::simd::isa_name) == std::string(expected));
   }
