@@ -1,4 +1,4 @@
-"""Check the installed pantr wheel's contents, then run the suite under the default rung and generic.
+"""Check the installed pantr wheel's contents, then run the suite under each rung it tests.
 
 Usage::
 
@@ -91,10 +91,11 @@ def content_problems(checkout: Path) -> list[str]:
             f"extension modules: expected {sorted(expected)}, installed {sorted(installed)}"
         )
     files = importlib.metadata.distribution("pantr").files or []
+    # A licence file's record path is ``<name>.dist-info/licenses/<path>``.
     licences = {
         Path(*f.parts[2:]).as_posix()
         for f in files
-        if len(f.parts) > 2 and f.parts[0].endswith(".dist-info") and f.parts[1] == "licenses"
+        if f.parts[:1] and f.parts[0].endswith(".dist-info") and f.parts[1:2] == ("licenses",)
     }
     wanted = {"LICENSE", "THIRD_PARTY_NOTICES.md"}
     wanted |= {f"licenses/{p.name}" for p in (checkout / "licenses").iterdir()}

@@ -42,7 +42,7 @@ inline constinit std::mutex lazy_builds_mutex;
 /// the only mutexes the child may find held, by threads that do not exist in it.
 inline std::map<std::mutex*, std::size_t> lazy_builds;
 
-/// Registration of the fork handlers; nonzero means it failed, which the first build reports.
+/// Registration of the fork handlers; nonzero means it failed, which every build then reports.
 /// The child handler runs before the child has any other thread, so no thread can hold or wait
 /// on a registered mutex there: each is replaced by a fresh one (the old one is never unlocked or
 /// destroyed, since its owner is gone) and the registry is emptied.
@@ -131,7 +131,7 @@ class Lazy {
   ///     const Block&: The stored block, valid for the lifetime of this `Lazy`.
   ///
   /// Raises:
-  ///     std::system_error: The fork handlers could not be registered (first build only).
+  ///     std::system_error: The fork handlers could not be registered (any build).
   ///     Whatever `compute` throws; nothing is stored in that case.
   template <class F>
     requires std::is_convertible_v<std::invoke_result_t<F&>, Block>

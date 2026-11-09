@@ -1,7 +1,8 @@
 """B-spline compatibility: match degrees and knot vectors across objects.
 
 Provides :func:`make_compat`, which takes N B-splines and returns new objects
-that share the same degree and knot vector along each specified axis.
+that share the same degree along each specified axis, and the same knot vector
+where their breakpoints agree exactly.
 This is the prerequisite for operations like ``create_ruled``,
 ``create_coons_surface``, and ``join`` that combine control points from
 different B-splines.

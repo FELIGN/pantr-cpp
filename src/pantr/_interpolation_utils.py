@@ -20,8 +20,8 @@ def check_svd_tolerance(tol: float | None) -> None:
     """Refuse a non-finite SVD truncation tolerance.
 
     A NaN or infinite tolerance truncates every singular value, so the fit would return zero
-    coefficients as if it had succeeded. Zero and negative values stay accepted: they truncate
-    nothing, the plain pseudo-inverse.
+    coefficients as if it had succeeded. Zero and negative values stay accepted, as before: they
+    truncate no nonzero singular value (an exactly zero one is then inverted, as before).
 
     Args:
         tol (float | None): User-provided tolerance, or ``None`` for the default.

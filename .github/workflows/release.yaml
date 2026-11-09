@@ -34,6 +34,11 @@ jobs:
     needs: [wheels]
     runs-on: ubuntu-latest
     steps:
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
       - name: Download every wheel and sdist
         uses: actions/download-artifact@v8
         with:
@@ -145,11 +150,14 @@ jobs:
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2 @ 2026-07-29
         with:
           packages-dir: dist-pantr/
+          # A re-run after a failed pantr-mpi upload must get past the files already up.
+          skip-existing: true
 
       - name: Publish pantr-mpi to PyPI
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2 @ 2026-07-29
         with:
           packages-dir: dist-pantr-mpi/
+          skip-existing: true
 
   github-release:
     name: Create GitHub Release

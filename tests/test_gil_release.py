@@ -19,6 +19,7 @@ import time
 from collections.abc import Callable
 
 import numpy as np
+import numpy.typing as npt
 import pytest
 
 from pantr._testing import reduction_cache_clear
@@ -96,9 +97,23 @@ def _bezier_tensor_fit() -> object:
     return fit_bezier(_rng().random((400, 400, 50)), nodes, degree=[60, 60])
 
 
-_NET = _rng().random((31, 40000, 3))
-_CURVE = _rng().random((601, 3000))
-_SQUARE = _rng().random((80, 80, 1))
+def _on(
+    cp: npt.NDArray[np.float64], op: Callable[[Bezier], object]
+) -> Callable[[], Callable[[], object]]:
+    """Build the Bezier outside the timed call (its constructor holds the GIL) and time ``op``."""
+
+    def setup() -> Callable[[], object]:
+        b = Bezier(cp)
+        return lambda: op(b)
+
+    return setup
+
+
+def _untimed_setup(call: Callable[[], object]) -> Callable[[], Callable[[], object]]:
+    return lambda: call
+
+
+_NET = (31, 120000, 3)
 _REDUCIBLE = _rng().random((66, 2))  # above the reduction table's cached degrees: built per call
 
 
@@ -107,27 +122,37 @@ def _reduction_error() -> object:
     return Bezier(_REDUCIBLE[:62]).degree_reduction_error(1)
 
 
-CASES: dict[str, Callable[[], object]] = {
-    "split": lambda: Bezier(_NET).split(0, 0.3),
-    "slice": lambda: Bezier(_NET).slice(0, 0.3),
-    "slice_point": lambda: Bezier(_CURVE).slice(0, 0.3),
-    "restrict": lambda: Bezier(_NET).restrict([(0.2, 0.7), None]),
-    "multiply": lambda: Bezier(_SQUARE).multiply(Bezier(_SQUARE)),
-    "compose": lambda: Bezier(_rng().random((10, 10, 1))).compose(Bezier(_rng().random((4, 4, 2)))),
-    "reduce_degree": lambda: Bezier(_REDUCIBLE).reduce_degree(1),
-    "degree_reduction_error": _reduction_error,
-    "fit_bezier scattered": _bezier_scattered_fit,
-    "fit_bezier tensor": _bezier_tensor_fit,
-    "fit_bspline scattered": _scattered_fit,
-    "fit_bspline tensor": _tensor_fit,
-    "quasi_interpolate_bspline": _qi,
+def _compose() -> Callable[[], object]:
+    outer, inner = Bezier(_rng().random((10, 10, 1))), Bezier(_rng().random((4, 4, 2)))
+    return lambda: outer.compose(inner)
+
+
+def _multiply() -> Callable[[], object]:
+    square = Bezier(_rng().random((80, 80, 1)))
+    return lambda: square.multiply(square)
+
+
+SETUPS: dict[str, Callable[[], Callable[[], object]]] = {
+    "split": _on(_rng().random(_NET), lambda b: b.split(0, 0.3)),
+    "slice": _on(_rng().random(_NET), lambda b: b.slice(0, 0.3)),
+    "slice_point": _on(_rng().random((801, 3000)), lambda b: b.slice(0, 0.3)),
+    "restrict": _on(_rng().random(_NET), lambda b: b.restrict([(0.2, 0.7), None])),
+    "multiply": _multiply,
+    "compose": _compose,
+    "reduce_degree": _on(_REDUCIBLE, lambda b: b.reduce_degree(1)),
+    "degree_reduction_error": _untimed_setup(_reduction_error),
+    "fit_bezier scattered": _untimed_setup(_bezier_scattered_fit),
+    "fit_bezier tensor": _untimed_setup(_bezier_tensor_fit),
+    "fit_bspline scattered": _untimed_setup(_scattered_fit),
+    "fit_bspline tensor": _untimed_setup(_tensor_fit),
+    "quasi_interpolate_bspline": _untimed_setup(_qi),
 }
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("name", list(CASES))
+@pytest.mark.parametrize("name", list(SETUPS))
 def test_long_call_lets_other_threads_run(name: str) -> None:
     """Another Python thread is never blocked for more than half of the call."""
-    duration, gap = _largest_gap(CASES[name])
+    duration, gap = _largest_gap(SETUPS[name]())
     assert duration >= _MIN_DURATION, f"{name} took {duration:.4f} s: too short to tell"
     assert gap < 0.5 * duration, f"{name}: blocked {gap:.4f} s of {duration:.4f} s"
