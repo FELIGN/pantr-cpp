@@ -225,6 +225,39 @@ def test_default_provider_is_berf_when_pantr_berf_imports(monkeypatch: pytest.Mo
     assert get_root_provider() == "berf"
 
 
+@pytest.mark.parametrize(
+    ("source", "message"),
+    [
+        ("import libberf_that_is_not_installed\n", "libberf_that_is_not_installed"),
+        ('raise ImportError("interface mismatch")\n', "interface mismatch"),
+    ],
+    ids=["missing-library", "interface-mismatch"],
+)
+def test_an_installed_berf_that_fails_to_import_is_an_error_not_a_fallback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, source: str, message: str
+) -> None:
+    """A ``pantr_berf`` that is found but fails to import raises, and nothing is cached.
+
+    Only "``pantr_berf`` is not installed" selects the builtin provider. The package is a real
+    file on ``sys.path`` whose own import fails, so the failure reaches the wrapper as the
+    interpreter raises it (``ModuleNotFoundError`` for a library it needs, whose ``name`` is that
+    library's and not ``pantr_berf``; a plain ``ImportError`` for an interface mismatch).
+
+    Bug caught: a first use that treats any import failure as "not installed", so a broken BeRF
+    install silently runs the builtin provider and the user never learns it is not the one they
+    installed.
+    """
+    (tmp_path / "pantr_berf.py").write_text(source, encoding="utf-8")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.delitem(sys.modules, "pantr_berf")  # the fixture hid the package: unhide it
+    _reset(monkeypatch)
+    with pytest.raises(ImportError, match=message):
+        get_root_provider()
+    assert root_provider_state() is None  # no provider was chosen on the way out
+    with pytest.raises(ImportError, match=message):  # and the failure repeats
+        find_roots(_line())
+
+
 def test_environment_unknown_name_raises_on_first_use(monkeypatch: pytest.MonkeyPatch) -> None:
     """An unknown ``PANTR_ROOT_PROVIDER`` raises at first use, every time, never at import."""
     monkeypatch.setenv(_ENV, "gurobi")
