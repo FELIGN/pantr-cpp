@@ -129,7 +129,7 @@ def l2_project_bspline_distributed(  # noqa: PLR0913
             global space, if ``func`` returns an output with an invalid shape, or if the
             reduced load does not match the expected stacked shape ``(*num_basis,
             n_components)`` (a symptom of ``func`` returning inconsistent shapes across
-            ranks).
+            ranks), or if ``tol`` is NaN or infinite.
 
     Note:
         ``func`` MUST be rank-independent: for a given quadrature lattice it must return

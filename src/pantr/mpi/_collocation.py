@@ -126,8 +126,8 @@ def _collocate(  # noqa: PLR0913 -- the solve, its nodes and constraints, the da
         Bspline: The global B-spline, control points in ``space.dtype``.
 
     Raises:
-        ValueError: The nodes are inconsistent with the space, or the gathered blocks do not
-            tile the flattened grid.
+        ValueError: The nodes are inconsistent with the space, the gathered blocks do not
+            tile the flattened grid, or ``tol`` is NaN or infinite.
     """
     system, mat_dtype = _tensor_collocation(space, node_arrays, boundary_derivatives)
     resolved = float(resolve_svd_tolerance(mat_dtype, tol))
@@ -204,8 +204,8 @@ def interpolate_bspline_distributed(
     Raises:
         TypeError: If ``distributed_space.global_space`` is not a
             :class:`~pantr.bspline.BsplineSpace`.
-        ValueError: If ``nodes`` is inconsistent with the space, or ``func`` returns an
-            output with an invalid shape.
+        ValueError: If ``nodes`` is inconsistent with the space, ``func`` returns an
+            output with an invalid shape, or ``tol`` is NaN or infinite.
 
     Note:
         Tensor-product (lattice / Greville) nodes are the parallelized path.  All internal
@@ -312,7 +312,8 @@ def fit_bspline_distributed(
             :class:`~pantr.bspline.BsplineSpace`.
         ValueError: If ``nodes`` are scattered (a 2D ``ndarray``) while
             ``values_distributed`` is ``True`` (scattered points have no tensor-product
-            block layout), or if ``nodes`` / ``values`` are inconsistent with the space.
+            block layout), if ``nodes`` / ``values`` are inconsistent with the space, or if
+            ``tol`` is NaN or infinite.
 
     Note:
         Scattered nodes (a 2D ``ndarray`` of shape ``(n_pts, dim)``) are only supported in
