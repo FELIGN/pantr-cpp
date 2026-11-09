@@ -11,6 +11,7 @@ build-backend = "scikit_build_core.build"
 [project]
 name = "pantr-mpi"
 description = "The MPI glue of pantr's pantr.mpi (install with pip install \"pantr[mpi]\")"
+readme = "README.md"
 requires-python = ">=3.12, <3.15"
 license = "MIT"
 # Copies of pantr's LICENSE and of the licences of the nanobind code compiled into _pantr_mpi
