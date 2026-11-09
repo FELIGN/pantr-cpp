@@ -89,6 +89,7 @@ tutorials/index
 :hidden:
 
 guide/concepts
+guide/special-values
 guide/spaces-knots
 guide/cad
 guide/visualization
