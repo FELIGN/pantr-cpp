@@ -6,6 +6,10 @@ release needed a barrier here (its import compiled kernels on a background threa
 concurrent parallel call aborted the process), so what is pinned is that a fresh process whose
 first calls come from several threads at once completes them correctly. It has to be a fresh
 process: a first call is a once-per-process event, so a warm test process cannot observe it.
+
+The one piece of lazily initialised Python state, the root provider's first resolution, has a test
+hook that returns it to "unresolved", so its race is staged in this process instead: the resolving
+thread is held inside its import while another thread makes an explicit choice.
 """
 
 from __future__ import annotations
@@ -13,10 +17,16 @@ from __future__ import annotations
 import subprocess
 import sys
 import textwrap
+import threading
+import types
+from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
 
+from pantr._testing import root_provider_state, set_root_provider_state
+from pantr.bezier import get_root_provider, set_root_provider
 from tests._tree_env import TESTING_INSTALLED, TREE_SRC, subprocess_env
 
 _THREADED_FIRST_CALLS = textwrap.dedent(
@@ -114,3 +124,86 @@ class TestConcurrentFirstCalls:
         origin = Path(result.stdout.splitlines()[0]).resolve()
         if not TESTING_INSTALLED:
             assert origin.is_relative_to(TREE_SRC), f"the child imported pantr from {origin}"
+
+
+_GATED_BERF = textwrap.dedent(
+    """
+    import pantr_test_import_gate as gate
+
+    gate.entered.set()
+    if not gate.proceed.wait(30):
+        raise RuntimeError("the test never released the import")
+    """
+)
+"""A ``pantr_berf`` whose import announces itself and then waits, so a test can hold the thread
+that resolves the root provider inside the import."""
+
+
+@pytest.fixture
+def gated_berf(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[types.SimpleNamespace]:
+    """Make ``pantr_berf`` importable but held at the gate, with the provider unresolved.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The fixture.
+        tmp_path (Path): The directory the gated module is written to.
+
+    Yields:
+        types.SimpleNamespace: ``entered`` (set when an import has reached the gate) and
+        ``proceed`` (set it to let the import finish).
+    """
+    gate = types.SimpleNamespace(entered=threading.Event(), proceed=threading.Event())
+    gate_module = types.ModuleType("pantr_test_import_gate")
+    gate_module.__dict__.update(vars(gate))
+    monkeypatch.setitem(sys.modules, "pantr_test_import_gate", gate_module)
+    (tmp_path / "pantr_berf.py").write_text(_GATED_BERF, encoding="utf-8")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.delitem(sys.modules, "pantr_berf", raising=False)
+    monkeypatch.delenv("PANTR_ROOT_PROVIDER", raising=False)
+    saved = root_provider_state()
+    set_root_provider_state(None)
+    yield gate
+    gate.proceed.set()  # a resolver is never left blocked
+    set_root_provider_state(saved)
+    sys.modules.pop("pantr_berf", None)  # the gated module must not outlive the test
+
+
+class TestRootProviderFirstResolution:
+    """The first ``get_root_provider`` races with an explicit ``set_root_provider``."""
+
+    def test_a_choice_made_while_the_first_call_resolves_is_kept(
+        self, gated_berf: types.SimpleNamespace
+    ) -> None:
+        """The thread resolving the default does not overwrite a choice made during its import.
+
+        Resolving may import ``pantr_berf``, which takes time, and ``set_root_provider`` from
+        another thread can land meanwhile; the explicit choice must win, as the code comment
+        states. The resolver is held inside the import, the other thread chooses ``builtin``
+        (which resolution would not have returned: with ``pantr_berf`` importable the default is
+        ``berf``), and the resolver is then released.
+
+        Bug caught: a first call that stores its resolved default unconditionally after the
+        import, so a provider the user set explicitly is silently replaced by the default.
+        """
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            try:
+                first = pool.submit(get_root_provider)
+                assert gated_berf.entered.wait(30), "the first call never reached the import"
+                set_root_provider("builtin")
+                gated_berf.proceed.set()
+                assert first.result(timeout=30) == "builtin"
+            finally:
+                gated_berf.proceed.set()
+        assert root_provider_state() == "builtin"
+        assert get_root_provider() == "builtin"
+
+    def test_without_a_competing_choice_the_resolved_default_is_stored(
+        self, gated_berf: types.SimpleNamespace
+    ) -> None:
+        """The same held import with no choice made meanwhile resolves to ``berf`` and keeps it.
+
+        Control for the test above: it shows the gated import does resolve to ``berf``, so the
+        ``builtin`` there can only come from the explicit choice.
+        """
+        gated_berf.proceed.set()
+        assert get_root_provider() == "berf"
+        assert root_provider_state() == "berf"
