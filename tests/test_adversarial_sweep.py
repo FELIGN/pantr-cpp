@@ -77,6 +77,23 @@ cases now decline the input, and the probe asserts that refusal with ``must_reje
 """
 
 
+def _sanitizer_expected() -> bool:
+    """Say whether this run is meant to be sanitized.
+
+    It is when the extension under test carries AddressSanitizer's instrumentation (it calls the
+    runtime's ``__asan_report`` functions, which no ordinary build does) or the runtime is
+    preloaded into the test process, as the CI job does. Neither is read from the sweep, whose
+    report is what is checked against it.
+
+    Returns:
+        bool: ``True`` when the extension is instrumented or the ASan runtime is preloaded.
+    """
+    from pantr._ext import ext  # noqa: PLC0415
+
+    instrumented = b"__asan_report" in pathlib.Path(ext.__file__).read_bytes()
+    return instrumented or "libasan" in os.environ.get("LD_PRELOAD", "")
+
+
 def _run_sweep(journal: pathlib.Path) -> subprocess.CompletedProcess[str]:
     """Run the smoke profile in a child process.
 
@@ -112,6 +129,25 @@ def test_smoke_sweep_finds_nothing_new(tmp_path: pathlib.Path) -> None:
         f"the sweep did not complete (exit {result.returncode}):\n"
         f"{result.stdout[-2000:]}\n{result.stderr[-4000:]}"
     )
+
+    # The canary. A clean verdict is worth something only if an out-of-range access in a kernel
+    # would have been seen, and the sweep reports whether the sanitizer's runtime is in its
+    # process: the report must be there, and where this run is meant to be sanitized it must say
+    # the runtime is loaded. (The old canary's two deliberately out-of-range kernels are gone with
+    # the Python kernels; CI separately checks that the extension is instrumented.)
+    reports = [
+        line
+        for line in result.stderr.splitlines()
+        if line.startswith("[sweep]") and "AddressSanitizer" in line
+    ]
+    assert len(reports) == 1, (
+        f"the sweep did not report its sanitizer state:\n{result.stderr[:2000]}"
+    )
+    if _sanitizer_expected():
+        assert "AddressSanitizer is loaded" in reports[0], (
+            "this run is meant to be sanitized, but the sweep says otherwise (a clean result "
+            f"would be blind to out-of-range access): {reports[0]}"
+        )
 
     records = [json.loads(line) for line in journal.read_text(encoding="utf-8").splitlines()]
     assert len(records) >= _MIN_CASES, f"only {len(records)} cases ran, expected >= {_MIN_CASES}"
