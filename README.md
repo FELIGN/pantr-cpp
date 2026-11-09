@@ -44,6 +44,11 @@ pip install pantr
 Requires Python 3.12–3.14. The serial core depends only on NumPy and SciPy;
 the wheel carries the compiled extension.
 
+Wheels exist for Linux x86_64 and aarch64 (glibc 2.28 or later, `manylinux_2_28`), macOS 14 or later
+on arm64 (Apple silicon) and Windows on x86_64 (amd64), one `cp312-abi3` wheel per platform for every
+supported Python. On any other platform (musllinux, Intel macOS, 32-bit or arm64 Windows) pip builds
+from the sdist, which needs the toolchain and network access described below.
+
 To install the latest development version from source:
 
 ```bash

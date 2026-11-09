@@ -9,6 +9,11 @@ extension in the wheel, and the serial core depends only on NumPy and SciPy:
 pip install pantr
 ```
 
+Wheels exist for Linux x86_64 and aarch64 (glibc 2.28 or later, `manylinux_2_28`), macOS 14 or later
+on arm64 (Apple silicon) and Windows on x86_64 (amd64), one `cp312-abi3` wheel per platform for every
+supported Python. On any other platform (musllinux, Intel macOS, 32-bit or arm64 Windows) pip builds
+from the sdist, which needs the toolchain and network access described next.
+
 A source build (`pip install .`, or pip building the sdist) needs a C++20 compiler, CMake 3.28 or
 later and git: at configure time CMake clones five header-only dependencies, each pinned to a
 commit (Eigen, Spectra, Kokkos mdspan, Boost.Multiprecision and Boost.Config; see
