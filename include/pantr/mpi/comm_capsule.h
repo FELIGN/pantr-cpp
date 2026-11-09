@@ -15,8 +15,9 @@
  *
  * Calling rules: a collective is called by every rank of the communicator, in the same order, from
  * the thread that initialized MPI (pantr requires `MPI_THREAD_FUNNELED`, design §2.8). A Python
- * extension calls the table with the GIL held; an MPI-backed implementation does not touch Python
- * objects except in `release`, which is called with the GIL held.
+ * extension calls the collectives with the GIL released, as mpi4py does in a blocking collective,
+ * so other Python threads run while a rank waits; an implementation must therefore touch no Python
+ * object in any function but `release`, which is called with the GIL held.
  *
  * Shapes cross as three `int64_t` per block, `(ndim, extent0, extent1)`, with `ndim` 1 or 2 and the
  * unused extent 0. Data are C-contiguous, row-major.

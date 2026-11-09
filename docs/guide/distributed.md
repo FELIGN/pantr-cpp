@@ -246,6 +246,15 @@ partition = from_dolfinx(mesh, n_cells)  # absent cells -> -1
 ds = DistributedSpace(space, partition, mesh.comm)
 ```
 
+### Distributed calls from several Python threads
+
+pantr's collectives release the GIL while a rank waits for the others, as mpi4py's do, so other
+Python threads keep running. Two threads that each make distributed calls can then be inside MPI at
+the same time, which `MPI_THREAD_SERIALIZED` forbids: initialize MPI at `MPI_THREAD_MULTIPLE` for
+that (with mpi4py, set `mpi4py.rc.thread_level = "multiple"` before importing `mpi4py.MPI`). One
+thread making distributed calls needs only `MPI_THREAD_FUNNELED`, from the thread that initialized
+MPI.
+
 ## Testing distributed code
 
 The distributed objects are duck-typed on the communicator (only `rank` / `size` /

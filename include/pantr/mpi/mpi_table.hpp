@@ -9,7 +9,9 @@
 /// `parallel_for`, so it needs `MPI_THREAD_FUNNELED` and no more (design §2.8). `make_mpi_table`
 /// refuses an MPI initialized below that level, and each collective refuses a call from another
 /// thread than the one that initialized MPI unless MPI was initialized at `MPI_THREAD_SERIALIZED`
-/// or above.
+/// or above. The Python bindings call a collective with the GIL released, so two Python threads can
+/// be inside MPI at once: concurrent distributed calls from several threads need
+/// `MPI_THREAD_MULTIPLE`, since `MPI_THREAD_SERIALIZED` only promises calls that do not overlap.
 ///
 /// An MPI error code becomes `PANTR_MPI_ERR_RUNTIME` with `MPI_Error_string`'s text (under the
 /// default error handler, `MPI_ERRORS_ARE_FATAL`, MPI aborts first). An `allreduce_sum` over
