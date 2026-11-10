@@ -833,6 +833,21 @@ TEST_CASE_TEMPLATE("minimize_degree: nothing to reduce gives a copy, and tol <= 
   CHECK(pb::minimize_degree<T>(elevated_line, std::nullopt).degree(0) == 1);
 }
 
+TEST_CASE("minimize_degree: a NaN or infinite tol is refused") {
+  // Infinity would accept every reduction (a degree-0 curve) and NaN none. Bug caught: the
+  // refusal living only in the Python wrapper.
+  const std::vector<double> line = {0.0, 1.0 / 3.0, 2.0 / 3.0, 1.0};
+  const pb::Bezier<double> curve = make_bezier<double>(line, {4, 1});
+  const double inf = std::numeric_limits<double>::infinity();
+  CHECK_THROWS_WITH_AS(static_cast<void>(pb::minimize_degree<double>(curve, inf)),
+                       "tol must be finite, got inf", pantr::value_error);
+  CHECK_THROWS_WITH_AS(static_cast<void>(pb::minimize_degree<double>(curve, -inf)),
+                       "tol must be finite, got -inf", pantr::value_error);
+  CHECK_THROWS_WITH_AS(static_cast<void>(pb::minimize_degree<double>(
+                           curve, std::numeric_limits<double>::quiet_NaN())),
+                       "tol must be finite, got nan", pantr::value_error);
+}
+
 TEST_CASE("minimize_degree: past degree 61 the binomial envelope is refused, at 61 it is not") {
   // Bug caught: the exact-integer binomial kernel wrapping silently past 61, so a degree-62 curve
   // is "reduced" with corrupted coefficients. tol = 0 keeps the degree and does no arithmetic, so
