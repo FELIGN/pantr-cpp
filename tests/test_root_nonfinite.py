@@ -77,9 +77,13 @@ def test_bspline_find_roots_refuses_non_finite_control_points(
     A NaN gave no roots, even in the spans it does not touch, and an infinity the misleading
     "vanishes identically".
     """
-    knots = np.array([0.0, 0.0, 0.0, 0.25, 0.5, 0.75, 1.0, 1.0, 1.0], dtype=dtype)
+    knots: npt.NDArray[np.floating[Any]] = np.array(
+        [0.0, 0.0, 0.0, 0.25, 0.5, 0.75, 1.0, 1.0, 1.0], dtype=dtype
+    )
     space = BsplineSpace([BsplineSpace1D(knots, 2)])
-    cp = np.array([[-1.0], [1.0], [-1.0], [1.0], [-1.0], [1.0]], dtype=dtype)
+    cp: npt.NDArray[np.floating[Any]] = np.array(
+        [[-1.0], [1.0], [-1.0], [1.0], [-1.0], [1.0]], dtype=dtype
+    )
     assert len(find_bspline_roots(Bspline(space, cp))) == 5  # control: five sign changes
     cp[where, 0] = bad
     with pytest.raises(ValueError, match="coefficients must be finite"):
