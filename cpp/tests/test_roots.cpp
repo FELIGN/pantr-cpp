@@ -1130,7 +1130,8 @@ TEST_CASE_TEMPLATE("roots newton cap: an exhausted hybrid returns its bracket an
   //     [0.1, 0.9]), p(2/3) < 0 so the bracket is [2/3, 1] and the midpoint is 5/6;
   //   * 1 iteration of solve_on_interval from the midpoint x = 1/2: p(1/2) = -9/20 < 0, bracket
   //     [1/2, 1], midpoint 3/4;
-  //   * the default cap of 64 reaches the root 4/5, converged.
+  //   * the default cap (max_safeguarded_iter, and 64 for solve_on_interval) reaches the root 4/5,
+  //     converged.
   // Bug caught: the cap returning NaN, the last iterate, or the root without ever bracketing it;
   // an off-by-one in the loop count; a capped result reported as converged.
   const Truth tr = make_truth({{rat(4, 5), 1}, {rat(-1), 1}});

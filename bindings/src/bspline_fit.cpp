@@ -219,9 +219,10 @@ double l2_build_ops(const bspline::BsplineSpace<T>& space, const std::vector<lon
   const std::size_t n = (std::min)(space.dim(), n_quad.size());
   for (std::size_t d = 0; d < n; ++d) {
     const bspline::BsplineSpace1D<T>& s = space.spaces()[d];
+    // The domain has at least two breakpoints, its ends.
     const std::size_t breaks = s.unique_knots_and_multiplicity(true).first.size();
-    const double points = static_cast<double>((std::max)(n_quad[d], 0LL)) *
-                          static_cast<double>(breaks > 0 ? breaks - 1 : 0);
+    const double points =
+        static_cast<double>((std::max)(n_quad[d], 0LL)) * static_cast<double>(breaks - 1);
     const double order = static_cast<double>(s.degree()) + 1.0;
     const auto basis = static_cast<double>(s.num_basis());
     ops += points * order * order + basis * basis;

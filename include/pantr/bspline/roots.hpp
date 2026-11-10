@@ -1371,10 +1371,10 @@ inline std::vector<double> merge_certified(const Bspline<double>& numerator,
 ///
 /// Raises:
 ///     value_error: `b` is not univariate and scalar valued, has degree zero, is rational with a
-///         non-positive (or NaN) weight, `tol` is not positive and finite, a control point or
-///         weight is NaN or infinite (the Bézier roots' message), the budget is negative, the
-///         spline is identically zero, it vanishes identically on a knot interval, or the basis
-///         derivative recurrence met a zero divisor while merging.
+///         non-positive (or NaN) weight, `tol` is not positive and finite, a control point is
+///         NaN or infinite or a weight infinite (the Bézier roots' message), the budget is
+///         negative, the spline is identically zero, it vanishes identically on a knot interval, or
+///         the basis derivative recurrence met a zero divisor while merging.
 template <StorageFloat T>
 [[nodiscard]] BsplineRootSet find_roots(const Bspline<T>& b,
                                         std::optional<double> tol = std::nullopt,

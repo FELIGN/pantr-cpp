@@ -21,8 +21,8 @@
 //                 float64 only; a float32 input is refused after the same checks, for the same
 //                 reason.
 //
-// None of these functions releases the GIL: each is short beside the cost of releasing it (design
-// §2.8, `gil_release_min_ops`).
+// None of these functions releases the GIL: none is gated by `gil_release_min_ops` yet (design
+// §2.8), so a large input holds it for the length of the call.
 #include "interface.hpp"
 
 #include "pantr/bspline/bspline.hpp"

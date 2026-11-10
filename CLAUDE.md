@@ -173,7 +173,8 @@ own CI cannot see breakage there.
 
 **Layer 2 — Bindings** (`bindings/src/*.cpp`, the private `pantr._pantr` submodules):
 - Flat nanobind functions over already-normalized arguments, one per dtype; most release the GIL
-  around work large enough to reach the pool (`ReleaseIfParallel`, `bindings/src/arrays.hpp`).
+  around a call whose estimated work reaches `gil_release_min_ops` (`ReleaseIfLong`,
+  `bindings/src/arrays.hpp`).
 
 **Layer 3 — The C++ library** (`include/pantr`, header-only, `pantr::pantr`):
 - Validates its inputs once, with the messages the suite matches; `detail` kernels behind it

@@ -46,7 +46,7 @@ enum class Family : int {
 }
 
 /// Operations one point of a family's 1D tabulation costs, as its kernel estimates it (the
-/// parallel decision, which the Python binding also reads to release the GIL only then).
+/// parallel decision; the Python binding also reads it to decide whether to release the GIL).
 ///
 /// Args:
 ///     family (Family): The basis family.

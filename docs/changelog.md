@@ -68,8 +68,9 @@
 - **`pantr.bspline.find_roots` with `tol=nan` or `tol=inf`** raises `ValueError` ("tol must be
   positive and finite"); the previous release returned no roots for NaN, and for `inf` raised that
   the spline vanishes identically.
-- **`pantr.bspline.find_roots` of a spline with a NaN or infinite control point or weight**
-  raises `ValueError` ("coefficients must be finite", as for the Bézier roots). The previous
+- **`pantr.bspline.find_roots` of a spline with a NaN or infinite control point, or an infinite
+  weight,** raises `ValueError` ("coefficients must be finite", as for the Bézier roots; a NaN
+  weight is refused first as a weight that is not strictly positive, as before). The previous
   release returned no roots for a NaN, even for the spans the NaN does not touch, and for an
   infinite control point raised that the spline vanishes identically.
 - **A raw `BVH` whose internal node has a `node_cell` below `-1`** raises `ValueError`; the
@@ -317,7 +318,8 @@
   `reduce_degree`, `degree_reduction_error` and `minimize_degree`, and the compiled parts of
   `fit_bezier`, `interpolate_bezier`, `fit_bspline`, `interpolate_bspline`, `l2_project_bspline`
   and `quasi_interpolate_bspline`, as the evaluations and tabulations already did. A call is long
-  when its estimated work is about one switch interval (`sys.getswitchinterval()`) or more, or
+  when its estimated work is about the default switch interval (`sys.getswitchinterval()`) or
+  more, or
   when a degree reduction first builds an exact operator; whether it uses the thread pool does not
   decide it. A short call keeps the GIL because, while another Python thread is busy, releasing it
   delays the caller by about a switch interval.

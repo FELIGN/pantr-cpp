@@ -188,12 +188,11 @@ def find_monotone_root(
         ValueError: If any Bezier has ``dim != 1`` or ``rank != 1``, a NaN or
             infinite coefficient, or ``tol`` is not positive and finite. In batch
             mode, also raised if degrees are not uniform.
-        RuntimeError: If the Newton/bisection iteration reaches its cap (64
-            iterations) before the bracket narrows to ``tol``; its midpoint can then
-            be far from the root. A root where the derivative also vanishes, or a
-            ``tol`` finer than the polynomial's evaluation resolves there (more
-            often in ``float32``), causes it. In batch mode the first such row is
-            named.
+        RuntimeError: If the Newton/bisection iteration reaches its cap (102
+            iterations, enough for any ``tol`` from ``2**-50`` up) before the
+            bracket narrows to ``tol``; its midpoint can then be far from the root.
+            A ``tol`` finer than that, or than the spacing of doubles at the root,
+            causes it. In batch mode the first such row is named.
     """
     from pantr.bezier._bezier import Bezier as BezierCls  # noqa: PLC0415
 

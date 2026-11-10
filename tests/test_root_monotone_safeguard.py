@@ -103,8 +103,8 @@ def test_float64_triple_roots_converge_within_the_cap() -> None:
     """``(t - k/d)^3`` converges at the strict ``float64`` tol for every ``k/d`` with ``d <= 16``.
 
     The bisection safeguard halves the bracket at least every two iterations, so a cap of
-    ``2 (ceil(log2(1 / tol)) + 1)`` iterations reaches ``tol``; the shared cap of 64 raised on 34 of
-    these (``(t - 5/8)^3`` among them). Oracle: analytic. The Bernstein coefficients of
+    ``2 (ceil(log2(1 / tol)) + 1)`` iterations reaches ``tol``; the shared cap of 64 raised on some
+    of these (``(t - 5/8)^3`` among them). Oracle: analytic. The Bernstein coefficients of
     ``(t - r)^3`` are ``(-r)^(3 - i) (1 - r)^i``. Each of de Casteljau's 3 levels forms convex
     combinations, two roundings each, so to first order the evaluation errs by at most
     ``2 * 3 * u * max|b|``; the evaluated sign change is then within the cube root of that of

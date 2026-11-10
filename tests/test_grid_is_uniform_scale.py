@@ -51,7 +51,7 @@ def test_an_axis_whose_spacings_overflow_is_not_uniform() -> None:
 @pytest.mark.parametrize(
     "breakpoints",
     [np.array([-1e308, -5e307, 0.0, 1e308]), np.array([-1.7e308, 0.0, 1e308, 1.7e308])],
-    ids=["finite-spread", "overflowing-spread"],
+    ids=["finite-spread", "wider-span"],
 )
 def test_an_axis_whose_tolerance_overflows_is_not_uniform(breakpoints: np.ndarray) -> None:
     """A span beyond the double range makes the tolerance infinite: it grades nothing.
