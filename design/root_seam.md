@@ -32,7 +32,8 @@ rational function's where the weights are positive, the library's convention).
 
 ## The Builtin provider
 
-pantr's own provider is the previous release's algorithms, ported operation by operation:
+pantr's own provider is the previous release's algorithms, ported operation by operation except
+for the monotone solver (`find_monotone_root`), whose safeguarded solve is new (below):
 Yuksel's monotone decomposition below degree 6 or past a coefficient range of `1e8`, Bezier
 clipping otherwise, and the derivative-aware merge of clipping's candidates. Its roots are the
 previous release's on both dtypes where the previous release's coefficients were of order one
@@ -56,14 +57,16 @@ nothing under- or overflows.
   written at a higher degree, at some roots), a tolerance below the spacing of doubles at its
   root, and a value floor small enough that no interval reads as flat first: at the floor the
   Python layer passes, no input is known to reach it. `gap_unlocalized` is never produced.
-- The two Newton/bisection hybrids have an iteration cap (64), and reaching it is a completeness
-  gap. The monotone solver (`find_monotone_root`) bisects where Newton fails: when the step leaves
-  the bracket, when the derivative is zero or not finite, and when the iteration just made, itself
-  not a bisection, failed to halve the bracket. The bracket then at least halves every two
-  iterations, so the cap alone reaches a width of `2^-32` whatever Newton does; it is reached only
-  for a finer `param_tol` (the strict `float64` one is `2^-50`) where Newton's progress is slow, as
-  at a root where the derivative also vanishes. The bracket's midpoint can then be far from the
-  root, so the solver raises (`state_error`) instead of returning it.
+- The two Newton/bisection hybrids have an iteration cap, and reaching it is a completeness gap.
+  The monotone solver (`find_monotone_root`) bisects where Newton fails: when the step leaves the
+  bracket, when the derivative is zero or not finite, and when the iteration just made, itself not
+  a bisection, failed to halve the bracket. The bracket then at least halves every two iterations,
+  so its cap, `max_safeguarded_iter` = `2 (ceil(log2(1 / tol)) + 1)` at the strict `float64`
+  tolerance `2^-50`, that is 102 for both dtypes (the bracket is a pair of doubles), reaches any
+  `param_tol` from `2^-50` up whatever Newton does. It is reached only for a finer `param_tol`, at
+  the latest one below the spacing of doubles at the root; the bracket's midpoint can then be far from the root, so the solver raises
+  (`state_error`) instead of returning it. The walk's hybrid keeps the previous release's cap of
+  64, an admitted bound: it has no halving guarantee.
 - `find_roots`' interval walk (Yuksel's, per monotone interval) keeps the previous release's hybrid
   without the bisection safeguard: its guard against reporting a root twice at a critical point
   relies on where that hybrid ends near a multiple root, and the safeguarded steps end elsewhere

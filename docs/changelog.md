@@ -1412,12 +1412,13 @@
   such a Bézier was reduced as far as it went (to degree 0 for a curve). Inherited from the
   previous release.
 - **`pantr.bezier.find_monotone_root` raises `RuntimeError` instead of returning a point far
-  from the root**, and `find_roots` warns where its own solve reaches that cap. Their Newton/bisection solve stops after 64
-  iterations, and when a Newton sequence approaches the root from one side the far end of its
-  bracket never moves: the midpoint it returned could be far from the root, silently (about
-  `2/3` for `(t - 1/3)^3`; for `float32` coefficients, where rounding stalls the Newton step,
-  also for simple roots such as that of `(t - 5/8)(t + 1)^3`). `find_monotone_root` now raises,
-  naming the bracket (and in batch mode the row); `find_roots` reports the bracket as a part of
+  from the root**, and `find_roots` warns where its own solve reaches that cap. Their
+  Newton/bisection solve stops after a fixed number of iterations, and when a Newton sequence
+  approaches the root from one side the far end of its bracket never moves: the midpoint it
+  returned could be far from the root, silently (about `2/3` for `(t - 1/3)^3`; for `float32`
+  coefficients, where rounding stalls the Newton step, also for simple roots such as that of
+  `(t - 5/8)(t + 1)^3`). `find_monotone_root` now raises where it reaches its cap, naming the
+  bracket (and in batch mode the row); `find_roots` reports the bracket as a part of
   `[0, 1]` it did not resolve, with the `RuntimeWarning` it gives for Bézier clipping's depth cap.
   A `tol` below the spacing of doubles at the root reaches the cap too, and raises there, where
   the previous release's value was as close as doubles allow. Inherited from the previous release.
@@ -1427,8 +1428,12 @@
   takes the Newton step from the bracket's end with the smaller value, keeps each Newton point at
   least `tol / 2` inside the bracket, and returns a point where the polynomial evaluates to an
   exact zero; at a simple root it moves within `tol` of the previous release's root wherever that
-  release converged. A multiple root can reach the cap and raise in `float64`: `(t - 1/3)^3`, as
-  before, and some the previous release's solve did converge on, such as `(t - 5/8)^3`.
+  release converged. Since the bracket at least halves every two iterations, its cap is 102
+  iterations, `2 (ceil(log2(1 / tol)) + 1)` at the strict `float64` tolerance, for both dtypes
+  (the previous release stopped after 64), which reaches any `tol` from that one up, on multiple
+  roots too: `(t - 1/3)^3` and `(t - 5/8)^3` converge in `float64`, and a `float32` polynomial at a
+  `tol` finer than its own strict tolerance converges. A `tol` below the spacing of doubles at the
+  root still reaches the cap and raises.
   `find_roots` keeps the previous solve, so a `float32` stall there warns as described above.
 - **A knot vector whose first domain knot repeats past `knots[degree]`** (a non-clamped vector
   with `knots[degree] == knots[degree + 1]`, or a first knot repeated more than `degree + 1`

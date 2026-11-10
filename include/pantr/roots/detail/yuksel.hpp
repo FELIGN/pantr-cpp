@@ -5,14 +5,16 @@
 /// Yuksel, *High-Performance Polynomial Root Finding for Graphics* (2022): the roots of the
 /// derivative split `[0, 1]` into intervals on which the polynomial is monotone; an interval whose
 /// end values change sign holds exactly one root. The derivative chain is built bottom-up to
-/// degree 1 and walked back up. Ported from the Numba kernels operation by operation (see
-/// `scalar.hpp` for the precision rules). None of these functions validates anything.
+/// degree 1 and walked back up. The walk and `solve_on_interval` are ported from the Numba kernels
+/// operation by operation (see `scalar.hpp` for the precision rules); `solve_monotone`'s
+/// `safeguarded_newton` is a new algorithm. None of these functions validates anything.
 #pragma once
 
 #include "pantr/config.hpp"
 #include "pantr/core/errors.hpp"
 #include "pantr/core/scalar.hpp"
 #include "pantr/roots/detail/scalar.hpp"
+#include "pantr/tolerance.hpp"
 
 #include <algorithm>
 #include <array>
@@ -26,16 +28,35 @@
 
 namespace pantr::roots::detail {
 
-/// Iteration cap of the Newton/bisection hybrid. Each iteration keeps a bracket that holds the
-/// root, so the cap ends a loop whose bracket has not narrowed to the tolerance: a tolerance below
-/// the spacing of doubles never does. The bisection safeguard of `safeguarded_newton` halves the
-/// bracket at least every two iterations, so 64 iterations reach a width of `2^-32` whatever the
-/// Newton steps do; a finer tolerance (the strict float64 one is `2^-50`) also relies on Newton's
-/// progress, which a multiple root of the polynomial (as in `(t - 1/3)^3`) slows to a linear rate
-/// and its evaluation's rounding blurs. The bracket's midpoint can then be far from the root, so
-/// the solvers say that the cap was reached (`Bracketed::converged`) and their callers report it.
-/// An admitted bound, kept from the previous release.
+/// Iteration cap of `solve_on_interval`, the previous release's hybrid. Each iteration keeps a
+/// bracket that holds the root, so the cap ends a loop whose bracket has not narrowed to the
+/// tolerance; that hybrid has no halving guarantee, so no cap follows from a rate, and a one-sided
+/// Newton sequence reaches it. Its callers report the cap as a gap. An admitted bound, kept from
+/// the previous release.
 inline constexpr int max_newton_iter = 64;
+
+/// The smallest `k` with `2^-k <= x`, for `0 < x <= 1`.
+[[nodiscard]] constexpr int ceil_log2_inverse(double x) noexcept {
+  int k = 0;
+  for (double p = 1.0; p > x; p *= 0.5) {
+    ++k;
+  }
+  return k;
+}
+
+/// Iteration cap of `safeguarded_newton` (`solve_monotone`): `2 (ceil(log2(1 / tol)) + 1)` at the
+/// strict `double` tolerance `2^-50`, so 102. Derived: a Newton iteration that fails to halve the
+/// bracket makes the next one a bisection, so every two iterations at least halve the bracket, up
+/// to the rounding of the midpoint (at most `2^-54` per bisection on `[0, 1]`, the ends being
+/// doubles). From width 1, `K` halvings leave at most `2^-K + 2^-52`, so `K = ceil(log2(1 / tol))
+/// + 1` reach any `tol` in `[2^-50, 2)`, the `+ 1` absorbing the accumulated rounding, and the cap
+/// is `2 K`. The bracket is held in `double` whatever the coefficient type, so the cap is the
+/// `double` one for `float` coefficients too: their strict tolerance `2^-21` needs only 44
+/// iterations, but a caller's finer `tol` needs more, and a cap of 44 would refuse it where the
+/// bracket still halves. A `tol` below `2^-50` may reach the cap, which the callers report; one
+/// below the spacing of doubles at the root always does.
+inline constexpr int max_safeguarded_iter =
+    2 * (ceil_log2_inverse(tolerance::get_strict<double>()) + 1);
 
 /// The result of the Newton/bisection hybrid.
 ///
@@ -77,17 +98,20 @@ template <class S>
 /// Each iteration evaluates at `x`, replaces the end of `[lo, hi]` on the same side of the sign
 /// change, and stops once the bracket is no wider than `tol`, or at once, with the bracket `[x,
 /// x]`, where the evaluation is an exact zero (the sign change is then at `x` itself). The next
-/// point is the Newton step from whichever end has the smaller `|f|`, with two safeguards, the ones
-/// of `rtsafe` (Press et al., Numerical Recipes, section 9.4) and Brent's zeroin (Brent,
-/// Algorithms for Minimization without Derivatives, 1973, chapter 4), recalled and not re-read:
+/// point is the Newton step from whichever end has the smaller `|f|`, with two safeguards adapted
+/// from Brent's zeroin (Brent, *Algorithms for Minimization without Derivatives*, 1973, chapter
+/// 4; netlib `go/zeroin.f`), which tests the step where this tests the bracket's width:
 ///
-/// - **Bisection**: the midpoint is taken
-///   when the Newton step leaves the bracket or the derivative there is zero or not finite, and
-///   when the iteration just made, not itself a bisection, failed to halve the bracket. A Newton
-///   sequence that stays on one side of the root, which a `float32` evaluation's rounding produces
-///   near a simple root and a multiple root produces in any precision, otherwise never moves the
-///   far end. With it the bracket at least halves every two iterations.
-/// - **Minimum step**: a Newton point is kept at least `tol / 2` inside both ends. Once
+/// - **Bisection**: the midpoint is taken when the Newton step leaves the bracket or the derivative
+///   there is zero or not finite, and when the iteration just made, not itself a bisection, failed
+///   to halve the bracket. A Newton sequence that stays on one side of the root, which a `float32`
+///   evaluation's rounding produces near a simple root and a multiple root produces in any
+///   precision, otherwise never moves the far end. With it the bracket at least halves every two
+///   iterations (zeroin rejects an interpolation step longer than half the step before last,
+///   `p >= |0.5 s q|`).
+/// - **Minimum step**: a Newton point is kept at least `tol / 2` inside both ends (zeroin's
+///   `0.5 * tol` term of `tol1`, without its `2 eps |b|` term: a `tol` below the spacing of doubles
+///   then reaches the cap, loudly, instead of being enlarged silently). Once
 ///   that end is within `tol / 2` of the sign change, the point is then on its far side and
 ///   the bracket closes to `tol`, where a Newton step of its own length would leave the far end
 ///   in place.
@@ -99,7 +123,7 @@ template <class S>
 ///     x (double): First point, inside the bracket.
 ///     f_lo (double): The polynomial's value at `lo`, whose sign marks the left side.
 ///     tol (double): Bracket width at which to stop.
-///     max_iter (int): Iteration cap (see `max_newton_iter`).
+///     max_iter (int): Iteration cap (see `max_safeguarded_iter`).
 ///
 /// Returns:
 ///     Bracketed: The midpoint of the final bracket, and whether it narrowed to `tol` within
@@ -156,7 +180,7 @@ template <StorageFloat S>
 ///
 /// Starts from false position clamped to `[0.1, 0.9]`, then narrows the bracket by
 /// `safeguarded_newton`. Stops when the bracket is no wider than `param_tol`, or after `max_iter`
-/// iterations (see `max_newton_iter`).
+/// iterations (see `max_safeguarded_iter`).
 ///
 /// Args:
 ///     coeff (std::span<const S>): Coefficients.
@@ -171,7 +195,7 @@ template <StorageFloat S>
 ///     Inputs are assumed to be correct (no validation performed).
 template <StorageFloat S>
 [[nodiscard]] Bracketed solve_monotone(std::span<const S> coeff, double param_tol,
-                                       int max_iter = max_newton_iter) {
+                                       int max_iter = max_safeguarded_iter) {
   double lo = 0.0;
   double hi = 1.0;
   // The end values stay in `S`, and so does the false-position quotient: Numba's `float()` of a

@@ -249,8 +249,8 @@ inline void check_coeffs(std::size_t n_coeff) {
   }
 }
 
-/// Refuse a monotone solve that reached the hybrid's iteration cap (see `max_newton_iter`): its
-/// bracket's midpoint can be far from the root, so no value is returned.
+/// Refuse a monotone solve that reached its iteration cap (`max_safeguarded_iter`): its bracket's
+/// midpoint can be far from the root, so no value is returned.
 ///
 /// Raises:
 ///     state_error: `r` did not converge.
@@ -259,8 +259,8 @@ inline void check_monotone_converged(const Bracketed& r) {
     throw state_error(
         "find_monotone_root: the Newton/bisection iteration did not narrow the "
         "bracket to tol within " +
-        std::to_string(max_newton_iter) + " iterations (the root is in [" + py_repr(r.lo) + ", " +
-        py_repr(r.hi) +
+        std::to_string(max_safeguarded_iter) + " iterations (the root is in [" + py_repr(r.lo) +
+        ", " + py_repr(r.hi) +
         "]); a root where the derivative also vanishes, or a tol finer than the "
         "polynomial's evaluation resolves there, causes this");
   }

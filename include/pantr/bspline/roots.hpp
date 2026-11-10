@@ -122,9 +122,7 @@ namespace detail {
 ///
 /// A zero of multiplicity greater than one is approached linearly, and the observed ratio is one
 /// half (seen on an exact double zero), so exhausting the 53-bit significand takes
-/// `log2(1 / eps) = 53` insertions. Rounded up to 64, matching `max_newton_iter` in
-/// `pantr/roots/detail/yuksel.hpp`, which bounds the same bisection-grade phase for the Bernstein
-/// solver.
+/// `log2(1 / eps) = 52` insertions. Rounded up to 64, an admitted margin.
 inline constexpr int insertions_base = 64;
 
 /// Extra insertions granted per unit of degree.

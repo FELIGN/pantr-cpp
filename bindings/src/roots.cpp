@@ -172,7 +172,7 @@ void def_internals(nb::module_& m) {
       [](const Vec<T>& c, double tol, int max_iter) {
         return rd::solve_monotone<T>(nonempty(c), tol, max_iter).x;
       },
-      nb::arg("coeff"), nb::arg("param_tol"), nb::arg("max_iter") = rd::max_newton_iter);
+      nb::arg("coeff"), nb::arg("param_tol"), nb::arg("max_iter") = rd::max_safeguarded_iter);
   m.def(
       "yuksel_roots",
       [](const Vec<T>& c, double tol) {

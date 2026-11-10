@@ -153,7 +153,7 @@ find_roots_detailed_f32 = ext.roots.find_roots_detailed_f32
 root_provider_capabilities = ext.roots.capabilities
 
 ROOTS_MAX_NEWTON_ITER: Final[int] = _t.ROOTS_MAX_NEWTON_ITER
-"""Iteration cap of the Newton/bisection hybrid."""
+"""Iteration cap of the previous release's Newton/bisection hybrid (the Yuksel walk's solve)."""
 
 ROOTS_CLIP_MAX_DEPTH: Final[int] = _t.ROOTS_CLIP_MAX_DEPTH
 """Depth at which Bezier clipping gives an interval up (and reports a gap)."""

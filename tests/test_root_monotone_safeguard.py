@@ -58,6 +58,21 @@ def test_float32_monotone_roots_converge_to_the_float64_root(seed: int) -> None:
         assert abs(root - reference) <= tol32 + tol64, c32.tolist()
 
 
+def test_float32_converges_at_a_tol_finer_than_its_own() -> None:
+    """A ``float32`` solve at ``tol=1e-13`` converges: the bracket is held in ``float64``.
+
+    The cap sized for ``float32``'s own strict tolerance (or the previous 64) refused some of these.
+    Oracle as above, at the ``float32`` strict tolerance: the rounding of the ``float32``
+    evaluation, not ``tol``, decides how far the sign change is from the ``float64`` one.
+    """
+    tol32 = get_strict(np.float32)
+    tol64 = get_strict(np.float64)
+    for c32 in _random_monotone_float32(np.random.default_rng(3), 1000):
+        root = find_monotone_root(Bezier(c32), tol=1e-13)
+        reference = find_monotone_root(Bezier(c32.astype(np.float64)))
+        assert abs(root - reference) <= tol32 + tol64, c32.tolist()
+
+
 def test_float32_batch_converges() -> None:
     """The batch form takes the same steps: one degree, no row raises."""
     rng = np.random.default_rng(2)
@@ -82,3 +97,26 @@ def test_overflowing_coefficient_spread_still_converges(coeffs: list[float], roo
     """
     got = find_monotone_root(Bezier(np.array(coeffs)))
     assert abs(got - root) <= 2.0 * get_strict(np.float64)
+
+
+def test_float64_triple_roots_converge_within_the_cap() -> None:
+    """``(t - k/d)^3`` converges at the strict ``float64`` tol for every ``k/d`` with ``d <= 16``.
+
+    The bisection safeguard halves the bracket at least every two iterations, so a cap of
+    ``2 (ceil(log2(1 / tol)) + 1)`` iterations reaches ``tol``; the shared cap of 64 raised on 34 of
+    these (``(t - 5/8)^3`` among them). Oracle: analytic. The Bernstein coefficients of
+    ``(t - r)^3`` are ``(-r)^(3 - i) (1 - r)^i``. Each of de Casteljau's 3 levels forms convex
+    combinations, two roundings each, so to first order the evaluation errs by at most
+    ``2 * 3 * u * max|b|``; the evaluated sign change is then within the cube root of that of
+    ``r``. The bar doubles the error (an admitted margin for the second-order terms) and adds
+    ``tol``.
+    """
+    tol = float(get_strict(np.float64))
+    u = float(np.finfo(np.float64).eps) / 2
+    for d in range(2, 17):
+        for k in range(1, d):
+            r = k / d
+            coeffs = np.array([(-r) ** (3 - i) * (1 - r) ** i for i in range(4)])
+            x = float(find_monotone_root(Bezier(coeffs)))
+            band = (2 * 6 * u * np.abs(coeffs).max()) ** (1 / 3) + tol
+            assert abs(x - r) <= band, (k, d, x)

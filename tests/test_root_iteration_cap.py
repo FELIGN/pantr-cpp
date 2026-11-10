@@ -1,12 +1,13 @@
 """The Newton/bisection hybrid's iteration cap is reported, never passed off as a root.
 
 The hybrid keeps a bracket around the root and stops when it is narrower than ``tol``. When it
-cannot (a root where the derivative also vanishes, whose Newton steps converge linearly, or a
-``tol`` below the spacing of doubles at the root) the cap of 64 iterations is reached with a
-bracket wider than ``tol``, whose midpoint can be far from the root. The previous release
-returned that midpoint as the root. A ``float32`` evaluation whose rounding kept every Newton step
-on one side of a simple root reached the cap too; the monotone solver's bisection safeguard now
-makes it converge (``find_roots``' Yuksel walk keeps the previous hybrid, so it still warns).
+cannot (a ``tol`` below the spacing of doubles at the root, or, for ``find_roots``' hybrid, a
+root where the derivative also vanishes, whose Newton steps converge linearly) its iteration cap
+is reached with a bracket wider than ``tol``, whose midpoint can be far from the root. The
+previous release returned that midpoint as the root. A ``float32`` evaluation whose rounding
+kept every Newton step on one side of a simple root reached the cap too; the monotone solver's
+bisection safeguard now makes it converge (``find_roots``' Yuksel walk keeps the previous hybrid,
+so it still warns).
 
 Oracle: encoded truth, the polynomials written as products of linear factors with rational roots
 and converted to Bernstein form in exact arithmetic.
@@ -51,14 +52,17 @@ def _bernstein(roots: list[Fraction]) -> npt.NDArray[np.float64]:
 
 
 _TRIPLE = _bernstein([Fraction(1, 3)] * 3)
-"""``(t - 1/3)^3``: the previous release's monotone solver returned about ``2/3``."""
+"""``(t - 1/3)^3``: the previous release's monotone solver returned about ``2/3``; it now converges
+at the strict tolerance, and a ``tol`` of ``2^-60`` cannot bracket it."""
 
 _SIMPLE = _bernstein([Fraction(3, 20)] + [Fraction(-1)] * 3)
 """``(t - 3/20)(t + 1)^3``: a simple root, which a ``tol`` of ``1e-20`` cannot bracket."""
 
 
 @pytest.mark.parametrize(
-    ("coeffs", "tol"), [(_TRIPLE, None), (_SIMPLE, 1e-20)], ids=["triple", "tol-below-spacing"]
+    ("coeffs", "tol"),
+    [(_TRIPLE, 2.0**-60), (_SIMPLE, 1e-20)],
+    ids=["triple-tol-below-spacing", "tol-below-spacing"],
 )
 def test_monotone_root_raises_at_the_cap(
     coeffs: npt.NDArray[np.floating], tol: float | None
@@ -67,9 +71,10 @@ def test_monotone_root_raises_at_the_cap(
     with pytest.raises(RuntimeError, match="did not narrow the bracket to tol"):
         find_monotone_root(Bezier(coeffs), tol=tol)
     with pytest.raises(RuntimeError, match="row 1: find_monotone_root"):
-        # Row 0 is a line written at the same degree, whose root 1/2 is an exact zero of its
-        # evaluation: it converges whatever the tol.
-        line = np.linspace(-1.0, 1.0, coeffs.size).astype(coeffs.dtype)
+        # Row 0 is a line written at the same degree with integer coefficients symmetric about
+        # zero, so false position starts at its root 1/2, an exact zero of its evaluation: it
+        # converges whatever the tol. (`linspace(-1, 1, 4)` is not symmetric to the bit.)
+        line = (2.0 * np.arange(coeffs.size) - (coeffs.size - 1)).astype(coeffs.dtype)
         find_monotone_root([Bezier(line), Bezier(coeffs)], tol=tol)
 
 

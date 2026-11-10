@@ -1164,24 +1164,66 @@ TEST_CASE_TEMPLATE("roots newton cap: an exhausted hybrid returns its bracket an
   CHECK(std::fabs(i.x - 0.8) <= rho);
 }
 
-TEST_CASE("roots newton cap: a triple root exhausts the cap in float64, loudly") {
-  // p(t) = (t - 1/3)^3: Newton approaches the triple root with ratio 2/3, and the bisection
-  // safeguard halves the bracket only every second iteration, so 64 iterations do not reach the
-  // strict float64 tolerance (2^-50). Bug caught: the cap returning the bracket's midpoint as the
-  // root, silently (the previous release returned about 0.667 for this polynomial).
+TEST_CASE("roots newton cap: the safeguarded cap is the derived one") {
+  // 2 (ceil(log2(1 / tol)) + 1) at the strict double tolerance 2^-50, for every coefficient type
+  // (the bracket is held in double). Bug caught: a cap that does not follow its derivation (the
+  // shared 64 was below 102).
+  CHECK(prd::max_safeguarded_iter == 102);
+}
+
+TEST_CASE("roots newton safeguard: a float32 polynomial converges at a tol finer than its own") {
+  // The bracket halves every two iterations whatever the float32 evaluation's rounding does to the
+  // Newton steps, so a tol of 2^-40 is reached within the cap. Bug caught: a cap sized from the
+  // float32 strict tolerance (44 iterations), which refused it. p(t) = (t - 3/10)(t + 1).
+  using T = float;
+  const Truth tr = make_truth({{rat(3, 10), 1}, {rat(-1), 1}});
+  const std::vector<T> c = stored<T>(tr);
+  const double fine = std::ldexp(1.0, -40);
+  const prd::Bracketed r = prd::solve_monotone<T>(std::span<const T>(c), fine);
+  CHECK(r.converged);
+  CHECK(r.hi - r.lo <= fine);
+}
+
+TEST_CASE("roots newton safeguard: triple roots converge at the strict float64 tolerance") {
+  // Newton approaches a triple root with ratio 2/3, and the bisection safeguard halves the bracket
+  // at least every second iteration, so the derived cap reaches 2^-50 whatever Newton does. Bug
+  // caught: a cap of 64, which raised on these (the previous release converged on (t - 5/8)^3).
+  // Oracle: analytic; the bracket holds the sign change of the evaluated polynomial, which near a
+  // triple root lies within the root's rounding band, so only the bracket is asserted.
+  using T = double;
+  const double strict = 4.0 * static_cast<double>(std::numeric_limits<T>::epsilon());
+  for (const auto& [num, den] : {std::pair{1, 3}, std::pair{5, 8}}) {
+    CAPTURE(num);
+    const Truth tr = make_truth({{rat(num, den), 3}});
+    const std::vector<T> c = stored<T>(tr);
+    const prd::Bracketed r = prd::solve_monotone<T>(std::span<const T>(c), strict);
+    CHECK(r.converged);
+    CHECK(r.hi - r.lo <= strict);
+    CHECK_NOTHROW(
+        static_cast<void>(pr::Builtin{}.find_monotone_root<T>(std::span<const T>(c), strict)));
+  }
+}
+
+TEST_CASE("roots newton cap: a tol below the double spacing exhausts the cap, loudly") {
+  // p(t) = (t - 1/3)^3 at tol 2^-60: the bracket stalls at the spacing of doubles near 1/3 (about
+  // 2^-54), so it never narrows to tol and the cap is reached. Bug caught: the cap returning the
+  // bracket's midpoint as the root, silently (the previous release returned about 0.667 for this
+  // polynomial at the strict tolerance).
   using T = double;
   const Truth tr = make_truth({{rat(1, 3), 3}});
   const std::vector<T> c = stored<T>(tr);
-  const double strict = 4.0 * static_cast<double>(std::numeric_limits<T>::epsilon());
-  const prd::Bracketed r = prd::solve_monotone<T>(std::span<const T>(c), strict);
+  const double fine = std::ldexp(1.0, -60);
+  const prd::Bracketed r = prd::solve_monotone<T>(std::span<const T>(c), fine);
   CHECK_FALSE(r.converged);
-  CHECK(r.lo <= 1.0 / 3.0);
-  CHECK(r.hi >= 1.0 / 3.0);
+  CHECK(r.hi - r.lo > fine);
+  CHECK(r.lo <= r.x);
+  CHECK(r.x <= r.hi);
   CHECK_THROWS_WITH_AS(
-      static_cast<void>(pr::Builtin{}.find_monotone_root<T>(std::span<const T>(c), strict)),
-      doctest::Contains("did not narrow the bracket to tol"), pantr::state_error);
+      static_cast<void>(pr::Builtin{}.find_monotone_root<T>(std::span<const T>(c), fine)),
+      doctest::Contains("did not narrow the bracket to tol within 102 iterations"),
+      pantr::state_error);
   CHECK_THROWS_WITH_AS(static_cast<void>(pr::Builtin{}.find_monotone_roots_batch<T>(
-                           pantr::mdview<const T, 2>(c.data(), 1, c.size()), strict)),
+                           pantr::mdview<const T, 2>(c.data(), 1, c.size()), fine)),
                        doctest::Contains("row 0: find_monotone_root"), pantr::state_error);
 }
 
