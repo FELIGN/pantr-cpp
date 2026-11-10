@@ -432,7 +432,7 @@ template <StorageFloat T>
 /// = r`, and the two knots of a pair differ by at most `r_a + r_b`. The normalization's own
 /// roundings (three per knot, and one for a flip) stay below the `8 u` of the strict `tol` (`4
 /// eps`). Without the resolution term two patches sharing an edge exactly were not matched once one
-/// knot vector sat 64 or more away from the origin relative to its span. The price is the
+/// knot vector sat 16 or more away from the origin relative to its span. The price is the
 /// resolution itself: a normalized knot moved by less than `r_a + r_b` (each `8 eps` times its
 /// patch's knot magnitude over its knot span) is not seen.
 ///
@@ -602,7 +602,10 @@ template <StorageFloat T>
 /// The relative tolerance of a pair is `tol` when given, else the larger of its two patches'
 /// entries of `relative_per_patch`. The homogeneous `detect_interfaces` passes the strict preset of
 /// `T` for every patch; the binding passes each patch's own dtype's when it has converted patches
-/// of different dtypes to one.
+/// of different dtypes to one. Each patch's knot resolution is scaled by the same entry over the
+/// strict preset of `T` (a power of two, so exactly): a `float32` patch converted to `double`
+/// carries the resolution of its `float32` knots, which the converted space's tolerance, sized for
+/// `double`, understates.
 ///
 /// Args:
 ///     patches (std::span<const bspline::Bspline<T>>): The patches.
@@ -632,8 +635,12 @@ template <StorageFloat T>
 
   std::vector<PatchData<T>> data;
   data.reserve(n_patches);
-  for (const auto& p : patches) {
-    data.push_back(make_patch_data(p));
+  const auto strict = static_cast<double>(tolerance::get_strict<T>());
+  for (std::size_t p = 0; p < n_patches; ++p) {
+    data.push_back(make_patch_data(patches[p]));
+    for (double& r : data.back().knot_resolution) {
+      r *= relative_per_patch[p] / strict;
+    }
   }
 
   // The first pair, in the order the loop below visits them, whose second patch cannot be compared

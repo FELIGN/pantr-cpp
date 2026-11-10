@@ -1477,10 +1477,11 @@
   relative to its span** find the interfaces there are. The knots are compared after mapping
   each vector onto `[0, 1]`, whose rounding grows with that ratio, against the bare relative
   tolerance: two patches sharing an edge exactly, one knot vector shifted by a few tens of its
-  span or more (from `16` for knots at thirds of `[0, 1]`), had no interface. Each matched direction now adds its space's knot tolerance over its knot span (`8
-  eps` times the knot magnitude over the span), which is also the comparison's resolution: a
-  normalized knot moved by less than the sum of the two patches' is not seen. Inherited from the
-  previous release.
+  span or more (from `16` for knots at thirds of `[0, 1]`), had no interface. Each matched
+  direction now adds its space's knot tolerance over its knot span (`8 eps` times the knot
+  magnitude over the span, `eps` of the patch's own dtype, also in a list of both dtypes), which is
+  also the comparison's resolution: a normalized knot moved by less than the sum of the two
+  patches' is not seen. Inherited from the previous release.
 - **`partition_graph` bisects graphs above 512 vertices along their Fiedler vector.** It asked
   ARPACK for the two smallest eigenpairs of the Laplacian and took the second, which is the
   Fiedler pair only if the first is the constant vector's (eigenvalue 0). The start vector is

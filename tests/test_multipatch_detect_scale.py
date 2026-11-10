@@ -5,7 +5,7 @@ Two inherited misses, each a silent "no interface":
 - **Knot offset.** The knots are compared after mapping each vector affinely onto ``[0, 1]``, whose
   rounding grows with the knots' magnitude over their span (about ``eps * offset / span``). The
   parametric tolerance was the bare relative one (``4 eps``), so two patches sharing an edge
-  exactly, one of whose knot vectors is shifted by 64 or more, were not matched.
+  exactly, one of whose knot vectors is shifted by 16 or more, were not matched.
 - **Corner distance overflow.** The corner pre-filter measured distances as ``sqrt(sum d^2)``,
   whose square overflows to ``inf`` once a coordinate difference reaches about ``1.3e154``, so a
   face pair whose corners agree only to rounding was not matched on patches that large.
@@ -49,10 +49,32 @@ def _patch(
     return Bspline(BsplineSpace([su, sv]), cp)
 
 
-@pytest.mark.parametrize("offset", [64.0, 1e3, 1e6, 1e9, 1e12], ids=str)
+@pytest.mark.parametrize("offset", [16.0, 64.0, 1e3, 1e6, 1e9, 1e12], ids=str)
 def test_shared_edge_is_found_with_offset_knots(offset: float) -> None:
     """The second patch's knots shifted by ``offset`` describe the same interface."""
     found = detect_interfaces([_patch(0.0, _KV), _patch(1.0, _KV + offset)])
+    assert len(found) == 1
+
+
+def _float32(patch: Bspline) -> Bspline:
+    """Get ``patch`` with its knots and control points in ``float32``."""
+    spaces = [BsplineSpace1D(s.knots.astype(np.float32), s.degree) for s in patch.space.spaces]
+    return Bspline(BsplineSpace(spaces), patch.control_points.astype(np.float32))
+
+
+@pytest.mark.parametrize("offset", [16.0, 64.0, 1e3], ids=str)
+@pytest.mark.parametrize("mixed", [True, False], ids=["f32-f64", "f32-f32"])
+def test_float32_offset_knots_match_a_neighbor_of_either_dtype(offset: float, mixed: bool) -> None:
+    """A ``float32`` patch's knot resolution is its own dtype's, also beside a ``float64`` one.
+
+    Its offset knots are rounded to ``float32``, so their normalisation errs by ``float32``'s
+    epsilon times the offset over the span. A list of both dtypes is compared in ``float64``, and
+    took the resolution from the converted (``float64``) space, so it missed these.
+    """
+    left = _patch(0.0, _KV)
+    found = detect_interfaces(
+        [left if mixed else _float32(left), _float32(_patch(1.0, _KV + offset))]
+    )
     assert len(found) == 1
 
 
