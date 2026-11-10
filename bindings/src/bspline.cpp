@@ -80,7 +80,7 @@ void tabulate_1d(const bspline::BsplineSpace1D<T>& s, const In1D<P>& pts, OutND<
                  OutFirst1D& first, bool validate) {
   const std::span<const P> p = as_span(pts);
   const mdview<P, 2> o(out.data(), out.shape(0), out.shape(1));
-  const ReleaseIfParallel gil(p.size(), bspline::detail::basis_ops_per_point(s.degree()));
+  const ReleaseIfLong gil(p.size(), bspline::detail::basis_ops_per_point(s.degree()));
   s.template tabulate_basis<P>(p, o, std::span<std::int64_t>(first.data(), first.shape(0)),
                                validate);
 }
@@ -100,8 +100,7 @@ void tabulate_derivs_1d(const bspline::BsplineSpace1D<T>& s, const In1D<P>& pts,
   const mdview<P, 3> o(out->data(), out->shape(0), out->shape(1), out->shape(2));
   bool complete = false;
   {
-    const ReleaseIfParallel gil(p.size(),
-                                bspline::detail::derivs_ops_per_point(s.degree(), n_deriv));
+    const ReleaseIfLong gil(p.size(), bspline::detail::derivs_ops_per_point(s.degree(), n_deriv));
     complete = s.template tabulate_basis_derivatives<P>(
         p, n_deriv, o, std::span<std::int64_t>(first->data(), first->shape(0)), validate);
   }
@@ -225,7 +224,7 @@ template <class T, class P>
 void tabulate_points(const bspline::BsplineSpace<T>& s, const In2D<P>& pts, OutND<T, 2>& out,
                      OutFirst2D& first) {
   const mdview<const P, 2> p(pts.data(), pts.shape(0), pts.shape(1));
-  const ReleaseIfParallel gil(pts.shape(0), tensor_ops_per_point(s));
+  const ReleaseIfLong gil(pts.shape(0), tensor_ops_per_point(s));
   s.template tabulate_basis<P>(
       p, mdview<T, 2>(out.data(), out.shape(0), out.shape(1)),
       mdview<std::int64_t, 2>(first.data(), first.shape(0), first.shape(1)));
@@ -234,7 +233,7 @@ void tabulate_points(const bspline::BsplineSpace<T>& s, const In2D<P>& pts, OutN
 template <class T, class L>
 void tabulate_lattice(const bspline::BsplineSpace<T>& s, const quad::PointsLattice<L>& lattice,
                       OutND<L, 2>& out, OutFirst2D& first) {
-  const ReleaseIfParallel gil(lattice.num_points(), tensor_ops_per_point(s));
+  const ReleaseIfLong gil(lattice.num_points(), tensor_ops_per_point(s));
   s.template tabulate_basis<L>(
       lattice, mdview<L, 2>(out.data(), out.shape(0), out.shape(1)),
       mdview<std::int64_t, 2>(first.data(), first.shape(0), first.shape(1)));

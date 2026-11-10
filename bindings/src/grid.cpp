@@ -150,7 +150,7 @@ void def_common(nb::class_<G>& cls) {
           [](const G& g, const F64Mat& points) {
             const std::size_t n = points.shape(0);
             NdArray<std::int64_t> out = [&] {
-              const ReleaseIfParallel release(n, g.locate_work().ops_per_item);
+              const ReleaseIfLong release(n, g.locate_work().ops_per_item);
               return g.locate_many(span_of(points), n);
             }();
             return to_numpy(std::move(out));  // with the GIL: it builds a Python object
@@ -163,7 +163,7 @@ void def_common(nb::class_<G>& cls) {
           [](const G& g) {
             auto bounds = [&] {
               // Only the hierarchical grid collects in parallel; the tensor-product one is serial.
-              std::optional<ReleaseIfParallel> release;
+              std::optional<ReleaseIfLong> release;
               if constexpr (std::is_same_v<G, HierarchicalGrid>) {
                 release.emplace(static_cast<std::size_t>(g.num_cells()),
                                 g.collect_work().ops_per_item);
@@ -541,7 +541,7 @@ void def_generic(nb::module_& m) {
           // Without a selection a hierarchical grid collects every cell's corners in parallel;
           // a selection is read cell by cell, serially, and a tensor-product grid collects
           // serially.
-          std::optional<ReleaseIfParallel> release;
+          std::optional<ReleaseIfLong> release;
           if constexpr (std::is_same_v<G, HierarchicalGrid>) {
             if (!selected.has_value()) {
               release.emplace(static_cast<std::size_t>(g.num_cells()),
@@ -571,7 +571,7 @@ void def_generic(nb::module_& m) {
         }
         // A hierarchical grid has no block backend, so its partition always collects the cell
         // corners in parallel; a tensor-product grid collects serially.
-        std::optional<ReleaseIfParallel> release;
+        std::optional<ReleaseIfLong> release;
         if constexpr (std::is_same_v<G, HierarchicalGrid>) {
           release.emplace(static_cast<std::size_t>(g.num_cells()), g.collect_work().ops_per_item);
         }

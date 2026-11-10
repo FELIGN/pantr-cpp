@@ -1,11 +1,10 @@
 // Arrays across the binding: handing a C++ result to NumPy without a copy, exposing a read-only
-// view of a shared immutable representation, and releasing the GIL only around work that reaches
-// the pool.
+// view of a shared immutable representation, and releasing the GIL only around a call long enough
+// for the release to pay (`gil_release_min_ops`), whether or not it reaches the pool.
 #pragma once
 
 #include "pantr/core/errors.hpp"
 #include "pantr/core/ndarray.hpp"
-#include "pantr/parallel/work_model.hpp"
 
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
@@ -146,15 +145,38 @@ inline std::vector<int> saturate_degrees(const std::vector<long long>& degrees) 
   return out;
 }
 
-/// Release the GIL for the lifetime of the guard when `n` items of `ops` work each will run in
-/// parallel (and only then: releasing costs a lock round trip a serial call need not pay).
-class ReleaseIfParallel {
+/// Operations below which a call keeps the GIL. An admitted heuristic, not a measurement.
+///
+/// Releasing the GIL while another Python thread is CPU-bound costs the caller about one switch
+/// interval `S` (`sys.getswitchinterval()`, 5 ms by default) before it gets the GIL back: the
+/// other thread keeps it until its interval expires. Holding it for a call of length `T` delays the
+/// other threads by `T`, and CPython already lets any thread run for `S` before it must yield, so a
+/// call shorter than `S` delays them no more than ordinary bytecode does. Releasing pays only when
+/// `T` is about `S` or longer. At `work_model.hpp`'s convention of one operation per cycle, about
+/// one per nanosecond, the default `S` is about 5 * 10^6 operations; 2^22 is that order, rounded
+/// down because every call site's estimate is a lower bound on its work. It follows the default
+/// `S` only: a program that changes `sys.setswitchinterval` moves the break-even, and this
+/// constant does not follow it. It is not `parallel::parallel_min_ops`, which models a pool's
+/// wake-and-join, a cost more than an order of magnitude smaller. Never tuned on a particular
+/// machine.
+inline constexpr double gil_release_min_ops = 4194304.0;
+
+/// Release the GIL for the lifetime of the guard when the call's work is at least
+/// `gil_release_min_ops` (and only then: see that constant). The estimate need only bound the work
+/// from below: an underestimate keeps the GIL over a call that could have released it, which is
+/// safe, since no pantr call touches a Python object while it computes, and only costs the other
+/// Python threads a wait.
+class ReleaseIfLong {
  public:
-  ReleaseIfParallel(std::size_t n, double ops) {
-    if (parallel::worth_parallel(n, parallel::WorkEstimate{ops})) {
+  /// Release when `total_ops`, the call's estimated operations, reaches `gil_release_min_ops`.
+  explicit ReleaseIfLong(double total_ops) {
+    if (total_ops >= gil_release_min_ops) {
       release_.emplace();
     }
   }
+
+  /// Release when `n` items of `ops` operations each reach `gil_release_min_ops`.
+  ReleaseIfLong(std::size_t n, double ops) : ReleaseIfLong(static_cast<double>(n) * ops) {}
 
  private:
   std::optional<nb::gil_scoped_release> release_;

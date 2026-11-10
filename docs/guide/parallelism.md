@@ -17,7 +17,7 @@ The following operations are parallelized over **evaluation points**:
 | Bezier evaluation and derivatives | C++ (`include/pantr/bezier/`), on pantr's own thread pool | points |
 | Bezier split / slice / restrict | C++ (`include/pantr/bezier/`), on pantr's own thread pool | control point columns |
 | Bezier extraction (`to_beziers`) | C++ (`include/pantr/bspline/to_beziers.hpp`), on pantr's own thread pool | element/slab pairs |
-| Batch applies of `SpanwiseElementExtraction` (`apply_many`, `apply_transpose_many`, `apply_MT_K_M_many`, `apply_M_K_MT_many`) | C++ (`include/pantr/bspline/spanwise_extraction.hpp`), on pantr's own thread pool, GIL released when the batch is large enough to run in parallel | cells |
+| Batch applies of `SpanwiseElementExtraction` (`apply_many`, `apply_transpose_many`, `apply_MT_K_M_many`, `apply_M_K_MT_many`) | C++ (`include/pantr/bspline/spanwise_extraction.hpp`), on pantr's own thread pool, GIL released when the batch is long enough | cells |
 
 By default, every CPU the process may run on is used: the pool sizes itself from the process's
 CPU affinity mask (on Linux), not from the machine's core count, so a process restricted with
@@ -110,13 +110,13 @@ with concurrent.futures.ThreadPoolExecutor(8) as pool:
     results = [f.result() for f in futures]
 ```
 
-This works for the operations that **release the GIL** while they compute, which most parallel
-entry points do once the call is large enough to use the pool (whatever the thread setting): the
-basis tabulations, B-spline and Bézier evaluation, the spanwise extraction's batch applies, point
-location and the grids' batch queries. Several Python threads then run PaNTr kernels
-concurrently. A call too small to use the pool keeps the GIL, since its work is shorter than the
-cost of releasing it, and so do a few parallel operations (Bézier split, slice and restrict among
-them), which serialize the calling threads.
+This works for the operations that **release the GIL** while they compute, which the long ones
+do whatever the thread setting: the basis tabulations, B-spline and Bézier evaluation, Bézier
+split, slice, restrict, multiply and composition, the degree reductions, the fits, projections
+and quasi-interpolants, the spanwise extraction's batch applies, point location and the grids'
+batch queries. Several Python threads then run PaNTr kernels concurrently. A short call keeps
+the GIL: when another Python thread is busy, handing the GIL over and getting it back costs the
+caller about one switch interval (`sys.getswitchinterval()`), more than such a call computes.
 
 ### Pattern 3: Balanced -- user and PaNTr share cores
 

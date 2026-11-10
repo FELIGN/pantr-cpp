@@ -300,11 +300,15 @@
   `NUMBA_NUM_THREADS=3` it is cut to 1 where it kept 3. The policy reads the variable each time it
   applies, while the capacity is read once: a value set after the first parallel call disables the
   policy without lowering the capacity.
-- **Long compiled calls release the GIL**, so other Python threads run while they compute:
-  `Bezier.split`, `slice`, `restrict` and `multiply` when their nets are large enough to use the
-  thread pool, and `Bezier.compose`, `reduce_degree`, `degree_reduction_error`, `minimize_degree`,
+- **Long compiled calls release the GIL, and short ones keep it**, so other Python threads run
+  while a long call computes: `Bezier.split`, `slice`, `restrict`, `multiply`, `compose`,
+  `reduce_degree`, `degree_reduction_error` and `minimize_degree`, and the compiled parts of
   `fit_bezier`, `interpolate_bezier`, `fit_bspline`, `interpolate_bspline`, `l2_project_bspline`
-  and `quasi_interpolate_bspline` in their compiled parts.
+  and `quasi_interpolate_bspline`, as the evaluations and tabulations already did. A call is long
+  when its estimated work is about one switch interval (`sys.getswitchinterval()`) or more, or
+  when a degree reduction first builds an exact operator; whether it uses the thread pool does not
+  decide it. A short call keeps the GIL because, while another Python thread is busy, releasing it
+  delays the caller by about a switch interval.
 - **numba and threadpoolctl are no longer dependencies**, and `import pantr` imports neither:
   every Numba kernel is replaced by C++ compiled into pantr's extension, and its thread pool
   replaces Numba's. Nor does the import start a background thread to compile kernels, and the

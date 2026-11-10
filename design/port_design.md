@@ -353,7 +353,12 @@ exhaustion becomes a status the caller receives, never a plausible value:
   particular many-core machine. This replaces `_PARALLEL_MIN_NUM_PTS = 4096` and the serial-twin kernels.
 - One pool and one per-thread setting per **process**, across extension modules: `_pantr` owns them and every other
   pantr module attaches its table at import (DR-20, `design/threading.md`).
-- The GIL is released around any call that reaches the pool, and only then (same work model).
+- The GIL is released around a call whose estimated work reaches `gil_release_min_ops` (2^22 operations,
+  `bindings/src/arrays.hpp`), whether or not it reaches the pool, and only then. Releasing while another Python
+  thread is CPU-bound costs the caller about one switch interval before it gets the GIL back, so it pays only for
+  a call about that long; the constant is that interval at the work model's one operation per cycle, an **admitted
+  heuristic** like the two above. Each site's estimate is a cheap lower bound on its work; a reduction that would
+  first build an exact operator releases whatever its size.
 - MPI: `MPI_THREAD_FUNNELED` is sufficient because collectives are only called by the calling thread, outside
   `parallel_for`; `pantr::mpi` checks `MPI_Query_thread() >= FUNNELED` at entry and says that the caller must be the
   thread that initialised MPI.

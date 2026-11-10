@@ -387,6 +387,27 @@ inline void check_reduction_table_atfork() {
   return detail::reduction_table_entries.size();
 }
 
+namespace detail {
+
+/// Whether `cached_reduction_operator(kind, degree, decrement)` would find its operator in the
+/// process table rather than compute it. False past `reduction_cache_max_degree` (computed on every
+/// call) and for a degree pair that call would refuse, neither of which the table ever holds.
+///
+/// Args:
+///     kind (ReductionKind): Which operator.
+///     degree (long long): The degree.
+///     decrement (long long): The decrement.
+///
+/// Returns:
+///     bool: Whether the table holds the operator.
+[[nodiscard]] inline bool reduction_operator_cached(ReductionKind kind, long long degree,
+                                                    long long decrement) {
+  const std::lock_guard<std::mutex> lock(reduction_table_mutex);
+  return reduction_table_entries.contains({static_cast<int>(kind), degree, decrement});
+}
+
+}  // namespace detail
+
 /// Empty the process table (operators already handed out stay valid).
 inline void reduction_cache_clear() {
   const std::lock_guard<std::mutex> lock(detail::reduction_table_mutex);

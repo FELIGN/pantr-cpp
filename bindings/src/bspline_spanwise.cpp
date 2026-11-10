@@ -226,7 +226,7 @@ void def_spanwise(nb::module_& m, const char* name) {
           "apply_many",
           [](const E& self, const In2D<T>& v, const Cells& cells, Out2D<T>& out,
              std::optional<Scratch2D<T>> scratch) {
-            const ReleaseIfParallel gil(cells.shape(0), self.work_per_cell(ExtractionOp::apply));
+            const ReleaseIfLong gil(cells.shape(0), self.work_per_cell(ExtractionOp::apply));
             self.apply_many(as_view(v), as_view(cells), as_view(out), maybe_view(scratch));
           },
           nb::arg("v"), nb::arg("cells"), nb::arg("out").noconvert(), nb::arg("scratch").none(),
@@ -235,8 +235,8 @@ void def_spanwise(nb::module_& m, const char* name) {
           "apply_transpose_many",
           [](const E& self, const In2D<T>& v, const Cells& cells, Out2D<T>& out,
              std::optional<Scratch2D<T>> scratch) {
-            const ReleaseIfParallel gil(cells.shape(0),
-                                        self.work_per_cell(ExtractionOp::apply_transpose));
+            const ReleaseIfLong gil(cells.shape(0),
+                                    self.work_per_cell(ExtractionOp::apply_transpose));
             self.apply_transpose_many(as_view(v), as_view(cells), as_view(out),
                                       maybe_view(scratch));
           },
@@ -246,7 +246,7 @@ void def_spanwise(nb::module_& m, const char* name) {
           "apply_mt_k_m_many",
           [](const E& self, const In3D<T>& k, const Cells& cells, Out3D<T>& out,
              std::optional<Scratch2D<T>> scratch) {
-            const ReleaseIfParallel gil(cells.shape(0), self.work_per_cell(ExtractionOp::mt_k_m));
+            const ReleaseIfLong gil(cells.shape(0), self.work_per_cell(ExtractionOp::mt_k_m));
             self.apply_mt_k_m_many(as_view(k), as_view(cells), as_view(out), maybe_view(scratch));
           },
           nb::arg("k"), nb::arg("cells"), nb::arg("out").noconvert(), nb::arg("scratch").none(),
@@ -255,7 +255,7 @@ void def_spanwise(nb::module_& m, const char* name) {
           "apply_m_k_mt_many",
           [](const E& self, const In3D<T>& k, const Cells& cells, Out3D<T>& out,
              std::optional<Scratch2D<T>> scratch) {
-            const ReleaseIfParallel gil(cells.shape(0), self.work_per_cell(ExtractionOp::m_k_mt));
+            const ReleaseIfLong gil(cells.shape(0), self.work_per_cell(ExtractionOp::m_k_mt));
             self.apply_m_k_mt_many(as_view(k), as_view(cells), as_view(out), maybe_view(scratch));
           },
           nb::arg("k"), nb::arg("cells"), nb::arg("out").noconvert(), nb::arg("scratch").none(),

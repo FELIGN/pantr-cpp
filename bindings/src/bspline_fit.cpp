@@ -2,12 +2,14 @@
 // projection, Lee-Lyche-Mørken quasi-interpolation). Each callable-based fit is bound in its staged
 // form (design §3.6): a class built before any value is known says what to sample, and the Python
 // wrapper calls the user's function and hands the values back. Reaches Eigen's LU and SVD (the
-// solves' dense paths). The builds and solves run without the GIL: they touch no Python object
-// (the arguments are C++ values or buffers the call keeps alive), and a dense solve can run for
-// seconds; results are converted to NumPy after the guard ends.
+// solves' dense paths). The builds and solves release the GIL when their work warrants it
+// (`ReleaseIfLong`, on the lower bounds below): they touch no Python object (the arguments are C++
+// values or buffers the call keeps alive), and results are converted to NumPy after the guard
+// ends.
 #include "arrays.hpp"
 #include "interface.hpp"
 
+#include "pantr/bspline/detail/basis_kernels.hpp"
 #include "pantr/bspline/fit.hpp"
 #include "pantr/bspline/l2_project.hpp"
 #include "pantr/bspline/quasi_interpolate.hpp"
@@ -103,6 +105,42 @@ std::vector<std::optional<bspline::BoundaryDerivatives>> to_derivs(const Derivs&
   return out;
 }
 
+/// The number of functions of a tensor-product space, as a `double` (for the work estimates).
+template <class T>
+double total_basis(const bspline::BsplineSpace<T>& space) {
+  double n = 1.0;
+  for (const bspline::BsplineSpace1D<T>& s : space.spaces()) {
+    n *= static_cast<double>(s.num_basis());
+  }
+  return n;
+}
+
+/// Work of building a `TensorCollocation`, for the GIL decision only: per direction, each node
+/// fills a dense row of the matrix and tabulates its basis.
+template <class T, class P>
+double collocation_build_ops(const bspline::BsplineSpace<T>& space,
+                             const std::vector<std::span<const P>>& nodes) {
+  double ops = 0.0;
+  const std::size_t n = (std::min)(space.dim(), nodes.size());
+  for (std::size_t d = 0; d < n; ++d) {
+    const bspline::BsplineSpace1D<T>& s = space.spaces()[d];
+    ops += static_cast<double>(nodes[d].size()) *
+           (static_cast<double>(s.num_basis()) + bspline::detail::basis_ops_per_point(s.degree()));
+  }
+  return ops;
+}
+
+/// Work of a `TensorCollocation` solve, for the GIL decision only: each value is read once per
+/// direction, and each direction's dense matrix is scanned once.
+template <class P>
+double collocation_solve_ops(const bspline::TensorCollocation<P>& t, std::size_t n_values) {
+  double ops = static_cast<double>(n_values) * static_cast<double>(t.matrices().size());
+  for (const NdArray<P>& a : t.matrices()) {
+    ops += static_cast<double>(a.size());
+  }
+  return ops;
+}
+
 template <class P>
 void def_tensor_collocation(nb::module_& m, const char* name) {
   using TC = bspline::TensorCollocation<P>;
@@ -115,14 +153,14 @@ void def_tensor_collocation(nb::module_& m, const char* name) {
           "grid_shape", [](const TC& t) { return t.grid_shape(); }, "The node grid's extents.");
   const auto solve = [](const TC& t, const Any<double>& values, std::size_t rank, double tol) {
     NdArray<double> out = [&] {
-      const nb::gil_scoped_release release;
+      const ReleaseIfLong release(collocation_solve_ops(t, values.size()));
       return t.template solve<double>(flat_of(values), rank, tol);
     }();
     return to_numpy(std::move(out));
   };
   const auto solve32 = [](const TC& t, const Any<float>& values, std::size_t rank, double tol) {
     NdArray<float> out = [&] {
-      const nb::gil_scoped_release release;
+      const ReleaseIfLong release(collocation_solve_ops(t, values.size()));
       return t.template solve<float>(flat_of(values), rank, tol);
     }();
     return to_numpy(std::move(out));
@@ -145,7 +183,7 @@ void def_tensor_collocation_factory(nb::module_& m) {
           }
           try {
             // The guard ends before the handler runs, which sets a Python error.
-            const nb::gil_scoped_release release;
+            const ReleaseIfLong release(collocation_build_ops(space, spans));
             return bspline::TensorCollocation<P>(space, spans, to_derivs(derivatives));
           } catch (const std::domain_error&) {
             raise_zero_division();
@@ -161,7 +199,8 @@ void def_fit_scattered(nb::module_& m) {
         [](const bspline::BsplineSpace<T>& space, const Mat<P>& pts, const Mat<C>& values,
            double tol) {
           auto out = [&] {
-            const nb::gil_scoped_release release;
+            // The dense `(n_pts, n_basis)` collocation matrix is filled entry by entry.
+            const ReleaseIfLong release(static_cast<double>(pts.shape(0)) * total_basis(space));
             return bspline::fit_scattered_coefficients<T, P, C>(
                 space, mdview<const P, 2>(pts.data(), pts.shape(0), pts.shape(1)),
                 mdview<const C, 2>(values.data(), values.shape(0), values.shape(1)), tol);
@@ -172,6 +211,32 @@ void def_fit_scattered(nb::module_& m) {
         "The coefficients `(n_0, ..., n_{d-1}, rank)` fitted to values at scattered points.");
 }
 
+/// Work of building an `L2Projection`, for the GIL decision only: per direction, each quadrature
+/// point adds `(p + 1)^2` products into the mass matrix, which is dense (`n_basis^2` entries).
+template <class T>
+double l2_build_ops(const bspline::BsplineSpace<T>& space, const std::vector<long long>& n_quad) {
+  double ops = 0.0;
+  const std::size_t n = (std::min)(space.dim(), n_quad.size());
+  for (std::size_t d = 0; d < n; ++d) {
+    const bspline::BsplineSpace1D<T>& s = space.spaces()[d];
+    const std::size_t breaks = s.unique_knots_and_multiplicity(true).first.size();
+    const double points = static_cast<double>((std::max)(n_quad[d], 0LL)) *
+                          static_cast<double>(breaks > 0 ? breaks - 1 : 0);
+    const double order = static_cast<double>(s.degree()) + 1.0;
+    const auto basis = static_cast<double>(s.num_basis());
+    ops += points * order * order + basis * basis;
+  }
+  return ops;
+}
+
+/// Work of an `L2Projection` load, for the GIL decision only: the first direction's assembly
+/// multiplies every value by the `p_0 + 1` functions nonzero at its node.
+template <class T>
+double l2_project_ops(const bspline::L2Projection<T>& p, std::size_t n_values) {
+  const double order = static_cast<double>(p.space().spaces()[0].degree()) + 1.0;
+  return static_cast<double>(n_values) * order;
+}
+
 template <class T>
 void def_l2(nb::module_& m, const char* name) {
   using L2 = bspline::L2Projection<T>;
@@ -180,7 +245,7 @@ void def_l2(nb::module_& m, const char* name) {
          "__init__",
          [](L2* self, const bspline::BsplineSpace<T>& space, const std::vector<long long>& n_quad,
             bool lobatto, const std::vector<std::pair<bool, bool>>& boundary_interpolation) {
-           const nb::gil_scoped_release release;
+           const ReleaseIfLong release(l2_build_ops(space, n_quad));
            new (self) L2(space, n_quad,
                          lobatto ? bspline::L2Quadrature::gauss_lobatto
                                  : bspline::L2Quadrature::gauss_legendre,
@@ -225,7 +290,7 @@ void def_l2(nb::module_& m, const char* name) {
       spans.push_back(flat_of(t));
     }
     NdArray<double> out = [&] {
-      const nb::gil_scoped_release release;
+      const ReleaseIfLong release(l2_project_ops(p, values.size()));
       return p.template project<double>(flat_of(values), spans, tol);
     }();
     return to_numpy(std::move(out));
@@ -237,7 +302,7 @@ void def_l2(nb::module_& m, const char* name) {
       spans.push_back(flat_of(t));
     }
     NdArray<float> out = [&] {
-      const nb::gil_scoped_release release;
+      const ReleaseIfLong release(l2_project_ops(p, values.size()));
       return p.template project<float>(flat_of(values), spans, tol);
     }();
     return to_numpy(std::move(out));
@@ -252,13 +317,27 @@ template <class T>
 void def_qi(nb::module_& m, const char* name) {
   using QI = bspline::QuasiInterpolation<T>;
   nb::class_<QI>(m, name, "The staged Lee-Lyche-Mørken quasi-interpolant (points, then weights).")
-      .def(nb::init<const bspline::BsplineSpace<T>&>(), nb::call_guard<nb::gil_scoped_release>(),
-           nb::arg("space"))
+      .def(
+          "__init__",
+          [](QI* self, const bspline::BsplineSpace<T>& space) {
+            // Per function, a local collocation block of `(p + 1)^2` entries is tabulated and
+            // inverted.
+            double ops = 0.0;
+            for (const bspline::BsplineSpace1D<T>& s : space.spaces()) {
+              const double order = static_cast<double>(s.degree()) + 1.0;
+              ops += static_cast<double>(s.num_basis()) * order * order;
+            }
+            const ReleaseIfLong release(ops);
+            new (self) QI(space);
+          },
+          nb::arg("space"))
       .def(
           "points",
           [](const QI& q) {
             auto out = [&] {
-              const nb::gil_scoped_release release;
+              // One copy per coordinate of every point.
+              const ReleaseIfLong release(q.num_functions() * q.block(),
+                                          static_cast<double>(q.space().dim()));
               return q.points();
             }();
             return to_numpy(std::move(out));
@@ -268,7 +347,8 @@ void def_qi(nb::module_& m, const char* name) {
           "coefficients",
           [](const QI& q, const Mat<double>& values) {
             NdArray<double> out = [&] {
-              const nb::gil_scoped_release release;
+              // The first direction's contraction reads every value once.
+              const ReleaseIfLong release(static_cast<double>(values.size()));
               return q.coefficients(
                   mdview<const double, 2>(values.data(), values.shape(0), values.shape(1)));
             }();
