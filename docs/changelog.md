@@ -1384,6 +1384,9 @@
   unchanged except as under Fixed.
 
 ### Fixed
+- **The Linux `pantr-mpi` wheels no longer bundle MPICH's `libmpicxx`.** The module uses only the
+  MPI C API and now links `MPI::MPI_C`; CI checks that the wheel vendors no library and carries its
+  licence files.
 - **`Bezier.multiply` of `float32` Béziers of high degree** returns finite control points where
   the product is finite. It formed each coefficient `C(p, i) C(q, j) / C(p + q, i + j)` in
   `float32`, whose intermediate product of binomials overflows from about degree 66 per operand for
