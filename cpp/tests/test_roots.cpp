@@ -1508,3 +1508,37 @@ TEST_CASE("roots batch: degrees 0 and 1 give one column, and empty batches are e
   CHECK(none.counts.empty());
   CHECK(none.completeness.empty());
 }
+
+TEST_CASE("roots clipping: a close pair in one bracket is found at a coarse tol") {
+  // (t - 0.65)(t - 0.653)(t + 2)^4 in Bernstein form, degree 6, so Bezier clipping. At param_tol
+  // 1e-2 the clip narrows the pair to one bracket narrower than param_tol whose midpoint lies
+  // between the roots, where the slope is about zero, so an allowance taken from that slope
+  // refused it and nothing was reported. Each root must have a reported root within param_tol,
+  // the accuracy asked for. Bug caught: the residual allowance built from the derivative at one
+  // point instead of a bound over the bracket.
+  const std::vector<double> c = {
+      6.7912, 5.580266666666667, 3.3353866666666665, 0.26274, -2.49813, -1.75815, 9.83745};
+  const double tol = 1e-2;
+  const double strict = 4.0 * std::numeric_limits<double>::epsilon();
+  const pr::RootSet<double> rs =
+      pr::Builtin{}.find_roots<double>(std::span<const double>(c), {tol, strict});
+  REQUIRE_FALSE(rs.roots.empty());
+  for (const double truth : {0.65, 0.653}) {
+    double nearest = std::numeric_limits<double>::infinity();
+    for (const auto& r : rs.roots) {
+      nearest = (std::min)(nearest, std::abs(r.x - truth));
+    }
+    CAPTURE(truth);
+    CHECK(nearest <= tol);
+  }
+  // And the same bits whatever the coefficients' power-of-two scale.
+  for (const int k : {-600, -64, 64, 600}) {
+    std::vector<double> scaled(c.size());
+    for (std::size_t i = 0; i < c.size(); ++i) {
+      scaled[i] = std::ldexp(c[i], k);
+    }
+    CAPTURE(k);
+    CHECK(root_bits<double>(scaled, tol, strict, false) ==
+          root_bits<double>(c, tol, strict, false));
+  }
+}

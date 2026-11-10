@@ -206,3 +206,50 @@ def test_coarse_tol_keeps_every_simple_root(tol: float, batch: bool) -> None:
     got = _batch_row(c, tol) if batch else find_roots(Bezier(c), tol=tol)
     assert got.shape == (6,)
     np.testing.assert_allclose(got, [float(r) for r in _DEG6_ROOTS], rtol=0.0, atol=tol)
+
+
+_CLOSE_PAIR = np.array(
+    [
+        6.7912,
+        5.580266666666667,
+        3.3353866666666665,
+        0.26274,
+        -2.49813,
+        -1.75815,
+        9.83745,
+    ]
+)
+"""``(t - 0.65)(t - 0.653)(t + 2)^4`` in Bernstein form: a close pair, and the clipping path."""
+
+
+@pytest.mark.parametrize("batch", [False, True])
+def test_coarse_tol_finds_a_close_pair_in_one_bracket(batch: bool) -> None:
+    """At ``tol=1e-2`` the pair 0.65, 0.653 is reported, each root within ``tol`` of a result.
+
+    Clipping narrows the pair to one bracket of width below ``tol``, whose midpoint sits between
+    the roots, where the slope is about zero; an acceptance allowance taken from that slope
+    refused the bracket, and no root was reported. The bar is ``tol``, the parametric accuracy
+    asked for. Bug caught: the allowance built from the derivative at one point of the bracket.
+    """
+    tol = 1e-2
+    got = _batch_row(_CLOSE_PAIR, tol) if batch else find_roots(Bezier(_CLOSE_PAIR), tol=tol)
+    assert got.size >= 1, got
+    for root in (0.65, 0.653):
+        assert np.min(np.abs(got - root)) <= tol, (root, got)
+
+
+def test_power_of_two_scaling_at_a_coarse_tol() -> None:
+    """The close pair scaled by ``2^k``, ``|k| <= 600``, gives the same bits at ``tol=1e-2``.
+
+    Bug caught: an absolute value floor at a coarse explicit ``tol`` (the previous release's
+    ``tol`` floor), which accepts at one scale what it refuses at another.
+    """
+    tol = 1e-2
+    ref = find_roots(Bezier(_CLOSE_PAIR), tol=tol)
+    assert ref.size > 0
+    differing = [
+        k
+        for k in range(-600, 601, 25)
+        if not np.array_equal(find_roots(Bezier(np.ldexp(_CLOSE_PAIR, k)), tol=tol), ref)
+    ]
+    assert differing == [], f"differs at 2^k for k in {differing[:10]}"

@@ -556,15 +556,15 @@
   coefficients all lay below `tol` had no roots; it now has its roots, within `tol` in the
   parameter. The zero tests use a floor of `get_strict(dtype)` times the polynomial's largest
   coefficient, whatever `tol` is, and a root found within `tol` in the parameter is accepted when
-  its residual is within that floor plus the slope times the bracket's width. A root provider
-  (`set_root_provider`) receives the relative `get_strict(dtype)` as `value_tol`. At a coarse
-  explicit `tol` this acceptance is a backward-error bound: the accepted point is a root of
-  coefficients that differ from the input's by the residual, not necessarily within `tol` of a
-  root of the input. Two roots closer than about `tol` that fall in one bracket can both be lost,
-  without a warning, and a point where the polynomial nearly touches zero can be reported as a
-  root. With `tol=1e-2`, a pair of roots a few thousandths apart is lost more often than in the
-  previous release, whose absolute floor of `tol` accepted more; at the default `tol` the same
-  pairs are found.
+  its residual is within that floor plus a bound on the slope over the bracket times the bracket's
+  width. A root provider (`set_root_provider`) receives the relative `get_strict(dtype)` as
+  `value_tol`. At a coarse explicit `tol` this acceptance is a backward-error bound: the accepted
+  point is a root of coefficients that differ from the input's by the residual, not necessarily
+  within `tol` of a root of the input. Two roots closer than about `tol` that fall in one bracket
+  can be reported as one point, and a point where the polynomial nearly touches
+  zero can be reported as a root. With `tol=1e-2`, where the previous release's absolute floor
+  often reported a pair of roots a few thousandths apart as a point more than `tol` from either,
+  such a pair is now found within `tol`.
 - **`fit_bezier` and `interpolate_bezier` with `float16`, `longdouble` or byte-swapped values
   compute in `float64`** (nodes included) and return a `float64` Bézier (also for byte-swapped
   `float32`, which `Bezier` itself would store as native `float32`). `fit_bezier` failed in the previous release's Numba basis kernel

@@ -88,6 +88,24 @@ template <StorageFloat S>
   return scale;
 }
 
+/// The residual a point of `[lo, hi]` may leave behind when the bracket holds a root: `|f'|`
+/// over the bracket times its width, bounded by `n max_i |c_{i+1} - c_i|` of the coefficients
+/// restricted to it (the Bernstein bound `|f'| <= n max |c_{i+1} - c_i| / (hi - lo)`), and at
+/// least `|df| (hi - lo)`. The derivative at one point alone vanishes between two close roots.
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed).
+template <StorageFloat S>
+[[nodiscard]] double bracket_allowance(std::span<const S> coeff, double lo, double hi, double df) {
+  const std::vector<double> local = subdivide<S>(coeff, lo, hi);
+  double steepest = 0.0;
+  for (std::size_t i = 0; i + 1 < local.size(); ++i) {
+    steepest = (std::max)(steepest, std::abs(local[i + 1] - local[i]));
+  }
+  const auto degree = static_cast<double>(local.size() - 1);
+  return (std::max)(std::abs(df) * (hi - lo), degree * steepest);
+}
+
 /// Find root candidates of a Bernstein polynomial by Bezier clipping.
 ///
 /// Every sub-interval is subdivided from the original coefficients (no accumulated subdivision
@@ -159,10 +177,10 @@ template <StorageFloat S>
       }
       const Polished p = newton_polish<S>(root_coeff, mid, lo, hi, param_tol, deriv_floor);
       mid = p.t;
-      // A point within `span` of a simple root leaves up to `|f'| * span` behind, however exactly
-      // it is evaluated: the interval was narrowed to `param_tol`, not to the zero test. Both terms
-      // are values, so the test scales with the coefficients (bspline/roots.hpp's `root_tol`).
-      const double accept = zero_tol + std::abs(p.df) * span;
+      // A point within `span` of a root leaves up to `|f'| * span` behind, however exactly it is
+      // evaluated: the interval was narrowed to `param_tol`, not to the zero test. Both terms are
+      // values, so the test scales with the coefficients (bspline/roots.hpp's `root_tol`).
+      const double accept = zero_tol + bracket_allowance<S>(root_coeff, lo, hi, p.df);
       if (std::abs(p.f) <= accept) {
         if (std::abs(p.df) <= deriv_floor) {
           // f' near zero (a multiple root): bisection on |f|.
@@ -285,9 +303,9 @@ template <StorageFloat S>
     if (new_span <= param_tol) {
       const Polished p = newton_polish<S>(root_coeff, 0.5 * (new_lo + new_hi), new_lo, new_hi,
                                           param_tol, deriv_floor);
-      // As at convergence above: within `new_span` of a simple root the residual is `|f'|` times
-      // it.
-      if (std::abs(p.f) <= zero_tol + std::abs(p.df) * new_span) {
+      // As at convergence above: within `new_span` of a root the residual is at most `|f'|` over
+      // the bracket times it.
+      if (std::abs(p.f) <= zero_tol + bracket_allowance<S>(root_coeff, new_lo, new_hi, p.df)) {
         res.candidates.push_back(p.t);
       }
       continue;
