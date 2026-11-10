@@ -64,3 +64,23 @@ def test_bspline_find_roots_refuses_a_non_finite_tol(tol: float) -> None:
     with pytest.raises(ValueError, match="tol must be positive and finite"):
         find_bspline_roots(spline, tol=tol)
     np.testing.assert_allclose(find_bspline_roots(spline), [0.5], rtol=0.0, atol=1e-12)
+
+
+@pytest.mark.parametrize("dtype", [np.float64, np.float32])
+@pytest.mark.parametrize("bad", [np.nan, np.inf, -np.inf], ids=str)
+@pytest.mark.parametrize("where", [1, 5])
+def test_bspline_find_roots_refuses_non_finite_control_points(
+    where: int, bad: float, dtype: type
+) -> None:
+    """A NaN or infinite control point raises, as for the Bezier roots.
+
+    A NaN gave no roots, even in the spans it does not touch, and an infinity the misleading
+    "vanishes identically".
+    """
+    knots = np.array([0.0, 0.0, 0.0, 0.25, 0.5, 0.75, 1.0, 1.0, 1.0], dtype=dtype)
+    space = BsplineSpace([BsplineSpace1D(knots, 2)])
+    cp = np.array([[-1.0], [1.0], [-1.0], [1.0], [-1.0], [1.0]], dtype=dtype)
+    assert len(find_bspline_roots(Bspline(space, cp))) == 5  # control: five sign changes
+    cp[where, 0] = bad
+    with pytest.raises(ValueError, match="coefficients must be finite"):
+        find_bspline_roots(Bspline(space, cp))

@@ -69,8 +69,9 @@ def _find_roots_impl(
     Raises:
         TypeError: If ``bspline`` is not a :class:`~pantr.bspline.Bspline`.
         ValueError: If ``tol`` is not positive and finite, or if the spline is not scalar and
-            univariate, has degree zero, has a non-positive weight, is identically
-            zero or vanishes identically on a knot interval.
+            univariate, has degree zero, has a non-positive weight, has a NaN or infinite
+            control point or weight, is identically zero or vanishes identically on a knot
+            interval.
     """
     from pantr.bspline._bspline import Bspline as BsplineCls  # noqa: PLC0415
 

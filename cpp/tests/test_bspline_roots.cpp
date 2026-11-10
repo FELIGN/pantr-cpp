@@ -735,14 +735,17 @@ TEST_CASE_TEMPLATE("find_roots: refuses a spline with no isolated zero set", T, 
       make_scalar<T>(open_knots(2, {0.0, 0.5, 1.0}, {2}), 2, {1.0, 0.0, 0.0, 0.0, -1.0}))));
 }
 
-// Oracle: analytic. A NaN coefficient makes every comparison false and the scales NaN
-// (`numpy.max` propagates it); nothing is reported and nothing is thrown.
-TEST_CASE("find_roots: a NaN coefficient reports no root") {
-  const double nan = std::numeric_limits<double>::quiet_NaN();
-  const bs::BsplineRootSet got =
-      bs::find_roots<double>(make_scalar<double>(clamped(2, {0.5}), 2, {1.0, nan, -1.0, 1.0}));
-  CHECK(got.roots.empty());
-  CHECK(std::isnan(got.root_tol));
+// A NaN coefficient made every comparison false and reported no root; an infinite one raised
+// "vanishes identically". Both are refused with the Bézier roots' message.
+TEST_CASE("find_roots: a NaN or infinite coefficient is refused") {
+  const double inf = std::numeric_limits<double>::infinity();
+  for (const double bad : {std::numeric_limits<double>::quiet_NaN(), inf, -inf}) {
+    CAPTURE(bad);
+    CHECK_THROWS_WITH_AS(static_cast<void>(bs::find_roots<double>(
+                             make_scalar<double>(clamped(2, {0.5}), 2, {1.0, bad, -1.0, 1.0}))),
+                         "coefficients must be finite, got a NaN or an infinite entry",
+                         pantr::value_error);
+  }
 }
 
 // --- Kernel helpers ---------------------------------------------------------------------------

@@ -68,6 +68,10 @@
 - **`pantr.bspline.find_roots` with `tol=nan` or `tol=inf`** raises `ValueError` ("tol must be
   positive and finite"); the previous release returned no roots for NaN, and for `inf` raised that
   the spline vanishes identically.
+- **`pantr.bspline.find_roots` of a spline with a NaN or infinite control point or weight**
+  raises `ValueError` ("coefficients must be finite", as for the Bézier roots). The previous
+  release returned no roots for a NaN, even for the spans the NaN does not touch, and for an
+  infinite control point raised that the spline vanishes identically.
 - **A raw `BVH` whose internal node has a `node_cell` below `-1`** raises `ValueError`; the
   documented encoding is `-1`, and the previous release accepted any negative value.
 - **`THBSplineSpace` whose grid's root bounds miss a small axis of the root space's domain**

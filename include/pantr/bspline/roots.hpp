@@ -1373,8 +1373,9 @@ inline std::vector<double> merge_certified(const Bspline<double>& numerator,
 ///
 /// Raises:
 ///     value_error: `b` is not univariate and scalar valued, has degree zero, is rational with a
-///         non-positive (or NaN) weight, `tol` is not positive and finite, the budget is negative,
-///         the spline is identically zero, it vanishes identically on a knot interval, or the basis
+///         non-positive (or NaN) weight, `tol` is not positive and finite, a control point or
+///         weight is NaN or infinite (the Bézier roots' message), the budget is negative, the
+///         spline is identically zero, it vanishes identically on a knot interval, or the basis
 ///         derivative recurrence met a zero divisor while merging.
 template <StorageFloat T>
 [[nodiscard]] BsplineRootSet find_roots(const Bspline<T>& b,
@@ -1383,6 +1384,10 @@ template <StorageFloat T>
   const Bspline<T> spline = detail::validate_bspline_for_roots<T>(b);
   if (tol.has_value() && !(*tol > 0.0 && std::isfinite(*tol))) {  // NaN included
     throw value_error("tol must be positive and finite, got " + py_repr(*tol));
+  }
+  const std::span<const T> stored = spline.control_points();
+  if (!std::all_of(stored.begin(), stored.end(), [](T v) { return std::isfinite(v); })) {
+    throw value_error("coefficients must be finite, got a NaN or an infinite entry");
   }
   if (max_insertions_override.has_value() && *max_insertions_override < 0) {
     throw value_error("max_insertions must be non-negative, got " +
@@ -1397,7 +1402,6 @@ template <StorageFloat T>
   const BsplineSpace1D<T>& space = whole.spaces()[0];
   const int degree = space.degree();
   const std::vector<double> knots = detail::widen<T>(space.knots());
-  const std::span<const T> stored = spline.control_points();
   const std::size_t cols = spline.cp_size();
   std::vector<double> coeffs(stored.size() / cols);
   for (std::size_t i = 0; i < coeffs.size(); ++i) {
