@@ -197,7 +197,7 @@ def test_long_call_lets_other_threads_run(name: str) -> None:
 
 
 _SWITCH_INTERVAL = 0.02  # long beside a short call, so a release shows as a wait of about this
-_SHORT_TRIES = 5
+_SHORT_TRIES = 10
 
 
 def _small_compose() -> Callable[[], object]:
@@ -275,8 +275,9 @@ def test_short_call_keeps_the_gil(name: str) -> None:
 
     A call that releases the GIL hands it to the spinning thread, which keeps it until its switch
     interval expires, so every try lasts about that interval; one that keeps it returns in far less.
-    The fastest of five tries must be under half the interval, so one descheduled try does not
-    decide it.
+    The wrapper's own bytecode also yields the GIL to the spinner once per interval, so a try that
+    straddles that moment waits too, whatever the compiled call does; the fastest of ten tries must
+    be under half the interval, so those tries, and a descheduled one, do not decide it.
     """
     fastest = _fastest_under_contention(SHORT_CALLS[name]())
     assert fastest < 0.5 * _SWITCH_INTERVAL, f"{name}: fastest {fastest:.4f} s under contention"

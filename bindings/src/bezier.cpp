@@ -91,8 +91,7 @@ double ops_per_control_point(const Bezier<T>& b) {
 }
 
 /// Work of `multiply`, for the GIL decision only: every pair of control points meets once, and
-/// each meeting multiplies the coordinates of the narrower point (a rational operand's weight
-/// meets a weight only when both are rational).
+/// each meeting multiplies at least the coordinates of the narrower point.
 template <class T>
 double multiply_ops(const Bezier<T>& a, const Bezier<T>& b) {
   const std::size_t points_a = a.size() / a.cp_size();
@@ -102,20 +101,32 @@ double multiply_ops(const Bezier<T>& a, const Bezier<T>& b) {
          static_cast<double>(coords);
 }
 
-/// Work of `compose`, for the GIL decision only: its last step adds every control point of `outer`
-/// times a product basis into every coefficient of the result, whose extents are
-/// `sum(outer degrees) * inner.degree(s) + 1`; the products of powers before it are not counted.
+/// Work of `compose`, for the GIL decision only. Its last step adds every control point of
+/// `outer` times a product basis into every coefficient of the result, whose extents are
+/// `sum(outer degrees) * inner.degree(s) + 1`; and for an `outer` of several directions each of
+/// its control points first forms that product basis, whose last product multiplies a polynomial
+/// of extents `(sum(outer degrees) - p_last) * inner.degree(s) + 1` by one of extents
+/// `p_last * inner.degree(s) + 1`, one multiply-add per pair of coefficients. The other products
+/// and the powers of `inner` are not counted.
 template <class T>
 double compose_ops(const Bezier<T>& outer, const Bezier<T>& inner) {
   double sum_deg = 0.0;
   for (std::size_t d = 0; d < outer.dim(); ++d) {
     sum_deg += static_cast<double>(outer.degree(d));
   }
+  const double last = static_cast<double>(outer.degree(outer.dim() - 1));
   double out_points = 1.0;
+  double rest_points = 1.0;
+  double last_points = 1.0;
   for (std::size_t s = 0; s < inner.dim(); ++s) {
-    out_points *= sum_deg * static_cast<double>(inner.degree(s)) + 1.0;
+    const auto q = static_cast<double>(inner.degree(s));
+    out_points *= sum_deg * q + 1.0;
+    rest_points *= (sum_deg - last) * q + 1.0;
+    last_points *= last * q + 1.0;
   }
-  return static_cast<double>(outer.size()) * out_points;
+  const double outer_points = static_cast<double>(outer.size() / outer.cp_size());
+  const double products = outer.dim() > 1 ? outer_points * rest_points * last_points : 0.0;
+  return static_cast<double>(outer.size()) * out_points + products;
 }
 
 template <class T>

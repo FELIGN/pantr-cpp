@@ -139,7 +139,9 @@ void def_reduction(nb::module_& m) {
 }
 
 /// Work of `fit_tensor`, for the GIL decision only: the first direction's contraction multiplies
-/// every value by `p_0 + 1` coefficients (`p_0 = n_0 - 1` when the degrees are not given).
+/// every value by `p_0 + 1` coefficients (`p_0 = n_0 - 1` when the degrees are not given), and each
+/// direction's pseudo-inverse is an SVD of an `(n_d, p_d + 1)` matrix, whose bidiagonalisation
+/// alone updates the trailing columns once per column, `n_d (p_d + 1)^2` multiply-adds.
 template <class T>
 double fit_tensor_ops(const Any<T>& values, const std::vector<Vec<T>>& nodes,
                       const std::optional<std::vector<long long>>& degrees) {
@@ -149,18 +151,28 @@ double fit_tensor_ops(const Any<T>& values, const std::vector<Vec<T>>& nodes,
   } else if (!nodes.empty() && nodes[0].shape(0) > 0) {
     first = static_cast<double>(nodes[0].shape(0) - 1);
   }
-  return static_cast<double>(values.size()) * (first + 1.0);
+  double svd = 0.0;
+  for (std::size_t d = 0; d < nodes.size(); ++d) {
+    const auto n = static_cast<double>(nodes[d].shape(0));
+    double cols = n;
+    if (degrees && d < degrees->size()) {
+      cols = static_cast<double>((std::max)((*degrees)[d], 0LL)) + 1.0;
+    }
+    svd += n * cols * cols;
+  }
+  return static_cast<double>(values.size()) * (first + 1.0) + svd;
 }
 
-/// Work of `fit_scattered`, for the GIL decision only: filling the `(n_pts, n_coef)` Vandermonde
-/// matrix, one entry per point and coefficient; its SVD, which costs more, is not counted.
+/// Work of `fit_scattered`, for the GIL decision only: the SVD of the `(n_pts, n_coef)` Vandermonde
+/// matrix, whose bidiagonalisation alone updates the trailing columns once per column,
+/// `n_pts n_coef^2` multiply-adds.
 template <class T>
 double fit_scattered_ops(const Mat<T>& pts, const std::vector<long long>& degrees) {
   double coefs = 1.0;
   for (const long long p : degrees) {
     coefs *= static_cast<double>((std::max)(p, 0LL)) + 1.0;
   }
-  return static_cast<double>(pts.shape(0)) * coefs;
+  return static_cast<double>(pts.shape(0)) * coefs * coefs;
 }
 
 template <class T>
