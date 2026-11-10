@@ -285,6 +285,8 @@ def interpolate_bezier(
     """
     n_pts_tuple = _validate_n_pts(n_pts)
     degree_tuple = _validate_degree(degree, n_pts_tuple)
+    # Refuse a bad tol before the callable is sampled: it may be costly or have side effects.
+    check_svd_tolerance(tol)
 
     # Resolve nodes and build PointsLattice (default to float64 for generated nodes)
     node_arrays = _resolve_nodes(n_pts_tuple, nodes, np.dtype(np.float64))

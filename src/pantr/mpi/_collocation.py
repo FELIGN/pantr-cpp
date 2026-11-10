@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import numpy as np
 
 from .._ext import ext
-from .._interpolation_utils import resolve_svd_tolerance
+from .._interpolation_utils import check_svd_tolerance, resolve_svd_tolerance
 from ..bspline import Bspline, BsplineSpace, fit_bspline
 from ..bspline._bspline_interpolate import (
     _is_scattered_nodes,
@@ -243,6 +243,8 @@ def interpolate_bspline_distributed(
     n_parts = int(comm.size)
     rank = int(comm.rank)
 
+    # Refuse a bad tol before the callable is sampled: it may be costly or have side effects.
+    check_svd_tolerance(tol)
     all_points = np.ascontiguousarray(lattice.get_all_points(order="C"), dtype=np.float64)
     n_total = all_points.shape[0]
     start, stop = _cpp.block_bounds(n_total, n_parts, rank)

@@ -577,8 +577,9 @@
   `tol` and every pair of faces for an infinite one; so did `MultiPatch` when it detected the
   interfaces, and with an infinite `tol` it accepted a supplied interface between patches that do
   not touch. A zero or negative `tol` is accepted as before.
-  `interpolate_bspline`, `l2_project_bspline` and `l2_project_bspline_distributed` check `tol`
-  before they call the function to project, so a non-finite `tol` is reported even where the
+  `interpolate_bezier`, `interpolate_bspline`, `l2_project_bspline`,
+  `interpolate_bspline_distributed` and `l2_project_bspline_distributed` check `tol` before they
+  call the function to project, so a non-finite `tol` is reported even where the
   function would raise its own error, which used to come first.
 - **A negative `degree` for scattered `fit_bezier` nodes** is a `ValueError` ("degree must be
   non-negative"); the previous release raised `IndexError` for `-1` and NumPy's "negative
