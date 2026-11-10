@@ -93,7 +93,8 @@ class LazyBuildRegistration {
   }
 
  private:
-  std::mutex* mutex_;
+  // Read only by the fork bookkeeping, which Windows does not compile.
+  [[maybe_unused]] std::mutex* mutex_;
 };
 
 /// A value of type `Block` computed at most once, by the first caller of `get`.
