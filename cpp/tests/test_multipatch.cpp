@@ -942,23 +942,24 @@ TEST_CASE("verify_interface: refusals and their messages") {
 }
 
 TEST_CASE("verify_interface and MultiPatch: a NaN or infinite tol is refused") {
+  // `far` is a macro under <windows.h>, hence `apart`.
   // Infinity verified any interface and detected every face pair; NaN verified and detected none.
   // Bug caught: the refusal living only in the Python wrapper of `detect_interfaces`.
-  const std::vector<bs::Bspline<double>> far = {lattice<double>(dirs_2d(), {0.0, 0.0}),
-                                                lattice<double>(dirs_2d(), {5.0, 0.0})};
+  const std::vector<bs::Bspline<double>> apart = {lattice<double>(dirs_2d(), {0.0, 0.0}),
+                                                  lattice<double>(dirs_2d(), {5.0, 0.0})};
   const mp::Interface bogus = iface(0, 1, 1, 0, {1}, {false});
   const double inf = std::numeric_limits<double>::infinity();
   for (const double bad : {std::numeric_limits<double>::quiet_NaN(), inf, -inf}) {
     const std::string want = "tol must be finite, got " + pantr::py_repr(bad);
-    CHECK(message_of([&] { (void)mp::verify_interface(view(far), bogus, bad); }) == want);
-    CHECK(message_of([&] { (void)mp::MultiPatch<double>(far, std::nullopt, bad); }) == want);
+    CHECK(message_of([&] { (void)mp::verify_interface(view(apart), bogus, bad); }) == want);
+    CHECK(message_of([&] { (void)mp::MultiPatch<double>(apart, std::nullopt, bad); }) == want);
     CHECK(message_of([&] {
-            (void)mp::MultiPatch<double>(far, std::vector<mp::Interface>{bogus}, bad);
+            (void)mp::MultiPatch<double>(apart, std::vector<mp::Interface>{bogus}, bad);
           }) == want);
-    CHECK(message_of([&] { (void)mp::detect_interfaces(view(far), bad); }) == want);
+    CHECK(message_of([&] { (void)mp::detect_interfaces(view(apart), bad); }) == want);
   }
   // Control: the default tol does not verify the interface between patches 5 units apart.
-  CHECK_FALSE(mp::verify_interface(view(far), bogus));
+  CHECK_FALSE(mp::verify_interface(view(apart), bogus));
 }
 
 // ------------------------------------------------------------------------------------ MultiPatch
