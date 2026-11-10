@@ -233,6 +233,12 @@
   grids of span `1e6` or offset by `1e6` as not; both now read the other way. An axis whose span
   overflows the double range makes that tolerance infinite, so it reads as uniform only when its
   spacings are exactly equal: `[-1e308, -5e307, 0, 1e308]` is not uniform, as before.
+- **`partition_grid` with more parts than the grid has cells raises at once.** The error is the
+  same; the previous release raised it only after searching the divisors of `n_parts`, whose cost
+  grows with its square root, so a huge count held the caller.
+- **`overlay` of two grids whose domains overlap on an axis by more than the largest double**
+  raises `ValueError` "overlay(): the overlap of the domains on axis N, [lo, hi], is wider than
+  the largest double."; the previous release said that the domains do not overlap.
 - **pantr needs Python 3.12 or later.** pantr is becoming a C++ library with a compiled
   Python extension, built for CPython's stable ABI so that one wheel per platform serves
   every Python from 3.12 on; the binding library's stable-ABI support starts at 3.12.
@@ -545,7 +551,14 @@
   parameter. The zero tests use a floor of `get_strict(dtype)` times the polynomial's largest
   coefficient, whatever `tol` is, and a root found within `tol` in the parameter is accepted when
   its residual is within that floor plus the slope times the bracket's width. A root provider
-  (`set_root_provider`) receives the relative `get_strict(dtype)` as `value_tol`.
+  (`set_root_provider`) receives the relative `get_strict(dtype)` as `value_tol`. At a coarse
+  explicit `tol` this acceptance is a backward-error bound: the accepted point is a root of
+  coefficients that differ from the input's by the residual, not necessarily within `tol` of a
+  root of the input. Two roots closer than about `tol` that fall in one bracket can both be lost,
+  without a warning, and a point where the polynomial nearly touches zero can be reported as a
+  root. With `tol=1e-2`, a pair of roots a few thousandths apart is lost more often than in the
+  previous release, whose absolute floor of `tol` accepted more; at the default `tol` the same
+  pairs are found.
 - **`fit_bezier` and `interpolate_bezier` with `float16`, `longdouble` or byte-swapped values
   compute in `float64`** (nodes included) and return a `float64` Bézier (also for byte-swapped
   `float32`, which `Bezier` itself would store as native `float32`). `fit_bezier` failed in the previous release's Numba basis kernel

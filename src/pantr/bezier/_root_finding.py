@@ -78,7 +78,15 @@ def find_roots(
             parameter only; the zero tests on the polynomial's values are
             relative to each polynomial's largest coefficient, so scaling the
             coefficients does not change the roots. Defaults to
-            ``tolerance.get_strict(bezier.dtype)``.
+            ``tolerance.get_strict(bezier.dtype)``. At a coarse explicit ``tol``
+            the guarantee is a backward error, not a forward one: Bezier
+            clipping accepts a point of a bracket narrowed to ``tol`` when its
+            residual is within the zero test plus ``|f'|`` times the bracket's
+            width, so it is a root of coefficients that differ by that much.
+            Two roots closer together than about ``tol`` that fall in one
+            bracket can then both be lost, without a warning, and a point where
+            the polynomial nearly touches zero can be reported. Both shrink
+            with ``tol``.
 
     Returns:
         npt.NDArray[np.float64]: *(single mode)* Sorted array of root
