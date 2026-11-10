@@ -76,6 +76,7 @@
 #include <pantr/bspline/space.hpp>
 #include <pantr/bspline/space_1d.hpp>
 #include <pantr/core/errors.hpp>
+#include <pantr/core/format.hpp>
 #include <pantr/core/mdspan.hpp>
 #include <pantr/core/ndarray.hpp>
 #include <pantr/linalg/banded_lstsq.hpp>
@@ -1102,16 +1103,18 @@ TEST_CASE_TEMPLATE(
     const double bound = solve_bound<C>(11 + 11 + 2, kappa_bound(ea), frobenius_norm(want));
     expect_solution<C>(bs::solve_collocation<C>(a, b, tol), want, bound, "long band");
   }
-  SUBCASE("a square system ignores the truncation tolerance, even NaN") {
+  SUBCASE("a square system ignores a finite truncation tolerance") {
     const bs::BsplineSpace1D<C> s = clamped_cubic_space<C>();
     const la::RowMatrix<C> a = collocation_of<C>(s, s.greville());
     const la::RowMatrix<C> b = dyadic_rhs<C>(7, 1, 7);
     const Matrix ea = exact_matrix<C>(a);
     const Matrix want = solve_exact(ea, exact_matrix<C>(b));
     const double bound = solve_bound<C>(7 + 7 + 2, kappa_bound(ea), frobenius_norm(want));
-    expect_solution<C>(bs::solve_collocation<C>(a, b, std::numeric_limits<double>::quiet_NaN()),
-                       want, bound, "square, NaN tolerance");
     expect_solution<C>(bs::solve_collocation<C>(a, b, 5.0), want, bound, "square, tolerance 5");
+    // A NaN one is refused on this path too, though the LU would not read it.
+    CHECK_THROWS_AS(
+        static_cast<void>(bs::solve_collocation<C>(a, b, std::numeric_limits<double>::quiet_NaN())),
+        pantr::value_error);
   }
 }
 
@@ -1197,25 +1200,26 @@ TEST_CASE_TEMPLATE(
   const double bound = solve_bound<C>(7 + 7 + 2, kappa, frobenius_norm(want));
   expect_solution<C>(bs::solve_collocation<C>(a, b, tol), want, bound, "singular square");
   // Truncating everything leaves the zero solution, also for this system.
-  const NdArray<C> zero = bs::solve_collocation<C>(a, b, std::numeric_limits<double>::quiet_NaN());
+  const NdArray<C> zero = bs::solve_collocation<C>(a, b, 2.0);
   for (std::size_t i = 0; i < zero.size(); ++i) {
     CHECK(zero.data()[i] == C(0));
   }
 }
 
 TEST_CASE_TEMPLATE(
-    "solve_collocation: the truncation tolerance is relative, NaN and infinity drop everything, a "
-    "negative one nothing",
+    "solve_collocation: the truncation tolerance is relative, a NaN or infinite one is refused, a "
+    "negative one drops nothing",
     C, float, double) {
   // The 4 x 2 matrix [[1, 0], [1, 0], [0, s], [0, s]] has the singular values sqrt 2 and sqrt 2 s
   // (orthogonal columns), the data [1, 1, s, s] has the solution (1, 1). s = 1e-6, so the ratio of
   // the singular values is 1e-6:
   //   tol 1e-9, 0 and -1  keep both       -> (1, 1)
   //   tol 1e-3            drops the second -> (1, 0)
-  //   tol 2, NaN, +inf    drop both        -> (0, 0) exactly (the comparison `s > tol s_max` is
-  //                                           false for NaN, and for tol >= 1 no value exceeds it)
-  // Bug caught: a tolerance that is absolute, `abs(tol)` for a negative one, a comparison that
-  // lets NaN through, a banded path that answers with its own default cutoff whatever the tolerance
+  //   tol 2               drops both       -> (0, 0) exactly (for tol >= 1 no value exceeds it)
+  //   NaN, +inf, -inf     refused           (they would drop both, all-zero coefficients reported
+  //                                           as a solution)
+  // Bug caught: a tolerance that is absolute, `abs(tol)` for a negative one, a non-finite one
+  // accepted, a banded path that answers with its own default cutoff whatever the tolerance
   // (the tol 1e-3 case: the banded certificate must refuse, which `try_lstsq_banded` is asserted
   // to do for an `rcond` above the ratio and to accept below it).
   const double s = 1e-6;
@@ -1234,10 +1238,13 @@ TEST_CASE_TEMPLATE(
   expect_solution<C>(solve_with(-1.0), keep_both, bound, "tol -1");
   expect_solution<C>(solve_with(1e-3), keep_first, bound, "tol 1e-3");
   expect_solution<C>(solve_with(2.0), keep_none, 0.0, "tol 2");
-  expect_solution<C>(solve_with(std::numeric_limits<double>::quiet_NaN()), keep_none, 0.0,
-                     "tol NaN");
-  expect_solution<C>(solve_with(std::numeric_limits<double>::infinity()), keep_none, 0.0,
-                     "tol +inf");
+  for (const double bad :
+       {std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::infinity(),
+        -std::numeric_limits<double>::infinity()}) {
+    CHECK_THROWS_WITH_AS(static_cast<void>(solve_with(bad)),
+                         ("tol must be finite, got " + pantr::py_repr(bad)).c_str(),
+                         pantr::value_error);
+  }
   // The banded certificate honours the cutoff it is given.
   CHECK(la::try_lstsq_banded<C>(a, b, 0, 1e-9).has_value());
   CHECK_FALSE(la::try_lstsq_banded<C>(a, b, 0, 1e-3).has_value());

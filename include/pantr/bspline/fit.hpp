@@ -463,17 +463,19 @@ template <StorageFloat C>
 ///     a (const linalg::RowMatrix<C>&): Extents `(m, n)`, finite.
 ///     b (const linalg::RowMatrix<C>&): Extents `(m, k)`.
 ///     tol (double): Relative truncation tolerance of the SVD path, compared as `s > tol * s_max`,
-///         as before: NaN drops every singular value, and a negative value keeps every one, an
-///         exactly zero one included (its reciprocal is then infinite).
+///         as before; finite (NaN or infinity would drop every singular value). A negative value
+///         keeps every one, an exactly zero one included (its reciprocal is then infinite).
 ///
 /// Returns:
 ///     NdArray<C>: Extents `(n, k)`.
 ///
 /// Raises:
-///     value_error: The rows of `a` and `b` differ, or the SVD fails.
+///     value_error: `tol` is NaN or infinite (on every path, the square one included), the rows of
+///         `a` and `b` differ, or the SVD fails.
 template <StorageFloat C>
 [[nodiscard]] NdArray<C> solve_collocation(const linalg::RowMatrix<C>& a,
                                            const linalg::RowMatrix<C>& b, double tol) {
+  bezier::detail::check_finite_tol(tol);
   const Eigen::Index m = a.rows();
   const Eigen::Index n = a.cols();
   if (b.rows() != m) {
@@ -507,10 +509,9 @@ template <StorageFloat C>
         return out;
       }
     }
-  } else if (m > n && n > 0 && std::isfinite(tol)) {
+  } else if (m > n && n > 0) {
     // A rectangular system keeps every singular value above `tol * s_max` (a negative `tol` keeps
-    // all), so the QR's certificate must clear that cutoff; a NaN or infinite one drops every
-    // singular value, which no full-rank certificate can stand for.
+    // all), so the QR's certificate must clear that cutoff.
     if (std::optional<NdArray<C>> x = detail::try_banded<C>(a, b, (std::max)(tol, 0.0))) {
       return std::move(*x);
     }

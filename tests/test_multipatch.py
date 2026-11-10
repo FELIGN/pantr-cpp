@@ -241,6 +241,27 @@ def test_detect_refuses_a_non_finite_tol(tol: float) -> None:
         detect_interfaces([], tol=tol)  # checked before the empty-input shortcut
 
 
+@pytest.mark.parametrize("tol", [float("nan"), float("inf"), -float("inf")])
+def test_multipatch_refuses_a_non_finite_tol(tol: float) -> None:
+    """MultiPatch passes tol to detection and verification, which refuse it in the compiled code.
+
+    NaN found no interface and infinity found every pair of faces, or verified a supplied interface
+    between patches far apart.
+    """
+    space = BsplineSpace([_open_space_1d(2, 1)])
+    near = [_lattice_patch(space), _lattice_patch(space, offset=[1.0])]
+    far = [_lattice_patch(space), _lattice_patch(space, offset=[5.0])]
+    bogus = (Interface(patch_a=0, face_a=1, patch_b=1, face_b=0, axis_map=(), flips=()),)
+    with pytest.raises(ValueError, match=r"^tol must be finite, got "):
+        MultiPatch(near, tol=tol)
+    with pytest.raises(ValueError, match=r"^tol must be finite, got "):
+        MultiPatch(far, bogus, tol=tol)
+    # Controls: the default tol finds the touching pair and refuses the bogus interface.
+    assert MultiPatch(near).interfaces == bogus
+    with pytest.raises(ValueError, match="Interface does not hold"):
+        MultiPatch(far, bogus)
+
+
 def test_detect_translated_2d() -> None:
     """Side-by-side 2D patches give the interface stated in the specification."""
     space = _anisotropic_space_2d()

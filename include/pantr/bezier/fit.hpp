@@ -18,6 +18,7 @@
 #include "pantr/bezier/detail/along_axis.hpp"
 #include "pantr/config.hpp"
 #include "pantr/core/errors.hpp"
+#include "pantr/core/format.hpp"
 #include "pantr/core/ndarray.hpp"
 #include "pantr/core/scalar.hpp"
 #include "pantr/linalg/dense.hpp"
@@ -27,6 +28,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -104,8 +106,37 @@ template <StorageFloat T>
   return out;
 }
 
+/// Refuse a NaN or infinite truncation tolerance: NaN keeps no singular value and infinity none
+/// either, so the fit would report all-zero coefficients as its answer.
+///
+/// Args:
+///     tol (double): The tolerance.
+///
+/// Raises:
+///     value_error: `tol` is NaN or infinite.
+inline void check_finite_tol(double tol) {
+  if (!std::isfinite(tol)) {
+    throw value_error("tol must be finite, got " + py_repr(tol));
+  }
+}
+
+/// The truncation tolerance a fit uses: `tol` when given, else `svd_tol_factor * eps`.
+///
+/// Args:
+///     tol (std::optional<double>): The caller's tolerance, if any.
+///     eps (double): The machine epsilon of the fit's type.
+///
+/// Returns:
+///     double: The tolerance.
+///
+/// Raises:
+///     value_error: `tol` is NaN or infinite.
 [[nodiscard]] inline double resolve_svd_tol(std::optional<double> tol, double eps) {
-  return tol ? *tol : svd_tol_factor * eps;
+  if (tol) {
+    check_finite_tol(*tol);
+    return *tol;
+  }
+  return svd_tol_factor * eps;
 }
 
 }  // namespace detail
@@ -122,10 +153,12 @@ template <StorageFloat T>
 ///     NdArray<T>: `(degree + 1, len(nodes))`.
 ///
 /// Raises:
-///     value_error: No node, or `degree` out of range.
+///     value_error: `tol` is NaN or infinite, no node, or `degree` out of range.
 template <StorageFloat T>
 [[nodiscard]] NdArray<T> bernstein_pinv(std::span<const T> nodes, long long degree,
                                         std::optional<double> tol) {
+  const double resolved =
+      detail::resolve_svd_tol(tol, static_cast<double>(std::numeric_limits<T>::epsilon()));
   if (nodes.empty() || degree < 0 || static_cast<std::size_t>(degree) >= nodes.size()) {
     throw value_error("bernstein_pinv needs 0 <= degree < len(nodes), got degree " +
                       std::to_string(degree) + " for " + std::to_string(nodes.size()) + " nodes.");
@@ -138,8 +171,7 @@ template <StorageFloat T>
   const NdArray<T> v = basis::tabulate_bernstein_1d<T>(static_cast<int>(degree), nodes);
   const linalg::RowMatrix<T> vm = Eigen::Map<const linalg::RowMatrix<T>>(
       v.data(), static_cast<Eigen::Index>(v.shape()[0]), static_cast<Eigen::Index>(v.shape()[1]));
-  return detail::truncated_pinv<T>(
-      vm, detail::resolve_svd_tol(tol, static_cast<double>(std::numeric_limits<T>::epsilon())));
+  return detail::truncated_pinv<T>(vm, resolved);
 }
 
 /// Fit a Bézier to values on a tensor-product grid of nodes.
@@ -156,12 +188,15 @@ template <StorageFloat T>
 ///     Bezier<T>: A non-rational Bézier of orders `degree + 1`.
 ///
 /// Raises:
-///     value_error: Inconsistent extents, node counts or degrees.
+///     value_error: `tol` is NaN or infinite, or inconsistent extents, node counts or degrees.
 template <StorageFloat T>
 [[nodiscard]] Bezier<T> fit_tensor(std::span<const T> values, std::span<const std::size_t> shape,
                                    const std::vector<std::span<const T>>& nodes,
                                    const std::optional<std::vector<long long>>& degrees,
                                    std::optional<double> tol) {
+  if (tol) {
+    detail::check_finite_tol(*tol);
+  }
   if (shape.size() < 2 || nodes.size() != shape.size() - 1 ||
       (degrees && degrees->size() != nodes.size())) {
     throw value_error(
@@ -237,11 +272,14 @@ template <StorageFloat T>
 ///     Bezier<T>: A non-rational Bézier.
 ///
 /// Raises:
-///     value_error: Inconsistent extents, a negative degree, or fewer points than coefficients.
+///     value_error: `tol` is NaN or infinite, inconsistent extents, a negative degree, or fewer
+///         points than coefficients.
 template <StorageFloat T>
 [[nodiscard]] Bezier<T> fit_scattered(mdview<const T, 2> values, mdview<const T, 2> pts,
                                       std::span<const long long> degrees,
                                       std::optional<double> tol) {
+  const double resolved =
+      detail::resolve_svd_tol(tol, static_cast<double>(std::numeric_limits<T>::epsilon()));
   const std::size_t n_pts = pts.extent(0);
   const std::size_t dim = pts.extent(1);
   if (values.extent(0) != n_pts || degrees.size() != dim || dim == 0 || n_pts == 0) {
@@ -283,8 +321,7 @@ template <StorageFloat T>
     }
     v = std::move(next);
   }
-  const NdArray<T> pinv = detail::truncated_pinv<T>(
-      v, detail::resolve_svd_tol(tol, static_cast<double>(std::numeric_limits<T>::epsilon())));
+  const NdArray<T> pinv = detail::truncated_pinv<T>(v, resolved);
   const std::size_t rank = values.extent(1);
   using CMat = Eigen::Map<const linalg::RowMatrix<T>>;
   const auto ec = static_cast<Eigen::Index>(n_coeffs);

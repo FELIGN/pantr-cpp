@@ -22,6 +22,7 @@
 #include <pantr/bezier/fit.hpp>
 #include <pantr/core/errors.hpp>
 #include <pantr/core/exact_rational.hpp>
+#include <pantr/core/format.hpp>
 #include <pantr/core/mdspan.hpp>
 #include <pantr/core/ndarray.hpp>
 #include <pantr/quad/rules_1d.hpp>
@@ -783,6 +784,32 @@ TEST_CASE("fit_scattered: a negative degree and mismatched arguments are refused
           pb::fit_scattered<double>(fewer, p, std::vector<long long>{1}, std::nullopt)),
       "fit_scattered: values (n_pts, rank), points (n_pts, dim) and dim degrees must agree.",
       pantr::value_error);
+}
+
+TEST_CASE("bezier fits: a NaN or infinite tol is refused before any fit") {
+  // A NaN cutoff keeps no singular value and an infinite one none either: all-zero coefficients
+  // returned as success. Bug caught: the refusal living only in a Python wrapper.
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  const double inf = std::numeric_limits<double>::infinity();
+  const std::vector<double> nodes = {0.0, 0.5, 1.0};
+  const std::vector<double> values = {1.0, 2.0, 3.0};
+  const std::vector<std::size_t> shape = {3, 1};
+  const std::vector<std::span<const double>> grid = {std::span<const double>(nodes)};
+  const auto pts = pantr::mdview<const double, 2>(nodes.data(), 3, 1);
+  const auto vals = pantr::mdview<const double, 2>(values.data(), 3, 1);
+  for (const double bad : {nan, inf, -inf}) {
+    const std::string message = "tol must be finite, got " + pantr::py_repr(bad);
+    CHECK_THROWS_WITH_AS(static_cast<void>(pb::bernstein_pinv<double>(nodes, 2, bad)),
+                         message.c_str(), pantr::value_error);
+    CHECK_THROWS_WITH_AS(static_cast<void>(pb::fit_tensor<double>(std::span<const double>(values),
+                                                                  shape, grid, std::nullopt, bad)),
+                         message.c_str(), pantr::value_error);
+    CHECK_THROWS_WITH_AS(
+        static_cast<void>(pb::fit_scattered<double>(vals, pts, std::vector<long long>{2}, bad)),
+        message.c_str(), pantr::value_error);
+  }
+  // Control: a finite tol fits.
+  CHECK_NOTHROW(static_cast<void>(pb::bernstein_pinv<double>(nodes, 2, 1e-12)));
 }
 
 TEST_CASE("bernstein_pinv: a non-finite node is refused, as LAPACK's SVD refused it") {

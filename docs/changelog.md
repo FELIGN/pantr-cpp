@@ -561,13 +561,16 @@
   no longer `numpy.linalg.LinAlgError` (a `ValueError` subclass), since the decomposition is no
   longer NumPy's.
 - **A NaN or infinite `tol`** in `fit_bezier`, `interpolate_bezier`, `fit_bspline`,
-  `interpolate_bspline`, `l2_project_bspline` and `pantr.multipatch.detect_interfaces` raises
-  `ValueError` ("tol must be finite, got nan"), as do the distributed fits in `pantr.mpi`. The
+  `interpolate_bspline`, `l2_project_bspline`, `pantr.multipatch.detect_interfaces` and
+  `pantr.multipatch.MultiPatch` raises `ValueError` ("tol must be finite, got nan"), as do the
+  distributed fits in `pantr.mpi`. The
   Bézier fits, and the B-spline fits whenever their system is rectangular or singular, used to
   truncate every singular value and return all-zero control points; `interpolate_bspline`,
   `l2_project_bspline` and `fit_bspline` on a regular square system never read `tol`, so a NaN or
   infinite one was ignored and now raises. `detect_interfaces` returned no interface for a NaN
-  `tol` and every pair of faces for an infinite one. A zero or negative `tol` is accepted as before.
+  `tol` and every pair of faces for an infinite one; so did `MultiPatch` when it detected the
+  interfaces, and with an infinite `tol` it accepted a supplied interface between patches that do
+  not touch. A zero or negative `tol` is accepted as before.
   `interpolate_bspline`, `l2_project_bspline` and `l2_project_bspline_distributed` check `tol`
   before they call the function to project, so a non-finite `tol` is reported even where the
   function would raise its own error, which used to come first.

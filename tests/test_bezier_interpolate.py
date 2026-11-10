@@ -9,6 +9,7 @@ import numpy.testing as nptest
 import numpy.typing as npt
 import pytest
 
+from pantr._ext import ext
 from pantr._testing import bernstein_interpolate as _bernstein_interpolate
 from pantr.basis import tabulate_bernstein_1d
 from pantr.bezier import fit_bezier, interpolate_bezier
@@ -764,6 +765,16 @@ def test_interpolate_bezier_refuses_a_non_finite_tol(tol: float) -> None:
     """The callable path shares the fit's tolerance check."""
     with pytest.raises(ValueError, match=r"^tol must be finite, got "):
         interpolate_bezier(lambda lat: lat.pts_per_dir[0] ** 2, 8, degree=3, tol=tol)
+
+
+@pytest.mark.parametrize("tol", _NON_FINITE)
+def test_compiled_fits_refuse_a_non_finite_tol(tol: float) -> None:
+    """The compiled fits refuse it themselves: they used to return all-zero coefficients."""
+    x = np.linspace(0.0, 1.0, 4)
+    with pytest.raises(ValueError, match=r"^tol must be finite, got "):
+        ext.bezier.fit_tensor(x[:, np.newaxis] ** 2, [x], (3,), tol)
+    with pytest.raises(ValueError, match=r"^tol must be finite, got "):
+        ext.bezier.fit_scattered(x[:, np.newaxis] ** 2, x[:, np.newaxis], [3], tol)
 
 
 def test_fit_bezier_keeps_accepting_a_zero_tol() -> None:

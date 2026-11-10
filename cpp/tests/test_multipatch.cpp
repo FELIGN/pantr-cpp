@@ -21,6 +21,7 @@
 #include <pantr/bspline/bspline.hpp>
 #include <pantr/bspline/convert.hpp>
 #include <pantr/core/errors.hpp>
+#include <pantr/core/format.hpp>
 #include <pantr/multipatch/detect.hpp>
 #include <pantr/multipatch/interface.hpp>
 #include <pantr/multipatch/match.hpp>
@@ -793,8 +794,10 @@ TEST_CASE("detect: the tolerance tier is the storage type's, and an override rep
   CHECK(mp::detect_interfaces(view(f64), 1e-3) ==
         std::vector<mp::Interface>{iface(0, 1, 1, 0, {1}, {false})});
   CHECK(mp::detect_interfaces(view(f32), 1e-12).empty());
-  // A NaN override matches nothing.
-  CHECK(mp::detect_interfaces(view(f64), std::numeric_limits<double>::quiet_NaN()).empty());
+  // A NaN override is refused: it would match nothing.
+  CHECK_THROWS_WITH_AS(
+      static_cast<void>(mp::detect_interfaces(view(f64), std::numeric_limits<double>::quiet_NaN())),
+      "tol must be finite, got nan", pantr::value_error);
 }
 
 TEST_CASE("detect: a tolerance within a rounding of the displacement is rounded to the type") {
@@ -936,6 +939,26 @@ TEST_CASE("verify_interface: refusals and their messages") {
   CHECK(message_of([&] {
           (void)mp::verify_interface(view(p), iface(0, 1, 1, 0, {1, 2}, {false, false}));
         }) == "Interface implies dim=3 but the patches are 2D");
+}
+
+TEST_CASE("verify_interface and MultiPatch: a NaN or infinite tol is refused") {
+  // Infinity verified any interface and detected every face pair; NaN verified and detected none.
+  // Bug caught: the refusal living only in the Python wrapper of `detect_interfaces`.
+  const std::vector<bs::Bspline<double>> far = {lattice<double>(dirs_2d(), {0.0, 0.0}),
+                                                lattice<double>(dirs_2d(), {5.0, 0.0})};
+  const mp::Interface bogus = iface(0, 1, 1, 0, {1}, {false});
+  const double inf = std::numeric_limits<double>::infinity();
+  for (const double bad : {std::numeric_limits<double>::quiet_NaN(), inf, -inf}) {
+    const std::string want = "tol must be finite, got " + pantr::py_repr(bad);
+    CHECK(message_of([&] { (void)mp::verify_interface(view(far), bogus, bad); }) == want);
+    CHECK(message_of([&] { (void)mp::MultiPatch<double>(far, std::nullopt, bad); }) == want);
+    CHECK(message_of([&] {
+            (void)mp::MultiPatch<double>(far, std::vector<mp::Interface>{bogus}, bad);
+          }) == want);
+    CHECK(message_of([&] { (void)mp::detect_interfaces(view(far), bad); }) == want);
+  }
+  // Control: the default tol does not verify the interface between patches 5 units apart.
+  CHECK_FALSE(mp::verify_interface(view(far), bogus));
 }
 
 // ------------------------------------------------------------------------------------ MultiPatch

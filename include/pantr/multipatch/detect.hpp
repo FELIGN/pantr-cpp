@@ -13,6 +13,7 @@
 #include "pantr/bspline/bspline.hpp"
 #include "pantr/config.hpp"
 #include "pantr/core/errors.hpp"
+#include "pantr/core/format.hpp"
 #include "pantr/core/scalar.hpp"
 #include "pantr/multipatch/interface.hpp"
 #include "pantr/multipatch/match.hpp"
@@ -94,6 +95,20 @@ template <StorageFloat T>
       return -std::numeric_limits<T>::infinity();
     }
     return static_cast<T>(tol);
+  }
+}
+
+/// Refuse a NaN or infinite tolerance override: NaN matches nothing and infinity everything, so a
+/// detection or a verification would report a plausible answer that nothing in it decided.
+///
+/// Args:
+///     tol (std::optional<double>): The override, if any.
+///
+/// Raises:
+///     value_error: `tol` is NaN or infinite.
+inline void check_finite_tol(std::optional<double> tol) {
+  if (tol && !std::isfinite(*tol)) {
+    throw value_error("tol must be finite, got " + py_repr(*tol));
   }
 }
 
@@ -608,6 +623,7 @@ template <StorageFloat T>
 [[nodiscard]] std::vector<Interface> detect_interfaces(std::span<const bspline::Bspline<T>> patches,
                                                        std::span<const double> relative_per_patch,
                                                        std::optional<double> tol) {
+  check_finite_tol(tol);
   if (patches.empty()) {
     return {};
   }
@@ -734,8 +750,9 @@ template <StorageFloat T>
 ///     `(patch_a, face_a, patch_b, face_b)`; empty for no patches.
 ///
 /// Raises:
-///     value_error: The patches do not all share the same parametric dimension; or a patch has
-///         fewer control-point coordinates per point than the rank of an earlier one.
+///     value_error: `tol` is NaN or infinite (checked first, also for no patches); the patches do
+///         not all share the same parametric dimension; or a patch has fewer control-point
+///         coordinates per point than the rank of an earlier one.
 template <StorageFloat T>
 [[nodiscard]] std::vector<Interface> detect_interfaces(std::span<const bspline::Bspline<T>> patches,
                                                        std::optional<double> tol = std::nullopt) {
@@ -760,12 +777,14 @@ template <StorageFloat T>
 ///
 /// Raises:
 ///     index_error: The interface refers to a patch index that does not exist.
-///     value_error: A patch's parametric dimension differs from the interface's; or the second
-///         patch has fewer control-point coordinates per point than the first one's rank.
+///     value_error: `tol` is NaN or infinite (checked first); a patch's parametric dimension
+///         differs from the interface's; or the second patch has fewer control-point coordinates
+///         per point than the first one's rank.
 template <StorageFloat T>
 [[nodiscard]] bool verify_interface(std::span<const bspline::Bspline<T>> patches,
                                     const Interface& iface,
                                     std::optional<double> tol = std::nullopt) {
+  detail::check_finite_tol(tol);
   for (const long long index : {iface.patch_a(), iface.patch_b()}) {
     if (!(0 <= index && static_cast<unsigned long long>(index) < patches.size())) {
       throw index_error("Interface patch index " + std::to_string(index) + " is out of range for " +

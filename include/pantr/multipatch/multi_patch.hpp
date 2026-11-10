@@ -42,13 +42,15 @@ class MultiPatch {
   ///         Defaults to the strict preset of `T`.
   ///
   /// Raises:
-  ///     value_error: No patches are given, the patches disagree on dimension, rank or
-  ///         rationality, an interface refers to a patch that does not exist or implies another
-  ///         dimension, a supplied interface does not hold for the geometry, or the detection or
-  ///         verification refuses the patches (see `detect_interfaces`).
+  ///     value_error: `tol` is NaN or infinite (checked first), no patches are given, the patches
+  ///         disagree on dimension, rank or rationality, an interface refers to a patch that does
+  ///         not exist or implies another dimension, a supplied interface does not hold for the
+  ///         geometry, or the detection or verification refuses the patches (see
+  ///         `detect_interfaces`).
   MultiPatch(std::vector<bspline::Bspline<T>> patches,
              std::optional<std::vector<Interface>> interfaces, std::optional<double> tol)
       : patches_(std::move(patches)) {
+    detail::check_finite_tol(tol);
     if (patches_.empty()) {
       throw value_error("A MultiPatch needs at least one patch");
     }
