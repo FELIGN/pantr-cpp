@@ -97,7 +97,7 @@ void def_provider(nb::module_& m, const std::string& sfx) {
   m.def(("find_roots_batch" + sfx).c_str(),
         [](const Mat<T>& c, double param_tol, double value_tol) {
           pantr::roots::BatchRootSet r = [&] {
-            const ReleaseIfLong release(c.shape(0), batch_ops(c.shape(1)));
+            const ReleaseIfParallel release(c.shape(0), batch_ops(c.shape(1)));
             return Builtin{}.find_roots_batch<T>(view_of(c), {param_tol, value_tol});
           }();
           NdArray<std::int64_t> counts({r.counts.size()}, for_overwrite);
@@ -119,7 +119,7 @@ void def_provider(nb::module_& m, const std::string& sfx) {
   m.def(("find_monotone_root_batch" + sfx).c_str(),
         [](const Mat<T>& c, double param_tol) {
           std::vector<double> r = [&] {
-            const ReleaseIfLong release(c.shape(0), batch_ops(c.shape(1)));
+            const ReleaseIfParallel release(c.shape(0), batch_ops(c.shape(1)));
             return Builtin{}.find_monotone_roots_batch<T>(view_of(c), param_tol);
           }();
           return vector_to_numpy(r);

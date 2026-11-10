@@ -98,6 +98,26 @@ template <StorageFloat T>
   }
 }
 
+/// Work per side of the detection's parallel loop over the `n_sides` faces, an admitted heuristic.
+/// A pair that fails (nearly all do) costs the corner distances, `corners^2` of them over `rank`
+/// coordinates; the partners of a side number `n_sides - 1 - i`, `(n_sides - 1) / 2` on average
+/// over the loop. The orientation search of the few pairs whose corners coincide is not counted.
+///
+/// Args:
+///     n_sides (std::size_t): Faces over all patches, at least 1.
+///     dim (std::size_t): Parametric dimension.
+///     max_rank (std::size_t): The largest output rank among the patches.
+///
+/// Returns:
+///     parallel::WorkEstimate: Operations per side, at least 1.
+[[nodiscard]] inline parallel::WorkEstimate detection_work(std::size_t n_sides, std::size_t dim,
+                                                           std::size_t max_rank) {
+  const double n_corners = std::ldexp(1.0, static_cast<int>(dim) - 1);
+  const double pairs_per_item = static_cast<double>(n_sides - 1) / 2.0;
+  return parallel::WorkEstimate{
+      (std::max)(1.0, pairs_per_item * n_corners * n_corners * static_cast<double>(max_rank))};
+}
+
 /// Refuse a NaN or infinite tolerance override: NaN matches nothing and infinity everything, so a
 /// detection or a verification would report a plausible answer that nothing in it decided.
 ///
@@ -677,20 +697,12 @@ template <StorageFloat T>
   // `(patch_a, face_a, patch_b, face_b)`, and the per-item lists concatenate in that order whatever
   // the number of threads.
   std::vector<std::vector<Interface>> per_side(n_sides);
-  // Work estimate: an admitted heuristic. A pair that fails (nearly all do) costs the corner
-  // distances, `corners^2` of them over `rank` coordinates; the partners of an item number
-  // `n_sides - 1 - i`, `(n_sides - 1) / 2` on average over the loop. The orientation search of
-  // the few pairs whose corners coincide is not counted.
   std::size_t max_rank = 1;
   for (const PatchData<T>& d : data) {
     max_rank = (std::max)(max_rank, d.rank);
   }
-  const double n_corners = std::ldexp(1.0, static_cast<int>(dim) - 1);
-  const double pairs_per_item = static_cast<double>(n_sides - 1) / 2.0;
-  const double ops_per_item =
-      (std::max)(1.0, pairs_per_item * n_corners * n_corners * static_cast<double>(max_rank));
   parallel::parallel_for(
-      n_sides, parallel::WorkEstimate{ops_per_item}, [&](std::size_t begin, std::size_t end) {
+      n_sides, detection_work(n_sides, dim, max_rank), [&](std::size_t begin, std::size_t end) {
         for (std::size_t i = begin; i < end; ++i) {
           const std::size_t patch_a = i / faces_per_patch;
           const auto face_a = static_cast<long long>(i % faces_per_patch);

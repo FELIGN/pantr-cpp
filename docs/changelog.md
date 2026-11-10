@@ -313,16 +313,20 @@
   `NUMBA_NUM_THREADS=3` it is cut to 1 where it kept 3. The policy reads the variable each time it
   applies, while the capacity is read once: a value set after the first parallel call disables the
   policy without lowering the capacity.
-- **Long compiled calls release the GIL, and short ones keep it**, so other Python threads run
-  while a long call computes: `Bezier.split`, `slice`, `restrict`, `multiply`, `compose`,
-  `reduce_degree`, `degree_reduction_error` and `minimize_degree`, and the compiled parts of
-  `fit_bezier`, `interpolate_bezier`, `fit_bspline`, `interpolate_bspline`, `l2_project_bspline`
-  and `quasi_interpolate_bspline`, as the evaluations and tabulations already did. A call is long
-  when its estimated work is about the default switch interval (`sys.getswitchinterval()`) or
-  more, or
-  when a degree reduction first builds an exact operator; whether it uses the thread pool does not
-  decide it. A short call keeps the GIL because, while another Python thread is busy, releasing it
-  delays the caller by about a switch interval.
+- **Compiled calls release the GIL when they run on pantr's thread pool or are long**, so other
+  Python threads run meanwhile. `Bezier.split`, `slice` and `restrict`, like the evaluations and
+  tabulations, release it when their nets are large enough to use the thread pool.
+  `Bezier.multiply`, `compose`, `reduce_degree`, `degree_reduction_error` and `minimize_degree`,
+  and the compiled parts of `fit_bezier`, `interpolate_bezier`, `fit_bspline`,
+  `interpolate_bspline`, `l2_project_bspline` and `quasi_interpolate_bspline`, never use the pool
+  and release it only when their estimated work is about the default switch interval
+  (`sys.getswitchinterval()`) or more, or when a degree reduction first builds an exact operator:
+  while another Python thread is busy, releasing costs the caller about a switch interval, more
+  than a shorter call computes. A call on the pool releases from a far smaller size, so Python
+  threads that each run pantr calls scale, and a mid-size pool call can wait up to a switch
+  interval when another Python thread is busy. `THBSpline.prolong_to`, the THB prolongation and
+  multipatch interface detection release it only when their work reaches the pool, where they
+  used to release it always.
 - **numba and threadpoolctl are no longer dependencies**, and `import pantr` imports neither:
   every Numba kernel is replaced by C++ compiled into pantr's extension, and its thread pool
   replaces Numba's. Nor does the import start a background thread to compile kernels, and the

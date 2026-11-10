@@ -43,7 +43,7 @@ nb::object tabulate_1d(int family, long long degree_in, int variant, const In1D<
   if (out) {
     const mdview<T, 2> o(out->data(), out->shape(0), out->shape(1));
     {
-      const ReleaseIfLong gil(p.size(), basis::ops_per_point(fam, degree));
+      const ReleaseIfParallel gil(p.size(), basis::ops_per_point(fam, degree));
       basis::tabulate_1d<T>(fam, degree, var, p, o);
     }
     return nb::none();
@@ -51,7 +51,7 @@ nb::object tabulate_1d(int family, long long degree_in, int variant, const In1D<
   basis::detail::check_degree(degree);
   NdArray<T> result({p.size(), static_cast<std::size_t>(degree) + 1}, for_overwrite);
   {
-    const ReleaseIfLong gil(p.size(), basis::ops_per_point(fam, degree));
+    const ReleaseIfParallel gil(p.size(), basis::ops_per_point(fam, degree));
     basis::tabulate_1d<T>(fam, degree, var, p, result.template view<2>());
   }
   return nb::cast(to_numpy(std::move(result)));
@@ -89,7 +89,7 @@ nb::object tabulate_lattice(int family, const std::vector<long long>& degrees_in
     o = result->template view<2>();
   }
   {
-    const ReleaseIfLong gil(n_pts, 2.0 * static_cast<double>(n_fun));
+    const ReleaseIfParallel gil(n_pts, 2.0 * static_cast<double>(n_fun));
     basis::tabulate_tensor<T>(fam, degrees, var, lattice, ord, o);
   }
   return out ? nb::none() : nb::cast(to_numpy(std::move(*result)));
@@ -119,7 +119,7 @@ nb::object tabulate_points(int family, const std::vector<long long>& degrees_in,
     o = result->template view<2>();
   }
   {
-    const ReleaseIfLong gil(p.extent(0), 2.0 * static_cast<double>(n_fun));
+    const ReleaseIfParallel gil(p.extent(0), 2.0 * static_cast<double>(n_fun));
     basis::tabulate_tensor<T>(fam, degrees, var, p, ord, o);
   }
   return out ? nb::none() : nb::cast(to_numpy(std::move(*result)));

@@ -115,7 +115,7 @@ void def_conversions(nb::class_<bspline::Bspline<T>>& cls) {
           "to_beziers",
           [](const B& b) {
             bspline::BezierDecomposition<T> r = [&] {
-              const ReleaseIfLong gil(1, decomposition_ops<T>(b));
+              const ReleaseIfParallel gil(1, decomposition_ops<T>(b));
               return bspline::to_beziers<T>(b);
             }();
             return std::make_pair(std::move(r.extents), std::move(r.beziers));

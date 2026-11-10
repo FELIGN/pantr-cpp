@@ -1,10 +1,12 @@
 // Arrays across the binding: handing a C++ result to NumPy without a copy, exposing a read-only
-// view of a shared immutable representation, and releasing the GIL only around a call long enough
-// for the release to pay (`gil_release_min_ops`), whether or not it reaches the pool.
+// view of a shared immutable representation, and releasing the GIL: around a call that reaches the
+// pool, whenever it does (`ReleaseIfParallel`), and around one that does not, only when it is long
+// enough for the release to pay (`ReleaseIfLong`).
 #pragma once
 
 #include "pantr/core/errors.hpp"
 #include "pantr/core/ndarray.hpp"
+#include "pantr/parallel/work_model.hpp"
 
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
@@ -145,7 +147,8 @@ inline std::vector<int> saturate_degrees(const std::vector<long long>& degrees) 
   return out;
 }
 
-/// Operations below which a call keeps the GIL. An admitted heuristic, not a measurement.
+/// Operations below which a call that does not reach the pool keeps the GIL (`ReleaseIfLong`). An
+/// admitted heuristic, not a measurement.
 ///
 /// Releasing the GIL while another Python thread is CPU-bound costs the caller about one switch
 /// interval `S` (`sys.getswitchinterval()`, 5 ms by default) before it gets the GIL back: the
@@ -161,11 +164,11 @@ inline std::vector<int> saturate_degrees(const std::vector<long long>& degrees) 
 /// machine.
 inline constexpr double gil_release_min_ops = 4194304.0;
 
-/// Release the GIL for the lifetime of the guard when the call's work is at least
-/// `gil_release_min_ops` (and only then: see that constant). The estimate need only bound the work
-/// from below: an underestimate keeps the GIL over a call that could have released it, which is
-/// safe, since no pantr call touches a Python object while it computes, and only costs the other
-/// Python threads a wait.
+/// Release the GIL for the lifetime of the guard around a call that never reaches the pool, when
+/// its work is at least `gil_release_min_ops` (and only then: see that constant). The estimate need
+/// only bound the work from below: an underestimate keeps the GIL over a call that could have
+/// released it, which is safe, since no pantr call touches a Python object while it computes, and
+/// only costs the other Python threads a wait.
 class ReleaseIfLong {
  public:
   /// Release when `total_ops`, the call's estimated operations, reaches `gil_release_min_ops`.
@@ -177,6 +180,37 @@ class ReleaseIfLong {
 
   /// Release when `n` items of `ops` operations each reach `gil_release_min_ops`.
   ReleaseIfLong(std::size_t n, double ops) : ReleaseIfLong(static_cast<double>(n) * ops) {}
+
+ private:
+  std::optional<nb::gil_scoped_release> release_;
+};
+
+/// Release the GIL for the lifetime of the guard when `release` holds: for a call site that decides
+/// with `parallel::worth_parallel` (pool) or against `gil_release_min_ops` (no pool) itself.
+class ReleaseGil {
+ public:
+  explicit ReleaseGil(bool release) {
+    if (release) {
+      guard_.emplace();
+    }
+  }
+
+ private:
+  std::optional<nb::gil_scoped_release> guard_;
+};
+
+/// Release the GIL for the lifetime of the guard when `n` items of `ops` work each will run on the
+/// pool (`parallel::worth_parallel`), and only then. A call that reaches the pool releases from
+/// `parallel_min_ops` rather than `gil_release_min_ops`: Python threads that each run pantr calls
+/// then scale (the guide's pattern of a thread pool of pantr callers), at the price of a wait of
+/// up to a switch interval for a mid-size call when another Python thread is CPU-bound.
+class ReleaseIfParallel {
+ public:
+  ReleaseIfParallel(std::size_t n, double ops) {
+    if (parallel::worth_parallel(n, parallel::WorkEstimate{ops})) {
+      release_.emplace();
+    }
+  }
 
  private:
   std::optional<nb::gil_scoped_release> release_;

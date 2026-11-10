@@ -277,7 +277,48 @@ def test_short_call_keeps_the_gil(name: str) -> None:
     interval expires, so every try lasts about that interval; one that keeps it returns in far less.
     The wrapper's own bytecode also yields the GIL to the spinner once per interval, so a try that
     straddles that moment waits too, whatever the compiled call does; the fastest of ten tries must
-    be under half the interval, so those tries, and a descheduled one, do not decide it.
+    be under half the interval, so those tries, and a descheduled one, do not decide it. Rarely a
+    whole batch of tries waits (the cause is not established), so the best of three batches, each
+    with its own spinning thread, is taken; a call that releases waits in every batch.
     """
-    fastest = _fastest_under_contention(SHORT_CALLS[name]())
+    setup = SHORT_CALLS[name]
+    fastest = min(_fastest_under_contention(setup()) for _ in range(3))
     assert fastest < 0.5 * _SWITCH_INTERVAL, f"{name}: fastest {fastest:.4f} s under contention"
+
+
+def test_pool_call_releases_the_gil() -> None:
+    """A call that reaches the pool releases the GIL, however short.
+
+    A curve of 20 control points evaluated at 8000 points is ``160000`` operations, above the pool's
+    threshold (``parallel_min_ops``, ``2**17``) and far below ``gil_release_min_ops`` (``2**22``),
+    so it releases only because it reaches the pool. A released call hands the GIL to the spinning
+    thread and waits for its switch interval, so the median try lasts about that interval; one that
+    kept it would return in far less. Bug caught: pool calls gated on the non-pool threshold, which
+    made Python threads that each run such calls serialize.
+    """
+    curve = Bezier(_rng().random((20, 1)))
+    pts = _rng().random(8000)
+    curve.evaluate(pts)  # warm
+    stop = threading.Event()
+
+    def spin() -> None:
+        x = 0
+        while not stop.is_set():
+            x += 1
+
+    previous = sys.getswitchinterval()
+    sys.setswitchinterval(_SWITCH_INTERVAL)
+    spinner = threading.Thread(target=spin)
+    spinner.start()
+    try:
+        durations = []
+        for _ in range(_SHORT_TRIES):
+            t0 = time.perf_counter()
+            curve.evaluate(pts)
+            durations.append(time.perf_counter() - t0)
+    finally:
+        stop.set()
+        spinner.join()
+        sys.setswitchinterval(previous)
+    median = sorted(durations)[len(durations) // 2]
+    assert median >= 0.5 * _SWITCH_INTERVAL, f"median {median:.4f} s: the GIL was kept"

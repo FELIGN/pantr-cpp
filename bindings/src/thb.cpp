@@ -14,7 +14,8 @@
 // table of a space (computed on the first call that needs it), the evaluation and prolongation
 // loops, the quasi-interpolant's contraction, the halo and the owner kernels. Where the pool is
 // reached only above a size, the decision is the C++ one (`parallel::worth_parallel`) on an
-// estimate that errs high, so the GIL is released at least whenever the pool is used.
+// estimate that errs high, so the GIL is released at least whenever the pool is used, except for
+// the prolongation, whose estimate is a lower bound (`prolongation_on_pool`).
 #include "arrays.hpp"
 #include "graph_views.hpp"
 #include "interface.hpp"
@@ -90,19 +91,6 @@ NumpyView<E> view_1d(std::span<const E> s, std::shared_ptr<const R> keep) {
   return view_of<E>(s.data(), shape, std::move(keep));
 }
 
-/// Release the GIL for the lifetime of the guard when `release` holds.
-class ReleaseGil {
- public:
-  explicit ReleaseGil(bool release) {
-    if (release) {
-      guard_.emplace();
-    }
-  }
-
- private:
-  std::optional<nb::gil_scoped_release> guard_;
-};
-
 /// Narrow a regularity from the binding's 64-bit integer to the C++ API's `int`, saturating: a
 /// value outside `int` is outside `[-1, degree)` whatever it is, so the C++ range check refuses it
 /// (naming the saturated value).
@@ -153,6 +141,17 @@ bool table_on_pool(const thb::THBSplineSpace<T>& space) {
 /// Whether a loop of `n` items of at most `ops` operations each runs on the pool.
 bool loop_on_pool(std::size_t n, double ops) {
   return parallel::worth_parallel(n, parallel::WorkEstimate{(std::max)(1.0, ops)});
+}
+
+/// Whether prolonging from `coarse` reaches the pool: its loop over the coarse functions, each
+/// priced as a column with one candidate (`thb::detail::prolongation_column_work`), a lower bound,
+/// since a coarse function always meets at least one fine one. An underestimate keeps the GIL over
+/// a mid-size parallel call, which is safe.
+template <class T>
+bool prolongation_on_pool(const thb::THBSplineSpace<T>& coarse) {
+  const double column =
+      thb::detail::prolongation_column_work(1.0, coarse.dim(), coarse.degrees()).ops_per_item;
+  return loop_on_pool(static_cast<std::size_t>(coarse.num_total_basis()), column);
 }
 
 /// Functions a cell can hold, at most: the level count times `prod(degree + 1)`.
@@ -321,7 +320,7 @@ void def_thb_space(nb::module_& m, const char* name) {
           [](const S& s, const S& fine) {
             thb::ProlongationCsr p = [&] {
               // The columns are solved on the pool.
-              const nb::gil_scoped_release release;
+              const ReleaseGil release(prolongation_on_pool(s));
               return s.prolongation_csr(fine);
             }();
             return std::make_tuple(p.rows, p.cols, vector_to_numpy(std::move(p.indptr)),
@@ -371,7 +370,8 @@ void def_thb_spline(nb::module_& m, const char* name) {
       .def(
           "prolong_to",
           [](const F& f, const S& fine) {
-            const nb::gil_scoped_release release;  // the control points are prolonged on the pool
+            // The prolongation's columns, then the control points, are computed on the pool.
+            const ReleaseGil release(prolongation_on_pool(f.space()));
             return f.prolong_to(fine);
           },
           nb::arg("fine"), "The same function on a refinement of the space.");

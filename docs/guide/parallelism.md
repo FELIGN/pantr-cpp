@@ -110,13 +110,17 @@ with concurrent.futures.ThreadPoolExecutor(8) as pool:
     results = [f.result() for f in futures]
 ```
 
-This works for the operations that **release the GIL** while they compute, which the long ones
-do whatever the thread setting: the basis tabulations, B-spline and Bézier evaluation, Bézier
-split, slice, restrict, multiply and composition, the degree reductions, the fits, projections
-and quasi-interpolants, the spanwise extraction's batch applies, point location and the grids'
-batch queries. Several Python threads then run PaNTr kernels concurrently. A short call keeps
-the GIL: when another Python thread is busy, handing the GIL over and getting it back costs the
-caller about one switch interval (`sys.getswitchinterval()`), more than such a call computes.
+This works for the operations that **release the GIL** while they compute. The parallel entry
+points do so once the call is large enough to use the pool (whatever the thread setting): the
+basis tabulations, B-spline and Bézier evaluation, Bézier split, slice and restrict, the spanwise
+extraction's batch applies, point location, the grids' batch queries, the THB evaluations and
+prolongation, and interface detection. Operations that never use the pool (Bézier multiply and
+composition, the degree reductions, the fits, projections and quasi-interpolants) release it only
+when they are long, about a switch interval of work (`sys.getswitchinterval()`) or more. Several
+Python threads then run PaNTr kernels concurrently, as in this pattern. One cost remains: when
+another Python thread runs CPU-bound bytecode, a call that releases the GIL waits up to a switch
+interval to get it back, which a mid-size pool call notices and a short call that keeps the GIL
+does not.
 
 ### Pattern 3: Balanced -- user and PaNTr share cores
 

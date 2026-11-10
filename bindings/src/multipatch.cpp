@@ -8,8 +8,9 @@
 // as the Python implementation computed it. An interface crosses the binding as the tuple
 // `(patch_a, face_a, patch_b, face_b, axis_map, flips)`; the Python `Interface` is built from it.
 //
-// The GIL is released around the detection (the pairs are tested on the pool), once the arguments
-// are plain C++ values. Every check is the C++ API's, with the messages the Python suite matches.
+// The GIL is released around a detection that runs on the pool (the pairs are tested there,
+// `ReleaseGil` on the detection's own work estimate), once the arguments are plain C++ values.
+// Every check is the C++ API's, with the messages the Python suite matches.
 #include "arrays.hpp"
 #include "interface.hpp"
 
@@ -29,6 +30,7 @@
 #include <nanobind/stl/variant.h>
 #include <nanobind/stl/vector.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <optional>
 #include <span>
@@ -60,6 +62,15 @@ std::vector<InterfaceTuple> to_tuples(const std::vector<multipatch::Interface>& 
   return out;
 }
 
+/// Whether detecting the interfaces among `n_patches` patches of parametric dimension `dim` (the
+/// first patch's) and largest rank `max_rank` runs on the pool: its loop over every face, priced as
+/// the detection prices it (`multipatch::detail::detection_work`).
+bool detection_on_pool(std::size_t n_patches, std::size_t dim, std::size_t max_rank) {
+  const std::size_t n_sides = n_patches * 2 * dim;
+  return n_sides > 0 && parallel::worth_parallel(
+                            n_sides, multipatch::detail::detection_work(n_sides, dim, max_rank));
+}
+
 multipatch::Interface from_tuple(const InterfaceTuple& t) {
   const auto& [patch_a, face_a, patch_b, face_b, axis_map, flips] = t;
   return multipatch::Interface(patch_a, face_a, patch_b, face_b, axis_map, flips);
@@ -73,14 +84,19 @@ std::vector<multipatch::Interface> detect_any(const std::vector<AnyPatch>& patch
                                               std::optional<double> tol) {
   std::vector<F32> f32;
   std::vector<F64> f64;
+  std::size_t max_rank = 1;
   for (const AnyPatch& p : patches) {
     if (const auto* single = std::get_if<F32>(&p)) {
       f32.push_back(*single);
+      max_rank = (std::max)(max_rank, single->rank());
     } else {
       f64.push_back(std::get<F64>(p));
+      max_rank = (std::max)(max_rank, f64.back().rank());
     }
   }
-  const nb::gil_scoped_release release;
+  const std::size_t dim =
+      patches.empty() ? 0 : std::visit([](const auto& b) { return b.dim(); }, patches.front());
+  const ReleaseGil release(detection_on_pool(patches.size(), dim, max_rank));
   if (f64.empty()) {
     return multipatch::detect_interfaces<float>(f32, tol);
   }
@@ -115,7 +131,14 @@ std::vector<multipatch::Interface> multi_patch_of(
       given->push_back(from_tuple(t));
     }
   }
-  const nb::gil_scoped_release release;
+  // Only detection runs on the pool; verifying a supplied list is serial and reads only the faces
+  // it names, so it keeps the GIL.
+  std::size_t max_rank = 1;
+  for (const bspline::Bspline<T>& p : patches) {
+    max_rank = (std::max)(max_rank, p.rank());
+  }
+  const std::size_t dim = patches.empty() ? 0 : patches.front().dim();
+  const ReleaseGil release(!given && detection_on_pool(patches.size(), dim, max_rank));
   return multipatch::MultiPatch<T>(patches, std::move(given), tol).interfaces();
 }
 

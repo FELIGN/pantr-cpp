@@ -88,7 +88,7 @@ void register_bspline_locate(nb::module_& m) {
                             " columns");
         }
         bs::LocateResult r = [&] {
-          const ReleaseIfLong release(n, bs::locate_work(ctx).ops_per_item);
+          const ReleaseIfParallel release(n, bs::locate_work(ctx).ops_per_item);
           return bs::locate(ctx, std::span<const double>(points.data(), points.size()), n, tol,
                             max_iter);
         }();
