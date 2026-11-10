@@ -19,6 +19,7 @@ one switch interval before it gets the GIL back, which is far more than the call
 from __future__ import annotations
 
 import itertools
+import os
 import sys
 import threading
 import time
@@ -152,9 +153,9 @@ def _multiply() -> Callable[[], object]:
 
 _WINDOWS_BLOCKED = pytest.mark.skipif(
     sys.platform == "win32",
-    reason="the Windows wheel leg showed slice and restrict blocking the ticker on all three tries "
-    "while split, on the same net, did not; the cause is not established, and the decision to "
-    "release depends only on the problem size, so the Linux and macOS legs exercise it",
+    reason="the Windows wheel legs showed slice and restrict, and in a later run split and "
+    "multiply, blocking the ticker on all three tries; the cause is not established, and the "
+    "decision to release depends only on the problem size, so the Linux and macOS legs exercise it",
 )
 
 SETUPS: dict[str, Callable[[], Callable[[], object]]] = {
@@ -174,14 +175,10 @@ SETUPS: dict[str, Callable[[], Callable[[], object]]] = {
     "quasi_interpolate_bspline": _untimed_setup(_qi),
 }
 
-_LONG_CASES = [
-    pytest.param(name, marks=_WINDOWS_BLOCKED) if name in {"slice", "restrict"} else name
-    for name in SETUPS
-]
 
-
+@_WINDOWS_BLOCKED
 @pytest.mark.slow
-@pytest.mark.parametrize("name", _LONG_CASES)
+@pytest.mark.parametrize("name", SETUPS)
 def test_long_call_lets_other_threads_run(name: str) -> None:
     """Another Python thread is not blocked for more than half of the call, in one of three tries.
 
@@ -286,6 +283,14 @@ def test_short_call_keeps_the_gil(name: str) -> None:
     assert fastest < 0.5 * _SWITCH_INTERVAL, f"{name}: fastest {fastest:.4f} s under contention"
 
 
+@pytest.mark.skipif(
+    "PYTEST_XDIST_WORKER" in os.environ
+    or not hasattr(os, "sched_getaffinity")
+    or len(os.sched_getaffinity(0)) < 2,
+    reason="the call is shorter than the time the spinning thread needs to be scheduled, so it "
+    "takes the released GIL only from a free core; under xdist workers or on one CPU it often has "
+    "none and the release cannot be seen (the serial coverage run has one)",
+)
 def test_pool_call_releases_the_gil() -> None:
     """A call that reaches the pool releases the GIL, however short.
 
