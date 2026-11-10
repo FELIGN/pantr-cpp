@@ -126,11 +126,12 @@ class BVH:
         Raises:
             TypeError: If any array has the wrong dtype.
             ValueError: If shapes are inconsistent, ``ndim`` is ``< 1``,
-                ``n_nodes != 2 * n_cells - 1`` (``0`` when ``n_cells == 0``), if
-                ``node_cell`` and the child pointers disagree about which nodes are
-                leaves, if an internal node's children or a leaf's cell id are out of
-                range, if the arrays do not encode a tree, or if the tree's
-                root-to-leaf depth exceeds the traversal's stack depth (128).
+                ``n_nodes != 2 * n_cells - 1`` (``0`` when ``n_cells == 0``), if a
+                ``node_cell`` is below ``-1``, if ``node_cell`` and the child pointers
+                disagree about which nodes are leaves, if an internal node's children
+                or a leaf's cell id are out of range, if the arrays do not encode a
+                tree, or if the tree's root-to-leaf depth exceeds the traversal's stack
+                depth (128).
         """
         if node_lo.dtype != np.float64 or node_hi.dtype != np.float64:
             raise TypeError(

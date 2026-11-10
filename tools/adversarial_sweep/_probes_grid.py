@@ -53,10 +53,23 @@ GROUP = "grid"
 _EPS64 = float(np.finfo(np.float64).eps)
 """``float64`` machine epsilon; every derived tolerance below is a multiple of this."""
 
-_UNIFORM_SPACING_ATOL = 1e-10
-"""Mirrors ``detail::uniform_spacing_atol`` in ``tensor_product_grid.hpp``, the
-absolute tolerance ``is_uniform`` compares spacing differences against. Needed here only to
-derive a perturbation guaranteed to sit well above it; not a probe tolerance itself."""
+
+def _uniform_spacing_tolerance(lo: float, hi: float) -> float:
+    """Mirror ``detail::uniform_spacing_tolerance`` in ``tensor_product_grid.hpp``.
+
+    ``16 eps max(span, |lo|, |hi|)``, the relative tolerance ``is_uniform`` compares the spread
+    of an axis's spacings against. Needed here only to derive a perturbation guaranteed to sit
+    well above it; not a probe tolerance itself.
+
+    Args:
+        lo (float): The axis's first breakpoint.
+        hi (float): Its last breakpoint.
+
+    Returns:
+        float: The tolerance.
+    """
+    return 16.0 * _EPS64 * max(hi - lo, abs(lo), abs(hi))
+
 
 # Deepest level probed for HierarchicalGrid refinement. The grid refuses a level whose
 # per-axis cell count (`cells * factor ** level`) does not fit int64 with an OverflowError;
@@ -481,10 +494,9 @@ def _tp_uniformity_cases(profile: Profile) -> Iterator[Case]:
     """Yield ``is_uniform`` corner cases across every domain magnitude.
 
     An exactly-uniform grid must report ``True`` on every domain, including the
-    translated ``[1e6, 1e6 + 1]`` one, and a grid perturbed by a *relative* amount
-    well above ``_UNIFORM_SPACING_ATOL`` (``1e-10``) must report ``False`` even at
-    that scale -- the tolerance is absolute, so this is where a translated domain
-    would silently flip the verdict if it were derived from the coordinates instead.
+    translated ``[1e6, 1e6 + 1]`` one, and a grid perturbed well above the relative
+    tolerance (``_uniform_spacing_tolerance``) must report ``False`` at every scale and
+    offset.
 
     Args:
         profile (Profile): Sweep width.
@@ -518,14 +530,13 @@ def _tp_uniformity_cases(profile: Profile) -> Iterator[Case]:
         perturbed = [bp.copy() for bp in breakpoints]
         spacing = span / 4.0
         # `spacing * 1e-7` is the relative perturbation the domain-scale axis is meant
-        # to probe, but on the tiny `[0, 1e-6]` domain that relative amount (~2.5e-14)
-        # falls *below* the absolute `_UNIFORM_SPACING_ATOL = 1e-10` and would register
-        # as uniform -- correctly, since it genuinely is uniform to that tolerance, not
-        # a probe finding. Flooring at `100 * _UNIFORM_SPACING_ATOL` keeps the
-        # perturbation two orders of magnitude above the code's own absolute tolerance
-        # on every domain, while staying well under `spacing` so the breakpoints stay
-        # strictly increasing.
-        perturbation = max(spacing * 1e-7, 100.0 * _UNIFORM_SPACING_ATOL)
+        # to probe. On a domain far from the origin relative to its span the tolerance
+        # grows with the offset, so the floor at a hundred times it keeps the
+        # perturbation two orders of magnitude above the code's own tolerance on every
+        # domain, while staying well under `spacing` so the breakpoints stay strictly
+        # increasing.
+        tolerance = _uniform_spacing_tolerance(domain[0], domain[1])
+        perturbation = max(spacing * 1e-7, 100.0 * tolerance)
         perturbed[0][2] += perturbation
         perturbed_grid = TensorProductGrid(perturbed)
         yield Case(

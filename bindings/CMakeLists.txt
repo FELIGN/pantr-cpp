@@ -131,9 +131,9 @@ install(TARGETS _pantr_cpu LIBRARY DESTINATION ${PANTR_PYTHON_DESTINATION} COMPO
         RUNTIME DESTINATION ${PANTR_PYTHON_DESTINATION} COMPONENT python)
 
 # --- Test-only modules --------------------------------------------------------------------------
-# A second extension built from the same headers, as _pantr_mpi and _pantr_berf will be: the twin
-# routes its parallel state through _pantr's table, the unrouted twin is the control that keeps its
-# own (tests/test_shared_parallelism.py). Installed in the `testing` component, never in a wheel.
+# A second extension built from the same headers that runs parallel loops, as _pantr_berf will (the
+# MPI module runs none; design/threading.md): the twin routes its parallel state through _pantr's
+# table, the unrouted twin is the control that keeps its own (tests/test_shared_parallelism.py). Installed in the `testing` component, never in a wheel.
 if(PANTR_BUILD_PYTHON_TEST_MODULES)
   foreach(_twin _pantr_twin _pantr_twin_unrouted)
     nanobind_add_module(${_twin} ${_pantr_nb_abi} NB_STATIC NOMINSIZE NOSTRIP NB_SUPPRESS_WARNINGS

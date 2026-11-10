@@ -13,7 +13,6 @@
 #include "pantr/tolerance.hpp"
 
 #include <cmath>
-#include <limits>
 #include <numbers>
 #include <string>
 

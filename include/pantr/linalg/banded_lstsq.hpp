@@ -133,7 +133,8 @@ struct Rotation {
 /// >= 4.3 (m + n - 2)`, that is `(m - 4.3) (n - 4.3) >= 9.9`, which holds for all `m >= n >= 8`
 /// and for `n <= 4` only at `m = n = 1`. Wherever it does not, the floor `sqrt(eps)` does, while
 /// `4.3 (m + n - 2) eps + rcond <= sqrt(eps) / 4`: with the default `rcond = max(m, n) eps`, for
-/// `m` up to about `3.1e6` (no fit or product in this library reaches such a system). The rotations
+/// `m` up to about `3.1e6`. Beyond that, with `n <= 4` (a fit of at most four functions to that
+/// many samples reaches it), the argument does not cover the answer given. The rotations
 /// come from `std::hypot`, and a rotation is skipped only on an exact zero, so no part of a column
 /// is dropped below the normal range; that `hypot` is accurate enough for Higham's rotation model
 /// is assumed, not checked.

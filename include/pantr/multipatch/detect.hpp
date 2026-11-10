@@ -750,7 +750,9 @@ template <StorageFloat T>
 ///         must share the same parametric dimension.
 ///     tol (std::optional<double>): Dimensionless relative tolerance override. Defaults to the
 ///         strict preset of `T`; it is scaled by the larger of the joint bounding-box diagonal and
-///         the largest coordinate magnitude for coordinates, and used bare for knots.
+///         the largest coordinate magnitude for coordinates, and for knots, normalized to
+///         `[0, 1]`, each matched direction adds its space's knot tolerance over its knot span
+///         (see `knots_agree`).
 ///
 /// Returns:
 ///     std::vector<Interface>: The interfaces found, sorted by
@@ -777,7 +779,8 @@ template <StorageFloat T>
 ///     patches (std::span<const bspline::Bspline<T>>): The patches the interface refers to.
 ///     iface (const Interface&): The interface to verify.
 ///     tol (std::optional<double>): Dimensionless relative tolerance override. Defaults to the
-///         strict preset of `T`.
+///         strict preset of `T`; scaled for coordinates and widened by the knot resolution for
+///         knots, as in `detect_interfaces`.
 ///
 /// Returns:
 ///     bool: True if the interface holds.

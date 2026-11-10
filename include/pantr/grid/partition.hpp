@@ -247,8 +247,9 @@ namespace detail {
 /// Searches all factorizations of `n_parts` into `cells_per_axis.size()` ordered factors with
 /// `blocks[d] <= cells_per_axis[d]` and returns the one whose block extents are the most uniform
 /// (minimizing the variance of their logarithms), the first of equals in enumeration order. The
-/// search is exact, so it finds a valid factorization whenever one exists; the divisor count of
-/// `n_parts` is small, so the enumeration is cheap.
+/// search is exact, so it finds a valid factorization whenever one exists. Each axis lists the
+/// divisors of what remains by trial division up to its square root, so the search costs at least
+/// `O(sqrt(n_parts))`; an `n_parts` above the grid's cell count is refused before it.
 ///
 /// Args:
 ///     cells_per_axis (std::span<const std::int64_t>): Cell count along each axis, each at least 1.

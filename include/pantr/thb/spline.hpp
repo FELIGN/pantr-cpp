@@ -289,8 +289,8 @@ class THBSpline {
         const std::size_t k = space().num_active_on(task.cid);
         // Backstop for an invariant: every leaf cell of a space is covered by at least one active
         // function. No known input violates it (an exhaustive search over small 1D leaf sets and a
-        // random one in 2D found none), so this is untested. It stays because, were it violated,
-        // the contraction below would sum nothing and the point would silently evaluate to zero.
+        // random one in 2D found none). It stays because, were it violated, the contraction below
+        // would sum nothing and the point would silently evaluate to zero.
         if (k == 0) {
           throw state_error("cell " + std::to_string(task.cid) +
                             " has no active basis functions; the THBSplineSpace may be "

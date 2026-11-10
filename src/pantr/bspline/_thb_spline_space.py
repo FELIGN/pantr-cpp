@@ -249,8 +249,8 @@ class THBSplineSpace:
                 the root knot-span grid, if ``regularity`` has the wrong length, or
                 if any per-direction regularity value is out of range.
             OverflowError: If a two-scale matrix between two levels overflows the
-                knots' dtype (a float32 knot difference within one refinement window
-                beyond the float32 range).
+                knots' dtype (a knot difference within one refinement window beyond
+                that dtype's range, as for float32 knots near ``1e38``).
         """
         if not isinstance(root_space, BsplineSpace):
             raise TypeError(
@@ -1024,8 +1024,8 @@ class THBSplineSpace:
             IndexError: If any id is outside ``[0, grid.num_cells)``.
             ValueError: If ``admissible_class`` is an integer ``< 2``.
             RuntimeError: If the grid has been modified since construction.
-            OverflowError: If a two-scale matrix overflows the knots' dtype (a float32
-                knot difference within one refinement window beyond the float32 range).
+            OverflowError: If a two-scale matrix overflows the knots' dtype (a knot
+                difference within one refinement window beyond that dtype's range).
         """
         self._check_not_stale()
         adm = self._admissible_class(admissible_class)
@@ -1076,8 +1076,8 @@ class THBSplineSpace:
                 ``lo[k] >= hi[k]``, or any part of ``[lo, hi)`` lies outside the
                 level domain.
             RuntimeError: If the grid has been modified since construction.
-            OverflowError: If a two-scale matrix overflows the knots' dtype (a float32
-                knot difference within one refinement window beyond the float32 range).
+            OverflowError: If a two-scale matrix overflows the knots' dtype (a knot
+                difference within one refinement window beyond that dtype's range).
         """
         self._check_not_stale()
         adm = self._admissible_class(admissible_class)
