@@ -189,6 +189,10 @@ TEST_CASE(
   }
   // One non-uniform axis makes the grid non-uniform.
   CHECK_FALSE(tpg({{0.0, 1.0, 2.0}, {0.0, 1.0, 5.0}}).is_uniform());
+  // A span beyond the double range makes the tolerance infinite: it grades no spread but zero.
+  // Bug caught: finite spacings 5e307, 5e307, 1e308 graded uniform against that infinity.
+  CHECK_FALSE(tpg({{-1e308, -5e307, 0.0, 1e308}}).is_uniform());
+  CHECK(tpg({{-1.7e308, 0.0, 1.7e308}}).is_uniform());
 }
 
 TEST_CASE(

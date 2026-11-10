@@ -46,3 +46,22 @@ def test_unequal_spacings_are_not_uniform(breakpoints: np.ndarray) -> None:
 def test_an_axis_whose_spacings_overflow_is_not_uniform() -> None:
     """A spread of spacings (and a tolerance) beyond the double range grades nothing."""
     assert not TensorProductGrid([np.array([-1.7e308, -1.6e308, 1.7e308])]).is_uniform
+
+
+@pytest.mark.parametrize(
+    "breakpoints",
+    [np.array([-1e308, -5e307, 0.0, 1e308]), np.array([-1.7e308, 0.0, 1e308, 1.7e308])],
+    ids=["finite-spread", "overflowing-spread"],
+)
+def test_an_axis_whose_tolerance_overflows_is_not_uniform(breakpoints: np.ndarray) -> None:
+    """A span beyond the double range makes the tolerance infinite: it grades nothing.
+
+    The spread of the first axis's spacings is finite (spacings ``5e307``, ``5e307`` and ``1e308``),
+    so only the tolerance's own overflow decides it.
+    """
+    assert not TensorProductGrid([breakpoints]).is_uniform
+
+
+def test_an_axis_whose_span_overflows_but_is_uniform_reads_uniform() -> None:
+    """Control: the same overflowing span with equal spacings is still uniform."""
+    assert TensorProductGrid([np.array([-1.7e308, 0.0, 1.7e308])]).is_uniform

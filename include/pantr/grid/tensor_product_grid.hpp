@@ -507,9 +507,13 @@ class TensorProductGrid : public GridBase<TensorProductGrid> {
         dmin = (std::min)(dmin, diff);
         dmax = (std::max)(dmax, diff);
       }
-      // A spread or tolerance that overflows grades nothing: such an axis is not reported uniform.
+      // A spread or tolerance that overflows grades nothing: such an axis is not reported uniform,
+      // unless its spacings are exactly equal, which no tolerance is needed to grade (an axis
+      // whose span alone overflows, as `[-1.7e308, 0, 1.7e308]`).
       const double spread = dmax - dmin;
-      if (!(std::isfinite(spread) && spread <= detail::uniform_spacing_tolerance(bp))) {
+      const double tolerance = detail::uniform_spacing_tolerance(bp);
+      // An overflowing spread fails the comparison against a finite tolerance (NaN included).
+      if (!(spread == 0.0 || (std::isfinite(tolerance) && spread <= tolerance))) {
         rep->is_uniform = false;
         break;
       }
