@@ -659,7 +659,7 @@ outcomes the suite asserts are discrete.
 | `change_basis` (4 sites) | `solve(G, C)`, `solve(forward, I)` | `PartialPivLU` | none beyond conditioning, which the degree limits already bound. |
 | `_bspline_knot_insertion.to_periodic` | `qr`, `solve(R, Q.T@b)` | `HouseholderQR` + triangular solve | residual check raises on gross violation: threshold unchanged. |
 | products (`multiply`, 6 sites), THB prolongation | `lstsq(rcond=None)` (gelsd) | products: banded Givens QR (`banded_lstsq.hpp`), kept only where its full-rank certificate clears the cutoff by a margin, else `BDCSVD`; THB: Householder QR with column pivoting where its full-rank certificate holds (`try_lstsq_full_rank_qr`), else the minimum-norm solution of a one-sided Jacobi SVD (`lstsq_min_norm_jacobi`). Cutoff `eps * max(m, n) * s_max` (`_linalg.py:2530`, gelsd's `S(i) <= RCOND*S(1)`) | rank decision at the cutoff; min-norm solution identical in exact arithmetic. The QR path answers only full-rank systems, where the least-squares solution is unique. |
-| THB restriction | `pinv` | `BDCSVD`, cutoff `1e-15 * s_max` (numpy 2.4 default, `_linalg.py:2240`; not `max(m,n)*eps`, which is `lstsq`'s) | as above. |
+| THB restriction | `pinv` | unchanged: `THBSplineSpace.restriction_to` still calls `numpy.linalg.pinv` (cutoff `1e-15 * s_max`, numpy's default) | none. |
 | QI local blocks | `inv`, singular -> `ValueError` | `PartialPivLU`, exact-zero-pivot -> `value_error` | same message. |
 | `locate` health check | `svd` of the Jacobian | `JacobiSVD` (tiny) | singular-value ratio test unchanged. |
 | spectral partition | `eigh` / `eigsh` | `SelfAdjointEigenSolver` / Spectra on the Laplacian **deflated against the constant vector** (4.2) | **eigenvector sign** canonicalised as today; **near-degenerate lambda_2** makes the Fiedler vector arbitrary within its eigenspace, so a partition can differ from ARPACK's. `test_partition_graph.py` asserts properties (balance, separation, validity) and determinism within a process, not exact memberships (read by its test names and its `assert_array_equal` sites, not every body), so the hazard is bounded to those tests' properties. |
@@ -863,13 +863,14 @@ last. Tests touched per stage are the files importing that stage's modules.
 | Boost.Multiprecision from Boost 1.90.0, standalone (`BOOST_MP_STANDALONE`) | exact rationals | BSL-1.0 | as Eigen |
 | Boost.Config from Boost 1.90.0 (DR-22: standalone Boost.Multiprecision refuses to compile without it) | configuration headers | BSL-1.0 | as Eigen |
 | nanobind (exact pin) | binding | BSD-3-Clause | statically in each extension |
+| robin_map (bundled by nanobind) | hash map inside nanobind | MIT | statically in each extension |
 | scikit-build-core | build backend | Apache-2.0 | build only |
 | doctest 2.5.3 | C++ tests | MIT | tests only |
 | numpy | runtime | BSD-3-Clause | dependency |
 | scipy | `csr_array` at the boundary | BSD-3-Clause | dependency |
 | mpi4py | `pantr-mpi` | BSD-3-Clause | dependency of `pantr-mpi` |
-| MPI library (MPICH / Open MPI / Intel MPI) | `pantr-mpi` runtime | permissive for MPICH and Open MPI, proprietary-redistributable for Intel MPI (recalled, not checked; confirm in stage 8; irrelevant to pantr's licence since nothing is bundled) | user-installed, not bundled |
-| pymetis | `pantr[metis]` | MIT (to confirm in stage 6) | optional dependency |
+| MPI library (MPICH / Open MPI / Intel MPI) | `pantr-mpi` runtime | permissive for MPICH and Open MPI, proprietary-redistributable for Intel MPI (recalled, not checked; irrelevant to pantr's licence since nothing is bundled) | user-installed, not bundled |
+| pymetis | `pantr[metis]` | MIT AND Apache-2.0 (its package metadata) | optional dependency |
 | METIS | `pantr::metis` (C++) | Apache-2.0 | user-provided |
 | BeRF-FR | `pantr-berf` only | its author's hybrid licence (planned) | `pantr-berf` wheel only |
 
@@ -977,7 +978,7 @@ pool thread per rank under `pantr.mpi`).
 - **U5** dolfinx's family check details have not moved since #4652: re-read the merged code at stage 8 start.
 - **U6** Spectra with ARPACK's default `ncv` reproduces `eigsh`'s convergence on the suite's graphs: run
   `test_partition_graph.py` at stage 6 with the fallback counter asserted zero on the non-fallback tests.
-- **U7** pymetis licence (stated as MIT, recalled, not checked): read its PyPI page in stage 6.
+- **U7** pymetis licence: settled, its package metadata (pymetis 2025.2.2) says `MIT AND Apache-2.0`.
 - **U8** Kokkos mdspan's namespace-selection macro name (README did not show it): read `mdspan/include/experimental/__p0009_bits/config.hpp`
   in stage 0 before writing `core/mdspan.hpp`.
 - **U9** `import_mpi4py()` under the stable ABI: compiled with `-DMPI4PY_LIMITED_API`, never run; run it in stage 8's

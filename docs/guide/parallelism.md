@@ -17,7 +17,7 @@ The following operations are parallelized over **evaluation points**:
 | Bezier evaluation and derivatives | C++ (`include/pantr/bezier/`), on pantr's own thread pool | points |
 | Bezier split / slice / restrict | C++ (`include/pantr/bezier/`), on pantr's own thread pool | control point columns |
 | Bezier extraction (`to_beziers`) | C++ (`include/pantr/bspline/to_beziers.hpp`), on pantr's own thread pool | element/slab pairs |
-| Batch applies of `SpanwiseElementExtraction` (`apply_many`, `apply_transpose_many`, `apply_MT_K_M_many`, `apply_M_K_MT_many`) | C++ (`include/pantr/bspline/spanwise_extraction.hpp`), on pantr's own thread pool, GIL released when the batch is long enough | cells |
+| Batch applies of `SpanwiseElementExtraction` (`apply_many`, `apply_transpose_many`, `apply_MT_K_M_many`, `apply_M_K_MT_many`) | C++ (`include/pantr/bspline/spanwise_extraction.hpp`), on pantr's own thread pool, GIL released when the batch is large enough to run in parallel | cells |
 
 By default, every CPU the process may run on is used: the pool sizes itself from the process's
 CPU affinity mask (on Linux), not from the machine's core count, so a process restricted with

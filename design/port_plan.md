@@ -275,8 +275,8 @@ kernels, precompiled instantiation, musllinux, Windows pantr-mpi, speed-ups beyo
 - DR-19 (mechanical) "pantr._parallel on C++" moves from P0a to P0b: it needs the
   extension module, which P0b's packaging builds. P0a's pool is C++-only, tested with ctest + TSan.
 - DR-20 (design) One pool and one per-thread parallelism setting per process across every pantr
-  extension module: `_pantr` owns them and exports an accessor table by capsule; `_pantr_mpi` and
-  `_pantr_berf_*` route the pool, the thread settings and the in-region flag through it. A plain C++
+  extension module: `_pantr` owns them and exports an accessor table by capsule; `_pantr_berf_*`
+  routes the pool, the thread settings and the in-region flag through it. A plain C++
   consumer (one binary) is unaffected. Why: per-module inline variables give each module its own
   pool, which oversubscribes the affinity mask R0 sizes from and makes set_num_threads module-local.
   Ruled out: GNU unique symbols (ELF/GCC only); per-module pools. Built in P0b
