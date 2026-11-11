@@ -63,7 +63,10 @@ def _load_berf() -> types.ModuleType:
     try:
         return importlib.import_module(_BERF_MODULE)
     except ImportError as exc:
-        msg = "The 'berf' root provider needs the pantr-berf package, which could not be imported."
+        msg = (
+            "The 'berf' root provider needs the pantr-berf package, which could not be imported. "
+            "pantr-berf is not published yet; until it is, use the 'builtin' provider."
+        )
 
         raise ImportError(msg) from exc
 

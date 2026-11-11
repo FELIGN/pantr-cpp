@@ -344,9 +344,13 @@ def test_set_non_string_raises_type_error(bad: object) -> None:
 
 
 def test_set_berf_without_the_package_raises_import_error() -> None:
-    """``berf`` needs ``pantr-berf``: an ``ImportError`` that names it, with the state unchanged."""
+    """``berf`` needs ``pantr-berf``: an ``ImportError`` that names it, with the state unchanged.
+
+    The message also says the package is not published yet, so nobody is sent to an install that
+    cannot succeed.
+    """
     set_root_provider("builtin")
-    with pytest.raises(ImportError, match="pantr-berf"):
+    with pytest.raises(ImportError, match=r"pantr-berf[\s\S]*not published yet"):
         set_root_provider("berf")
     assert get_root_provider() == "builtin"
 

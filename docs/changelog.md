@@ -8,8 +8,9 @@
   from the `pantr-berf` package). The initial choice comes from the `PANTR_ROOT_PROVIDER`
   environment variable, read on first use (an unknown name raises `ValueError` then, not at
   import); without it, `"berf"` when `pantr-berf` is installed, else `"builtin"`. Asking for
-  `"berf"` without the package raises `ImportError`. This is the runtime switch for the
-  certified finder the C++ port adds as an optional package.
+  `"berf"` without the package raises `ImportError`. `pantr-berf` is not published yet, so
+  `"builtin"` is the only provider available for now; the switch is where the certified finder
+  will plug in once it is.
 - **A METIS graph partitioner for C++ users** (`pantr::metis::Partitioner`, target `pantr::metis`,
   CMake option `PANTR_WITH_METIS`, off by default), against a METIS the user installs. It does what
   `partition_graph(backend="metis")` does through pymetis. The Python package does not use it:
