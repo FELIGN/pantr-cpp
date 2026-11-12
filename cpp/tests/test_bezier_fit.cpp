@@ -730,6 +730,62 @@ TEST_CASE_TEMPLATE("fit_scattered: scattered samples of a polynomial give its co
   }
 }
 
+TEST_CASE_TEMPLATE("fit_scattered: a rank-deficient Vandermonde gives the minimum-norm fit", T,
+                   float, double) {
+  // Bug caught: a solve that does not drop a zero singular value (an infinite or huge coefficient)
+  // or drops the wrong one, and a truncation compared on singular values other than those of the
+  // Vandermonde. Points with x in {0, 1} only, degrees (2, 2): B_1(x) vanishes at both, so the
+  // three columns B_1(x) B_j(y) are exactly zero and the matrix has rank 6 of 9. Data from
+  // coefficients whose B_1(x) row is zero fit exactly, and the minimum-norm least-squares solution
+  // is those coefficients: the null space is spanned by the zero columns. kappa_2 of the six
+  // nonzero columns comes from the exact normal equations.
+  const double u = unit_roundoff<T>();
+  Lcg rng;
+  const std::size_t n_pts = 30;
+  std::vector<T> pts(n_pts * 2);
+  for (std::size_t i = 0; i < n_pts; ++i) {
+    pts[i * 2] = static_cast<T>(i % 2);
+    pts[i * 2 + 1] = static_cast<T>(static_cast<double>(rng.next() % 65) / 64.0);
+  }
+  Matrix kept;  // the six nonzero columns, x direction slowest
+  for (std::size_t i = 0; i < n_pts; ++i) {
+    const auto b0 = bernstein_values(2, Rational(static_cast<double>(pts[i * 2])));
+    const auto b1 = bernstein_values(2, Rational(static_cast<double>(pts[i * 2 + 1])));
+    std::vector<Rational> row;
+    for (const std::size_t a : {std::size_t{0}, std::size_t{2}}) {
+      for (const Rational& b : b1) {
+        row.push_back(b0[a] * b);
+      }
+    }
+    kept.push_back(row);
+  }
+  const double kappa = condition_bound(kept);
+  REQUIRE(1.0 / kappa > 100.0 * static_cast<double>(std::numeric_limits<T>::epsilon()));
+  const std::size_t cols[] = {0, 1, 2, 6, 7, 8};  // the nonzero columns' indices in the nine
+  std::vector<double> c(9, 0.0);  // (x index, y index), x slowest; the B_1(x) row stays zero
+  for (const std::size_t j : cols) {
+    c[j] = dyadic(j, 7);
+  }
+  std::vector<T> values(n_pts);
+  for (std::size_t i = 0; i < n_pts; ++i) {
+    Rational s = 0;
+    for (std::size_t k = 0; k < 6; ++k) {
+      s += kept[i][k] * Rational(c[cols[k]]);
+    }
+    values[i] = static_cast<T>(to_double(s));
+  }
+  const std::vector<long long> degrees = {2, 2};
+  const pb::Bezier<T> fit =
+      pb::fit_scattered<T>(pantr::mdview<const T, 2>(values.data(), n_pts, 1),
+                           pantr::mdview<const T, 2>(pts.data(), n_pts, 2), degrees, std::nullopt);
+  const double bound = fit_slack * static_cast<double>(n_pts + 9 + 2) * u * kappa;
+  REQUIRE(fit.control_points().size() == c.size());
+  for (std::size_t i = 0; i < c.size(); ++i) {
+    CAPTURE(i);
+    CHECK(std::fabs(static_cast<double>(fit.control_points()[i]) - c[i]) <= bound);
+  }
+}
+
 TEST_CASE("fit_scattered: as many points as coefficients interpolates, one fewer is refused") {
   // The boundary of "Underdetermined": 4 coefficients (degrees {3}) from exactly 4 points is a
   // square system and is solved; from 3 it is not.

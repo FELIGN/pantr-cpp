@@ -5,11 +5,13 @@
 /// through its SVD with the singular values below `tol * sigma_max` dropped (Golub and Van Loan,
 /// *Matrix Computations*: regularised least squares). On a tensor-product grid the system
 /// separates and one pseudo-inverse per direction is applied along its axis; at scattered points
-/// the full tensor-product Vandermonde is built and pseudo-inverted once. As in the previous
-/// release (NumPy's `linalg.svd`), the decomposition runs in `double` and its factors are rounded
-/// to the storage type `T`; the Vandermonde matrix, the truncation, the pseudo-inverse and its
-/// application are in `T`. Eigen's `BDCSVD` (divide and conquer, Jacobi below 16 columns) stands
-/// for LAPACK's `gesdd` (design §6).
+/// the full tensor-product Vandermonde is built once and its truncated pseudo-inverse applied to
+/// the values through a QR, never formed (`truncated_pinv_apply`). As in the previous release
+/// (NumPy's `linalg.svd`), the decompositions run in `double`; on a grid the factors are rounded
+/// to the storage type `T` and the truncation, the pseudo-inverse and its application are in `T`,
+/// while at scattered points the truncation compares in `T` and the solve stays in `double` until
+/// its result is rounded to `T`. Eigen's `BDCSVD` (divide and conquer, Jacobi below 16 columns)
+/// stands for LAPACK's `gesdd` (design §6).
 #pragma once
 
 #include "pantr/basis/bernstein.hpp"
@@ -24,6 +26,7 @@
 #include "pantr/linalg/dense.hpp"
 
 #include <Eigen/Core>
+#include <Eigen/QR>
 #include <Eigen/SVD>
 
 #include <algorithm>
@@ -104,6 +107,54 @@ template <StorageFloat T>
                  for_overwrite);
   Eigen::Map<linalg::RowMatrix<T>>(out.data(), pinv.rows(), pinv.cols()) = pinv;
   return out;
+}
+
+/// `truncated_pinv(v, tol) * b` without forming the pseudo-inverse, for a tall `v` (`m >= n`).
+///
+/// A Householder QR of `v` first, then the SVD of its `(n, n)` triangular factor, whose singular
+/// values are those of `v` up to the QR's backward error, `O(eps * |v|)` (Householder QR is
+/// backward stable, Higham, *Accuracy and Stability of Numerical Algorithms*, 2nd ed., ch. 19):
+/// the same order as the error of the SVD of `v` itself. The truncation is `truncated_pinv`'s,
+/// `s >= tol * s_max` compared in `T`. Neither the `(m, n)` factor `U` nor the `(n, m)`
+/// pseudo-inverse is formed, so the cost is the QR's, `O(m n^2)` with a small constant.
+///
+/// Args:
+///     v (const linalg::RowMatrix<T>&): The matrix, `(m, n)` with `m >= n`.
+///     b (mdview<const T, 2>): The right-hand sides, `(m, k)`.
+///     tol (double): Relative truncation tolerance, as in `truncated_pinv`.
+///
+/// Returns:
+///     linalg::RowMatrix<T>: `(n, k)`.
+///
+/// Raises:
+///     value_error: `v` has a NaN or infinite entry, or the SVD fails ("SVD did not converge").
+template <StorageFloat T>
+[[nodiscard]] linalg::RowMatrix<T> truncated_pinv_apply(const linalg::RowMatrix<T>& v,
+                                                        mdview<const T, 2> b, double tol) {
+  using MatD = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic>;
+  if (!v.allFinite()) {
+    throw value_error("SVD did not converge");  // as truncated_pinv, for the same reason
+  }
+  const Eigen::Index n = v.cols();
+  const auto m = static_cast<Eigen::Index>(b.extent(0));
+  const auto k = static_cast<Eigen::Index>(b.extent(1));
+  const Eigen::HouseholderQR<MatD> qr(v.template cast<double>());
+  const MatD r = qr.matrixQR().topRows(n).template triangularView<Eigen::Upper>();
+  MatD qtb = Eigen::Map<const linalg::RowMatrix<T>>(b.data_handle(), m, k).template cast<double>();
+  qtb.applyOnTheLeft(qr.householderQ().adjoint());
+  const Eigen::BDCSVD<MatD, Eigen::ComputeThinU | Eigen::ComputeThinV> svd(r);
+  if (svd.info() != Eigen::Success) {
+    throw value_error("SVD did not converge");
+  }
+  const Eigen::Matrix<T, Eigen::Dynamic, 1> sigma = svd.singularValues().template cast<T>();
+  const auto ns = sigma.size();
+  Eigen::VectorXd inv(ns);
+  const T cut = ns > 0 ? static_cast<T>(tol) * sigma(0) : T(0);
+  for (Eigen::Index i = 0; i < ns; ++i) {
+    inv(i) = sigma(i) >= cut ? 1.0 / static_cast<double>(sigma(i)) : 0.0;
+  }
+  const MatD x = svd.matrixV() * (inv.asDiagonal() * (svd.matrixU().transpose() * qtb.topRows(n)));
+  return x.template cast<T>();
 }
 
 /// Refuse a NaN or infinite truncation tolerance: NaN keeps no singular value and infinity none
@@ -321,14 +372,10 @@ template <StorageFloat T>
     }
     v = std::move(next);
   }
-  const NdArray<T> pinv = detail::truncated_pinv<T>(v, resolved);
+  const linalg::RowMatrix<T> coeffs = detail::truncated_pinv_apply<T>(v, values, resolved);
   const std::size_t rank = values.extent(1);
-  using CMat = Eigen::Map<const linalg::RowMatrix<T>>;
   const auto ec = static_cast<Eigen::Index>(n_coeffs);
-  const auto ep = static_cast<Eigen::Index>(n_pts);
   const auto er = static_cast<Eigen::Index>(rank);
-  const linalg::RowMatrix<T> coeffs =
-      CMat(pinv.data(), ec, ep) * CMat(values.data_handle(), ep, er);
   std::vector<std::size_t> shape(orders);
   shape.push_back(rank);
   NdArray<T> out(std::move(shape), for_overwrite);
