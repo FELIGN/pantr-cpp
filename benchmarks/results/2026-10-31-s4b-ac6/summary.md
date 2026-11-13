@@ -1,0 +1,92 @@
+| case | main stat (ns) | main range | branch stat (ns) | branch range | flags |
+|---|---|---|---|---|---|
+| S4.bspline_construct.large@t1 | 885 | 66 | 443382 | 7193 | branch |
+| S4.bspline_construct.large@t8 | 896 | 54 | 443105 | 9468 | branch |
+| S4.bspline_construct.medium@t1 | 907 | 47 | 2818 | 359 | branch |
+| S4.bspline_construct.medium@t8 | 919 | 68 | 2883 | 385 | branch |
+| S4.bspline_construct.tiny@t1 | 880 | 68 | 1909 | 143 | branch |
+| S4.bspline_construct.tiny@t8 | 900 | 506 | 1878 | 1033 | branch |
+| S4.bspline_elevate_degree.large@t1 | 15472341 | 491464 | 11619058 | 247990 |  |
+| S4.bspline_elevate_degree.large@t8 | 15568406 | 269334 | 11653131 | 703390 |  |
+| S4.bspline_elevate_degree.medium@t1 | 234777 | 18649 | 111639 | 7398 |  |
+| S4.bspline_elevate_degree.medium@t8 | 235472 | 12101 | 113597 | 6380 |  |
+| S4.bspline_elevate_degree.tiny@t1 | 84122 | 4678 | 9402 | 1258 |  |
+| S4.bspline_elevate_degree.tiny@t8 | 86304 | 6496 | 9407 | 576 |  |
+| S4.bspline_evaluate_1d.large@t1 | 91523097 | 4925156 | 52544540 | 920682 |  |
+| S4.bspline_evaluate_1d.large@t8 | 20808050 | 1005362 | 7546462 | 5072174 |  |
+| S4.bspline_evaluate_1d.medium@t1 | 65807 | 6618 | 54665 | 3671 |  |
+| S4.bspline_evaluate_1d.medium@t8 | 63935 | 12585 | 54739 | 2776 |  |
+| S4.bspline_evaluate_1d.tiny@t1 | 11093 | 543 | 2999 | 236 |  |
+| S4.bspline_evaluate_1d.tiny@t8 | 27185 | 10833 | 3000 | 328 |  |
+| S4.bspline_evaluate_2d.large@t1 | 32570413 | 1883040 | 15160915 | 2249916 |  |
+| S4.bspline_evaluate_2d.large@t8 | 28363924 | 1567158 | 5423600 | 662532 |  |
+| S4.bspline_evaluate_2d.medium@t1 | 528203 | 19994 | 153918 | 23378 |  |
+| S4.bspline_evaluate_2d.medium@t8 | 535202 | 38550 | 153126 | 6938 |  |
+| S4.bspline_evaluate_2d.tiny@t1 | 58499 | 4036 | 4096 | 345 |  |
+| S4.bspline_evaluate_2d.tiny@t8 | 59121 | 3931 | 4074 | 333 |  |
+| S4.bspline_evaluate_2d_lattice.large@t1 | 3740760 | 364832 | 299343 | 130812 |  |
+| S4.bspline_evaluate_2d_lattice.large@t8 | 3827354 | 350903 | 263631 | 16526 |  |
+| S4.bspline_evaluate_2d_lattice.medium@t1 | 108834 | 55190 | 12428 | 409 |  |
+| S4.bspline_evaluate_2d_lattice.medium@t8 | 108511 | 9748 | 12468 | 715 |  |
+| S4.bspline_evaluate_2d_lattice.tiny@t1 | 72210 | 6529 | 4779 | 525 |  |
+| S4.bspline_evaluate_2d_lattice.tiny@t8 | 71674 | 4666 | 4858 | 430 |  |
+| S4.bspline_evaluate_3d.large@t1 | 147318560 | 6173568 | 42881300 | 834152 |  |
+| S4.bspline_evaluate_3d.large@t8 | 141964247 | 2728417 | 8999408 | 461902 |  |
+| S4.bspline_evaluate_3d.medium@t1 | 1308331 | 51322 | 429350 | 17484 |  |
+| S4.bspline_evaluate_3d.medium@t8 | 1318870 | 47392 | 273916 | 5226 |  |
+| S4.bspline_evaluate_3d.tiny@t1 | 78352 | 3340 | 4941 | 372 |  |
+| S4.bspline_evaluate_3d.tiny@t8 | 78927 | 7974 | 4993 | 460 |  |
+| S4.bspline_evaluate_3d_lattice.large@t1 | 4208891 | 339896 | 368760 | 53295 |  |
+| S4.bspline_evaluate_3d_lattice.large@t8 | 4373930 | 290687 | 393450 | 55860 |  |
+| S4.bspline_evaluate_3d_lattice.medium@t1 | 144899 | 9022 | 32471 | 1295 |  |
+| S4.bspline_evaluate_3d_lattice.medium@t8 | 146462 | 10301 | 32448 | 2911 |  |
+| S4.bspline_evaluate_3d_lattice.tiny@t1 | 107676 | 10094 | 8281 | 372 |  |
+| S4.bspline_evaluate_3d_lattice.tiny@t8 | 107577 | 4273 | 8269 | 289 |  |
+| S4.bspline_evaluate_derivatives_2d.large@t1 | 54876234 | 2590760 | 27016231 | 2133054 |  |
+| S4.bspline_evaluate_derivatives_2d.large@t8 | 40128732 | 5065214 | 8925726 | 3797778 |  |
+| S4.bspline_evaluate_derivatives_2d.medium@t1 | 803734 | 40487 | 276289 | 22861 |  |
+| S4.bspline_evaluate_derivatives_2d.medium@t8 | 804087 | 32984 | 277110 | 136566 |  |
+| S4.bspline_evaluate_derivatives_2d.tiny@t1 | 65647 | 3389 | 5203 | 650 |  |
+| S4.bspline_evaluate_derivatives_2d.tiny@t8 | 64743 | 3064 | 5209 | 2850 |  |
+| S4.bspline_insert_knots.large@t1 | 7561258 | 293390 | 4516842 | 141166 |  |
+| S4.bspline_insert_knots.large@t8 | 7623456 | 250780 | 4549335 | 377232 |  |
+| S4.bspline_insert_knots.medium@t1 | 181216 | 7432 | 55511 | 2903 |  |
+| S4.bspline_insert_knots.medium@t8 | 182146 | 17498 | 55325 | 3895 |  |
+| S4.bspline_insert_knots.tiny@t1 | 94982 | 4485 | 9779 | 757 |  |
+| S4.bspline_insert_knots.tiny@t8 | 94598 | 4154 | 9747 | 1396 |  |
+| S4.bspline_remove_knots.large@t1 | 638751490 | 21803632 | 277312866 | 3688410 |  |
+| S4.bspline_remove_knots.large@t8 | 636686012 | 11323392 | 277123879 | 3742928 |  |
+| S4.bspline_remove_knots.medium@t1 | 17849262 | 802014 | 3105401 | 174072 |  |
+| S4.bspline_remove_knots.medium@t8 | 17808012 | 993242 | 3052784 | 107716 |  |
+| S4.bspline_remove_knots.tiny@t1 | 137152 | 8983 | 10983 | 1258 |  |
+| S4.bspline_remove_knots.tiny@t8 | 137291 | 5067 | 10604 | 1365 |  |
+| S4.bspline_to_beziers.large@t1 | 301084130 | 6005230 | 200506730 | 4525892 |  |
+| S4.bspline_to_beziers.large@t8 | 293147826 | 8150848 | 196161142 | 6814456 |  |
+| S4.bspline_to_beziers.medium@t1 | 2874746 | 148882 | 1038302 | 66609 |  |
+| S4.bspline_to_beziers.medium@t8 | 3021973 | 190880 | 1067624 | 58928 |  |
+| S4.bspline_to_beziers.tiny@t1 | 99098 | 5042 | 7797 | 1087 |  |
+| S4.bspline_to_beziers.tiny@t8 | 116686 | 3941 | 7678 | 624 |  |
+| S4.bspline_to_periodic.large@t1 | 116345046 | 3686384 | 32120594 | 2251684 |  |
+| S4.bspline_to_periodic.large@t8 | 116977525 | 2634675 | 32360818 | 2130005 |  |
+| S4.bspline_to_periodic.medium@t1 | 115861005 | 4380270 | 32108461 | 1761850 |  |
+| S4.bspline_to_periodic.medium@t8 | 117225682 | 3417828 | 32349110 | 2542620 |  |
+| S4.bspline_to_periodic.tiny@t1 | 290829 | 21802 | 11986 | 939 |  |
+| S4.bspline_to_periodic.tiny@t8 | 291711 | 28369 | 11733 | 2188 |  |
+| S4.spanwise_extraction_apply.large@t1 | 143046730 | 11516396 | 76971823 | 5840634 |  |
+| S4.spanwise_extraction_apply.large@t8 | 147262950 | 6778631 | 74755299 | 13401476 |  |
+| S4.spanwise_extraction_apply.medium@t1 | 14701430 | 1198698 | 7666064 | 591519 |  |
+| S4.spanwise_extraction_apply.medium@t8 | 14777065 | 1163284 | 7459193 | 1441690 |  |
+| S4.spanwise_extraction_apply.tiny@t1 | 14674 | 1565 | 7645 | 898 |  |
+| S4.spanwise_extraction_apply.tiny@t8 | 14918 | 1180 | 7450 | 1515 |  |
+| S4.spanwise_extraction_apply_many.large@t1 | 142896403 | 1747378 | 75190807 | 5389330 |  |
+| S4.spanwise_extraction_apply_many.large@t8 | 25246572 | 867644 | 24079646 | 1782456 |  |
+| S4.spanwise_extraction_apply_many.medium@t1 | 1166353 | 77030 | 660056 | 72703 |  |
+| S4.spanwise_extraction_apply_many.medium@t8 | 327361 | 7818 | 298586 | 45120 |  |
+| S4.spanwise_extraction_apply_many.tiny@t1 | 71064 | 2807 | 20435 | 1991 |  |
+| S4.spanwise_extraction_apply_many.tiny@t8 | 96617 | 9715 | 20717 | 3602 |  |
+| S4.spanwise_extraction_construct.large@t1 | 104494 | 6939 | 16994 | 1218 |  |
+| S4.spanwise_extraction_construct.large@t8 | 103590 | 2566 | 16783 | 936 |  |
+| S4.spanwise_extraction_construct.medium@t1 | 61069 | 4448 | 13538 | 1251 |  |
+| S4.spanwise_extraction_construct.medium@t8 | 61531 | 2805 | 13398 | 862 |  |
+| S4.spanwise_extraction_construct.tiny@t1 | 49153 | 3539 | 12103 | 1465 |  |
+| S4.spanwise_extraction_construct.tiny@t8 | 49669 | 5681 | 11893 | 1018 |  |

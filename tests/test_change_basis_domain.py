@@ -32,15 +32,17 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
-from pantr.basis import LagrangeVariant
-from pantr.basis._basis_lagrange import _get_lagrange_points
-from pantr.change_basis import (
+from pantr._testing import (
     _BERNSTEIN_TO_CARDINAL_MAX_DEGREE,
     _BERNSTEIN_TO_LAGRANGE_MAX_DEGREE,
     _CARDINAL_TO_BERNSTEIN_MAX_DEGREE,
     _CARDINAL_TO_LEGENDRE_MAX_DEGREE,
     _cached_cardinal_to_bernstein_matrix,
     _DegreeLimit,
+    _get_lagrange_points,
+)
+from pantr.basis import LagrangeVariant
+from pantr.change_basis import (
     compute_bernstein_to_cardinal_1d,
     compute_bernstein_to_lagrange_1d,
     compute_cardinal_dual_legendre_coeffs_1d,
@@ -643,7 +645,7 @@ def test_cached_wrapper_propagates_the_domain_refusal() -> None:
 def test_extraction_degrees_stay_inside_the_domain() -> None:
     """The Bezier extraction paths are unaffected by the domain (issue #311).
 
-    ``pantr.bspline._bspline_extraction`` and
+    ``pantr/bspline/extraction.hpp`` (through ``BsplineSpace1D``) and
     ``pantr.bspline.spanwise_element_extraction`` reach two of these builders through the
     cached matrices: the Lagrange-to-Bernstein one, which carries no limit, and the
     cardinal-to-Bernstein one, which does. Their highest tested spline degree is 4, so this

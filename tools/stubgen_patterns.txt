@@ -1,0 +1,4 @@
+# Patterns applied by `make stubs` (nanobind.stubgen -p). Each regex is searched in an entry's
+# qualified name, so it is anchored at both ends. A capsule has no type stubgen can name.
+^pantr\._pantr\._shared_parallelism$:
+    _shared_parallelism: object

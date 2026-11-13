@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import copy
+from typing import Any
+
 import numpy as np
 import pytest
 
@@ -239,3 +242,60 @@ def test_facet_tags_to_dense_overflow_raises() -> None:
     tags.set("bc", [[0, 0]], [200])
     with pytest.raises(OverflowError, match="truncation"):
         tags.to_dense("bc", dtype=np.int8)
+
+
+_KEYS: dict[str, tuple[Any, Any]] = {
+    "cell": ([1, 4], [0]),
+    "facet": ([[0, 1], [2, 3]], [[1, 0]]),
+}
+"""Per registry kind, the keys of tag ``a`` (two entries) and of tag ``b`` (one entry)."""
+
+
+def _registry(kind: str) -> CellTags | FacetTags:
+    """Return a registry of the given kind with tags ``a`` (values 5, 6) and ``b`` (value 1)."""
+    keys_a, keys_b = _KEYS[kind]
+    tags: CellTags | FacetTags = (
+        CellTags(num_cells=6) if kind == "cell" else FacetTags(num_cells=3, facets_per_cell=4)
+    )
+    tags.set("a", keys_a, [5, 6])
+    tags.set("b", keys_b, 1)
+    return tags
+
+
+@pytest.mark.parametrize("kind", ["cell", "facet"])
+def test_a_tag_read_twice_is_the_same_tuple(kind: str) -> None:
+    """``tags[name] is tags[name]``, as for the previous release, which stored the tuple.
+
+    The tuple is built once per name and dropped when that name is set or removed; the tuple of a
+    name that was not touched stays.
+    """
+    keys_a, keys_b = _KEYS[kind]
+    tags = _registry(kind)
+    first = tags["a"]
+    assert tags["a"] is first
+    kept_b = tags["b"]
+    tags.set("a", keys_a, [7, 8])  # replaces "a" only
+    second = tags["a"]
+    assert second is not first
+    assert second[1].tolist() == [7, 8]
+    assert tags["a"] is second
+    assert tags["b"] is kept_b
+    assert first[1].tolist() == [5, 6]  # the tuple read before the change holds what it held
+    tags.remove("b")
+    with pytest.raises(KeyError):
+        tags["b"]
+    tags.set("b", keys_b, 2)
+    assert tags["b"] is not kept_b
+    assert tags["b"][1].tolist() == [2]
+
+
+@pytest.mark.parametrize("kind", ["cell", "facet"])
+def test_a_copy_of_a_registry_changes_independently(kind: str) -> None:
+    """A copy starts with the tuples of the original; a change on either side stays on it."""
+    tags = _registry(kind)
+    shared = tags["a"]
+    clone = copy.copy(tags)
+    assert clone["a"][1].tolist() == shared[1].tolist()
+    clone.remove("a")
+    assert "a" not in clone
+    assert tags["a"] is shared

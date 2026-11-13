@@ -34,13 +34,49 @@ def _validate_float_dtype(dtype: npt.DTypeLike) -> None:
         raise ValueError("dtype must be float32 or float64")
 
 
+_IS_FLOAT32_BY_DTYPE_LIKE: dict[object, bool] = {}
+"""Whether each dtype-like argument already validated names ``float32`` (else ``float64``).
+
+Keyed on the caller's own argument, so a repeated call skips ``np.dtype``; only valid scalar types,
+strings and ``np.dtype`` instances are stored (see :func:`_is_float32`).
+"""
+
+
+def _is_float32(dtype: npt.DTypeLike) -> bool:
+    """Validate ``dtype`` as :func:`_validate_float_dtype` does and say whether it is ``float32``.
+
+    This is how a wrapper picks the ``float`` or the ``double`` instantiation of a C++ function.
+
+    Args:
+        dtype (npt.DTypeLike): The dtype to validate.
+
+    Returns:
+        bool: ``True`` for ``float32``, ``False`` for ``float64``.
+
+    Raises:
+        ValueError: If the dtype does not resolve to ``np.float32`` or ``np.float64``.
+    """
+    cacheable = isinstance(dtype, type | str | np.dtype)
+    if cacheable:
+        cached = _IS_FLOAT32_BY_DTYPE_LIKE.get(dtype)
+        if cached is not None:
+            return cached
+    _validate_float_dtype(dtype)
+    is_f32 = bool(np.dtype(dtype).type is np.float32)
+    # Only spellings whose equality is the dtype's are keys: a NumPy scalar equals its value in
+    # another format (np.float32(1.0) == np.float64(1.0)), and a .dtype holder can change.
+    if cacheable:
+        _IS_FLOAT32_BY_DTYPE_LIKE[dtype] = is_f32
+    return is_f32
+
+
 def _flatten_along_axis(
     arr: npt.NDArray[np.float32 | np.float64],
     axis: int,
 ) -> tuple[npt.NDArray[np.float32 | np.float64], tuple[int, ...]]:
     """Move ``axis`` to position 0 and flatten trailing dimensions.
 
-    Returns a C-contiguous 2-D view suitable for passing to Numba kernels
+    Returns a C-contiguous 2-D view suitable for passing to compiled kernels
     that operate along a single axis, together with the trailing shape
     needed to invert the operation via :func:`_unflatten_along_axis`.
 

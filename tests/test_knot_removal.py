@@ -285,6 +285,66 @@ class TestErrors:
         with pytest.raises(ValueError, match="positive"):
             b.remove_knots(0.5, num=0)
 
+    @pytest.mark.parametrize("ghost", [0.0, 1.0, 7.0, 8.0])
+    def test_a_ghost_knot_of_an_unclamped_vector_is_refused(self, ghost: float) -> None:
+        """A knot outside the domain is not removable.
+
+        The previous implementation accepted it, read and wrote outside its working arrays
+        (Numba wraps negative indices and does not check positive ones) and returned a
+        spline of the wrong values, or crashed. The interior knots of the same vector are
+        the ordinary case.
+        """
+        space = BsplineSpace([BsplineSpace1D(np.arange(9.0), 2)])
+        spline = Bspline(space, np.arange(space.num_total_basis, dtype=np.float64).reshape(-1, 1))
+
+        with pytest.raises(ValueError, match="is not an interior knot of the domain"):
+            spline.remove_knots(ghost, tol=1.0e9)
+        for interior in (3.0, 4.0, 5.0):
+            assert spline.remove_knots(interior, tol=1.0e9).space.spaces[0].knots.size == 8
+
+    @pytest.mark.parametrize(("degree", "copies"), [(1, 4), (2, 5), (1, 3), (2, 4)])
+    def test_a_knot_repeated_more_than_degree_plus_one_times_is_refused(
+        self, degree: int, copies: int
+    ) -> None:
+        """A knot of multiplicity above ``degree + 1`` cannot be removed.
+
+        A space accepts such a vector (the basis function over an empty interval is zero).
+        The removal kernel seeds a scratch row that lies below its buffer from multiplicity
+        ``degree + 3``; the previous implementation returned a result there only because a
+        negative index wraps in Numba. The refusal covers the default, an explicit
+        tolerance and an explicit ``num`` alike.
+        """
+        knots = np.concatenate([np.zeros(degree + 1), np.full(copies, 0.5), np.ones(degree + 1)])
+        space = BsplineSpace([BsplineSpace1D(knots, degree)])
+        spline = Bspline(space, np.arange(space.num_total_basis, dtype=np.float64).reshape(-1, 1))
+        match = (
+            rf"Knot removal cannot remove the knot 0\.5, which the knot vector repeats "
+            rf"{copies} times at degree {degree}: a knot may repeat at most "
+            rf"degree \+ 1 = {degree + 1} times\."
+        )
+
+        for kwargs in ({}, {"tol": 1.0e9}, {"num": 1}):
+            with pytest.raises(ValueError, match=match):
+                spline.remove_knots(0.5, **kwargs)
+
+    @pytest.mark.parametrize("degree", [1, 2, 3])
+    def test_a_knot_repeated_degree_plus_one_times_is_served(self, degree: int) -> None:
+        """The refusal starts above ``degree + 1``: a ``C^-1`` knot is the ordinary case."""
+        run = np.ones(degree + 1)
+        knots = np.concatenate([np.zeros(degree + 1), 0.5 * run, run])
+        space = BsplineSpace([BsplineSpace1D(knots, degree)])
+        spline = Bspline(space, np.arange(space.num_total_basis, dtype=np.float64).reshape(-1, 1))
+
+        result = spline.remove_knots(0.5, tol=1.0e9)
+
+        assert result.space.spaces[0].knots.size == knots.size - degree
+
+    def test_num_must_be_an_integer(self) -> None:
+        """``num`` is an integer like every other count: a float is refused."""
+        b = _make_curve_p2()
+        with pytest.raises(TypeError):
+            b.remove_knots(0.5, num=1.5)  # type: ignore[arg-type]
+
 
 # ===========================================================================
 # Tolerance rejection
@@ -308,17 +368,19 @@ class TestToleranceRejection:
 
 
 class TestRemoveKnotKernelPrecondition:
-    """The Layer-2 cap on ``num`` is what keeps the kernel's scratch buffer in bounds.
+    """The cap on ``num`` is what keeps the kernel's scratch buffer in bounds.
 
-    ``_remove_knot_1d_core`` sizes ``temp`` as ``(2 * degree + 1, rank)`` once, and
+    The compiled removal kernel sizes ``temp`` as ``(2 * degree + 1, rank)`` once, and
     each removal pass writes two rows further out, so it stays in bounds only while
-    ``2 * num <= degree + multiplicity``. Nothing inside the kernel enforces that --
-    Layer 3 validates nothing by contract -- and Numba compiles without bounds
-    checking, so exceeding it corrupts memory silently rather than raising.
+    ``2 * num <= degree + multiplicity``. Nothing inside the kernel enforces that -- the
+    kernel validates nothing by contract -- so exceeding it would corrupt memory
+    silently rather than raise.
 
-    ``_remove_knot_bspline_1d_impl`` establishes the precondition by clamping ``num``
-    to ``min(multiplicity, degree)``, which implies it. These tests pin that clamp:
-    if it were dropped, a caller-supplied ``num`` would reach the kernel unbounded.
+    ``pantr::bspline::remove_knot_1d`` establishes the precondition by clamping ``num``
+    to ``min(multiplicity, degree)``, which implies it. These tests pin that clamp
+    through the public API: if it were dropped, a caller-supplied ``num`` would reach
+    the kernel unbounded (the sanitizer builds of the C++ suite exercise the bound
+    itself).
     """
 
     @staticmethod
@@ -352,9 +414,9 @@ class TestRemoveKnotKernelPrecondition:
         """However large a ``num`` the caller asks for, the kernel stays in bounds.
 
         The removals actually performed must satisfy ``2 * removals <= degree + s``.
-        Verified under ``NUMBA_BOUNDSCHECK=1`` that this is exactly where the kernel
-        starts writing out of bounds when called directly: e.g. degree 2 with
-        ``s == 1`` raises at ``num == 2``, and degree 4 with ``s == 2`` at ``num == 4``.
+        This is exactly where the kernel would start writing out of bounds when called
+        directly: e.g. degree 2 with ``s == 1`` at ``num == 2``, and degree 4 with
+        ``s == 2`` at ``num == 4``.
         """
         curve = self._curve_with_multiplicity(degree, s)
         before = int(np.sum(np.abs(np.asarray(curve.space.spaces[0].knots) - 3.0) <= 1e-14))
@@ -438,9 +500,7 @@ class TestDefaultToleranceIsARoundOffFloor:
         This is the case the absolute default lost above scale 1e6, where one ulp of a
         coordinate already exceeds ``1e-10``.
         """
-        from pantr.bspline._bspline_knot_removal import (  # noqa: PLC0415
-            _roundoff_deviation_floor,
-        )
+        from pantr._testing import roundoff_deviation_floor  # noqa: PLC0415
 
         curve = _random_curve(degree, 5, 3, scale, seed=degree)
         inserted = curve.insert_knots(np.array([0.37]))
@@ -453,7 +513,7 @@ class TestDefaultToleranceIsARoundOffFloor:
         # distance A5.8 measures is an upper bound on the curve deviation, so the two
         # curves must agree to within the very floor that admitted the removal --
         # a bound derived from the geometry rather than a round number.
-        floor = _roundoff_deviation_floor(np.asarray(inserted.control_points), degree, 1)
+        floor = roundoff_deviation_floor(np.asarray(inserted.control_points), degree, 1)
         t = np.linspace(0.0, 1.0, 401)
         deviation = float(
             np.linalg.norm(
@@ -480,30 +540,25 @@ class TestDefaultToleranceIsARoundOffFloor:
 
     def test_the_floor_is_proportional_to_the_control_net(self) -> None:
         """Rescaling the geometry rescales the floor by the same factor."""
-        from pantr.bspline._bspline_knot_removal import (  # noqa: PLC0415
-            _roundoff_deviation_floor,
-        )
+        from pantr._testing import roundoff_deviation_floor  # noqa: PLC0415
 
         cp = _random_curve(3, 5, 3, 1.0, seed=4).control_points
-        unit = _roundoff_deviation_floor(np.asarray(cp), 3, 1)
-        scaled = _roundoff_deviation_floor(np.asarray(cp) * 1.0e6, 3, 1)
+        unit = roundoff_deviation_floor(np.asarray(cp), 3, 1)
+        scaled = roundoff_deviation_floor(np.asarray(cp) * 1.0e6, 3, 1)
         assert scaled == pytest.approx(1.0e6 * unit, rel=1.0e-12)
 
     def test_the_floor_grows_with_degree_and_is_a_multiple_of_eps(self) -> None:
         """Pin the derivation, not the digits: ``8 * (degree + 1) * eps * scale``."""
-        from pantr.bspline._bspline_knot_removal import (  # noqa: PLC0415
-            _control_point_scale,
-            _roundoff_deviation_floor,
-        )
+        from pantr._testing import control_point_scale, roundoff_deviation_floor  # noqa: PLC0415
 
         cp = np.asarray(_random_curve(3, 5, 3, 1.0, seed=4).control_points)
         eps = float(np.finfo(np.float64).eps)
         for degree in (1, 3, 7):
-            expected = 8.0 * (degree + 1) * eps * _control_point_scale(cp)
-            assert _roundoff_deviation_floor(cp, degree, 1) == pytest.approx(expected, rel=1e-14)
+            expected = 8.0 * (degree + 1) * eps * control_point_scale(cp)
+            assert roundoff_deviation_floor(cp, degree, 1) == pytest.approx(expected, rel=1e-14)
         # And the stacking factor is a square root, not a factor of one or of n.
-        base = _roundoff_deviation_floor(cp, 3, 1)
-        assert _roundoff_deviation_floor(cp, 3, 10_000) == pytest.approx(100.0 * base, rel=1e-14)
+        base = roundoff_deviation_floor(cp, 3, 1)
+        assert roundoff_deviation_floor(cp, 3, 10_000) == pytest.approx(100.0 * base, rel=1e-14)
 
 
 class TestRationalDeviationIsMeasuredInProjectedSpace:
@@ -579,16 +634,14 @@ class TestRationalDeviationIsMeasuredInProjectedSpace:
 
     def test_the_conversion_is_the_published_formula(self) -> None:
         """``TOL = d * w_min / (1 + |P|_max)``, checked against a direct computation."""
-        from pantr.bspline._bspline_knot_removal import (  # noqa: PLC0415
-            _homogeneous_deviation_tolerance,
-        )
+        from pantr._testing import homogeneous_deviation_tolerance  # noqa: PLC0415
 
         curve = _nurbs_curve(3, 5, 3, 100.0, 1.5, seed=13)
         cp = np.asarray(curve.control_points, dtype=np.float64)
         w_min = float(cp[:, -1].min())
         p_max = float(np.linalg.norm(cp[:, :-1] / cp[:, -1:], axis=1).max())
 
-        assert _homogeneous_deviation_tolerance(cp, 1.0e-3) == pytest.approx(
+        assert homogeneous_deviation_tolerance(cp, 1.0e-3) == pytest.approx(
             1.0e-3 * w_min / (1.0 + p_max), rel=1.0e-14
         )
 
@@ -655,27 +708,48 @@ class TestTheFloorSpansEveryStackedControlPoint:
         """Asserted on the count itself, because no behavioural test can catch this.
 
         Taking the reduced axis instead of the others is the natural way to get this
-        wrong.  It cannot be caught through ``remove_knots``: the floor carries a 48x
-        margin over the measured worst case, so *any* positive multiplier still admits
-        an exactly redundant knot.  Mutating the production line to ``ctrl.shape[axis]``
-        was confirmed to leave a round-trip test passing at 4-vs-4000 and at
-        4-vs-400000.  So the count is asserted directly, on a deliberately lopsided
+        wrong.  It is not caught through ``remove_knots`` by the tests here: the exactly
+        redundant knots they remove sit inside the floor under either count, so *any*
+        positive multiplier still admits them.  Mutating the production line to
+        ``ctrl.shape[axis]`` was confirmed to leave a round-trip test passing at 4-vs-4000
+        and at 4-vs-400000.  So the count is asserted directly, on a deliberately lopsided
         control net where the two candidate answers differ by three orders of magnitude.
         """
-        from pantr.bspline._bspline_knot_removal import (  # noqa: PLC0415
-            _num_stacked_control_points,
-        )
+        from pantr._testing import num_stacked_control_points  # noqa: PLC0415
 
         ctrl = np.zeros((7, 4003, 3))  # 7 basis functions along axis 0, 4003 along axis 1
-        assert _num_stacked_control_points(ctrl, 0) == 4003
-        assert _num_stacked_control_points(ctrl, 1) == 7
+        assert num_stacked_control_points(ctrl.shape, 0) == 4003
+        assert num_stacked_control_points(ctrl.shape, 1) == 7
         # A curve stacks nothing, so the floor is exactly the per-point one.
-        assert _num_stacked_control_points(np.zeros((9, 3)), 0) == 1
+        assert num_stacked_control_points((9, 3), 0) == 1
         # And a volume stacks the product of the two it is not reducing.
         vol = np.zeros((5, 6, 7, 3))
-        assert _num_stacked_control_points(vol, 0) == 42
-        assert _num_stacked_control_points(vol, 1) == 35
-        assert _num_stacked_control_points(vol, 2) == 30
+        assert num_stacked_control_points(vol.shape, 0) == 42
+        assert num_stacked_control_points(vol.shape, 1) == 35
+        assert num_stacked_control_points(vol.shape, 2) == 30
+
+    @pytest.mark.parametrize(
+        "name",
+        ["control_point_scale", "roundoff_deviation_floor", "homogeneous_deviation_tolerance"],
+    )
+    def test_a_net_of_no_columns_is_refused_not_divided_by(self, name: str) -> None:
+        """The compiled helpers divide the flat length by the column count.
+
+        A net of zero columns used to reach that division, which is a hardware trap (SIGFPE,
+        no exception) and ended the process. The compiled hooks are called directly, since the
+        wrappers in ``pantr._testing`` reshape first and fail earlier on this shape.
+        """
+        from pantr._testing import _by_dtype  # noqa: PLC0415
+
+        helper = _by_dtype(name, np.float64)
+        args = {
+            "control_point_scale": (),
+            "roundoff_deviation_floor": (3, 1),
+            "homogeneous_deviation_tolerance": (1.0e-3,),
+        }[name]
+
+        with pytest.raises(ValueError, match="needs at least one column per control point"):
+            helper(np.zeros((3, 0)), *args)
 
     def test_a_lopsided_surface_stays_lossless_along_either_axis(self) -> None:
         """The behavioural half: whichever axis is reduced, the redundant knot goes."""

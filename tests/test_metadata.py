@@ -6,7 +6,11 @@ Validates public attributes exposed via the package API.
 from __future__ import annotations
 
 import importlib
+import re
+from pathlib import Path
 from typing import Final
+
+import pytest
 
 import pantr
 
@@ -22,6 +26,7 @@ def test_package_all_exports() -> None:
         "bspline",
         "cad",
         "change_basis",
+        "cmake_dir",
         "geometry",
         "get_num_threads",
         "grid",
@@ -36,15 +41,25 @@ def test_package_all_exports() -> None:
 
 def test_package_metadata_values() -> None:
     """Validate the package metadata constants."""
-    assert pantr.__version__ == "0.7.0"
+    assert re.fullmatch(r"\d+\.\d+\.\d+", pantr.__version__)
     assert pantr.__license__ == "MIT"
     assert pantr.__author__ == "Pablo Antolin <pablo.antolin@epfl.ch>"
 
 
 def test_metadata_import_stability() -> None:
     """Verify metadata survives module reloads."""
+    version = pantr.__version__
     module = importlib.reload(pantr)
-    assert module.__version__ == "0.7.0"
+    assert module.__version__ == version
+
+
+def test_citation_file_states_the_package_version() -> None:
+    """``CITATION.cff`` names the version in ``pantr.__version__``, so a bump cannot miss it."""
+    path = Path(__file__).resolve().parents[1] / "CITATION.cff"
+    if not path.exists():
+        pytest.skip("not run from a source tree")
+    versions = re.findall(r"^version: (\S+)\s*$", path.read_text(), flags=re.MULTILINE)
+    assert versions == [pantr.__version__]
 
 
 def test_submodule_all_exports() -> None:

@@ -1,0 +1,219 @@
+name: Wheels
+
+# The distributions pantr publishes, built and tested once: called by ci.yaml (leg 11) on every
+# push, and by release.yaml, which publishes exactly these artifacts. Nothing here uploads to an
+# index.
+#
+# Artifacts:
+#   wheel-<label>            the pantr cp312-abi3 wheel of one platform, tested against the suite
+#   sdist-pantr              the pantr sdist
+#   wheel-mpi-<label>        the pantr-mpi wheel of one platform (MPICH ABI on Linux, Open MPI on
+#                            macOS; no Windows wheel), built against that platform's pantr wheel
+#   sdist-pantr-mpi          the pantr-mpi sdist, built into a wheel against the pantr wheel
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  pantr:
+    name: "pantr wheel (${{ matrix.label }})"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, label: linux-x86_64, archs: x86_64 }
+          - { os: ubuntu-24.04-arm, label: linux-aarch64, archs: aarch64 }
+          # Apple Clang: Homebrew's GCC would have delocate bundle its libstdc++ (and needs a newer
+          # macOS than the wheel targets).
+          - { os: macos-15, label: macos-arm64, archs: arm64, cc: clang, cxx: clang++ }
+          - { os: windows-2022, label: windows-amd64, archs: AMD64 }
+    steps:
+      - uses: actions/checkout@v7
+      # Eigen lives only on gitlab.com, whose refusals under load have failed runs: a cached
+      # checkout (tools/ci_fetch_eigen.sh) reaches the build through PANTR_EIGEN_SOURCE_DIR, on the
+      # host for macOS and Windows and at the project's path inside the manylinux container.
+      - uses: actions/cache@v5
+        with:
+          path: build/ci-deps/eigen
+          key: eigen-${{ hashFiles('cmake/PantrDependencies.cmake') }}
+      - name: Eigen from the cache, else from GitLab with retries
+        shell: bash
+        run: tools/ci_fetch_eigen.sh build/ci-deps/eigen
+      # Builds the cp312-abi3 wheel, repairs it, installs it in a clean environment, checks its
+      # contents and runs the suite against it once per rung the runner can execute
+      # ([tool.cibuildwheel] in pyproject.toml, tools/wheel_test.py). The Linux wheels build in
+      # the manylinux container with its own compiler: CC and CXX here reach only the macOS leg
+      # (the Windows leg builds with MSVC, which ignores them), and the container's GCC version is
+      # asserted by [tool.cibuildwheel.linux].
+      - uses: pypa/cibuildwheel@v4.3.5
+        env:
+          CIBW_ARCHS: ${{ matrix.archs }}
+          CC: ${{ matrix.cc || 'gcc-14' }}
+          CXX: ${{ matrix.cxx || 'g++-14' }}
+          PANTR_EIGEN_SOURCE_DIR: ${{ github.workspace }}/build/ci-deps/eigen
+          CIBW_ENVIRONMENT_LINUX: PANTR_EIGEN_SOURCE_DIR=/project/build/ci-deps/eigen
+      - name: The wheel carries no BeRF-FR file
+        shell: bash
+        run: |
+          for wheel in wheelhouse/*.whl; do python -m zipfile -l "$wheel"; done | tee wheel-contents.txt
+          if grep -i berf wheel-contents.txt; then exit 1; fi
+      # What the pantr-mpi sdist builds against: the installed wheel's headers and CMake package.
+      # cpp/tests/consumer finds COMPONENTS mpi-capsule through pantr.cmake_dir(), the package
+      # refuses pantr::pantr (the wheel has no third-party headers), and no header but the two
+      # MPI ones includes mpi.h. tests/test_cmake_dir.py checks the files on every platform.
+      - name: The wheel's CMake package serves find_package(pantr COMPONENTS mpi-capsule)
+        if: matrix.label == 'linux-x86_64'
+        run: |
+          python3 -m venv wheel-env
+          wheel-env/bin/pip install wheelhouse/*.whl
+          pantr_dir="$(wheel-env/bin/python -c 'import pantr; print(pantr.cmake_dir())')"
+          include="$(wheel-env/bin/python -c 'import pantr, pathlib; print(pathlib.Path(pantr.__file__).parent / "include")')"
+          cmake -DINCLUDE_DIR="$include" "-DALLOWED=pantr/mpi/mpi_table.hpp|pantr/mpi/mpi_communicator.hpp" \
+            -P cpp/tests/header_rules/check_no_mpi.cmake
+          cmake -S cpp/tests/consumer -B build/wheel-capsule -Dpantr_DIR="$pantr_dir" -DCONSUMER_CAPSULE_ONLY=ON
+          if cmake -S cpp/tests/consumer -B build/wheel-core -Dpantr_DIR="$pantr_dir" > wheel-core.log 2>&1; then
+            echo "pantr::pantr was found in the wheel's package, which has no third-party headers"; exit 1
+          fi
+          tr -s ' \n' ' ' < wheel-core.log | grep -q "provides COMPONENTS mpi-capsule only" \
+            || { cat wheel-core.log; exit 1; }
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheel-${{ matrix.label }}
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+
+  pantr-sdist:
+    name: "pantr sdist"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Build and check the sdist
+        run: |
+          python -m pip install build twine
+          python -m build --sdist --outdir dist .
+          python -m twine check --strict dist/*
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sdist-pantr
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  # pantr-mpi links the MPI library of one family. The Linux wheels are built against MPICH
+  # (whose libmpi.so.12 is the MPICH ABI that MPICH, Intel MPI and MVAPICH share) and the macOS
+  # wheel against Open MPI; neither library is bundled (the repair step excludes it, and the module
+  # links the MPI C API alone, so no libmpicxx is vendored either: the test step fails on any
+  # vendored library or missing licence file). The family is
+  # set explicitly rather than read from mpi.h, so a runner image that changes its MPI fails the
+  # build instead of shipping a wheel of another family.
+  pantr-mpi:
+    name: "pantr-mpi wheel (${{ matrix.label }})"
+    needs: [pantr]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            label: linux-x86_64
+            archs: x86_64
+            family: mpich
+            runtime: mpich
+          - os: ubuntu-24.04-arm
+            label: linux-aarch64
+            archs: aarch64
+            family: mpich
+            runtime: mpich
+          - os: macos-15
+            label: macos-arm64
+            archs: arm64
+            family: openmpi
+            runtime: openmpi
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: wheel-${{ matrix.label }}
+          path: wheelhouse-pantr
+      - name: Install Open MPI (macOS)
+        if: runner.os == 'macOS'
+        run: brew install open-mpi
+      - uses: pypa/cibuildwheel@v4.3.5
+        with:
+          package-dir: bindings/mpi
+        env:
+          CIBW_ARCHS: ${{ matrix.archs }}
+          CIBW_BUILD: cp312-*
+          CIBW_SKIP: "*-musllinux_*"
+          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+          CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
+          CIBW_CONFIG_SETTINGS: cmake.define.PANTR_MPI_FAMILY=${{ matrix.family }}
+          CIBW_BEFORE_ALL_LINUX: dnf install -y mpich-devel
+          # The pantr wheel of this run satisfies pantr-mpi's pantr==<version> build requirement
+          # (before that version is on PyPI), and MPICH's compiler wrappers are on PATH for FindMPI.
+          CIBW_ENVIRONMENT_LINUX: >-
+            PATH=/usr/lib64/mpich/bin:$PATH
+            PIP_FIND_LINKS=/project/wheelhouse-pantr
+          CIBW_ENVIRONMENT_MACOS: >-
+            MACOSX_DEPLOYMENT_TARGET=14.0
+            PIP_FIND_LINKS=${{ github.workspace }}/wheelhouse-pantr
+          CIBW_REPAIR_WHEEL_COMMAND_LINUX: >-
+            auditwheel repair --exclude libmpi.so.12 -w {dest_dir} {wheel}
+          CIBW_REPAIR_WHEEL_COMMAND_MACOS: >-
+            delocate-wheel --require-archs {delocate_archs} --exclude libmpi -w {dest_dir} -v {wheel}
+          CIBW_TEST_REQUIRES: ${{ matrix.runtime }}
+          CIBW_TEST_COMMAND: >-
+            pip install {project}/wheelhouse-pantr/*.whl &&
+            python -c "import pantr.mpi as m; m.require_mpi(); import pantr_mpi; print(pantr_mpi.__file__)" &&
+            python {project}/tools/wheel_test.py {project} --mpi-wheel
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheel-mpi-${{ matrix.label }}
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+
+  # The route a user without a matching wheel takes: pantr-mpi's sdist, holding bindings/mpi
+  # alone, built against an installed pantr wheel's headers and CMake package.
+  pantr-mpi-sdist:
+    name: "pantr-mpi sdist, built against the pantr wheel"
+    needs: [pantr]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v8
+        with:
+          name: wheel-linux-x86_64
+          path: wheelhouse-pantr
+      - name: Install MPICH and Ninja
+        run: sudo apt-get install -y libmpich-dev mpich ninja-build
+      - name: Build the sdist, then a wheel from it against the pantr wheel
+        env:
+          PIP_FIND_LINKS: ${{ github.workspace }}/wheelhouse-pantr
+        run: |
+          python -m pip install build twine
+          python -m build --sdist --outdir dist bindings/mpi
+          python -m twine check --strict dist/*
+          python -m pip wheel --no-deps -w built \
+            -Ccmake.define.PANTR_MPI_FAMILY=mpich dist/pantr_mpi-*.tar.gz
+          ls built/pantr_mpi-*.whl
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sdist-pantr-mpi
+          path: dist/*.tar.gz
+          if-no-files-found: error

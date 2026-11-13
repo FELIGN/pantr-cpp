@@ -9,6 +9,7 @@ import pytest
 from numpy import typing as npt
 from numpy.testing import assert_allclose
 
+from pantr._testing import coons_edge_pairs as _extract_edge_pairs
 from pantr.bspline import Bspline, BsplineSpace, BsplineSpace1D
 from pantr.cad import (
     create_bilinear,
@@ -19,7 +20,6 @@ from pantr.cad import (
     create_line,
     create_ruled,
 )
-from pantr.cad._coons import _extract_edge_pairs
 from pantr.tolerance import get_conservative, get_machine_epsilon
 
 _RANK_3D = 3
@@ -256,7 +256,7 @@ class TestCoonsSurface:
         primitive that zero-pads its corners to rank 3, so a rank-2 model produced a rank-3
         term beside two rank-2 ruled surfaces and the sum died in NumPy with
         ``operands could not be broadcast together with shapes (2,2,2) (2,2,3) (2,2,2)``,
-        naming nothing the caller had supplied.  ``_build_multilinear_corner_term`` takes the
+        naming nothing the caller had supplied.  ``build_multilinear_corner_term`` takes the
         rank from the corners, which is the same reason it exists for the volume.
         """
         c_v0 = Bspline(_bezier_space_1d(1), np.array([[0.0, 0.0], [0.0, 1.0]]))
@@ -378,12 +378,12 @@ class TestCoonsSurfaceHomogeneousCorners:
     promoted with unit weights, so four curves agreeing homogeneously at every corner still
     produced a patch that missed them whenever the weight they agreed on was not 1: measured
     ``2.198e-02`` on a degree-2 model whose corner weights were all 2, with nothing refused.
-    ``create_coons_volume`` never had that defect -- ``_extract_corners`` reads homogeneously
+    ``create_coons_volume`` never had that defect -- ``extract_corners_3d`` reads homogeneously
     and the corner term carries the weight column -- and the patch now takes the same path.
 
-    Where a refusal grades homogeneous data it uses ``_verify_edges_3d``'s rule, coordinate
+    Where a refusal grades homogeneous data it uses ``verify_edges_3d``'s rule, coordinate
     and weight columns in separate scale groups, whose derivation and measurements live in
-    ``pantr.cad._join._verify_shared_boundary``.
+    ``verify_shared_boundary`` (``include/pantr/cad/join.hpp``).
     """
 
     @classmethod
@@ -558,7 +558,7 @@ class TestCoonsSurfaceHomogeneousCorners:
         """A polynomial curve promotes with unit weights, so that is the weight it demands.
 
         The three blend terms are added together and so share one space, and a polynomial
-        curve among rational ones is promoted with weight 1 -- the argument ``_extract_corners``
+        curve among rational ones is promoted with weight 1 -- the argument ``extract_corners_3d``
         makes for the volume.  The mismatch is put at the origin, where the homogeneous
         coordinates are zero at any weight, so only the weight column can see it: projecting,
         as the old check did, gives ``(0, 0, 0)`` on both sides.
@@ -587,8 +587,8 @@ class TestCoonsSurfaceHomogeneousCorners:
 
         Four times the tier against weights of 1 is a gross error at any ``scale``.  One
         magnitude over the homogeneous row would grade it against ``max|w x|``, accepting it
-        from ``scale = 1e2`` up -- the failure ``_verify_shared_boundary`` and
-        ``_verify_edges_3d`` were split into column groups to stop, on the path this ticket
+        from ``scale = 1e2`` up -- the failure ``verify_shared_boundary`` and
+        ``verify_edges_3d`` were split into column groups to stop, on the path this ticket
         brought onto the same rule.
         """
         weight_gap = 4.0 * get_conservative(np.float64)
@@ -852,7 +852,7 @@ class TestCoonsVolumeFaceConsistency:
 
     The tolerance is the surface path's: ``get_conservative(float64)`` times the largest
     absolute coordinate of what is being compared.  Its derivation is in
-    ``pantr.cad._coons._verify_corners_2d``.
+    ``verify_corners_2d`` (``include/pantr/cad/coons.hpp``).
     """
 
     @staticmethod
@@ -1410,7 +1410,7 @@ class TestCoonsVolumeRationalFaces:
     commutes with restriction to a face, and a blend whose homogeneous restriction to
     ``u = 0`` is ``face_u0``'s homogeneous data projects to ``face_u0`` itself.  Its
     hypothesis is that the faces agree **homogeneously**, weights included, which
-    ``_verify_edges_3d`` enforces and
+    ``verify_edges_3d`` enforces and
     ``TestCoonsVolumeFaceConsistency.test_a_rational_face_whose_weights_disagree_with_its_neighbours_is_refused``
     pins.
     """
@@ -1686,8 +1686,8 @@ class TestCoonsPrecisionAndColumnScale:
        **weight error was graded against the model's length** and was accepted once the
        model was large.
 
-    The corrected rules are ``pantr.cad._join._verify_shared_boundary``'s, which carries
-    their derivations and measurements.
+    The corrected rules are those of ``verify_shared_boundary`` (``include/pantr/cad/join.hpp``),
+    which carries their derivations and measurements.
     """
 
     # -- mechanism 1: the tier is read at the inputs' own precision ---------------------
@@ -2025,7 +2025,7 @@ class TestCoonsPrecisionAndColumnScale:
     def test_a_float32_volume_grades_its_corners_at_float32(self) -> None:
         """The tier reaches the volume's corner check too, not only the patch's.
 
-        The pair above pins ``_verify_corners_2d``; this pins ``_verify_corners_3d``, whose
+        The pair above pins ``verify_corners_2d``; this pins ``verify_corners_3d``, whose
         population is twenty-four readings rather than eight.  A relative corner gap of
         ``1e-6`` lies between the two readings of the tier -- above float64's ``9.09e-13``
         and below float32's ``4.88e-4`` -- so it separates them cleanly: graded at float64
@@ -2050,7 +2050,7 @@ class TestCoonsPrecisionAndColumnScale:
         homogeneously (pantr issue 309) and builds it at the corners' own precision
         (pantr issue 319); a corner term silently promoted to float64 cannot be assembled
         over a float32 space at all, so this is what would catch it.  The same face set
-        then puts a displaced weight -- which only ``_verify_edges_3d`` can see, the corner
+        then puts a displaced weight -- which only ``verify_edges_3d`` can see, the corner
         check comparing projected points -- on both sides of the float32 tier.
         """
         volume = create_coons_volume(self._cube_with_displaced_weight(1.0, 0.0, np.float32))

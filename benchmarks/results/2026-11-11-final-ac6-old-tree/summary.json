@@ -1,0 +1,150 @@
+{
+ "protocol": {
+  "k": 20,
+  "repeats": 30,
+  "threads": [
+   1
+  ],
+  "cpus": "8-15",
+  "reference": "main",
+  "argv": [
+   "benchmarks/compare.py",
+   "--out-dir",
+   "<absolute path>",
+   "--side",
+   "old=<old src>",
+   "--side",
+   "head=<head src>",
+   "--side",
+   "main=<main src>",
+   "--k",
+   "20",
+   "--threads",
+   "1",
+   "--cpus",
+   "8-15",
+   "--filter",
+   "^S2\\.fit_bezier_scattered\\.medium"
+  ]
+ },
+ "sides": {
+  "old": {
+   "commit": "c2946275058e810f8de7cad197a3444ec9a47b2c",
+   "extension": "pantr._pantr_v4 (v4, _pantr_v4.abi3.so)"
+  },
+  "head": {
+   "commit": "f9a0ce365e4e6719dcc283b847f3af6ecf36e8fc",
+   "extension": "pantr._pantr_v4 (v4, _pantr_v4.abi3.so)"
+  },
+  "main": {
+   "commit": "unknown",
+   "extension": "none"
+  }
+ },
+ "machine": {
+  "cpu": "Intel(R) Xeon(R) Gold 6148 CPU @ 2.40GHz",
+  "platform": "Linux-5.15.0-144-generic-x86_64-with-glibc2.35",
+  "affinity": [
+   8,
+   9,
+   10,
+   11,
+   12,
+   13,
+   14,
+   15
+  ],
+  "governor": "schedutil"
+ },
+ "cases": {
+  "S2.fit_bezier_scattered.medium@t1": {
+   "what": {
+    "old": "fit_bezier, 1000 scattered points, degree (3, 3)",
+    "head": "fit_bezier, 1000 scattered points, degree (3, 3)",
+    "main": "fit_bezier, 1000 scattered points, degree (3, 3)"
+   },
+   "sides": {
+    "old": {
+     "statistic_ns": 707474.9166666666,
+     "range_ns": 369941.6,
+     "process_medians_ns": [
+      403012.4,
+      695299.3333333333,
+      727036.5,
+      772954.0,
+      720215.1666666667,
+      720794.8333333333,
+      717573.5,
+      707073.8333333333,
+      747507.6666666667,
+      731218.6666666666,
+      734550.0,
+      716243.5,
+      697991.8333333333,
+      673832.1666666667,
+      691928.8333333333,
+      703361.5,
+      687136.1666666667,
+      690587.5,
+      689330.75,
+      707876.0
+     ],
+     "flagged": true
+    },
+    "head": {
+     "statistic_ns": 704600.6666666667,
+     "range_ns": 326724.16666666674,
+     "process_medians_ns": [
+      703069.0,
+      706132.3333333334,
+      714042.6666666667,
+      701438.6666666667,
+      694378.5,
+      717410.1666666667,
+      696382.0,
+      702636.1666666666,
+      728683.0,
+      1009558.0,
+      718309.0,
+      714723.6666666666,
+      698059.1666666667,
+      734597.5,
+      708566.6666666667,
+      682833.8333333333,
+      688011.125,
+      688501.1666666667,
+      746815.6666666666,
+      687115.8333333334
+     ],
+     "flagged": true
+    },
+    "main": {
+     "statistic_ns": 505938.1,
+     "range_ns": 138206.0,
+     "process_medians_ns": [
+      526833.625,
+      506292.0,
+      516683.625,
+      623692.0,
+      513375.0,
+      516957.5,
+      509783.375,
+      507192.7,
+      518937.75,
+      508799.625,
+      505584.2,
+      504365.5,
+      490972.75,
+      489939.75,
+      494903.0,
+      495240.125,
+      492397.125,
+      503005.5,
+      485486.0,
+      488783.0
+     ]
+    }
+   }
+  }
+ }
+}

@@ -9,20 +9,16 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
-from pantr._numba_compat import wait_for_jit_warmup
+from pantr._testing import degree_reduce_1d
+from pantr._testing import elevation_matrix as _elevation_matrix_exact
+from pantr._testing import interpolating_reduction_operator as _interpolating_reduction_operator
+from pantr._testing import l2_reduction_operator as _l2_reduction_operator
+from pantr._testing import projected_quadrature_size as _projected_quadrature_size
+from pantr._testing import projected_relative_deviation as _projected_relative_deviation
+from pantr._testing import sample_projected as _sample_projected
+from pantr._testing import squared_l2_norm as _squared_l2_norm
+from pantr._testing import tensor_gauss_weights as _tensor_gauss_weights
 from pantr.bezier import Bezier
-from pantr.bezier._bezier_degree import (
-    _degree_elevate_bezier,
-    _degree_reduce_bezier,
-    _elevation_matrix_exact,
-    _interpolating_reduction_operator,
-    _l2_reduction_operator,
-    _projected_quadrature_size,
-    _projected_relative_deviation,
-    _sample_projected,
-    _squared_l2_norm,
-    _tensor_gauss_weights,
-)
 from pantr.bspline import (
     Bspline,
     BsplineSpace,
@@ -30,15 +26,6 @@ from pantr.bspline import (
     create_uniform_open_knots,
     create_uniform_periodic_knots,
 )
-from pantr.bspline._bspline_degree_core import _degree_reduce_1d_core
-
-# Several tests here reach `Bezier.evaluate` within milliseconds of the process
-# starting, and it dispatches to a `parallel=True` kernel. Numba's default workqueue
-# layer is not safe against that racing `pantr/__init__.py`'s background warmup thread:
-# the interpreter *aborts* rather than raising. Measured on this file with a warm Numba
-# cache, before this barrier was added: 3 of 4 runs aborted. Same mitigation, and the
-# same reason, as `tests/test_bernstein_underflow.py`.
-wait_for_jit_warmup()
 
 _EPS = float(np.finfo(np.float64).eps)
 
@@ -233,11 +220,12 @@ class TestReductionOperator:
 
     @pytest.mark.parametrize("degree,decrement", [(1, 1), (4, 1), (7, 3), (12, 2)])
     def test_operator_is_shared_and_read_only(self, degree: int, decrement: int) -> None:
-        """Repeated calls hand back the same immutable array."""
+        """Repeated calls hand back read-only views of the same immutable array."""
         first = _interpolating_reduction_operator(degree, decrement)
         second = _interpolating_reduction_operator(degree, decrement)
 
-        assert first is second
+        # The operator lives in the C++ process table; each call is a new view of it.
+        assert np.shares_memory(first, second)
         assert not first.flags.writeable
         assert first.shape == (degree - decrement + 1, degree + 1)
 
@@ -782,11 +770,11 @@ class TestBezierMinimizeDegreeRational:
 
         The integrand is rational, so the rule is not exact and the measure is an
         estimate; this pins how good an estimate.  See
-        :func:`~pantr.bezier._bezier_degree._projected_quadrature_size`.
+        ``pantr._testing.projected_quadrature_size``.
         """
         source = Bezier(np.array(_NUDGED_WEIGHT_NETS[1.0e6, 1.0e-3]), is_rational=True)
         num_nodes = tuple(_projected_quadrature_size(p) for p in source.degree)
-        trial = _degree_elevate_bezier(_degree_reduce_bezier(source, (1,)), (1,)).control_points
+        trial = source.reduce_degree((1,)).elevate_degree((1,)).control_points
         estimate = _projected_relative_deviation(
             _sample_projected(source.control_points, num_nodes),
             _sample_projected(trial, num_nodes),
@@ -984,13 +972,7 @@ class TestBsplineReduceDegreeOutputSizing:
         bsp = _open_uniform_bspline(degree, n_el, rank=1)
         space_1d = bsp.space.spaces[0]
 
-        new_ctrl, new_knots = _degree_reduce_1d_core(
-            degree,
-            bsp.control_points,
-            space_1d.knots,
-            dec,
-            _interpolating_reduction_operator(degree, dec),
-        )
+        new_ctrl, new_knots = degree_reduce_1d(degree, bsp.control_points, space_1d.knots, dec)
 
         new_degree = degree - dec
         assert new_ctrl.shape[0] == n_el * new_degree + 1
@@ -1057,13 +1039,7 @@ class TestBsplineSegmentStitching:
         bsp = _open_uniform_bspline(degree, n_el, rank=2, seed=degree + n_el)
         space_1d = bsp.space.spaces[0]
 
-        new_ctrl, new_knots = _degree_reduce_1d_core(
-            degree,
-            bsp.control_points,
-            space_1d.knots,
-            1,
-            _interpolating_reduction_operator(degree, 1),
-        )
+        new_ctrl, new_knots = degree_reduce_1d(degree, bsp.control_points, space_1d.knots, 1)
         bezier_form = Bspline(
             BsplineSpace([BsplineSpace1D(new_knots, degree - 1)]),
             new_ctrl,
@@ -1207,12 +1183,8 @@ class TestBsplineReduceDegreeDiscontinuous:
         n_basis = len(knots) - degree - 1
         bsp = _make_bspline_1d(knots.tolist(), degree, rng.standard_normal((n_basis, 1)).tolist())
 
-        new_ctrl, new_knots = _degree_reduce_1d_core(
-            degree,
-            bsp.control_points,
-            bsp.space.spaces[0].knots,
-            dec,
-            _interpolating_reduction_operator(degree, dec),
+        new_ctrl, new_knots = degree_reduce_1d(
+            degree, bsp.control_points, bsp.space.spaces[0].knots, dec
         )
 
         new_degree = degree - dec
@@ -1224,7 +1196,7 @@ class TestBsplineReduceDegreeDiscontinuous:
 class TestBsplineReduceDegreeForcedRemoval:
     """The coarsening removal is structural: no deviation can veto it.
 
-    ``_coarsen_knots_after_reduction`` passes ``tol_dev = np.inf`` to the removal
+    the coarsening after a reduction passes an infinite deviation budget to the removal
     kernel, whose acceptance test is ``dist <= tol``.  That does not loosen the
     test, it removes it -- which is the documented contract: the continuity
     structure is what the step has to restore, and the forced removal is what sets
@@ -1625,3 +1597,22 @@ class TestBsplineReduceDegreeErrors:
         bsp = _make_bspline_1d([0, 0, 1, 1], 1, [[0.0], [1.0]])
         with pytest.raises(ValueError, match=r"must match dimension"):
             bsp.reduce_degree((1, 1))
+
+    def test_an_unclamped_direction_is_refused(self) -> None:
+        """The decomposition into Bezier segments needs a clamped knot vector.
+
+        The previous kernel took the first ``degree + 1`` control points as the first
+        segment whatever the knots were, and walked past its arrays at the other end: the
+        result was a different function, or a knot vector the space refused as decreasing.
+        """
+        bsp = _make_bspline_1d([float(i) for i in range(8)], 2, [[float(i)] for i in range(5)])
+        with pytest.raises(ValueError, match="needs a clamped knot vector"):
+            bsp.reduce_degree(1)
+
+    def test_a_knot_repeated_beyond_degree_plus_one_is_refused(self) -> None:
+        """A space accepts a knot of multiplicity ``degree + 2``; the reduction cannot walk it."""
+        bsp = _make_bspline_1d(
+            [0.0, 0.0, 0.0, 0.5, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0], 2, [[float(i)] for i in range(7)]
+        )
+        with pytest.raises(ValueError, match="cannot walk a knot vector that repeats the knot 0.5"):
+            bsp.reduce_degree(1)

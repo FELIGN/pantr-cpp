@@ -47,11 +47,6 @@ repos:
           # Drop the bound once the Python floor moves to 3.12.
           'numpy>=1.26,<2.5',
           'scipy>=1.11,<2',
-          # Mirrors the pyproject pin, which documents why the upper bound
-          # exists: 0.66 broke mypy's view of get_num_threads and of
-          # config.NUMBA_NUM_THREADS.
-          'numba>=0.63,<0.66',
-          'threadpoolctl>=3.0',
           # tests/test_tutorials.py imports matplotlib.pyplot; without it the
           # hook's isolated environment cannot resolve it and every commit
           # touching a .py file fails, while a real mypy run passes.

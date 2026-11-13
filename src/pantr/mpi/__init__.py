@@ -7,9 +7,13 @@ never imports it (enforced by an import-linter contract), and ``import pantr.mpi
 succeeds even when ``mpi4py`` is absent -- only helpers that genuinely need MPI raise at
 call time, via :func:`require_mpi`.
 
-``mpi4py`` is the optional *backend*, not extra PaNTr code: a plain ``pip install pantr``
-is serial-only and MPI-free, while ``pip install "pantr[mpi]"`` simply installs ``mpi4py``
-for you (equivalently ``pip install mpi4py``; an MPI library is also required).
+The distributed algorithms are compiled into pantr's extension, which links no MPI. They
+take either an ``mpi4py`` communicator, which goes through the separate ``pantr-mpi``
+package (the MPI glue, built for one MPI family: its family is checked against the MPI
+library ``mpi4py`` loaded the first time one is used), or any duck-typed object with
+``rank`` and ``size`` attributes and ``allgather`` and ``allreduce`` methods. A plain
+``pip install pantr`` is serial-only and MPI-free; ``pip install "pantr[mpi]"`` installs
+``mpi4py`` and ``pantr-mpi`` (an MPI library is also required).
 
 Main exports:
 - :data:`HAS_MPI`: whether ``mpi4py`` was importable at module load time.
@@ -20,16 +24,16 @@ Main exports:
 - :func:`create_distributed_space`: build a :class:`DistributedSpace` from a space.
 - :class:`DistributedFunction`: the per-rank handle to an MPI-distributed function.
 - :func:`create_distributed_function`: build a :class:`DistributedFunction` from a function.
-- :func:`configure_threads`: explicitly set this rank's Numba thread count.
+- :func:`configure_threads`: explicitly set this rank's thread count.
 - :func:`interpolate_bspline_distributed`: distributed B-spline collocation interpolation.
 - :func:`fit_bspline_distributed`: distributed B-spline fit from pre-evaluated values.
 - :func:`l2_project_bspline_distributed`: distributed B-spline L2 projection.
 - :func:`quasi_interpolate_bspline_distributed`: distributed B-spline quasi-interpolation.
 - :func:`quasi_interpolate_thb_spline_distributed`: distributed THB-spline quasi-interpolation.
 
-A process-level thread policy coordinates MPI with PaNTr's Numba parallelism: the
-first use of any MPI-engaging entry point limits this process to **one Numba thread
-per rank**, unless threads were explicitly configured (``NUMBA_NUM_THREADS``,
+A process-level thread policy coordinates MPI with PaNTr's thread pool: the
+first use of any MPI-engaging entry point limits this process to **one thread
+per rank**, unless threads were explicitly configured (``PANTR_NUM_THREADS``,
 ``pantr.set_num_threads``, ``pantr.num_threads``, or :func:`configure_threads`).
 Every new MPI entry point added to this package must call
 ``_ensure_default_thread_policy()`` from ``pantr.mpi._thread_policy`` before any
@@ -91,8 +95,8 @@ def require_mpi() -> ModuleType:
     if not mpi_available():
         raise ImportError(
             "pantr.mpi requires 'mpi4py', which is not installed. Install the optional "
-            "MPI extra with 'pip install \"pantr[mpi]\"', or 'pip install mpi4py', in an "
-            "environment with an MPI library."
+            "MPI extra with 'pip install \"pantr[mpi]\"' in an environment with an MPI "
+            "library."
         )
     try:
         return importlib.import_module("mpi4py.MPI")

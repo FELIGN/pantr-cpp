@@ -1,10 +1,10 @@
 # PaNTr
 
-**PaNTr** (Polynomial And NURBS Toolkit) is a pure-Python library for geometric
-modeling and numerical analysis with B-splines, NURBS, Bézier patches, and truncated
-hierarchical B-splines. It is built on [NumPy](https://numpy.org), [SciPy](https://scipy.org), and [Numba](https://numba.pydata.org) — typed
-across its public API and JIT-compiled for multi-core throughput — and targets
-isogeometric analysis, CAD-style modeling, and scientific computing.
+**PaNTr** (Polynomial And NURBS Toolkit) is a library for geometric modeling and numerical
+analysis with B-splines, NURBS, Bézier patches, and truncated hierarchical B-splines. Its
+algorithms are header-only C++, parallel on its own thread pool, with a typed Python API built on
+[NumPy](https://numpy.org) and [SciPy](https://scipy.org); it can also be used from C++ directly.
+It targets isogeometric analysis, CAD-style modeling, and scientific computing.
 
 ```python
 import numpy as np
@@ -89,11 +89,13 @@ tutorials/index
 :hidden:
 
 guide/concepts
+guide/special-values
 guide/spaces-knots
 guide/cad
 guide/visualization
 guide/parallelism
 guide/distributed
+guide/cpp
 ```
 
 ```{toctree}

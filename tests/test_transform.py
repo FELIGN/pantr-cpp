@@ -598,15 +598,21 @@ class TestBsplineTransform:
         assert result is None
         npt.assert_allclose(s.control_points[0], [5.0, 5.0])
 
-    def test_inplace_no_extra_alloc(self) -> None:
-        """in_place=True writes directly into the existing array."""
+    def test_inplace_replaces_the_value_and_keeps_an_earlier_view(self) -> None:
+        """in_place=True replaces the value held; an array read before keeps the old points.
+
+        The control points are read-only (the B-spline is an immutable value), so an in-place
+        transform cannot write into the existing array (changelog).
+        """
         knots = [0.0, 0.0, 1.0, 1.0]
         ctrl = [[0.0, 0.0], [1.0, 1.0]]
         s = _make_bspline_1d(knots, 1, ctrl)
-        cp_id = id(s.control_points)
+        before = s.control_points
         t = AffineTransform.translation([5.0, 5.0])
         s.transform(t, in_place=True)
-        assert id(s.control_points) == cp_id
+        npt.assert_allclose(before, ctrl)
+        npt.assert_allclose(s.control_points, [[5.0, 5.0], [6.0, 6.0]])
+        assert not np.shares_memory(before, s.control_points)
 
     def test_not_inplace_returns_new(self) -> None:
         """Default returns a new Bspline with same space."""

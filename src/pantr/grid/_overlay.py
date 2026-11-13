@@ -19,15 +19,10 @@ the same breakpoints up to floating-point noise -- and is defined for any
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-import numpy as np
-
-from ..tolerance import get_default
+from .._ext import ext
 from ._tensor_product_grid import TensorProductGrid
 
-if TYPE_CHECKING:
-    import numpy.typing as npt
+_cpp = ext.grid
 
 
 def overlay(grid_a: TensorProductGrid, grid_b: TensorProductGrid) -> TensorProductGrid:
@@ -53,8 +48,10 @@ def overlay(grid_a: TensorProductGrid, grid_b: TensorProductGrid) -> TensorProdu
     Raises:
         TypeError: If either argument is not a :class:`TensorProductGrid`.
         ValueError: If the grids have different
-            :attr:`~TensorProductGrid.ndim`, or if their domains do not overlap
-            on some axis (the per-axis intersection is empty or degenerate).
+            :attr:`~TensorProductGrid.ndim`, if their domains do not overlap
+            on some axis (the per-axis intersection is empty or degenerate), or if
+            the overlap on some axis is wider than the largest double.
+        OverflowError: If the merged grid would have 2**63 cells or more.
 
     Example:
         >>> import numpy.testing as npt
@@ -71,66 +68,4 @@ def overlay(grid_a: TensorProductGrid, grid_b: TensorProductGrid) -> TensorProdu
             "overlay() requires two TensorProductGrid instances; got "
             f"{type(grid_a).__name__!r} and {type(grid_b).__name__!r}."
         )
-    if grid_a.ndim != grid_b.ndim:
-        raise ValueError(f"overlay(): grids must share ndim; got {grid_a.ndim} vs {grid_b.ndim}.")
-    relative = get_default(np.float64)
-    merged: list[npt.NDArray[np.float64]] = []
-    for d in range(grid_a.ndim):
-        ba = grid_a.breakpoints[d]
-        bb = grid_b.breakpoints[d]
-        lo = max(float(ba[0]), float(bb[0]))
-        hi = min(float(ba[-1]), float(bb[-1]))
-        # ``relative`` is dimensionless; the magnitude a breakpoint comparison on this
-        # axis is relative to is the intersection window, taken together with the
-        # coordinates bounding it -- a window of length 1 sitting at 1e6 resolves its
-        # breakpoints no better than ``eps * 1e6``, however short the window is.
-        atol = relative * max(hi - lo, abs(lo), abs(hi))
-        if hi - lo <= atol:
-            raise ValueError(
-                f"overlay(): domains do not overlap on axis {d}; grid_a extent "
-                f"[{ba[0]}, {ba[-1]}] vs grid_b extent [{bb[0]}, {bb[-1]}]."
-            )
-        merged.append(_merge_axis_breakpoints(ba, bb, lo, hi, atol))
-    return TensorProductGrid(merged)
-
-
-def _merge_axis_breakpoints(
-    ba: npt.NDArray[np.float64],
-    bb: npt.NDArray[np.float64],
-    lo: float,
-    hi: float,
-    atol: float,
-) -> npt.NDArray[np.float64]:
-    """Merge two 1-D breakpoint arrays into their sorted, deduplicated union.
-
-    Only breakpoints strictly inside ``(lo, hi)`` participate; the ``lo`` / ``hi``
-    intersection bounds are always emitted as the first and last entries.
-    Breakpoints closer than ``atol`` are folded into a single entry.
-
-    Args:
-        ba (npt.NDArray[np.float64]): First input's 1-D breakpoints.
-        bb (npt.NDArray[np.float64]): Second input's 1-D breakpoints.
-        lo (float): Lower intersection bound; always emitted first.
-        hi (float): Upper intersection bound; always emitted last.
-        atol (float): Absolute tolerance for merging near-coincident entries.
-
-    Returns:
-        npt.NDArray[np.float64]: Strictly increasing ``float64`` array starting
-        with ``lo`` and ending with ``hi`` (at least two entries).
-    """
-    candidates = np.concatenate(
-        [
-            np.asarray([lo, hi], dtype=np.float64),
-            ba[(ba > lo + atol) & (ba < hi - atol)],
-            bb[(bb > lo + atol) & (bb < hi - atol)],
-        ]
-    )
-    candidates.sort(kind="stable")
-    keep = np.ones(candidates.shape[0], dtype=bool)
-    keep[1:] = np.diff(candidates) > atol
-    merged = candidates[keep]
-    # Belt-and-suspenders: re-pin lo/hi so any float conversion noise in
-    # the sort/concatenate path doesn't alter the caller-supplied bounds.
-    merged[0] = lo
-    merged[-1] = hi
-    return np.ascontiguousarray(merged, dtype=np.float64)
+    return TensorProductGrid._from_handle(_cpp.overlay(grid_a._h, grid_b._h))

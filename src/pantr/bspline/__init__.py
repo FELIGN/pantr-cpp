@@ -19,11 +19,12 @@ This package consolidates the B-spline API:
 - :func:`quasi_interpolate_bspline`: Lee-Lyche-Mørken local quasi-interpolation
   onto a tensor-product space.
 - :func:`create_from_bezier`: create a B-spline from a Bézier.
-- :class:`SpanwiseElementExtraction`: lazy tensor-product change-of-basis
-  operator across B-spline elements (Bézier/Lagrange/cardinal targets).
-- :class:`ExtractionStructView`, :func:`make_struct_view`: Numba-passable
-  bundle of a :class:`SpanwiseElementExtraction`'s compact storage for
-  downstream ``@njit`` code.
+- :class:`SpanwiseElementExtraction`: tensor-product change-of-basis operator
+  across B-spline elements (Bézier/Lagrange/cardinal targets), built eagerly and
+  applied matrix-free.
+- :class:`ExtractionStructView`, :func:`make_struct_view`: bundle of a
+  :class:`SpanwiseElementExtraction`'s compact storage (read-only views of the
+  compiled value) and shape metadata.
 - :class:`THBSplineSpace`: hierarchical B-spline space (truncated /
   non-truncated) on a :class:`pantr.grid.HierarchicalGrid`.
 - :func:`create_thb_space`: convenience factory for a trivial (unrefined) THB

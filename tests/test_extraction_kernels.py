@@ -1,4 +1,11 @@
-"""Correctness and validation tests for the extraction kernels and helpers."""
+"""Correctness and validation tests for the Kronecker application behind the extraction.
+
+The element operators of :class:`~pantr.bspline.SpanwiseElementExtraction` are contractions of
+``M = kron(M_0, ..., M_{d-1})`` with a vector or on both sides of a matrix. The compiled library
+runs them for any number of directions on factors of any shape; ``pantr._testing.kron_apply``
+reaches that application on factors that need not come from a space, and the extraction's own
+methods reach it with the messages a caller sees.
+"""
 
 from __future__ import annotations
 
@@ -9,34 +16,24 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
-from pantr.bspline._extraction_helpers import (
-    OpKind,
-    _allocate_or_validate_scratch,
-    _apply_scratch_size,
-    _bilateral_scratch_size,
-    _dispatch_apply,
-    _operation_shapes,
-    _prepare_apply_call,
-    _prepare_apply_many_call,
-    _required_scratch_size,
-    _validate_op_kind,
-)
-from pantr.bspline._extraction_kernels import (
-    apply_kron_1d,
-    apply_kron_2d,
-    apply_kron_3d,
-    apply_kron_M_K_MT_1d,
-    apply_kron_M_K_MT_2d,
-    apply_kron_M_K_MT_3d,
-    apply_kron_MT_K_M_1d,
-    apply_kron_MT_K_M_2d,
-    apply_kron_MT_K_M_3d,
-    apply_kron_T_1d,
-    apply_kron_T_2d,
-    apply_kron_T_3d,
-)
+from pantr._testing import kron_apply, required_scratch_size
+from pantr.bspline import BsplineSpace, BsplineSpace1D, SpanwiseElementExtraction
+from pantr.bspline.spanwise_element_extraction import OpKind
 
 RNG = np.random.default_rng(12345)
+
+
+def _operation_shapes(
+    in_shape: tuple[int, ...], out_shape: tuple[int, ...], op_kind: str
+) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    """Shapes of the operand and of the result of an operation, by the definition of each."""
+    n_in, n_out = int(np.prod(in_shape)), int(np.prod(out_shape))
+    return {
+        "apply": ((n_in,), (n_out,)),
+        "apply_T": ((n_out,), (n_in,)),
+        "MT_K_M": ((n_out, n_out), (n_in, n_in)),
+        "M_K_MT": ((n_in, n_in), (n_out, n_out)),
+    }[op_kind]
 
 
 def _make_ops(
@@ -124,14 +121,14 @@ SHAPE_CONFIGS_NONSQUARE: list[tuple[int, tuple[int, ...], tuple[int, ...]]] = [
 @pytest.mark.parametrize(("d", "in_shape", "out_shape"), SHAPE_CONFIGS_SQUARE)
 @pytest.mark.parametrize("op_kind", ["apply", "apply_T", "MT_K_M", "M_K_MT"])
 @pytest.mark.parametrize("dtype", [np.float64, np.float32])
-def test_kernels_square_all_identity_patterns(
+def test_square_factors_all_identity_patterns(
     d: int,
     in_shape: tuple[int, ...],
     out_shape: tuple[int, ...],
     op_kind: OpKind,
     dtype: np.dtype[Any],
 ) -> None:
-    """Each kernel matches the naive Kronecker reference for every identity pattern."""
+    """Each operation matches the naive Kronecker reference for every identity pattern."""
     tol = 5e-5 if dtype == np.float32 else 1e-10
     for identity in _identity_patterns(d):
         ops = _make_ops(in_shape, out_shape, identity, np.dtype(dtype))
@@ -139,15 +136,14 @@ def test_kernels_square_all_identity_patterns(
         operand = RNG.standard_normal(in_op_shape).astype(dtype)
         expected = _reference(ops, operand, op_kind)
 
-        kernel, args, out = _prepare_apply_call(tuple(ops), identity, operand, None, None, op_kind)
-        kernel(*args)
+        out = kron_apply(ops, identity, operand, op_kind)
         np.testing.assert_allclose(out, expected, atol=tol, rtol=tol)
 
 
 @pytest.mark.parametrize(("d", "in_shape", "out_shape"), SHAPE_CONFIGS_NONSQUARE)
 @pytest.mark.parametrize("op_kind", ["apply", "apply_T", "MT_K_M", "M_K_MT"])
 @pytest.mark.parametrize("dtype", [np.float64, np.float32])
-def test_kernels_nonsquare(
+def test_nonsquare_factors(
     d: int,
     in_shape: tuple[int, ...],
     out_shape: tuple[int, ...],
@@ -162,8 +158,7 @@ def test_kernels_nonsquare(
     operand = RNG.standard_normal(in_op_shape).astype(dtype)
     expected = _reference(ops, operand, op_kind)
 
-    kernel, args, out = _prepare_apply_call(tuple(ops), identity, operand, None, None, op_kind)
-    kernel(*args)
+    out = kron_apply(ops, identity, operand, op_kind)
     np.testing.assert_allclose(out, expected, atol=tol, rtol=tol)
 
 
@@ -185,9 +180,8 @@ def test_all_identity_apply_aliasing(
         v_copy = v.copy()
         # Pass v itself as `out`: in the all-identity case this should be a
         # self-copy (no-op for the values), and v remains unchanged.
-        kernel, args, out = _prepare_apply_call(tuple(ops), identity, v, v, None, op_kind)
+        out = kron_apply(ops, identity, v, op_kind, out=v)
         assert out is v
-        kernel(*args)
         np.testing.assert_array_equal(v, v_copy)
 
 
@@ -204,209 +198,205 @@ def test_all_identity_bilateral_aliasing(
         in_shape_op, _ = _operation_shapes(in_shape, out_shape, op_kind)
         K = RNG.standard_normal(in_shape_op).astype(np.float64)
         K_copy = K.copy()
-        kernel, args, out = _prepare_apply_call(tuple(ops), identity, K, K, None, op_kind)
+        out = kron_apply(ops, identity, K, op_kind, out=K)
         assert out is K
-        kernel(*args)
         np.testing.assert_array_equal(K, K_copy)
 
 
-# -- Dispatcher errors --------------------------------------------------------
+# -- Any number of directions ---------------------------------------------------
 
 
-def test_dispatch_d_too_large_raises() -> None:
-    with pytest.raises(NotImplementedError, match=r"d in \{1, 2, 3\}"):
-        _dispatch_apply(4, "apply")
+@pytest.mark.parametrize("d", [4, 5])
+@pytest.mark.parametrize("op_kind", ["apply", "apply_T", "MT_K_M", "M_K_MT"])
+def test_more_than_three_directions(d: int, op_kind: OpKind) -> None:
+    """The application is not specialised by dimension: ``d > 3`` matches the dense reference.
+
+    Main raised ``NotImplementedError`` for ``d`` outside ``{1, 2, 3}``.
+    """
+    in_shape = tuple(2 + (k % 2) for k in range(d))
+    out_shape = tuple(3 - (k % 2) for k in range(d))
+    identity = tuple(k == 1 for k in range(d))
+    in_shape = tuple(
+        o if flag else i for i, o, flag in zip(in_shape, out_shape, identity, strict=True)
+    )
+    ops = _make_ops(in_shape, out_shape, identity, np.dtype(np.float64))
+    in_op_shape, _ = _operation_shapes(in_shape, out_shape, op_kind)
+    operand = RNG.standard_normal(in_op_shape)
+    out = kron_apply(ops, identity, operand, op_kind)
+    np.testing.assert_allclose(out, _reference(ops, operand, op_kind), atol=1e-10, rtol=1e-10)
 
 
-def test_dispatch_d_too_small_raises() -> None:
-    with pytest.raises(NotImplementedError, match=r"d in \{1, 2, 3\}"):
-        _dispatch_apply(0, "apply")
-
-
-def test_dispatch_unknown_op_kind_raises() -> None:
-    with pytest.raises(ValueError, match="Unknown op_kind"):
-        _dispatch_apply(2, "banana")  # type: ignore[arg-type]
-
-
-def test_dispatch_returns_expected_kernels() -> None:
-    """Dispatcher maps (op_kind, d) to the right module-level kernel."""
-    expected: dict[tuple[str, int], object] = {
-        ("apply", 1): apply_kron_1d,
-        ("apply", 2): apply_kron_2d,
-        ("apply", 3): apply_kron_3d,
-        ("apply_T", 1): apply_kron_T_1d,
-        ("apply_T", 2): apply_kron_T_2d,
-        ("apply_T", 3): apply_kron_T_3d,
-        ("MT_K_M", 1): apply_kron_MT_K_M_1d,
-        ("MT_K_M", 2): apply_kron_MT_K_M_2d,
-        ("MT_K_M", 3): apply_kron_MT_K_M_3d,
-        ("M_K_MT", 1): apply_kron_M_K_MT_1d,
-        ("M_K_MT", 2): apply_kron_M_K_MT_2d,
-        ("M_K_MT", 3): apply_kron_M_K_MT_3d,
-    }
-    for (op_kind, d), kernel in expected.items():
-        assert _dispatch_apply(d, op_kind) is kernel  # type: ignore[arg-type]
+def test_no_direction_raises() -> None:
+    """A Kronecker product of no factors is refused (the compiled library says so)."""
+    with pytest.raises(ValueError, match="At least one direction is required"):
+        kron_apply([], [], np.ones(1), "apply")
 
 
 # -- Validation errors --------------------------------------------------------
 
 
-def test_validate_op_kind_accepts_known() -> None:
-    for k in ("apply", "apply_T", "MT_K_M", "M_K_MT"):
-        assert _validate_op_kind(k) == k
-
-
-def test_validate_op_kind_rejects_unknown() -> None:
+def test_unknown_op_kind_raises() -> None:
     with pytest.raises(ValueError, match="Unknown op_kind"):
-        _validate_op_kind("nope")
+        required_scratch_size((2,), (2,), "nope")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="Unknown op_kind"):
+        kron_apply([np.eye(2)], [False], np.ones(2), "nope")  # type: ignore[arg-type]
 
 
 def test_required_scratch_size_mismatched_shapes_raises() -> None:
     with pytest.raises(ValueError, match="must have the same length"):
-        _required_scratch_size((2, 3), (2,), "apply")
+        required_scratch_size((2, 3), (2,), "apply")
+
+
+def _extraction() -> SpanwiseElementExtraction:
+    """A 2D extraction on 3x3 operators: 6 x 6 elements, operand sizes 9 and 9."""
+    sp1 = BsplineSpace1D([0, 0, 0, 1, 2, 3, 4, 5, 6, 6, 6], 2)
+    return SpanwiseElementExtraction(BsplineSpace([sp1, sp1]), "bezier")
 
 
 def test_operand_wrong_shape_raises() -> None:
-    ops = _make_ops((3, 4), (3, 4), (False, False), np.dtype(np.float64))
+    ext = _extraction()
     bad = RNG.standard_normal(20).astype(np.float64)
     with pytest.raises(ValueError, match="expected shape"):
-        _prepare_apply_call(tuple(ops), (False, False), bad, None, None, "apply")
+        ext.apply(bad, 7)
 
 
 def test_operand_wrong_dtype_raises() -> None:
-    ops = _make_ops((3, 4), (3, 4), (False, False), np.dtype(np.float64))
-    bad = RNG.standard_normal(12).astype(np.float32)
+    ext = _extraction()
+    bad = RNG.standard_normal(9).astype(np.float32)
     with pytest.raises(ValueError, match="expected dtype"):
-        _prepare_apply_call(tuple(ops), (False, False), bad, None, None, "apply")
+        ext.apply(bad, 7)
 
 
 def test_out_wrong_shape_raises() -> None:
-    ops = _make_ops((3, 4), (3, 4), (False, False), np.dtype(np.float64))
-    v = RNG.standard_normal(12).astype(np.float64)
-    bad_out = np.empty(11, dtype=np.float64)
+    ext = _extraction()
+    v = RNG.standard_normal(9).astype(np.float64)
+    bad_out = np.empty(8, dtype=np.float64)
     with pytest.raises(ValueError, match="expected shape"):
-        _prepare_apply_call(tuple(ops), (False, False), v, bad_out, None, "apply")
+        ext.apply(v, 7, out=bad_out)
 
 
 def test_out_not_writable_raises() -> None:
-    ops = _make_ops((3, 4), (3, 4), (False, False), np.dtype(np.float64))
-    v = RNG.standard_normal(12).astype(np.float64)
-    bad_out = np.empty(12, dtype=np.float64)
+    ext = _extraction()
+    v = RNG.standard_normal(9).astype(np.float64)
+    bad_out = np.empty(9, dtype=np.float64)
     bad_out.flags.writeable = False
     with pytest.raises(ValueError, match="writeable"):
-        _prepare_apply_call(tuple(ops), (False, False), v, bad_out, None, "apply")
+        ext.apply(v, 7, out=bad_out)
 
 
 def test_scratch_too_small_raises() -> None:
-    ops = _make_ops((3, 4), (3, 4), (False, False), np.dtype(np.float64))
-    v = RNG.standard_normal(12).astype(np.float64)
+    ext = _extraction()
+    v = RNG.standard_normal(9).astype(np.float64)
     bad_scratch = np.empty(1, dtype=np.float64)
     with pytest.raises(ValueError, match="smaller than required"):
-        _prepare_apply_call(tuple(ops), (False, False), v, None, bad_scratch, "apply")
+        ext.apply(v, 7, scratch=bad_scratch)
 
 
 def test_scratch_wrong_ndim_raises() -> None:
+    ext = _extraction()
+    v = RNG.standard_normal(9).astype(np.float64)
     with pytest.raises(ValueError, match="1D"):
-        _allocate_or_validate_scratch(np.empty((3, 3), dtype=np.float64), 4, np.float64)
+        ext.apply(v, 7, scratch=np.empty((3, 3), dtype=np.float64))
 
 
 def test_scratch_wrong_dtype_raises() -> None:
+    ext = _extraction()
+    v = RNG.standard_normal(9).astype(np.float64)
     with pytest.raises(ValueError, match="expected dtype"):
-        _allocate_or_validate_scratch(np.empty(16, dtype=np.float32), 4, np.float64)
+        ext.apply(v, 7, scratch=np.empty(16, dtype=np.float32))
 
 
-def test_ops_ndim_raises() -> None:
-    bad_op = np.eye(3)[np.newaxis]  # 3D instead of 2D
-    v = RNG.standard_normal(3).astype(np.float64)
-    with pytest.raises(ValueError, match="must be 2D"):
-        _prepare_apply_call((bad_op,), (False,), v, None, None, "apply")
-
-
-def test_ops_dtype_mismatch_raises() -> None:
-    ops: tuple[npt.NDArray[Any], ...] = (
-        np.eye(3, dtype=np.float64),
-        np.eye(4, dtype=np.float32),
-    )
-    v = RNG.standard_normal(12).astype(np.float64)
-    with pytest.raises(ValueError, match="dtype"):
-        _prepare_apply_call(ops, (False, False), v, None, None, "apply")
+def test_scratch_not_writable_raises() -> None:
+    ext = _extraction()
+    v = RNG.standard_normal(9).astype(np.float64)
+    scratch = np.empty(64, dtype=np.float64)
+    scratch.flags.writeable = False
+    with pytest.raises(ValueError, match="not writeable"):
+        ext.apply(v, 7, scratch=scratch)
 
 
 def test_identity_length_mismatch_raises() -> None:
     ops = _make_ops((3, 4), (3, 4), (False, False), np.dtype(np.float64))
     v = RNG.standard_normal(12).astype(np.float64)
     with pytest.raises(ValueError, match="length"):
-        _prepare_apply_call(tuple(ops), (False,), v, None, None, "apply")
+        kron_apply(ops, (False,), v, "apply")
 
 
 # -- Scratch size sanity -------------------------------------------------------
 
 
 def test_required_scratch_size_apply_d1_is_zero() -> None:
-    assert _required_scratch_size((5,), (3,), "apply") == 0
-    assert _required_scratch_size((5,), (3,), "apply_T") == 0
+    assert required_scratch_size((5,), (3,), "apply") == 0
+    assert required_scratch_size((5,), (3,), "apply_T") == 0
 
 
-def test_apply_scratch_size_d2_matches_kernel_usage() -> None:
+def test_required_scratch_size_d2_matches_the_intermediate() -> None:
     n_in, n_out = (3, 4), (5, 6)
-    assert _apply_scratch_size(n_in, n_out) == 2 * (n_out[0] * n_in[1])
+    # The only intermediate of ``apply`` is (n_out[0], n_in[1]); twice that holds the two halves.
+    assert required_scratch_size(n_in, n_out, "apply") == 2 * (n_out[0] * n_in[1])
     # apply_T: starts at n_out, ends at n_in -- intermediate size n_in[0] * n_out[1].
-    assert _apply_scratch_size(n_out, n_in) == 2 * (n_in[0] * n_out[1])
+    assert required_scratch_size(n_in, n_out, "apply_T") == 2 * (n_in[0] * n_out[1])
 
 
-def test_bilateral_scratch_size_d1_matches_kernel_usage() -> None:
+def test_required_scratch_size_bilateral_d1_matches_the_intermediate() -> None:
     # Stage 0 intermediate (only intermediate) is n_in * n_out.
-    assert _bilateral_scratch_size((5,), (3,)) == 2 * (5 * 3)
-    assert _bilateral_scratch_size((3,), (5,)) == 2 * (3 * 5)
+    assert required_scratch_size((3,), (5,), "MT_K_M") == 2 * (5 * 3)
+    assert required_scratch_size((3,), (5,), "M_K_MT") == 2 * (3 * 5)
+
+
+@pytest.mark.parametrize("op_kind", ["apply", "apply_T", "MT_K_M", "M_K_MT"])
+def test_exactly_the_required_scratch_is_enough(op_kind: OpKind) -> None:
+    """A scratch of exactly ``required_scratch_size`` entries runs every identity pattern."""
+    in_shape, out_shape = (2, 3, 2), (3, 2, 4)
+    for identity in itertools.product([False, True], repeat=3):
+        shape_in = tuple(
+            o if f else i for i, o, f in zip(in_shape, out_shape, identity, strict=True)
+        )
+        ops = _make_ops(shape_in, out_shape, identity, np.dtype(np.float64))
+        need = required_scratch_size(shape_in, out_shape, op_kind)
+        in_op_shape, _ = _operation_shapes(shape_in, out_shape, op_kind)
+        operand = RNG.standard_normal(in_op_shape)
+        out = kron_apply(ops, identity, operand, op_kind, scratch=np.empty(need))
+        np.testing.assert_allclose(out, _reference(ops, operand, op_kind), atol=1e-10, rtol=1e-10)
+
+
+def test_scratch_overlapping_the_operand_or_out_raises() -> None:
+    """Scratch that shares memory with the operand or the result is refused.
+
+    Main computed on regardless, and returned values corrupted by its own intermediates.
+    """
+    ops = _make_ops((3, 4), (3, 4), (False, False), np.dtype(np.float64))
+    v = RNG.standard_normal(12)
+    buf = np.concatenate([v, np.zeros(64)])
+    with pytest.raises(ValueError, match="scratch must not overlap"):
+        kron_apply(ops, (False, False), buf[:12], "apply", scratch=buf)
+    big = np.zeros(64)
+    with pytest.raises(ValueError, match="scratch must not overlap"):
+        kron_apply(ops, (False, False), v, "apply", out=big[:12], scratch=big)
 
 
 # An identity branch copies over a single extent, which equals applying the operator only
-# when it is square. The Layer 2 dispatchers derive the operand and output extents from the
-# operator's shape whatever the flag says, so an identity-flagged non-square operator used to
-# pass validation and let a 1D kernel read past its operand.
+# when it is square, so an identity-flagged factor that is not square is refused.
 
 
 def test_identity_flagged_nonsquare_operator_raises() -> None:
     non_square = np.eye(3, 2, dtype=np.float64)
     v = RNG.standard_normal(2).astype(np.float64)
     with pytest.raises(ValueError, match="must be square"):
-        _prepare_apply_call((non_square,), (True,), v, None, None, "apply")
+        kron_apply([non_square], [True], v, "apply")
 
 
 def test_nonsquare_operator_not_flagged_identity_is_accepted() -> None:
     # The refusal keys on the flag: the same operator unflagged is an ordinary rectangular
-    # operator and must still dispatch.
+    # operator and must still apply.
     non_square = np.eye(3, 2, dtype=np.float64)
     v = RNG.standard_normal(2).astype(np.float64)
-    _, _, out = _prepare_apply_call((non_square,), (False,), v, None, None, "apply")
+    out = kron_apply([non_square], [False], v, "apply")
     assert out.shape == (3,)
 
 
 def test_identity_flagged_square_operator_is_accepted() -> None:
     square = np.eye(3, dtype=np.float64)
     v = RNG.standard_normal(3).astype(np.float64)
-    _, _, out = _prepare_apply_call((square,), (True,), v, None, None, "apply")
+    out = kron_apply([square], [True], v, "apply")
     assert out.shape == (3,)
-
-
-def _batch_inputs(n_out: int, n_in: int, mask: tuple[bool, ...]) -> tuple[Any, ...]:
-    """Build the 1D ``_prepare_apply_many_call`` arguments for ``len(mask)`` elements."""
-    n_el = len(mask)
-    ops = (np.ones((1, n_out, n_in), dtype=np.float64),)
-    idx_maps = (np.zeros(n_el, dtype=np.intp),)
-    masks = (np.array(mask, dtype=np.bool_),)
-    cells = np.arange(n_el, dtype=np.intp)[:, None]
-    operand = RNG.standard_normal((n_el, n_in)).astype(np.float64)
-    return ops, idx_maps, masks, cells, operand
-
-
-def test_batch_identity_flagged_nonsquare_operators_raise() -> None:
-    ops, idx_maps, masks, cells, operand = _batch_inputs(3, 2, (True, False))
-    with pytest.raises(ValueError, match="must be square"):
-        _prepare_apply_many_call(ops, idx_maps, masks, cells, operand, None, None, "apply")
-
-
-def test_batch_nonsquare_operators_without_identity_flag_are_accepted() -> None:
-    ops, idx_maps, masks, cells, operand = _batch_inputs(3, 2, (False, False))
-    _, _, out = _prepare_apply_many_call(ops, idx_maps, masks, cells, operand, None, None, "apply")
-    assert out.shape == (2, 3)

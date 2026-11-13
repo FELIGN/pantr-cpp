@@ -1,34 +1,23 @@
-"""Keep the bounds-checked adversarial sweep alive as a test.
+"""Keep the adversarial sweep alive as a test.
 
-The sweep proper lives in ``tools/adversarial_sweep/`` and exists because pantr's Layer-3
-kernels run under Numba ``nopython=True``: there is no bounds check, a negative index
-wraps, and int64 overflows untrapped. The whole suite already runs clean under
-``NUMBA_BOUNDSCHECK=1``, so everything the sweep finds comes from inputs the suite does
-not contain. This test runs the sweep's bounded ``smoke`` profile and fails when it finds
-something that is not already pinned by a regression test.
+The sweep proper lives in ``tools/adversarial_sweep/`` and exists because pantr's kernels are
+compiled code with no bounds checking of their own: an out-of-range write corrupts memory
+silently and integer arithmetic overflows untrapped. The whole suite already runs clean, so
+everything the sweep finds comes from inputs the suite does not contain. This test runs the
+sweep's bounded ``smoke`` profile and fails when it finds something that is not already pinned
+by a regression test.
 
-Three things force the shape of this test:
-
-* **It must be a subprocess.** ``NUMBA_BOUNDSCHECK`` is read when Numba is imported and
-  applied when a kernel is compiled, so it cannot be turned on from inside a pytest
-  process that has already imported pantr.
-* **It needs a fresh Numba cache.** The bounds-check flag is *not* part of the cache key,
-  so a ``cache=True`` kernel compiled earlier without it is silently reused and the run
-  returns a false clean. Every pantr kernel is ``cache=True``. The test therefore hands
-  the child a per-run ``NUMBA_CACHE_DIR`` under pytest's ``tmp_path``.
-* **It is opt-in.** A fresh cache means recompiling every kernel the sweep touches, which
-  costs minutes rather than the seconds a suite run should. Following the precedent of
-  ``tests/mpi/``, it is gated on an environment variable and marked ``slow``, so the
-  default suite pays nothing and CI runs it in a step of its own.
+It runs in a subprocess, so that a sanitizer's abort or a hard crash in a case fails this test
+instead of taking the pytest process with it, and it is opt-in: following the precedent of
+``tests/mpi/``, it is gated on an environment variable and marked ``slow``, so the default suite
+pays nothing. CI runs it in a job of its own against an extension built with AddressSanitizer,
+UndefinedBehaviorSanitizer and libstdc++'s assertions, which is what turns an out-of-range access
+in a kernel into a failure; against an ordinary build, the sweep grades exceptions, non-finite
+results and declared invariants only.
 
 Run it with::
 
     PANTR_RUN_SWEEP=1 pytest tests/test_adversarial_sweep.py
-
-The sweep's own canary is what makes a clean result meaningful: it compiles two
-deliberately out-of-range ``cache=True`` kernels and requires both to raise before any
-case runs. This test asserts the canary line is present, because a sweep that cannot
-detect the bug it hunts is worse than no sweep.
 """
 
 from __future__ import annotations
@@ -40,6 +29,8 @@ import subprocess
 import sys
 
 import pytest
+
+from tests._tree_env import subprocess_env
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
 _LAUNCHER = _ROOT / "tools" / "sweep.py"
@@ -63,11 +54,6 @@ _KNOWN_FINDINGS = frozenset(
         # `test_sweep_regressions.py::test_degree_elevation_outputs_are_mutually_consistent`.
         "elevate_degree_d0_m1_float64_random",
         "elevate_degree_d1_m2_float64_random",
-        # `_de_casteljau_eval_scalar` reads `coeff[0]` with no guard, so an empty
-        # coefficient array reads out of bounds. Layer 3 documents that it validates
-        # nothing, and no public path reaches it with an empty array, so this is a port
-        # note rather than a live bug: in C++ the same read is undefined behavior.
-        "de_casteljau_len0_float64",
     }
 )
 """Findings the smoke profile is expected to reproduce.
@@ -91,30 +77,38 @@ cases now decline the input, and the probe asserts that refusal with ``must_reje
 """
 
 
-def _run_sweep(cache_dir: pathlib.Path, journal: pathlib.Path) -> subprocess.CompletedProcess[str]:
-    """Run the smoke profile in a child process with a fresh Numba cache.
+def _sanitizer_expected() -> bool:
+    """Say whether this run is meant to be sanitized.
+
+    It is when the extension under test carries AddressSanitizer's instrumentation (it calls the
+    runtime's ``__asan_report`` functions, which no ordinary build does) or the runtime is
+    preloaded into the test process, as the CI job does. Neither is read from the sweep, whose
+    report is what is checked against it.
+
+    Returns:
+        bool: ``True`` when the extension is instrumented or the ASan runtime is preloaded.
+    """
+    from pantr._ext import ext  # noqa: PLC0415
+
+    instrumented = b"__asan_report" in pathlib.Path(ext.__file__).read_bytes()
+    return instrumented or "libasan" in os.environ.get("LD_PRELOAD", "")
+
+
+def _run_sweep(journal: pathlib.Path) -> subprocess.CompletedProcess[str]:
+    """Run the smoke profile in a child process.
 
     Args:
-        cache_dir (pathlib.Path): Directory for the child's Numba cache. Must not already
-            hold a compilation of these kernels, or the bounds check is silently skipped.
         journal (pathlib.Path): File to receive the per-case JSONL records.
 
     Returns:
         subprocess.CompletedProcess[str]: The finished process, with output captured.
     """
-    env = dict(os.environ)
-    env["NUMBA_BOUNDSCHECK"] = "1"
-    env["NUMBA_CACHE_DIR"] = str(cache_dir)
-    # The coverage run sets this globally, and with the JIT off nothing is compiled and
-    # the bounds check grades nothing. The sweep's canary refuses to start in that state,
-    # so clear it rather than let an inherited value turn the run into a false clean.
-    env.pop("NUMBA_DISABLE_JIT", None)
     # Fixed argv, no shell, in-repo launcher.
     return subprocess.run(
         [sys.executable, str(_LAUNCHER), "--profile", "smoke", "--journal", str(journal)],
         capture_output=True,
         text=True,
-        env=env,
+        env=subprocess_env(),
         check=False,
     )
 
@@ -122,23 +116,38 @@ def _run_sweep(cache_dir: pathlib.Path, journal: pathlib.Path) -> subprocess.Com
 @pytest.mark.slow
 @pytest.mark.skipif(
     os.environ.get(_ENV_FLAG) != "1",
-    reason=f"set {_ENV_FLAG}=1 to run the bounds-checked adversarial sweep",
+    reason=f"set {_ENV_FLAG}=1 to run the adversarial sweep",
 )
 def test_smoke_sweep_finds_nothing_new(tmp_path: pathlib.Path) -> None:
-    cache_dir = tmp_path / "numba-cache"
-    cache_dir.mkdir()
     journal = tmp_path / "sweep.jsonl"
 
-    result = _run_sweep(cache_dir, journal)
+    result = _run_sweep(journal)
 
-    # 0 is clean, 1 is findings, 3 is "the harness is unusable" and anything else is a
-    # crash or a signal. Only the first two may be interpreted, and the canary line has to
-    # be there: a sweep that cannot detect an out-of-bounds access proves nothing.
+    # 0 is clean, 1 is findings, and anything else is an incomplete run, a crash or a
+    # signal (a sanitizer's abort among them). Only the first two may be interpreted.
     assert result.returncode in (0, 1), (
         f"the sweep did not complete (exit {result.returncode}):\n"
         f"{result.stdout[-2000:]}\n{result.stderr[-4000:]}"
     )
-    assert "canary OK" in result.stderr, f"the canary did not report:\n{result.stderr[-4000:]}"
+
+    # The canary. A clean verdict is worth something only if an out-of-range access in a kernel
+    # would have been seen, and the sweep reports whether the sanitizer's runtime is in its
+    # process: the report must be there, and where this run is meant to be sanitized it must say
+    # the runtime is loaded. (The old canary's two deliberately out-of-range kernels are gone with
+    # the Python kernels; CI separately checks that the extension is instrumented.)
+    reports = [
+        line
+        for line in result.stderr.splitlines()
+        if line.startswith("[sweep]") and "AddressSanitizer" in line
+    ]
+    assert len(reports) == 1, (
+        f"the sweep did not report its sanitizer state:\n{result.stderr[:2000]}"
+    )
+    if _sanitizer_expected():
+        assert "AddressSanitizer is loaded" in reports[0], (
+            "this run is meant to be sanitized, but the sweep says otherwise (a clean result "
+            f"would be blind to out-of-range access): {reports[0]}"
+        )
 
     records = [json.loads(line) for line in journal.read_text(encoding="utf-8").splitlines()]
     assert len(records) >= _MIN_CASES, f"only {len(records)} cases ran, expected >= {_MIN_CASES}"

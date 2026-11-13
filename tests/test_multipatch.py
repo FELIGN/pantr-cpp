@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import dataclasses
 import itertools
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
 import pytest
 
+import pantr
+from pantr._ext import ext
 from pantr.bspline import Bspline, BsplineSpace, BsplineSpace1D
 from pantr.multipatch import Interface, MultiPatch, detect_interfaces, match_face_cps
-from pantr.multipatch._interface import tangential_axes
 
 
 def _open_space_1d(degree: int, n_interior: int) -> BsplineSpace1D:
@@ -91,6 +93,29 @@ def test_interface_requires_canonical_order() -> None:
         Interface(patch_a=1, face_a=0, patch_b=0, face_b=1, axis_map=(1,), flips=(False,))
 
 
+def test_interface_and_matching_accept_numpy_scalars() -> None:
+    """NumPy integers and booleans in the fields (the dataclass converts none) are accepted.
+
+    The compiled signatures are typed ``int`` and ``bool``; the wrappers spell the fields as
+    plain Python values first, so an index that came out of a NumPy computation still works.
+    """
+    # Typed as Any: the annotations say ``int`` and ``bool``, and the point is what runs.
+    one: Any = np.int64(1)
+    zero: Any = np.int64(0)
+    yes: Any = np.bool_(True)
+    no: Any = np.bool_(False)
+    iface = Interface(zero, one, 1, 0, (one,), (no,))
+    assert iface == Interface(0, 1, 1, 0, (1,), (False,))
+
+    space = _anisotropic_space_2d()
+    cps_a, cps_b = match_face_cps(space, one, space, zero, (one,), (yes,))
+    assert cps_a.tolist() == [9, 10, 11]
+    assert cps_b.tolist() == [2, 1, 0]
+
+    patches = [_lattice_patch(space), _lattice_patch(space, offset=[1.0, 0.0])]
+    assert MultiPatch(patches, (iface,)).interfaces == (iface,)
+
+
 # ---------------------------------------------------------------- match_face_cps
 
 
@@ -111,7 +136,7 @@ def _brute_force_match(  # noqa: PLR0913
     n_a, n_b = space_a.num_basis, space_b.num_basis
     axis_a, side_a = divmod(face_a, 2)
     axis_b, side_b = divmod(face_b, 2)
-    tang_a = tangential_axes(face_a, dim)
+    tang_a = tuple(k for k in range(dim) if k != face_a // 2)
     slab_a = 0 if side_a == 0 else n_a[axis_a] - 1
     slab_b = 0 if side_b == 0 else n_b[axis_b] - 1
 
@@ -145,10 +170,12 @@ def test_match_face_cps_matches_brute_force(dim: int) -> None:
     space = BsplineSpace([_open_space_1d(d, n) for d, n in zip(degrees, interior, strict=True)])
 
     for face_a, face_b in itertools.product(range(2 * dim), repeat=2):
-        tang_b = tangential_axes(face_b, dim)
+        tang_b = tuple(k for k in range(dim) if k != face_b // 2)
         for axis_map in itertools.permutations(tang_b):
             for flips in itertools.product([False, True], repeat=len(tang_b)):
-                sizes_a = [space.num_basis[a] for a in tangential_axes(face_a, dim)]
+                sizes_a = [
+                    space.num_basis[a] for a in tuple(k for k in range(dim) if k != face_a // 2)
+                ]
                 sizes_b = [space.num_basis[a] for a in axis_map]
                 if sizes_a != sizes_b:
                     with pytest.raises(ValueError, match="different numbers of basis functions"):
@@ -201,6 +228,38 @@ def test_detect_translated_1d() -> None:
     assert detect_interfaces([left, right]) == (
         Interface(patch_a=0, face_a=1, patch_b=1, face_b=0, axis_map=(), flips=()),
     )
+
+
+@pytest.mark.parametrize("tol", [float("nan"), float("inf"), -float("inf")])
+def test_detect_refuses_a_non_finite_tol(tol: float) -> None:
+    """A NaN tol matched nothing and an infinite one matched every face: both refused."""
+    space = BsplineSpace([_open_space_1d(2, 1)])
+    patches = [_lattice_patch(space), _lattice_patch(space, offset=[1.0])]
+    with pytest.raises(ValueError, match=r"^tol must be finite, got "):
+        detect_interfaces(patches, tol=tol)
+    with pytest.raises(ValueError, match=r"^tol must be finite, got "):
+        detect_interfaces([], tol=tol)  # checked before the empty-input shortcut
+
+
+@pytest.mark.parametrize("tol", [float("nan"), float("inf"), -float("inf")])
+def test_multipatch_refuses_a_non_finite_tol(tol: float) -> None:
+    """MultiPatch passes tol to detection and verification, which refuse it in the compiled code.
+
+    NaN found no interface and infinity found every pair of faces, or verified a supplied interface
+    between patches far apart.
+    """
+    space = BsplineSpace([_open_space_1d(2, 1)])
+    near = [_lattice_patch(space), _lattice_patch(space, offset=[1.0])]
+    far = [_lattice_patch(space), _lattice_patch(space, offset=[5.0])]
+    bogus = (Interface(patch_a=0, face_a=1, patch_b=1, face_b=0, axis_map=(), flips=()),)
+    with pytest.raises(ValueError, match=r"^tol must be finite, got "):
+        MultiPatch(near, tol=tol)
+    with pytest.raises(ValueError, match=r"^tol must be finite, got "):
+        MultiPatch(far, bogus, tol=tol)
+    # Controls: the default tol finds the touching pair and refuses the bogus interface.
+    assert MultiPatch(near).interfaces == bogus
+    with pytest.raises(ValueError, match="Interface does not hold"):
+        MultiPatch(far, bogus)
 
 
 def test_detect_translated_2d() -> None:
@@ -543,3 +602,192 @@ def test_multipatch_rejects_mixed_rank() -> None:
 
     with pytest.raises(ValueError, match="must share rank"):
         MultiPatch([planar, spatial])
+
+
+def test_multipatch_rejects_mixed_dtype() -> None:
+    """Patches of different precisions cannot be combined, and the message names both dtypes."""
+    space = _anisotropic_space_2d()
+    double = _lattice_patch(space)
+    knots = [np.asarray(s.knots, dtype=np.float32) for s in space.spaces]
+    space32 = BsplineSpace(
+        [BsplineSpace1D(k, s.degree) for k, s in zip(knots, space.spaces, strict=True)]
+    )
+    single = Bspline(space32, np.asarray(double.control_points, dtype=np.float32))
+
+    with pytest.raises(ValueError, match="patch 0 has float64 but patch 1 has float32"):
+        MultiPatch([double, single])
+
+
+# ---------------------------------------------------------------- threads, dtypes, quirks
+
+
+def _many_threads() -> int:
+    """Pick a thread count above one for the parallel run.
+
+    Returns:
+        int: Eight, capped at the most threads `pantr.num_threads` accepts, the thread pool's
+        capacity (a CI runner may allow four).
+    """
+    return min(8, int(ext.max_threads()))
+
+
+def _grid_of_patches(dim: int, per_side: int) -> list[Bspline]:
+    """Build ``per_side ** dim`` unit boxes tiling a larger box, in C order of their position."""
+    space = BsplineSpace([_open_space_1d(1, 0)] * dim)
+    return [
+        _lattice_patch(space, offset=list(position))
+        for position in itertools.product(range(per_side), repeat=dim)
+    ]
+
+
+def _grid_interfaces(dim: int, per_side: int) -> tuple[Interface, ...]:
+    """List the interfaces of :func:`_grid_of_patches` from how the tiling is numbered."""
+    found = []
+    for position in itertools.product(range(per_side), repeat=dim):
+        index = sum(c * per_side ** (dim - 1 - k) for k, c in enumerate(position))
+        for axis in range(dim):
+            if position[axis] + 1 == per_side:
+                continue
+            found.append(
+                Interface(
+                    patch_a=index,
+                    face_a=2 * axis + 1,
+                    patch_b=index + per_side ** (dim - 1 - axis),
+                    face_b=2 * axis,
+                    axis_map=tuple(k for k in range(dim) if k != axis),
+                    flips=(False,) * (dim - 1),
+                )
+            )
+    return tuple(sorted(found, key=lambda i: (i.patch_a, i.face_a, i.patch_b, i.face_b)))
+
+
+@pytest.mark.parametrize(("dim", "per_side"), [(2, 4), (3, 4)])
+def test_detect_is_independent_of_the_thread_count(dim: int, per_side: int) -> None:
+    """One thread and several threads give the same interfaces, and the right ones.
+
+    The 2D tiling is small enough for the work model to keep the search on one thread (the two
+    runs are then the same code); the 3D one is above the threshold and runs on the pool. The
+    expected interfaces come from how the tiling is numbered, not from the detection.
+    """
+    if _many_threads() < 2:
+        pytest.skip("a single thread is available, so there is no parallel run to compare")
+    patches = _grid_of_patches(dim, per_side)
+    expected = _grid_interfaces(dim, per_side)
+    with pantr.num_threads(1):
+        serial = detect_interfaces(patches)
+    with pantr.num_threads(_many_threads()):
+        parallel = detect_interfaces(patches)
+    assert parallel == serial
+    assert serial == expected
+    assert len(expected) == dim * per_side ** (dim - 1) * (per_side - 1)
+
+
+def _f32_patch(offset: float, gap: float = 0.0) -> Bspline:
+    """Build a float32 patch: the 2D anisotropic lattice shifted by ``offset`` along x."""
+    knots = [np.array(_open_space_1d(2, n).knots, dtype=np.float32) for n in (1, 0)]
+    space = BsplineSpace([BsplineSpace1D(k, 2) for k in knots])
+    num_basis = space.num_basis
+    grids = np.meshgrid(*[np.linspace(0.0, 1.0, n) for n in num_basis], indexing="ij")
+    cps = np.stack(grids, axis=-1)
+    cps[..., 0] += offset + gap
+    return Bspline(space, cps.astype(np.float32))
+
+
+def test_detect_mixed_dtypes_use_the_larger_strict_tolerance_of_each_pair() -> None:
+    """Each pair is graded at the larger strict tolerance of its own two dtypes.
+
+    The second patch's shared face is displaced by ``3e-7``: inside float32's strict tier (a few
+    unit roundoffs of the coordinate scale, about 2) and far outside float64's. A pair with a
+    float32 patch is graded at float32's tier even though the other is float64, and a pair of
+    float64 patches keeps float64's tier whatever else the list holds.
+    """
+    gap = 3e-7
+    space = _anisotropic_space_2d()
+    shifted64 = _lattice_patch(space, offset=[1.0 + gap, 0.0])
+    first64 = _lattice_patch(space)
+    first32 = _f32_patch(0.0)
+    expected = (Interface(patch_a=0, face_a=1, patch_b=1, face_b=0, axis_map=(1,), flips=(False,)),)
+
+    assert detect_interfaces([first32, shifted64]) == expected
+    # Listed the other way round the pair is the same, with the faces named from the other side.
+    assert detect_interfaces([shifted64, first32]) == (
+        Interface(patch_a=0, face_a=0, patch_b=1, face_b=1, axis_map=(1,), flips=(False,)),
+    )
+    assert detect_interfaces([first64, shifted64]) == ()
+    # A float32 patch elsewhere in the list does not loosen the float64 pair.
+    assert detect_interfaces([first64, shifted64, _f32_patch(10.0)]) == ()
+    # Two float32 patches: the displacement survives rounding to float32 and is within its tier.
+    assert detect_interfaces([first32, _f32_patch(1.0, gap)]) == expected
+
+
+def test_detect_inherited_quirk_rank_columns() -> None:
+    """Inherited from main: the joint tolerance reads the first patch's rank columns of both.
+
+    A second patch with fewer coordinates per point than the first patch's rank cannot be read
+    and is refused (main died inside NumPy there; the message is this library's own). The other
+    order reads one column of each and finds no interface between the two, since their faces
+    differ in rank.
+    """
+    space = BsplineSpace([_open_space_1d(2, 0), _open_space_1d(2, 0)])
+    planar = _lattice_patch(space)
+    line = Bspline(space, planar.control_points[..., :1])
+
+    with pytest.raises(ValueError, match="fewer than the rank 2 of patch 0"):
+        detect_interfaces([planar, line])
+    assert [i for i in detect_interfaces([line, planar]) if i.patch_a != i.patch_b] == []
+
+
+def test_detect_inherited_quirk_weight_column() -> None:
+    """Inherited from main: the weights are compared when the *first* patch is rational.
+
+    The last column of each patch is compared, which for a polynomial second patch is a
+    coordinate (here ``y``), so a rational patch followed by a polynomial one with identical
+    coordinates is refused. With the order swapped no weight is compared and the interface is
+    found.
+    """
+    space = BsplineSpace([_open_space_1d(2, 0), _open_space_1d(2, 0)])
+    polynomial = _lattice_patch(space).control_points
+    homogeneous = np.concatenate([polynomial, np.ones((*space.num_basis, 1))], axis=-1)
+    shift = np.array([1.0, 0.0])
+    expected = (Interface(patch_a=0, face_a=1, patch_b=1, face_b=0, axis_map=(1,), flips=(False,)),)
+
+    rational_first = [
+        Bspline(space, homogeneous, is_rational=True),
+        Bspline(space, polynomial + shift),
+    ]
+    assert detect_interfaces(rational_first) == ()
+    rational_second = [
+        Bspline(space, polynomial),
+        Bspline(space, homogeneous + np.array([1.0, 0.0, 0.0]), is_rational=True),
+    ]
+    assert detect_interfaces(rational_second) == expected
+
+
+def test_a_periodic_direction_never_pairs_with_an_open_one() -> None:
+    """Equal corners and equal normalised knots, but four control points against six.
+
+    A periodic degree-2 direction on the knots ``(-2..6)/4`` holds four functions; the open
+    direction on the same knots holds six. The faces running along that direction pass the
+    corner and knot checks, so only the control-point count can refuse them, and it must do so
+    as "no interface", not as an error. The faces across it (one control row each) still pair.
+    Main gives the same two interfaces.
+    """
+    degree, n = 2, 4
+    knots = np.arange(-degree, n + degree + 1) / n
+    linear = BsplineSpace1D(np.array([0.0, 0.0, 1.0, 1.0]), 1)
+
+    def patch(periodic: bool) -> Bspline:
+        space = BsplineSpace([BsplineSpace1D(knots, degree, periodic=periodic), linear])
+        rows, cols = space.num_basis
+        x = np.full(rows, 0.5)
+        x[0], x[-1] = 0.0, 1.0
+        cps = np.stack(np.broadcast_arrays(x[:, None], np.arange(cols)[None, :]), axis=-1)
+        return Bspline(space, cps.astype(np.float64))
+
+    ring, strip = patch(True), patch(False)
+    assert ring.space.num_basis[0] != strip.space.num_basis[0]
+    found = detect_interfaces([ring, strip])
+    assert [(i.patch_a, i.face_a, i.patch_b, i.face_b) for i in found] == [
+        (0, 0, 1, 0),
+        (0, 1, 1, 1),
+    ]

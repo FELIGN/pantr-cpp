@@ -47,10 +47,17 @@ def _interior_points(thb: THBSplineSpace) -> npt.NDArray[np.float64]:
     return np.stack([m.ravel() for m in mesh], axis=-1)
 
 
-def _reproduction_error(thb: THBSplineSpace) -> float:
-    """Max |operator·Bernstein - tabulate_basis| over all cells; also checks C == M·E."""
-    mle = MultiLevelExtraction(thb)
+def _reproduction_error(thb: THBSplineSpace, mle: MultiLevelExtraction | None = None) -> float:
+    """Max |operator·Bernstein - tabulate_basis| over all cells; also checks C == M·E.
+
+    The single-level factor ``E`` is the public ``SpanwiseElementExtraction`` of the cell's level
+    space, a second route to the operator the multilevel extraction composes internally.
+    ``mle`` is the extraction to check, a fresh one over ``thb`` when omitted.
+    """
+    if mle is None:
+        mle = MultiLevelExtraction(thb)
     degrees = list(thb.degrees)
+    level_extractions: dict[int, SpanwiseElementExtraction] = {}
     err = 0.0
     for cid in range(thb.grid.num_cells):
         lo, hi = thb.grid.cell_bounds(cid)
@@ -63,9 +70,10 @@ def _reproduction_error(thb: THBSplineSpace) -> float:
         err = max(err, float(np.abs(from_extraction - direct).max()))
         # C == M @ E by construction.
         m_op = mle.multilevel_operator(cid)
-        e_op = mle._level_extraction(thb.grid.cell_level(cid)).operator(
-            thb.grid.cell_multi_index(cid)
-        )
+        level = thb.grid.cell_level(cid)
+        if level not in level_extractions:
+            level_extractions[level] = SpanwiseElementExtraction(thb.level_space(level), mle.target)
+        e_op = level_extractions[level].operator(thb.grid.cell_multi_index(cid))
         err = max(err, float(np.abs(m_op @ e_op - c_op).max()))
     return err
 
@@ -346,12 +354,18 @@ class TestOperatorApi:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Coefficient memoization (PR 5 of #197)
+# Lazy coefficient blocks: what they may and may not change in the results
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-class TestElementCoeffsMemoization:
-    """_element_coeffs is memoized per (origin_level, multi, target_level)."""
+class TestLazyCoefficients:
+    """The operators do not depend on when, or in which order, their coefficients were built.
+
+    The coefficients of each function in the finer levels' bases are built lazily by the compiled
+    extraction (the Python implementation memoized them per ``(origin level, cell, target level)``).
+    What that must not change, and is checked through the public operators only: a repeated call,
+    a call after a warm-up in any order, and a mutation of a returned array.
+    """
 
     @staticmethod
     def _thb() -> THBSplineSpace:
@@ -360,19 +374,62 @@ class TestElementCoeffsMemoization:
         grid.refine(1, [0, 0], [2, 2])
         return THBSplineSpace(_root_2d(), grid)
 
-    def test_cache_returns_shared_readonly_entry(self) -> None:
-        """Repeated keys return the same frozen array; distinct keys return independent objects."""
+    def test_a_returned_operator_is_the_callers_own_array(self) -> None:
+        """Overwriting a returned operator changes no later result (no aliasing of the block).
+
+        Bin 3 replacement of the memo test that asserted a shared read-only array: the property
+        it protected is that a caller cannot corrupt the extraction through what it was handed.
+        """
         ext = MultiLevelExtraction(self._thb())
-        box1, c1 = ext._element_coeffs(0, (0, 0), 2)
-        box2, c2 = ext._element_coeffs(0, (0, 0), 2)
-        assert c1 is c2
-        assert box1 == box2
-        assert not c1.flags.writeable
-        with pytest.raises(ValueError, match="read-only|assignment"):
-            c1[(0,) * c1.ndim] = 1.0
-        # Different target_level → independent cache entry (no key collision).
-        _, c_other = ext._element_coeffs(0, (0, 0), 1)
-        assert c_other is not c1
+        cid = ext.num_elements - 1
+        first = ext.operator(cid)
+        kept = first.copy()
+        first[...] = -1.0
+        second = ext.operator(cid)
+        assert second is not first
+        np.testing.assert_array_equal(second, kept)
+        m_first = ext.multilevel_operator(cid)
+        m_kept = m_first.copy()
+        m_first[...] = -1.0
+        np.testing.assert_array_equal(ext.multilevel_operator(cid), m_kept)
+
+    def test_every_operator_reproduces_the_basis_after_a_reverse_order_warm_up(self) -> None:
+        """Operators built in reverse cell order still reproduce ``tabulate_basis`` everywhere.
+
+        Bin 3 replacement of the memo's key-collision test (distinct ``(origin, cell, target)``
+        keys must not share an entry): a collision would hand one cell the coefficients of
+        another, so every cell is checked against the direct basis values (a second route:
+        ``THBSplineSpace.tabulate_basis``, not the extraction) after the cells were visited in
+        reverse. The bound is the one of ``TestReproduction``.
+        """
+        thb = self._thb()
+        mle = MultiLevelExtraction(thb)
+        for cid in reversed(range(thb.grid.num_cells)):
+            mle.operator(cid)
+        assert _reproduction_error(thb, mle) < 1e-12
+
+    def test_a_warm_extraction_still_refuses_a_bad_cell_and_a_stale_grid(self) -> None:
+        """Argument and staleness checks fire after the lazy blocks are built, not only before.
+
+        Bin 3 replacement of the memo's ``origin > target`` validation test: the checks of the
+        operators' arguments must not be skipped once a result could be served from built state.
+        """
+        grid = hierarchical_grid(uniform_grid([[0.0, 1.0], [0.0, 1.0]], 4), 2)
+        grid.refine(0, [0, 0], [2, 2])
+        thb = THBSplineSpace(_root_2d(), grid)
+        mle = MultiLevelExtraction(thb)
+        for cid in range(thb.grid.num_cells):
+            mle.operator(cid)
+            mle.multilevel_operator(cid)
+        with pytest.raises(IndexError):
+            mle.operator(thb.grid.num_cells)
+        with pytest.raises(IndexError):
+            mle.multilevel_operator(-1)
+        grid.refine(1, [0, 0], [2, 2])
+        with pytest.raises(RuntimeError, match="stale"):
+            mle.operator(0)
+        with pytest.raises(RuntimeError, match="stale"):
+            mle.multilevel_operator(0)
 
     def test_operators_match_fresh_instance(self) -> None:
         """Operators computed through a warm cache equal a fresh instance's."""
@@ -392,9 +449,3 @@ class TestElementCoeffsMemoization:
         ext = MultiLevelExtraction(self._thb())
         cid = ext.num_elements - 1
         np.testing.assert_array_equal(ext.operator(cid), ext.operator(cid))
-
-    def test_invalid_levels_still_raise(self) -> None:
-        """The origin > target validation fires before the cache."""
-        ext = MultiLevelExtraction(self._thb())
-        with pytest.raises(ValueError, match="must be <="):
-            ext._element_coeffs(2, (0, 0), 0)

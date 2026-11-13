@@ -125,6 +125,21 @@ def test_degree_elevation_invalid_inputs() -> None:
         bspline.elevate_degree(-1)
 
 
+def test_degree_elevation_refuses_a_knot_repeated_beyond_degree_plus_one() -> None:
+    """A space accepts a knot of multiplicity ``degree + 2``; the A5.9 walk cannot follow it.
+
+    The previous kernel wrote below its working arrays there and returned a control net of
+    the wrong size, which the constructor then refused with a message about the caller's
+    control points.
+    """
+    knots = np.array([0.0, 0.0, 0.0, 0.5, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0])
+    space = BsplineSpace([BsplineSpace1D(knots, 2)])
+    bspline = Bspline(space, np.arange(space.num_total_basis, dtype=np.float64).reshape(-1, 1))
+
+    with pytest.raises(ValueError, match="cannot walk a knot vector that repeats the knot 0.5"):
+        bspline.elevate_degree(1)
+
+
 def test_degree_elevation_unclamped_raises() -> None:
     """Test that an unclamped, non-periodic direction is refused.
 

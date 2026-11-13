@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import threading
+
 import numpy as np
 import numpy.typing as npt
 import pytest
 
 from pantr.geometry import AABB
-from pantr.grid import BVH
+from pantr.grid import BVH, Grid, hierarchical_grid, uniform_grid
 
 
 def _grid_cells(nx: int, ny: int) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
@@ -281,13 +283,13 @@ def _chain_bvh_arrays(
 
 
 def test_ctor_unbalanced_chain_raises_at_construction() -> None:
-    """A hand-built 148-leaf linear-chain tree exceeds the kernel stack depth.
+    """A hand-built 148-leaf linear-chain tree exceeds the traversal stack depth.
 
-    148 leaves force a chain of depth 148, past the traversal kernels' fixed
-    stack depth (``_BVH_STACK_DEPTH == 128`` in ``_bvh_core.py``). Unlike
+    148 leaves force a chain of depth 148, past the traversal's fixed stack
+    depth (128, the library's ``bvh_stack_depth``). Unlike
     ``from_cell_bounds``, the raw constructor accepts arbitrary node arrays, so
     this depth cannot be inferred from ``n_cells`` alone; ``BVH.__init__`` must
-    reject it before any query touches the fixed-size kernel stack.
+    reject it before any query touches the fixed-size traversal stack.
     """
     node_lo, node_hi, node_left, node_right, node_cell = _chain_bvh_arrays(148)
     with pytest.raises(ValueError, match="stack depth"):
@@ -299,11 +301,11 @@ def test_ctor_unbalanced_chain_at_the_limit_constructs_and_queries() -> None:
 
     A depth-``d`` DFS occupies at most ``d`` stack slots: the root takes one, then
     each of the ``d - 1`` internal expansions along the deepest path pops one entry
-    and pushes two, a net ``+1``. So ``d == _BVH_STACK_DEPTH == 128`` fits exactly
+    and pushes two, a net ``+1``. So ``d == bvh_stack_depth == 128`` fits exactly
     while ``d == 129`` does not, which is what makes the guard's strict ``>`` the
-    right comparison. Confirmed against the kernel under ``NUMBA_BOUNDSCHECK=1``
-    with the guard lifted: a depth-128 chain queries correctly, and a depth-129
-    chain raises ``IndexError`` from inside the compiled traversal.
+    right comparison. The traversal's stack is a fixed array of ``bvh_stack_depth``
+    entries; that a depth-129 chain would overrun it is derived here, not run (the
+    guard keeps it from being built).
 
     So this is the exact boundary, and it also shows the guard cannot pass merely
     by rejecting everything.
@@ -318,7 +320,7 @@ def test_ctor_unbalanced_chain_one_past_the_limit_raises() -> None:
     """A 129-leaf chain is the smallest chain that overflows, and must be rejected.
 
     Pins the other side of the boundary above: without the guard this constructs
-    cleanly and then writes one slot past the kernel's 128-entry stack on the very
+    cleanly and then writes one slot past the traversal's 128-entry stack on the very
     first query.
     """
     node_lo, node_hi, node_left, node_right, node_cell = _chain_bvh_arrays(129)
@@ -337,8 +339,37 @@ def test_ctor_rejects_a_cyclic_node_graph_without_hanging() -> None:
     node_lo, node_hi, node_left, node_right, node_cell = _chain_bvh_arrays(4)
     node_right[0] = 0  # root points back at itself
 
-    with pytest.raises(ValueError, match="stack depth"):
+    with pytest.raises(ValueError, match="do not encode a tree"):
         BVH(node_lo, node_hi, node_left, node_right, node_cell, n_cells=4)
+
+
+def test_ctor_rejects_a_child_shared_by_two_parents() -> None:
+    """Two parents naming the same child is not a tree, even though every index is in range.
+
+    The 3-leaf tree is node 0 -> (1, 2), node 2 -> (3, 4); pointing node 2's right child at
+    node 1 makes node 1 reachable twice and leaves node 4 unreachable.
+    """
+    node_lo, node_hi, node_left, node_right, node_cell = _three_leaf_arrays()
+    assert (int(node_left[2]), int(node_right[2])) == (3, 4)
+    node_right[2] = 1
+
+    with pytest.raises(ValueError, match="do not encode a tree"):
+        BVH(node_lo, node_hi, node_left, node_right, node_cell, n_cells=3)
+
+
+def test_ctor_rejects_an_orphan_subtree() -> None:
+    """A node no path from the root reaches is not a tree, though nothing is shared.
+
+    Turning node 2 into a leaf (cell 0, no children) leaves nodes 3 and 4 unreachable. Every
+    node is still consistently a leaf or an internal node and every index is in range, so only
+    the reachability check refuses it.
+    """
+    node_lo, node_hi, node_left, node_right, node_cell = _three_leaf_arrays()
+    node_left[2] = node_right[2] = -1
+    node_cell[2] = 0
+
+    with pytest.raises(ValueError, match="do not encode a tree"):
+        BVH(node_lo, node_hi, node_left, node_right, node_cell, n_cells=3)
 
 
 def _three_leaf_arrays() -> tuple[
@@ -373,7 +404,7 @@ def test_ctor_accepts_a_well_formed_hand_built_tree() -> None:
 def test_ctor_rejects_internal_node_with_a_missing_child() -> None:
     """An "internal" node whose child is -1 must be rejected at construction.
 
-    The traversal kernels decide leaf-vs-internal from ``node_cell`` alone and then
+    The traversal decides leaf-vs-internal from ``node_cell`` alone and then
     push both children without checking either against -1, so a -1 child index wraps
     to the last row of the node array. Before this check the tree constructed
     cleanly and the query silently returned the wrong cells: this arrangement gave
@@ -405,7 +436,7 @@ def test_ctor_rejects_out_of_range_child_index() -> None:
     """A child index outside ``[0, n_nodes)`` must be rejected, negatives included.
 
     A negative other than -1 passes the leaf-consistency check (the node still does
-    not look like a leaf) but still wraps when the kernel indexes with it.
+    not look like a leaf) but still wraps when the traversal indexes with it.
     """
     node_lo, node_hi, node_left, node_right, node_cell = _three_leaf_arrays()
     internal = int(np.where(node_cell < 0)[0][0])
@@ -444,18 +475,49 @@ def test_from_cell_bounds_always_satisfies_the_consistency_invariant() -> None:
         )
 
 
-def test_stack_overflow_guard(monkeypatch: pytest.MonkeyPatch) -> None:
-    """from_cell_bounds raises when the tree depth would overflow the kernel stack."""
-    import pantr.grid._bvh as _bvh_mod  # noqa: PLC0415
+def test_stack_overflow_guard() -> None:
+    """The raw constructor refuses a caterpillar tree far deeper than the traversal stack.
 
-    monkeypatch.setattr(_bvh_mod, "_BVH_STACK_DEPTH", 1)
-    lo, hi = _grid_cells(2, 2)  # 4 cells → depth 3 > 1
-    with pytest.raises(ValueError, match="stack depth"):
-        BVH.from_cell_bounds(lo, hi)
+    The depth walk stops at the first path past the limit, so a 1000-leaf caterpillar is
+    refused at depth 129 without being walked in full. A tree built by ``from_cell_bounds``
+    can never reach the limit (its median split keeps the depth at ``ceil(log2 n) + 1``), so
+    the guard is reachable only through the raw constructor: this replaces the retired test
+    that lowered the limit of the Numba traversal.
+    """
+    node_lo, node_hi, node_left, node_right, node_cell = _chain_bvh_arrays(1000)
+    with pytest.raises(ValueError, match="stack depth") as info:
+        BVH(node_lo, node_hi, node_left, node_right, node_cell, n_cells=1000)
+    assert "depth 129 or more" in str(info.value)
+
+
+def _tree_depth(bvh: BVH) -> int:
+    """Count the nodes on the longest root-to-leaf path of a BVH (the root counts as 1)."""
+    depth = 0
+    stack = [(0, 1)]
+    while stack:
+        node, d = stack.pop()
+        depth = max(depth, d)
+        for child in (int(bvh.node_left[node]), int(bvh.node_right[node])):
+            if child != -1:
+                stack.append((child, d + 1))
+    return depth
+
+
+@pytest.mark.parametrize("n_cells", [1, 2, 3, 100, 1024, 1025, 5000])
+def test_median_split_depth_is_logarithmic(n_cells: int) -> None:
+    """A built tree has depth ``ceil(log2 n) + 1``, far below the traversal's stack depth.
+
+    This is the property that makes the fixed stack safe for ``from_cell_bounds``: the depth
+    grows with the logarithm of the cell count, so no int64 count can reach 128.
+    """
+    lo = np.arange(n_cells, dtype=np.float64).reshape(-1, 1)
+    bvh = BVH.from_cell_bounds(lo, lo + 1.0)
+    expected = 1 if n_cells == 1 else int(np.ceil(np.log2(n_cells))) + 1
+    assert _tree_depth(bvh) == expected
 
 
 # ---------------------------------------------------------------------------
-# Numba build kernel (PR 3 of #197)
+# Build (originally the Numba build kernel, PR 3 of #197; now in C++)
 # ---------------------------------------------------------------------------
 
 
@@ -516,3 +578,48 @@ def test_build_identical_cells_stable() -> None:
     assert cells == list(range(n))
     result = sorted(bvh.query_aabb(AABB([0.5, 0.5], [0.6, 0.6])).tolist())
     assert result == list(range(n))
+
+
+@pytest.mark.parametrize("kind", ["tensor-product", "hierarchical"])
+def test_concurrent_first_queries_agree_with_a_serial_one(kind: str) -> None:
+    """Threads that reach a grid's lazy BVH together all get the serial answer, without a hang.
+
+    The first query builds the tree with the GIL released, and a thread that finds the build under
+    way waits for it; the result of every thread must equal the one a single thread gets from an
+    identical grid. A smoke test: the build is short, so the threads need not overlap it, and the
+    absence of a deadlock rests on the argument at the binding's ``ensure_bvh``, not on this test.
+    """
+
+    def make() -> Grid:
+        root = uniform_grid([[0.0, 1.0], [0.0, 1.0]], [40, 40])
+        if kind == "tensor-product":
+            return root
+        g = hierarchical_grid(root, 2)
+        g.refine(0, [5, 5], [30, 30])
+        return g
+
+    query = AABB([0.2, 0.3], [0.45, 0.6])
+    expected = sorted(make().query_aabb(query).tolist())
+    assert expected  # the box meets cells
+
+    shared = make()
+    n_threads = 8
+    start = threading.Barrier(n_threads)
+    results: list[list[int]] = []
+    errors: list[BaseException] = []
+
+    def work() -> None:
+        try:
+            start.wait()
+            results.append(sorted(shared.query_aabb(query).tolist()))
+        except BaseException as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=work) for _ in range(n_threads)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=60.0)
+    assert not any(t.is_alive() for t in threads), "a query thread did not finish"
+    assert not errors
+    assert results == [expected] * n_threads

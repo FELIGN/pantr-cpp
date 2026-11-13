@@ -2,12 +2,27 @@
 
 ## Installation
 
-PaNTr requires Python 3.11–3.14. The serial core depends only on NumPy, SciPy, Numba,
-and threadpoolctl:
+PaNTr requires Python 3.12 or later. Its algorithms are compiled C++, shipped as a compiled
+extension in the wheel, and the serial core depends only on NumPy and SciPy:
 
 ```bash
 pip install pantr
 ```
+
+Wheels exist for Linux x86_64 and aarch64 (glibc 2.28 or later, `manylinux_2_28`), macOS 14 or later
+on arm64 (Apple silicon) and Windows on x86_64 (amd64), one `cp312-abi3` wheel per platform for every
+supported Python. On any other platform (musllinux, Intel macOS, 32-bit or arm64 Windows) pip builds
+from the sdist, which needs the toolchain and network access described next.
+
+A source build (`pip install .`, or pip building the sdist) needs a C++20 compiler, CMake 3.28 or
+later and git: at configure time CMake clones five header-only dependencies, each pinned to a
+commit (Eigen, Spectra, Kokkos mdspan, Boost.Multiprecision and Boost.Config; see
+`THIRD_PARTY_NOTICES.md`). To build offline, clone them first and pass
+`-DFETCHCONTENT_SOURCE_DIR_PANTR_EIGEN=<checkout>` (likewise `_PANTR_SPECTRA`, `_PANTR_MDSPAN`,
+`_PANTR_BOOST_MULTIPRECISION`, `_PANTR_BOOST_CONFIG`) with `-DFETCHCONTENT_FULLY_DISCONNECTED=ON`,
+for example through pip's `--config-settings=cmake.define.<NAME>=<value>`.
+
+To use PaNTr from C++ rather than Python, see {doc}`/guide/cpp`.
 
 ### Optional features
 
@@ -17,13 +32,15 @@ needs a third-party *backend* library, and activates automatically as soon as th
 library is importable. Until then, calling into the module raises a clear error; nothing
 else is affected.
 
-The extras below install **no extra PaNTr code** — they are a convenience that pulls in
-the backend for you. Installing the backend yourself is exactly equivalent:
+The extras below are a convenience that pulls in the backend for you, and installing the
+backend yourself is equivalent, except for `mpi`: it also installs `pantr-mpi`, pantr's own
+MPI glue built for one MPI family, which an `mpi4py` communicator needs (see
+{doc}`/guide/distributed`):
 
 | Capability | Module | Backend | Install (extra *or* direct) |
 |---|---|---|---|
 | Visualization & VTK export | {mod}`pantr.viz` | `pyvista` | `pip install "pantr[viz]"` · `pip install pyvista` |
-| Distributed (MPI) spaces | {mod}`pantr.mpi` | `mpi4py` (+ an MPI library) | `pip install "pantr[mpi]"` |
+| Distributed (MPI) spaces | {mod}`pantr.mpi` | `mpi4py` and `pantr-mpi` (+ an MPI library) | `pip install "pantr[mpi]"` |
 | METIS partitioning backend | {func}`pantr.bspline.partition_graph` | `pymetis` | `pip install "pantr[metis]"` |
 
 ```bash

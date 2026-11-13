@@ -312,6 +312,13 @@ class TestSliceErrors:
         with pytest.raises(ValueError, match="outside the domain"):
             crv.slice(0, 2.0)
 
+    @pytest.mark.parametrize("value", [float("nan"), np.float32("nan"), float("inf")])
+    def test_value_not_a_number_or_infinite(self, value: float) -> None:
+        """A NaN or an infinite value is outside every domain: ValueError, not an index error."""
+        crv = _make_1d_curve()
+        with pytest.raises(ValueError, match="outside the domain"):
+            crv.slice(0, value)
+
 
 # ---------------------------------------------------------------------------
 # Tests: Bspline.boundary()

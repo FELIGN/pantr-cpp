@@ -8,9 +8,11 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
+from pantr import _testing
+from pantr._testing import blossom_span as _blossom_span
+from pantr._testing import evaluate_blossom_1d as _evaluate_blossom_1d
 from pantr.bspline import Bspline, BsplineSpace, BsplineSpace1D
-from pantr.bspline._bspline_blossom import _evaluate_blossom_1d
-from pantr.bspline._bspline_blossom_core import _blossom_span
+from tests.oracles import bspline_exact, knot_insertion_exact
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -215,7 +217,9 @@ def _linear_scan_span(knots: npt.NDArray[Any], u_last: float, n: int, degree: in
     """The ``O(n)`` scan ``_blossom_span`` replaced, kept here as the reference oracle.
 
     Verbatim from the kernel before the change, including its ``k = n`` fall-through when
-    no half-open span contains ``u_last``.
+    no half-open span contains ``u_last``. A consistency check (mirror M5): it is the defining
+    scan the binary search must reproduce, not an independent computation of the blossom; the
+    independent oracle is :class:`TestBlossomAgainstThePolarForm` below.
     """
     k = n
     for idx in range(n + degree):
@@ -323,3 +327,110 @@ class TestBlossomSpan:
             np.testing.assert_allclose(
                 np.asarray(blossom).reshape(2), direct, atol=tol, rtol=0.0, err_msg=f"t={t}"
             )
+
+
+# ---------------------------------------------------------------------------
+# Independent oracle: the polar form of the polynomial piece, exact-rational
+# ---------------------------------------------------------------------------
+
+
+_BLOSSOM_KNOTS: list[tuple[int, list[float]]] = [
+    (1, [0.0, 0.0, 0.5, 1.0, 1.0]),
+    (2, [0.0, 0.0, 0.0, 0.25, 0.75, 1.0, 1.0, 1.0]),
+    (3, [0.0, 0.0, 0.0, 0.0, 0.25, 0.5, 0.5, 1.0, 1.0, 1.0, 1.0]),
+    (4, [0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.5, 0.75, 1.0, 1.0, 1.0, 1.0, 1.0]),
+    (5, [0.0] * 6 + [0.125, 0.5, 0.5, 0.5] + [1.0] * 6),
+]
+"""``(degree, knots)`` pairs: dyadic, clamped, interior multiplicities up to ``degree - 2``."""
+
+
+class TestBlossomAgainstThePolarForm:
+    """The blossom against its definition, and the properties that define it."""
+
+    @pytest.mark.parametrize("dtype", [np.float64, np.float32])
+    @pytest.mark.parametrize(("degree", "knots"), _BLOSSOM_KNOTS)
+    def test_equals_the_exact_polar_form_of_the_piece(
+        self, degree: int, knots: list[float], dtype: type
+    ) -> None:
+        """The value is the polar form of the polynomial piece, evaluated exactly.
+
+        Oracle: :func:`tests.oracles.knot_insertion_exact.blossom`, which recovers the piece on
+        the span of the largest argument from exact Cox-de Boor values and evaluates its polar
+        form ``sum_k c_k e_k(u) / C(p, k)`` (no de Boor recurrence). Tolerance: ``degree`` levels
+        of a convex combination, each with the weight (two roundings), its complement and the two
+        products and a sum, within ``6 u`` of the exact level; ``8 degree u max|P|`` keeps a margin
+        (``u = eps / 2`` of the storage type; the float32 kernel rounds to float32 at each level).
+        """
+        rng = np.random.default_rng(degree)
+        n = len(knots) - degree - 1
+        ctrl: npt.NDArray[Any] = (rng.integers(-64, 65, (n, 2)) / 64.0).astype(dtype)
+        kv: npt.NDArray[Any] = np.asarray(knots, dtype=dtype)
+        u = float(np.finfo(dtype).eps) / 2
+        tol = 8.0 * degree * u * float(np.max(np.abs(ctrl)))
+        for _ in range(20):
+            args = rng.integers(0, 65, degree) / 64.0
+            blossom_fn = (
+                _testing.evaluate_blossom_1d_f32 if dtype == np.float32 else _evaluate_blossom_1d
+            )
+            got = blossom_fn(kv, degree, ctrl, args.astype(dtype), 1e-6)
+            want = knot_insertion_exact.blossom(kv, degree, ctrl.astype(np.float64), args.tolist())
+            assert all(
+                abs(bspline_exact.exact(g) - w) <= tol
+                for g, w in zip(got.tolist(), want, strict=True)
+            ), f"args={args.tolist()}"
+
+    @pytest.mark.parametrize(("degree", "knots"), _BLOSSOM_KNOTS)
+    def test_diagonal_is_the_exactly_evaluated_curve(self, degree: int, knots: list[float]) -> None:
+        """``f[t, ..., t]`` equals the Cox-de Boor sum at ``t``, in fractions.
+
+        Oracle: :mod:`tests.oracles.bspline_exact`. Tolerance: ``8 degree u max|P|`` as above.
+        """
+        rng = np.random.default_rng(10 + degree)
+        n = len(knots) - degree - 1
+        ctrl = rng.integers(-64, 65, (n, 2)) / 64.0
+        kv = np.asarray(knots)
+        tol = 8.0 * degree * float(np.finfo(np.float64).eps) / 2 * float(np.max(np.abs(ctrl)))
+        for t in [0.0, 0.25, 0.5, 1.0, *(rng.integers(0, 65, 8) / 64.0).tolist()]:
+            got = _evaluate_blossom_1d(kv, degree, ctrl, np.full(degree, t), 1e-12)
+            want = bspline_exact.homogeneous([kv], [degree], ctrl, [t], [0])
+            assert all(
+                abs(bspline_exact.exact(g) - w) <= tol
+                for g, w in zip(got.tolist(), want, strict=True)
+            ), f"t={t}"
+
+    @pytest.mark.parametrize(("degree", "knots"), _BLOSSOM_KNOTS)
+    def test_symmetric_and_multi_affine(self, degree: int, knots: list[float]) -> None:
+        """Every ordering of the arguments gives one value; the value is affine in each argument.
+
+        Oracle: the two defining properties of a blossom, checked on the computed values:
+        invariance under permutation, and ``f[(1 - s) a + s b, rest] = (1 - s) f[a, rest] + s
+        f[b, rest]`` for an exact ``s = 1/2``, with ``a`` and ``b`` in one span so that the
+        affine combination stays in the piece (the other arguments are fixed in one span).
+        Tolerance: ``16 degree u max|P|`` (two blossoms and their combination).
+        """
+        rng = np.random.default_rng(20 + degree)
+        n = len(knots) - degree - 1
+        ctrl = rng.integers(-64, 65, (n, 2)) / 64.0
+        kv = np.asarray(knots)
+        tol = 16.0 * degree * float(np.finfo(np.float64).eps) / 2 * float(np.max(np.abs(ctrl)))
+        args = (rng.integers(0, 65, degree) / 64.0).tolist()
+        base = _evaluate_blossom_1d(kv, degree, ctrl, np.array(args), 1e-12)
+        for perm in [args[::-1], sorted(args), [*args[1:], args[0]]]:
+            np.testing.assert_allclose(
+                _evaluate_blossom_1d(kv, degree, ctrl, np.array(perm), 1e-12),
+                base,
+                rtol=0.0,
+                atol=tol,
+            )
+        # Affinity in the first argument: with the other arguments in [0.125, 0.1875] the largest
+        # argument stays in one span (the knot 0.125 of the last case is the left end of that
+        # span), so the three values are blossoms of the same piece.
+        lo_arg = 0.0625
+        hi_arg = 0.1875
+        rest = [0.125 + 0.015625 * i for i in range(degree - 1)]
+        f_a = _evaluate_blossom_1d(kv, degree, ctrl, np.array([lo_arg, *rest]), 1e-12)
+        f_b = _evaluate_blossom_1d(kv, degree, ctrl, np.array([hi_arg, *rest]), 1e-12)
+        f_m = _evaluate_blossom_1d(
+            kv, degree, ctrl, np.array([0.5 * (lo_arg + hi_arg), *rest]), 1e-12
+        )
+        np.testing.assert_allclose(f_m, 0.5 * (f_a + f_b), rtol=0.0, atol=tol)

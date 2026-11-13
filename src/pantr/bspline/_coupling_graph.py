@@ -15,17 +15,18 @@ to those libraries with no reshaping.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, NamedTuple, cast
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import numpy as np
-from scipy import sparse
 
+from .._ext import ext
 from ._bspline_space_nd import BsplineSpace
-from ._local_space import _reject_periodic
-from ._thb_spline_space import THBSplineSpace, _func_support_1d
+from ._thb_spline_space import THBSplineSpace
 
 if TYPE_CHECKING:
     import numpy.typing as npt
+
+_cpp: Any = ext.bspline
 
 
 class CouplingGraph(NamedTuple):
@@ -90,164 +91,46 @@ def coupling_graph(
         True
     """
     if isinstance(space, THBSplineSpace):
-        n_cells = space.grid.num_cells
-        n_dofs = space.num_total_basis
-        rows, cols = _thb_incidence(space)
+        weights = _coerce_cell_weights(cell_weights, space.grid.num_cells)
+        space._check_not_stale()
+        arrays = _cpp.coupling_graph_thb(space._h, weights)
     elif isinstance(space, BsplineSpace):
-        _reject_periodic(space)
-        n_cells = space.num_total_intervals
-        n_dofs = space.num_total_basis
-        rows, cols = _tp_incidence(space)
+        if space._h is None:
+            raise ValueError("a B-spline space needs at least one direction")
+        weights = _coerce_cell_weights(cell_weights, space.num_total_intervals)
+        arrays = _cpp.coupling_graph(space._h, weights)
     else:
         raise TypeError(
             f"coupling_graph expects a BsplineSpace or THBSplineSpace; got {type(space).__name__}."
         )
-    vertex_weights = _validate_vertex_weights(cell_weights, n_cells)
-    return _dual_graph(rows, cols, n_cells, n_dofs, vertex_weights)
+    num_vertices, xadj, adjncy, edge_weights, vertex_weights = arrays
+    return CouplingGraph(int(num_vertices), xadj, adjncy, edge_weights, vertex_weights)
 
 
-def _tp_incidence(space: BsplineSpace) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]:
-    """Build the cell -> DOF incidence (row, col) pairs for a tensor-product space.
-
-    Cell ``c`` (multi-index ``i``) is supported by the tensor product of the per-axis
-    function ranges ``fb_d[i_d], fb_d[i_d] + 1, ..., fb_d[i_d] + degree_d`` (that is,
-    ``degree_d + 1`` functions per axis), where ``fb_d`` is the first function non-zero
-    on each cell along axis ``d``. Cells and DOFs are flat-indexed in C-order over
-    ``num_intervals`` and ``num_basis`` respectively.
-
-    Args:
-        space (BsplineSpace): Non-periodic tensor-product B-spline space.
-
-    Returns:
-        tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]: ``(rows, cols)`` cell ids
-        and the global DOF ids they support, one entry per (cell, supported DOF).
-    """
-    num_intervals = space.num_intervals
-    num_basis = space.num_basis
-    n_cells = space.num_total_intervals
-    fb_axes = [_func_support_1d(sp)[0].astype(np.int64) for sp in space.spaces]
-
-    offset_grids = np.meshgrid(*[np.arange(sp.degree + 1) for sp in space.spaces], indexing="ij")
-    local_offsets = [grid.ravel() for grid in offset_grids]
-    cell_multi = np.unravel_index(np.arange(n_cells), num_intervals)
-    func_per_axis = [
-        fb_axes[d][cell_multi[d]][:, None] + local_offsets[d][None, :] for d in range(space.dim)
-    ]
-    dof_ids = np.ravel_multi_index(func_per_axis, num_basis)
-
-    k = dof_ids.shape[1]
-    rows = np.repeat(np.arange(n_cells, dtype=np.int64), k)
-    cols = dof_ids.ravel().astype(np.int64)
-    return rows, cols
-
-
-def _thb_incidence(space: THBSplineSpace) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]:
-    """Build the cell -> DOF incidence (row, col) pairs for a THB-spline space.
-
-    Uses :meth:`THBSplineSpace.active_basis` for the active global DOF ids on each cell.
-    ``active_basis`` returns all functions whose untruncated support intersects the cell,
-    including truncated functions that may evaluate to zero there; edge weights therefore
-    count support-intersecting functions, not just non-zero ones.
-
-    Args:
-        space (THBSplineSpace): The hierarchical space.
-
-    Returns:
-        tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]: ``(rows, cols)`` cell ids
-        and the global DOF ids they support, one entry per (cell, active DOF).
-    """
-    # grid.num_cells >= 1 is enforced by TensorProductGrid construction, so the loop
-    # always executes at least once and np.concatenate never receives an empty list.
-    rows_list: list[npt.NDArray[np.int64]] = []
-    cols_list: list[npt.NDArray[np.int64]] = []
-    for cid in range(space.grid.num_cells):
-        dofs = np.asarray(space.active_basis(cid), dtype=np.int64)
-        rows_list.append(np.full(dofs.size, cid, dtype=np.int64))
-        cols_list.append(dofs)
-    return np.concatenate(rows_list), np.concatenate(cols_list)
-
-
-def _dual_graph(
-    rows: npt.NDArray[np.int64],
-    cols: npt.NDArray[np.int64],
-    n_cells: int,
-    n_dofs: int,
-    vertex_weights: npt.NDArray[np.float64],
-) -> CouplingGraph:
-    """Assemble the dual graph from a cell -> DOF incidence.
-
-    Forms the integer cell-by-DOF incidence ``B`` (entries are 1 for active
-    ``(cell, DOF)`` pairs) and the symmetric product ``B @ B.T``: its off-diagonal entry
-    ``(i, j)`` counts the DOFs cells ``i`` and ``j`` share. The diagonal (self-coupling)
-    is dropped, leaving the CSR adjacency.
-
-    Note:
-        ``rows`` / ``cols`` must be duplicate-free. ``scipy.sparse.csr_matrix`` sums
-        repeated ``(row, col)`` entries, so any duplicate ``(cell, DOF)`` pair would
-        silently inflate the edge weight for that cell pair.
-
-    Args:
-        rows (npt.NDArray[np.int64]): Cell ids of the incidence entries.
-        cols (npt.NDArray[np.int64]): Supported global DOF ids, aligned with ``rows``.
-        n_cells (int): Number of cells (graph vertices).
-        n_dofs (int): Number of global DOFs.
-        vertex_weights (npt.NDArray[np.float64]): Per-cell weights (already validated).
-
-    Returns:
-        CouplingGraph: The assembled coupling graph.
-    """
-    incidence = sparse.csr_matrix(
-        (np.ones(rows.size, dtype=np.int64), (rows, cols)),
-        shape=(n_cells, n_dofs),
-    )
-    coupling = (incidence @ incidence.T).tocsr()
-    coupling.setdiag(0)
-    coupling.eliminate_zeros()
-    coupling.sort_indices()
-
-    xadj = coupling.indptr.astype(np.int64)
-    adjncy = coupling.indices.astype(np.int64)
-    edge_weights = coupling.data.astype(np.int64)
-    for arr in (xadj, adjncy, edge_weights):
-        arr.flags.writeable = False
-    return CouplingGraph(
-        int(n_cells),
-        cast("npt.NDArray[np.int64]", xadj),
-        cast("npt.NDArray[np.int64]", adjncy),
-        cast("npt.NDArray[np.int64]", edge_weights),
-        vertex_weights,
-    )
-
-
-def _validate_vertex_weights(
+def _coerce_cell_weights(
     cell_weights: npt.ArrayLike | None, n_cells: int
-) -> npt.NDArray[np.float64]:
-    """Validate and coerce ``cell_weights`` to a read-only ``(n_cells,)`` array.
+) -> npt.NDArray[np.float64] | None:
+    """Coerce ``cell_weights`` to a 1-D ``float64`` array.
+
+    The length and the values (finite, non-negative) are checked by the compiled builder.
 
     Args:
-        cell_weights (npt.ArrayLike | None): Candidate per-cell weights, or ``None``
-            for uniform.
-        n_cells (int): Expected length.
+        cell_weights (npt.ArrayLike | None): Candidate per-cell weights, or ``None``.
+        n_cells (int): Expected length (for the message).
 
     Returns:
-        npt.NDArray[np.float64]: Read-only weights; uniform ``1.0`` if input was
+        npt.NDArray[np.float64] | None: The coerced weights, or ``None`` if the input was
         ``None``.
 
     Raises:
-        ValueError: If the shape is not ``(n_cells,)`` or any entry is negative or
-            non-finite.
+        ValueError: If the weights are not 1-D.
     """
-    weights: npt.NDArray[np.float64]
     if cell_weights is None:
-        weights = np.ones(n_cells, dtype=np.float64)
-    else:
-        weights = np.array(cell_weights, dtype=np.float64)
-        if weights.shape != (n_cells,):
-            raise ValueError(f"cell_weights must have shape ({n_cells},); got {weights.shape}.")
-        if not bool(np.all(np.isfinite(weights))) or bool(np.any(weights < 0.0)):
-            raise ValueError("cell_weights must be finite and non-negative.")
-    weights.flags.writeable = False
-    return weights
+        return None
+    weights = np.asarray(cell_weights, dtype=np.float64)
+    if weights.ndim != 1:
+        raise ValueError(f"cell_weights must have shape ({n_cells},); got {weights.shape}.")
+    return np.ascontiguousarray(weights)
 
 
 __all__ = ["CouplingGraph", "coupling_graph"]

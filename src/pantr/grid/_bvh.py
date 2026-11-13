@@ -2,14 +2,14 @@
 
 A simple but efficient BVH that indexes a fixed collection of axis-aligned
 bounding boxes (one per grid cell). The tree is built once by iterative
-median-of-longest-axis splits and queried by iterative descent, both via the
-Layer-3 kernels in :mod:`pantr.grid._bvh_core`.
+median-of-longest-axis splits and queried by iterative descent, both in C++; this
+module wraps the compiled tree (``_h``).
 
 Layout
 ------
 
-The BVH is held as five parallel arrays, matching the representation consumed by
-the kernels:
+The BVH is held as five parallel arrays, matching the representation the traversal
+consumes:
 
 - ``node_lo`` / ``node_hi``: per-node AABB corners, shape ``(n_nodes, ndim)``.
 - ``node_left`` / ``node_right``: child indices; ``-1`` on leaves.
@@ -26,10 +26,8 @@ Queries
 -------
 
 :meth:`BVH.query_aabb` returns the ids of cells whose AABB is not separated from
-the query box. Queries run in two passes: a count-only descent sizes the output,
-then an emit descent writes the cell ids. Both passes visit the same nodes in the
-same order, so the result is a fresh, compact ``int64`` array with no Python-side
-list growth.
+the query box. A query is one descent that collects the matching cell ids in
+preorder, returned as a fresh, compact ``int64`` array.
 
 **The overlap test is a separating-axis test and nothing else**, and it is not
 :meth:`pantr.geometry.AABB.overlaps`. It compares inclusively, so a query box
@@ -43,129 +41,27 @@ changed, because reconciling the two predicates has to move both at once.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING, Any, Self
 
 import numpy as np
 
-from ._bvh_core import (
-    _BVH_STACK_DEPTH,
-    _bvh_build_core,
-    _bvh_query_count_core,
-    _bvh_query_emit_core,
-)
-from ._grid_utils import _as_float64
+from .._ext import ext
+from ._grid_utils import _as_float64, _previous_release_slots
 
 if TYPE_CHECKING:
     import numpy.typing as npt
 
     from ..geometry import AABB
 
-
-def _check_tree_structure(
-    node_left: npt.NDArray[np.int64],
-    node_right: npt.NDArray[np.int64],
-    node_cell: npt.NDArray[np.int64],
-    n_nodes: int,
-    n_cells: int,
-) -> None:
-    """Check that the node arrays encode a tree the traversal kernels can walk.
-
-    The kernels in :mod:`pantr.grid._bvh_core` decide "leaf or internal" from
-    ``node_cell`` alone (``node_cell[i] < 0`` means internal) and then push
-    ``node_left[i]`` and ``node_right[i]`` unconditionally, without testing either
-    against ``-1``. So the two encodings of leafness have to agree, and an internal
-    node's children have to be real indices: a child left at ``-1``, or any other
-    negative value, wraps to the end of the node array rather than raising, and
-    silently corrupts the query result.
-
-    Args:
-        node_left (npt.NDArray[np.int64]): Left-child indices; ``-1`` on leaves.
-        node_right (npt.NDArray[np.int64]): Right-child indices; ``-1`` on leaves.
-        node_cell (npt.NDArray[np.int64]): Leaf cell ids; ``-1`` on internal nodes.
-        n_nodes (int): Number of nodes, i.e. the valid child-index range.
-        n_cells (int): Number of indexed cells, i.e. the valid cell-id range.
-
-    Raises:
-        ValueError: If ``node_cell`` and the child pointers disagree about which
-            nodes are leaves, if an internal node's child index lies outside
-            ``[0, n_nodes)``, or if a leaf's cell id lies outside ``[0, n_cells)``.
-    """
-    is_leaf = node_cell >= 0
-    if not np.array_equal(is_leaf, (node_left == -1) & (node_right == -1)):
-        raise ValueError(
-            "BVH: node_cell and the child pointers disagree about which nodes are "
-            "leaves. A node is a leaf iff node_cell >= 0, and exactly then must "
-            "node_left and node_right both be -1."
-        )
-    internal = ~is_leaf
-    for arr, name in ((node_left, "node_left"), (node_right, "node_right")):
-        child = arr[internal]
-        if child.size > 0 and (int(child.min()) < 0 or int(child.max()) >= n_nodes):
-            raise ValueError(
-                f"BVH: {name} contains values outside [0, {n_nodes}) on internal nodes: "
-                f"range is [{int(child.min())}, {int(child.max())}]."
-            )
-    leaf_cells = node_cell[is_leaf]
-    if leaf_cells.size > 0 and int(leaf_cells.max()) >= n_cells:
-        raise ValueError(
-            f"BVH: node_cell contains values outside [0, {n_cells}) on leaves: "
-            f"maximum is {int(leaf_cells.max())}."
-        )
-
-
-def _max_tree_depth(
-    node_left: npt.NDArray[np.int64],
-    node_right: npt.NDArray[np.int64],
-    limit: int,
-) -> int:
-    """Measure a BVH node array's maximum root-to-leaf depth, capped at ``limit``.
-
-    Walks from the root (node ``0``) with an explicit Python ``list`` as the
-    traversal stack. That list has to be unbounded: the depth is precisely the
-    unknown quantity being checked, so a fixed-size buffer would reproduce the very
-    bug this function exists to catch.
-
-    The walk stops as soon as it finds a path deeper than ``limit``, which is all the
-    caller needs to know and which also makes it terminate on a node array that is
-    not a tree. A cyclic child pointer would otherwise grow the stack without bound,
-    and a validator that hangs is worse than the out-of-bounds write it replaces.
-
-    Args:
-        node_left (npt.NDArray[np.int64]): Left-child indices; ``-1`` on
-            leaves. Shape ``(n_nodes,)``.
-        node_right (npt.NDArray[np.int64]): Right-child indices; ``-1`` on
-            leaves. Shape ``(n_nodes,)``.
-        limit (int): Depth beyond which the exact value no longer matters.
-
-    Returns:
-        int: Number of nodes on the longest root-to-leaf path, the root counting as
-        depth ``1``; ``0`` for empty node arrays. A returned value greater than
-        ``limit`` means only "deeper than ``limit``", not the true maximum.
-    """
-    n_nodes = node_left.shape[0]
-    if n_nodes == 0:
-        return 0
-    stack: list[tuple[int, int]] = [(0, 1)]
-    max_depth = 0
-    while stack:
-        node, depth = stack.pop()
-        max_depth = max(max_depth, depth)
-        if max_depth > limit:
-            return max_depth
-        left = int(node_left[node])
-        right = int(node_right[node])
-        if left != -1:
-            stack.append((left, depth + 1))
-        if right != -1:
-            stack.append((right, depth + 1))
-    return max_depth
+_cpp = ext.grid
 
 
 class BVH:
     """Bounding-volume hierarchy indexing a fixed collection of AABBs.
 
-    Instances are immutable: once built, the internal arrays are flagged
-    read-only. Queries allocate fresh ``int64`` output arrays per call.
+    Instances are immutable: the tree lives in the compiled library and the arrays
+    this class exposes are read-only views of it. Queries allocate fresh ``int64``
+    output arrays per call.
 
     Build by passing per-cell AABBs to :meth:`from_cell_bounds`; direct
     construction from the raw array representation is supported via the default
@@ -173,6 +69,7 @@ class BVH:
     """
 
     __slots__ = (
+        "_h",
         "_node_cell",
         "_node_hi",
         "_node_left",
@@ -183,6 +80,13 @@ class BVH:
         "ndim",
     )
 
+    #: The compiled tree (private).
+    _h: Any
+    _node_lo: npt.NDArray[np.float64]
+    _node_hi: npt.NDArray[np.float64]
+    _node_left: npt.NDArray[np.int64]
+    _node_right: npt.NDArray[np.int64]
+    _node_cell: npt.NDArray[np.int64]
     #: Spatial dimension of the indexed AABBs (``>= 1``).
     ndim: int
     #: Number of cells indexed (equal to the number of leaves).
@@ -200,10 +104,11 @@ class BVH:
         *,
         n_cells: int,
     ) -> None:
-        """Store the raw BVH arrays after validating their shapes.
+        """Validate the raw BVH arrays and copy them into the compiled tree.
 
         Callers should prefer :meth:`from_cell_bounds`; this constructor is
-        useful for tests that need to poke specific tree shapes.
+        useful for tests that need to poke specific tree shapes. The arrays are
+        copied: the caller's arrays are neither kept nor modified.
 
         Args:
             node_lo (npt.NDArray[np.float64]): Per-node AABB lo corners, shape
@@ -221,74 +126,109 @@ class BVH:
         Raises:
             TypeError: If any array has the wrong dtype.
             ValueError: If shapes are inconsistent, ``ndim`` is ``< 1``,
-                ``n_nodes != 2 * n_cells - 1`` (``0`` when ``n_cells == 0``), if
-                ``node_cell`` and the child pointers disagree about which nodes are
-                leaves, if an internal node's children or a leaf's cell id are out of
-                range, or if the tree's root-to-leaf depth exceeds the traversal
-                kernels' stack depth (``_BVH_STACK_DEPTH``).
+                ``n_nodes != 2 * n_cells - 1`` (``0`` when ``n_cells == 0``), if a
+                ``node_cell`` is below ``-1``, if ``node_cell`` and the child pointers
+                disagree about which nodes are leaves, if an internal node's children
+                or a leaf's cell id are out of range, if the arrays do not encode a
+                tree, or if the tree's root-to-leaf depth exceeds the traversal's stack
+                depth (128).
         """
         if node_lo.dtype != np.float64 or node_hi.dtype != np.float64:
             raise TypeError(
                 f"node_lo / node_hi must be float64; got {node_lo.dtype!r} / {node_hi.dtype!r}."
             )
-        if node_lo.ndim != 2:  # noqa: PLR2004
-            raise ValueError(f"node_lo must be 2-D (n_nodes, ndim); got shape {node_lo.shape}.")
-        if node_hi.shape != node_lo.shape:
-            raise ValueError(
-                f"node_hi shape {node_hi.shape} must match node_lo shape {node_lo.shape}."
-            )
-        n_nodes, ndim = int(node_lo.shape[0]), int(node_lo.shape[1])
-        if ndim < 1:
-            raise ValueError(f"BVH ndim must be >= 1; got {ndim}.")
-        for arr, name in (
+        indices = (
             (node_left, "node_left"),
             (node_right, "node_right"),
             (node_cell, "node_cell"),
-        ):
+        )
+        for arr, name in indices:
             if arr.dtype != np.int64:
                 raise TypeError(f"{name} must be int64; got {arr.dtype!r}.")
-            if arr.shape != (n_nodes,):
-                raise ValueError(f"{name} must have shape ({n_nodes},); got {arr.shape}.")
-        n_cells_int = int(n_cells)
-        expected_nodes = 2 * n_cells_int - 1 if n_cells_int > 0 else 0
-        if n_nodes != expected_nodes:
-            raise ValueError(
-                f"BVH: n_cells={n_cells_int} implies n_nodes={expected_nodes}; "
-                f"got node arrays with {n_nodes} rows."
+            if arr.ndim != 1 and node_lo.ndim == 2:  # noqa: PLR2004
+                # The compiled constructor takes the index arrays flat; the message spells
+                # the NumPy shape.
+                raise ValueError(f"{name} must have shape ({node_lo.shape[0]},); got {arr.shape}.")
+        self._init_from_handle(
+            _cpp.BVH(
+                np.require(node_lo, requirements="C"),
+                np.require(node_hi, requirements="C"),
+                np.require(node_left, requirements="C").ravel(),
+                np.require(node_right, requirements="C").ravel(),
+                np.require(node_cell, requirements="C").ravel(),
+                int(n_cells),
             )
-        # Runs before the depth walk below, which indexes the children itself.
-        _check_tree_structure(node_left, node_right, node_cell, n_nodes, n_cells_int)
+        )
 
-        # Guard the fixed-depth traversal stack in :mod:`pantr.grid._bvh_core`, whose
-        # kernels push unconditionally.  Unlike from_cell_bounds -- whose median split
-        # keeps the tree balanced, so depth follows from n_cells -- this constructor
-        # takes arbitrary node arrays, and an unbalanced one overflows that stack with
-        # an out-of-bounds write on the first query.  A depth-d traversal occupies at
-        # most d slots, so depth == _BVH_STACK_DEPTH still fits.
-        tree_depth = _max_tree_depth(node_left, node_right, _BVH_STACK_DEPTH)
-        if tree_depth > _BVH_STACK_DEPTH:
-            raise ValueError(
-                f"BVH: the given node arrays encode a tree of depth {tree_depth} or more, "
-                f"exceeding the stack depth {_BVH_STACK_DEPTH} that the traversal kernels "
-                f"allow. Build the tree more evenly, or use BVH.from_cell_bounds, whose "
-                f"median split keeps the depth logarithmic in the cell count."
-            )
-        self._node_lo = np.ascontiguousarray(node_lo, dtype=np.float64)
-        self._node_hi = np.ascontiguousarray(node_hi, dtype=np.float64)
-        self._node_left = np.ascontiguousarray(node_left, dtype=np.int64)
-        self._node_right = np.ascontiguousarray(node_right, dtype=np.int64)
-        self._node_cell = np.ascontiguousarray(node_cell, dtype=np.int64)
-        for arr_ro in (
-            self._node_lo,
-            self._node_hi,
-            self._node_left,
-            self._node_right,
-            self._node_cell,
-        ):
-            arr_ro.flags.writeable = False
-        self.ndim = ndim
-        self.n_cells = n_cells_int
-        self.n_nodes = n_nodes
+    def _init_from_handle(self, h: Any) -> None:  # noqa: ANN401
+        """Adopt a compiled tree and read its scalars and array views once.
+
+        Args:
+            h (Any): The compiled tree.
+        """
+        self._h = h
+        self.ndim = int(h.ndim)
+        self.n_cells = int(h.n_cells)
+        self.n_nodes = int(h.n_nodes)
+        self._node_lo = h.node_lo
+        self._node_hi = h.node_hi
+        self._node_left = h.node_left
+        self._node_right = h.node_right
+        self._node_cell = h.node_cell
+
+    @classmethod
+    def _from_handle(cls, h: Any) -> Self:  # noqa: ANN401
+        """Wrap a compiled tree without copying it.
+
+        Args:
+            h (Any): The compiled tree.
+
+        Returns:
+            Self: The wrapper.
+        """
+        bvh = object.__new__(cls)
+        bvh._init_from_handle(h)
+        return bvh
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        """Pickle and copy through the constructor, from the raw arrays.
+
+        Returns:
+            tuple[Any, ...]: The rebuild function and its arguments.
+        """
+        return (
+            _rebuild_bvh,
+            (
+                type(self),
+                self._node_lo,
+                self._node_hi,
+                self._node_left,
+                self._node_right,
+                self._node_cell,
+                self.n_cells,
+            ),
+        )
+
+    def __setstate__(self, state: Any) -> None:  # noqa: ANN401
+        """Rebuild the compiled tree from a pickle written by a previous release.
+
+        A previous release pickled the five node arrays and the counts as slots. Pickles
+        written by this release go through :meth:`__reduce__` and never reach here.
+
+        Args:
+            state (Any): The pickled state: ``(None, {slot: value})`` for the protocols
+                that pickle slots, or the bare mapping.
+        """
+        slots = _previous_release_slots(state)
+        BVH.__init__(
+            self,
+            slots["_node_lo"],
+            slots["_node_hi"],
+            slots["_node_left"],
+            slots["_node_right"],
+            slots["_node_cell"],
+            n_cells=slots["n_cells"],
+        )
 
     @classmethod
     def from_cell_bounds(
@@ -314,52 +254,12 @@ class BVH:
 
         Raises:
             TypeError: If inputs cannot be cast to ``float64``.
-            ValueError: If shapes are inconsistent, ``ndim`` is ``< 1``, any cell
-                has ``hi < lo``, or the implied tree exceeds the internal stack
-                depth.
+            ValueError: If shapes are inconsistent, ``ndim`` is ``< 1``, any
+                value is not finite, or any cell has ``hi < lo``.
         """
         lo = _as_float64(cell_lo, name="cell_lo")
         hi = _as_float64(cell_hi, name="cell_hi")
-        if lo.ndim != 2:  # noqa: PLR2004
-            raise ValueError(f"cell_lo must be 2-D (n_cells, ndim); got shape {lo.shape}.")
-        if hi.shape != lo.shape:
-            raise ValueError(f"cell_hi shape {hi.shape} must match cell_lo shape {lo.shape}.")
-        n_cells, ndim = int(lo.shape[0]), int(lo.shape[1])
-        if ndim < 1:
-            raise ValueError(f"BVH ndim must be >= 1; got {ndim}.")
-        if not np.all(np.isfinite(lo)) or not np.all(np.isfinite(hi)):
-            raise ValueError(
-                "BVH.from_cell_bounds: cell_lo and cell_hi must contain only finite "
-                "values; got NaN or Inf."
-            )
-        if np.any(hi < lo):
-            raise ValueError(
-                "Every cell must satisfy cell_hi >= cell_lo on every axis; "
-                "at least one cell violates this."
-            )
-        if n_cells == 0:
-            empty_lo = np.zeros((0, ndim), dtype=np.float64)
-            empty_hi = np.zeros((0, ndim), dtype=np.float64)
-            empty_i = np.zeros(0, dtype=np.int64)
-            return cls(empty_lo, empty_hi, empty_i, empty_i, empty_i, n_cells=0)
-        # Guard against the fixed-depth Numba stack in :mod:`pantr.grid._bvh_core`.
-        # Median-of-longest-axis splits produce a balanced tree of height
-        # ``ceil(log2(n_cells)) + 1``; the ``+ 1`` accounts for the root push.
-        max_depth = int(np.ceil(np.log2(n_cells))) + 1 if n_cells > 1 else 1
-        if max_depth > _BVH_STACK_DEPTH:
-            raise ValueError(
-                f"BVH.from_cell_bounds: {n_cells} cells would produce a tree of depth "
-                f">= {max_depth}, exceeding the internal stack depth {_BVH_STACK_DEPTH}. "
-                f"This is a library limit; please report this as an issue."
-            )
-        max_nodes = 2 * n_cells - 1
-        node_lo = np.empty((max_nodes, ndim), dtype=np.float64)
-        node_hi = np.empty((max_nodes, ndim), dtype=np.float64)
-        node_left = np.full(max_nodes, -1, dtype=np.int64)
-        node_right = np.full(max_nodes, -1, dtype=np.int64)
-        node_cell = np.full(max_nodes, -1, dtype=np.int64)
-        _bvh_build_core(lo, hi, node_lo, node_hi, node_left, node_right, node_cell)
-        return cls(node_lo, node_hi, node_left, node_right, node_cell, n_cells=n_cells)
+        return cls._from_handle(_cpp.BVH.from_cell_bounds(lo, hi))
 
     def query_aabb(self, aabb: AABB) -> npt.NDArray[np.int64]:
         """Return the ids of every leaf cell whose AABB is not separated from ``aabb``.
@@ -378,43 +278,7 @@ class BVH:
         Raises:
             ValueError: If ``aabb.ndim != self.ndim``.
         """
-        if aabb.ndim != self.ndim:
-            raise ValueError(
-                f"BVH.query_aabb: aabb.ndim ({aabb.ndim}) must match self.ndim ({self.ndim})."
-            )
-        if self.n_cells == 0:
-            return np.zeros(0, dtype=np.int64)
-        count = int(
-            _bvh_query_count_core(
-                aabb.lo,
-                aabb.hi,
-                self._node_lo,
-                self._node_hi,
-                self._node_left,
-                self._node_right,
-                self._node_cell,
-            )
-        )
-        out = np.empty(count, dtype=np.int64)
-        if count == 0:
-            return out
-        written = int(
-            _bvh_query_emit_core(
-                aabb.lo,
-                aabb.hi,
-                self._node_lo,
-                self._node_hi,
-                self._node_left,
-                self._node_right,
-                self._node_cell,
-                out,
-            )
-        )
-        if written != count:
-            raise RuntimeError(
-                f"BVH.query_aabb: internal count/emit mismatch (count pass returned {count}, "
-                f"emit pass wrote {written}). This is a bug in the BVH kernel; please report it."
-            )
+        out: npt.NDArray[np.int64] = self._h.query_aabb(aabb._h)
         return out
 
     @property
@@ -462,6 +326,32 @@ class BVH:
             nodes, ``0 <= id < n_cells`` on leaves.
         """
         return self._node_cell
+
+
+def _rebuild_bvh(  # noqa: PLR0913 -- the five arrays and the cell count
+    cls: type[BVH],
+    node_lo: npt.NDArray[np.float64],
+    node_hi: npt.NDArray[np.float64],
+    node_left: npt.NDArray[np.int64],
+    node_right: npt.NDArray[np.int64],
+    node_cell: npt.NDArray[np.int64],
+    n_cells: int,
+) -> BVH:
+    """Unpickle a :class:`BVH` from its raw arrays.
+
+    Args:
+        cls (type[BVH]): The class to build.
+        node_lo (npt.NDArray[np.float64]): Per-node lo corners.
+        node_hi (npt.NDArray[np.float64]): Per-node hi corners.
+        node_left (npt.NDArray[np.int64]): Left-child indices.
+        node_right (npt.NDArray[np.int64]): Right-child indices.
+        node_cell (npt.NDArray[np.int64]): Leaf cell identifiers.
+        n_cells (int): Number of indexed cells.
+
+    Returns:
+        BVH: The rebuilt hierarchy.
+    """
+    return cls(node_lo, node_hi, node_left, node_right, node_cell, n_cells=n_cells)
 
 
 __all__ = ["BVH"]

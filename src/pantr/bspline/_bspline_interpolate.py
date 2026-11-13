@@ -3,188 +3,226 @@
 Provides :func:`interpolate_bspline` (callable-based),
 :func:`fit_bspline` (pre-evaluated values), and
 :func:`l2_project_bspline` (L2 projection with per-element quadrature).
+
+The systems are built and solved in C++ (``include/pantr/bspline/fit.hpp`` and
+``l2_project.hpp``) in their staged form: C++ builds what is to be sampled, this module calls the
+user's function on it, and C++ solves for the coefficients. The dtype rules (which type a solve
+runs in, which result is refused) are the previous release's NumPy promotions, decided here.
 """
 
 from __future__ import annotations
 
-import itertools
+import operator
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 from numpy import typing as npt
 
-from .._array_utils import _flatten_along_axis, _unflatten_along_axis
+from .._ext import ext
 from .._interpolation_utils import resolve_svd_tolerance, split_components
 from ..quad import PointsLattice
-from ._bspline_space_1d import BsplineSpace1D
 from ._bspline_space_factory import create_greville_lattice
 from ._bspline_space_nd import BsplineSpace
 
 if TYPE_CHECKING:
     from ._bspline import Bspline
 
+_cpp: Any = ext.bspline
+"""The compiled fitting systems (private; untyped: one class per dtype)."""
+
+_F32: np.dtype[np.float32] = np.dtype(np.float32)
+_F64: np.dtype[np.float64] = np.dtype(np.float64)
+
 
 # ---------------------------------------------------------------------------
-# 1D collocation matrix assembly
+# Dtype rules of the previous NumPy implementation
 # ---------------------------------------------------------------------------
 
 
-def _build_collocation_matrix_1d(
-    space: BsplineSpace1D,
-    nodes: npt.NDArray[np.float32 | np.float64],
-) -> npt.NDArray[np.float32 | np.float64]:
-    """Build the dense collocation matrix for a 1D B-spline space.
-
-    ``C[i, j] = N_j(node_i)`` where ``N_j`` is the ``j``-th basis function.
+def _native(dtype: np.dtype[Any]) -> np.dtype[Any]:
+    """Return ``dtype`` in native byte order (a byte-swapped float solves as the native one).
 
     Args:
-        space (BsplineSpace1D): The 1D B-spline space.
-        nodes (npt.NDArray): Evaluation nodes of shape ``(n_pts,)``.
+        dtype (np.dtype): Any dtype.
 
     Returns:
-        npt.NDArray: Dense matrix of shape ``(n_pts, num_basis)``.
-
-    Note:
-        No input validation is performed.
+        np.dtype: The same dtype in native byte order.
     """
-    basis_vals, first_basis = space.tabulate_basis(nodes)
-    n_pts = nodes.shape[0]
-    n_basis = space.num_basis
-    order = space.degree + 1
-
-    mat = np.zeros((n_pts, n_basis), dtype=nodes.dtype)
-    row_idx = np.arange(n_pts)[:, np.newaxis]  # (n_pts, 1)
-    local_offsets = np.arange(order)[np.newaxis, :]  # (1, order)
-    col_idx = first_basis[:, np.newaxis] + local_offsets  # (n_pts, order)
-
-    if space.periodic:
-        col_idx = col_idx % n_basis
-        np.add.at(mat, (row_idx, col_idx), basis_vals[:, :order])
-    else:
-        mat[row_idx, col_idx] = basis_vals[:, :order]
-
-    return mat
+    return dtype if dtype.isnative else dtype.newbyteorder("=")
 
 
-def _build_collocation_deriv_matrix_1d(
-    space: BsplineSpace1D,
-    node: np.float32 | np.float64,
-    n_derivs: int,
-) -> npt.NDArray[np.float32 | np.float64]:
-    """Build rows of the collocation matrix for derivatives at a single point.
-
-    Returns ``n_derivs`` rows, one per derivative order ``1, ..., n_derivs``.
+def _is_linalg_float(dtype: np.dtype[Any]) -> bool:
+    """Return whether NumPy's ``linalg`` accepted ``dtype`` (float32 or float64).
 
     Args:
-        space (BsplineSpace1D): The 1D B-spline space.
-        node (float): Single evaluation point.
-        n_derivs (int): Number of derivative orders to include.
+        dtype (np.dtype): A native dtype.
 
     Returns:
-        npt.NDArray: Matrix of shape ``(n_derivs, num_basis)``.
-
-    Note:
-        No input validation is performed.
+        bool: True for float32 and float64.
     """
-    pts = np.array([node], dtype=node.dtype)
-    deriv_vals, first_basis = space.tabulate_basis_derivatives(pts, n_derivs)
-    # deriv_vals shape: (1, n_derivs+1, degree+1)
-    n_basis = space.num_basis
-    order = space.degree + 1
-
-    mat: npt.NDArray[np.float32 | np.float64] = np.zeros((n_derivs, n_basis), dtype=pts.dtype)
-    fb = first_basis[0]
-    for k in range(n_derivs):
-        mat[k, fb : fb + order] = deriv_vals[0, k + 1, :order]
-
-    return mat
+    return dtype in (_F32, _F64)
 
 
-# ---------------------------------------------------------------------------
-# SVD pseudo-inverse solve
-# ---------------------------------------------------------------------------
+def _unsupported_in_linalg(dtype: np.dtype[Any]) -> TypeError:
+    """Return the error ``numpy.linalg.solve`` raised for a float it does not support.
+
+    Args:
+        dtype (np.dtype): The unsupported dtype (float16, longdouble).
+
+    Returns:
+        TypeError: The error, with NumPy's message.
+    """
+    return TypeError(f"array type {dtype.name} is unsupported in linalg")
 
 
-def _solve_1d(
-    mat: npt.NDArray[np.float32 | np.float64],
-    rhs: npt.NDArray[np.float32 | np.float64],
+def _linalg_dtype(dtype: np.dtype[Any]) -> np.dtype[Any]:
+    """Return the dtype a compiled solve runs in for a NumPy promotion ``dtype``.
+
+    Args:
+        dtype (np.dtype): The promotion of a solve's operand dtypes.
+
+    Returns:
+        np.dtype: float32 for float32, float64 otherwise.
+    """
+    return _F32 if dtype == _F32 else _F64
+
+
+def _tag(dtype: np.dtype[Any]) -> str:
+    """Return the suffix naming a float32 or float64 dtype in the compiled names.
+
+    Args:
+        dtype (np.dtype): float32 or float64.
+
+    Returns:
+        str: ``"f32"`` or ``"f64"``.
+    """
+    return "f32" if dtype == _F32 else "f64"
+
+
+def _derivative_count(n: Any) -> int:  # noqa: ANN401
+    """Normalize one boundary derivative count as the previous code used it.
+
+    A count that is not positive constrains nothing; a positive one had to be an integer (a
+    ``bool`` or a float raised ``TypeError`` from the derivative tabulation).
+
+    Args:
+        n (Any): The count as given.
+
+    Returns:
+        int: The count, or 0 when it is not positive.
+
+    Raises:
+        TypeError: A positive ``bool`` or a positive non-integer.
+    """
+    if not n > 0:
+        return 0
+    if isinstance(n, bool):
+        raise TypeError("an integer is required")
+    return operator.index(n)
+
+
+def _normalize_boundary_derivatives(
+    space: BsplineSpace,
+    boundary_derivatives: Sequence[tuple[int, ...] | None] | None,
+) -> list[tuple[int, int] | None]:
+    """Unpack the per-direction derivative constraints as the previous code did.
+
+    Args:
+        space (BsplineSpace): The target space.
+        boundary_derivatives: Per-direction ``(n_left, n_right)`` or ``None``.
+
+    Returns:
+        list[tuple[int, int] | None]: One entry per direction the sequence reaches; ``None`` for a
+        skipped or periodic direction.
+
+    Raises:
+        ValueError: An entry does not unpack into two counts.
+        TypeError: A count of the wrong type (see :func:`_derivative_count`).
+    """
+    if boundary_derivatives is None:
+        return []
+    out: list[tuple[int, int] | None] = []
+    for d, s1d in enumerate(space.spaces):
+        if d >= len(boundary_derivatives):
+            break
+        bd = boundary_derivatives[d]
+        if bd is None or s1d.periodic:
+            out.append(None)
+            continue
+        n_left, n_right = bd
+        out.append((_derivative_count(n_left), _derivative_count(n_right)))
+    return out
+
+
+def _tensor_collocation(
+    space: BsplineSpace,
+    node_arrays: list[npt.NDArray[np.float32 | np.float64]],
+    boundary_derivatives: Sequence[tuple[int, ...] | None] | None,
+) -> tuple[Any, np.dtype[Any]]:
+    """Build the compiled tensor-product collocation system.
+
+    Args:
+        space (BsplineSpace): The target space.
+        node_arrays (list[npt.NDArray]): Per-direction nodes.
+        boundary_derivatives: Per-direction ``(n_left, n_right)`` or ``None``.
+
+    Returns:
+        tuple[Any, np.dtype]: The system and its matrices' dtype (the nodes' dtype).
+
+    Raises:
+        ValueError: A node outside the domain, or more derivative rows than nodes allow.
+        ZeroDivisionError: The derivative recurrence divided by zero.
+    """
+    dtype = np.result_type(*node_arrays) if node_arrays else space.dtype
+    mat_dtype = _linalg_dtype(np.dtype(dtype))
+    arrays = [np.ascontiguousarray(a, dtype=mat_dtype) for a in node_arrays]
+    derivs = _normalize_boundary_derivatives(space, boundary_derivatives)
+    build = getattr(_cpp, "tensor_collocation_" + _tag(mat_dtype))
+    return build(space._h, arrays, derivs), mat_dtype
+
+
+def _solve_tensor(
+    system: Any,  # noqa: ANN401
+    mat_dtype: np.dtype[Any],
+    values: npt.NDArray[np.floating[Any]],
+    value_dtype: np.dtype[Any],
     tol: float | None,
-) -> npt.NDArray[np.float32 | np.float64]:
-    """Solve a 1D linear system via SVD pseudo-inverse with truncation.
+) -> npt.NDArray[np.floating[Any]]:
+    """Solve a collocation system for values given on its node grid.
 
-    For square systems where the matrix is well-conditioned, uses a direct
-    solve. Otherwise uses truncated SVD.
-
-    Args:
-        mat (npt.NDArray): Matrix of shape ``(m, n)`` with ``m >= n``.
-        rhs (npt.NDArray): Right-hand side of shape ``(m,)`` or ``(m, k)``.
-        tol (float | None): SVD truncation tolerance. If *None*, defaults to
-            ``100 * machine_epsilon``.
-
-    Returns:
-        npt.NDArray: Solution of shape ``(n,)`` or ``(n, k)``.
-    """
-    m, n = mat.shape
-    if m == n:
-        # Try direct solve first for square systems.
-        try:
-            return np.linalg.solve(mat, rhs)
-        except np.linalg.LinAlgError:
-            pass
-
-    # Truncated SVD pseudo-inverse for rectangular or singular systems.
-    u, s, vt = np.linalg.svd(mat, full_matrices=False)
-    threshold = resolve_svd_tolerance(mat.dtype, tol) * s[0]
-    s_inv = np.where(s > threshold, 1.0 / s, 0.0)
-    # pinv @ rhs = Vt.T @ diag(s_inv) @ U.T @ rhs
-    result: npt.NDArray[np.float32 | np.float64]
-    if rhs.ndim == 2:  # noqa: PLR2004
-        result = vt.T @ (s_inv[:, np.newaxis] * (u.T @ rhs))
-    else:
-        result = vt.T @ (s_inv * (u.T @ rhs))
-    return result
-
-
-# ---------------------------------------------------------------------------
-# Kronecker (per-direction) solve
-# ---------------------------------------------------------------------------
-
-
-def _solve_kronecker(
-    matrices: list[npt.NDArray[np.float32 | np.float64]],
-    rhs: npt.NDArray[np.float32 | np.float64],
-    tol: float | None,
-) -> npt.NDArray[np.float32 | np.float64]:
-    """Solve the tensor-product system by sequential 1D solves.
-
-    Given 1D matrices ``A_0, A_1, ...`` and a right-hand side tensor of shape
-    ``(m_0, m_1, ...)``, solves for the coefficient tensor ``C`` such that
-    ``(A_{d-1} ⊗ ... ⊗ A_0) vec(C) = vec(rhs)``.
-
-    Each direction is solved independently: contract ``A_d`` along axis ``d``
-    of the current tensor.
+    The solve runs in the promotion of the matrices' and the values' dtypes (float64 where that
+    promotion is a float NumPy's ``linalg`` did not support), and the coefficients are returned in
+    the values' dtype, as before.
 
     Args:
-        matrices (list[npt.NDArray]): One matrix per parametric direction,
-            each of shape ``(m_d, n_d)``.
-        rhs (npt.NDArray): Tensor of shape ``(m_0, m_1, ...)``.
-        tol (float | None): SVD truncation tolerance forwarded to
-            :func:`_solve_1d`.
+        system (Any): The compiled system.
+        mat_dtype (np.dtype): Its matrices' dtype.
+        values (npt.NDArray): ``(*grid, rank)``.
+        value_dtype (np.dtype): The values' (native) dtype.
+        tol (float | None): Truncation tolerance; ``100 * eps`` of the matrices' dtype when
+            ``None``.
 
     Returns:
-        npt.NDArray: Coefficient tensor of shape ``(n_0, n_1, ...)``.
+        npt.NDArray: ``(*num_basis, rank)`` coefficients in ``value_dtype``.
+
+    Raises:
+        ValueError: No node in some direction (NumPy's reshape message, as before).
     """
-    result = rhs.copy()
-    for d, mat in enumerate(matrices):
-        pts_2d, trailing_shape = _flatten_along_axis(result, d)
-        solved = _solve_1d(mat, pts_2d, tol)
-        result = _unflatten_along_axis(solved, trailing_shape, d)
-    return np.array(result, dtype=rhs.dtype)
+    if values.size == 0:
+        # The previous solve failed reshaping the empty value tensor; its message named the
+        # extent of the direction it was solving, here the first one's.
+        raise ValueError(f"cannot reshape array of size 0 into shape ({values.shape[0]},newaxis)")
+    compute = _linalg_dtype(np.result_type(mat_dtype, value_dtype))
+    rank = int(values.shape[-1])
+    resolved = float(resolve_svd_tolerance(mat_dtype, tol))
+    solve = system.solve_f32 if compute == _F32 else system.solve_f64
+    ctrl = solve(np.ascontiguousarray(values, dtype=compute), rank, resolved)
+    return np.asarray(ctrl).astype(value_dtype, copy=False)
 
 
 # ---------------------------------------------------------------------------
-# Function evaluation helper
+# Function evaluation and node resolution
 # ---------------------------------------------------------------------------
 
 
@@ -237,11 +275,6 @@ def _evaluate_func_on_lattice(
     _f64: np.dtype[np.float64] = np.dtype(np.float64)
     out_dtype = _f32 if raw.dtype == _f32 else _f64
     return components, out_dtype
-
-
-# ---------------------------------------------------------------------------
-# Node resolution
-# ---------------------------------------------------------------------------
 
 
 def _resolve_nodes(
@@ -367,6 +400,7 @@ def interpolate_bspline(
         ``func``.
 
     Raises:
+        ValueError: If ``tol`` is NaN or infinite.
         TypeError: If ``space`` is not a :class:`BsplineSpace`.
         ValueError: If ``nodes`` is inconsistent with ``space``, or the
             callable returns an unexpected shape.
@@ -388,105 +422,18 @@ def interpolate_bspline(
 
     node_arrays = _resolve_nodes(space, nodes)
 
-    # Build collocation matrices per direction (possibly with derivative rows).
-    matrices = _build_collocation_matrices(space, node_arrays, boundary_derivatives)
+    # The collocation matrices (with derivative rows) are built before the function is sampled.
+    system, mat_dtype = _tensor_collocation(space, node_arrays, boundary_derivatives)
+    # Refuse a bad tol before the callable is sampled: it may be costly or have side effects.
+    resolved = float(resolve_svd_tolerance(mat_dtype, tol))
 
-    # Build sampling lattice and evaluate function.
     lattice = PointsLattice(node_arrays)
     grid_shape = tuple(a.shape[0] for a in node_arrays)
     components, out_dtype = _evaluate_func_on_lattice(func, lattice, grid_shape)
 
-    # Modify RHS for boundary derivative constraints.
-    if boundary_derivatives is not None:
-        components = _apply_boundary_deriv_rhs(space, components, boundary_derivatives)
-
-    # Solve per-component via Kronecker structure.
-    ctrl_components: list[npt.NDArray[np.floating[Any]]] = []
-    for comp in components:
-        coeffs = _solve_kronecker(matrices, comp.astype(out_dtype), tol)
-        ctrl_components.append(coeffs)
-
-    ctrl = np.stack(ctrl_components, axis=-1)
+    values = np.stack(components, axis=-1)
+    ctrl = _solve_tensor(system, mat_dtype, values, out_dtype, resolved)
     return Bspline(space, ctrl)
-
-
-def _build_collocation_matrices(
-    space: BsplineSpace,
-    node_arrays: list[npt.NDArray[np.float32 | np.float64]],
-    boundary_derivatives: Sequence[tuple[int, ...] | None] | None,
-) -> list[npt.NDArray[np.float32 | np.float64]]:
-    """Build per-direction collocation matrices, with optional derivative rows.
-
-    Args:
-        space (BsplineSpace): Target B-spline space.
-        node_arrays (list[npt.NDArray]): Per-direction node arrays.
-        boundary_derivatives: Per-direction ``(n_left, n_right)`` or ``None``.
-
-    Returns:
-        list[npt.NDArray]: One collocation matrix per direction.
-    """
-    matrices: list[npt.NDArray[np.float32 | np.float64]] = []
-    for d, s1d in enumerate(space.spaces):
-        mat = _build_collocation_matrix_1d(s1d, node_arrays[d])
-
-        if boundary_derivatives is not None and d < len(boundary_derivatives):
-            bd = boundary_derivatives[d]
-            if bd is not None and not s1d.periodic:
-                n_left, n_right = bd
-                a, b = s1d.domain
-                dtype = node_arrays[d].dtype
-
-                if n_left > 0:
-                    deriv_rows = _build_collocation_deriv_matrix_1d(s1d, dtype.type(a), n_left)
-                    # Replace rows 1..n_left with derivative rows.
-                    mat[1 : 1 + n_left, :] = deriv_rows
-
-                if n_right > 0:
-                    deriv_rows = _build_collocation_deriv_matrix_1d(s1d, dtype.type(b), n_right)
-                    # Replace rows -1-n_right..-1 with derivative rows.
-                    mat[-1 - n_right : -1, :] = deriv_rows
-
-        matrices.append(mat)
-    return matrices
-
-
-def _apply_boundary_deriv_rhs(
-    space: BsplineSpace,
-    components: list[npt.NDArray[np.floating[Any]]],
-    boundary_derivatives: Sequence[tuple[int, ...] | None],
-) -> list[npt.NDArray[np.floating[Any]]]:
-    """Replace RHS entries corresponding to derivative rows with zero.
-
-    Boundary derivative constraints force the specified derivative orders to
-    zero at the domain endpoints (the callable provides values only, not
-    derivatives).
-
-    Args:
-        space (BsplineSpace): Target B-spline space.
-        components (list[npt.NDArray]): Per-component value arrays.
-        boundary_derivatives: Per-direction ``(n_left, n_right)`` or ``None``.
-
-    Returns:
-        list[npt.NDArray]: Modified components with zero derivative entries.
-    """
-    modified = [c.copy() for c in components]
-    for d, s1d in enumerate(space.spaces):
-        if d >= len(boundary_derivatives):
-            continue
-        bd = boundary_derivatives[d]
-        if bd is None or s1d.periodic:
-            continue
-        n_left, n_right = bd
-        for comp in modified:
-            if n_left > 0:
-                slices = [slice(None)] * comp.ndim
-                slices[d] = slice(1, 1 + n_left)
-                comp[tuple(slices)] = 0.0
-            if n_right > 0:
-                slices = [slice(None)] * comp.ndim
-                slices[d] = slice(-1 - n_right, -1)
-                comp[tuple(slices)] = 0.0
-    return modified
 
 
 # ---------------------------------------------------------------------------
@@ -508,7 +455,7 @@ def fit_bspline(
     Recover B-spline coefficients by solving the collocation system.
     For tensor-product nodes, uses per-direction solves (Kronecker
     structure). For scattered nodes, builds the full collocation matrix
-    and solves via SVD.
+    and solves it as a single system.
 
     The output dtype is inferred from *values*.
 
@@ -541,6 +488,7 @@ def fit_bspline(
         Bspline: A non-rational B-spline.
 
     Raises:
+        ValueError: If ``tol`` is NaN or infinite.
         TypeError: If ``space`` is not a :class:`BsplineSpace`.
         ValueError: If *nodes* are inconsistent with *space*, or the
             system is underdetermined for scattered nodes.
@@ -584,6 +532,12 @@ def _fit_from_tensor_product(
 
     Returns:
         Bspline: The fitted B-spline.
+
+    Raises:
+        TypeError: Values of a float type NumPy's ``linalg`` does not support, when the first
+            direction's system is square.
+        ValueError: Inconsistent nodes or values, a node outside the domain, or values of
+            another dtype than the space.
     """
     from ._bspline import Bspline  # noqa: PLC0415
 
@@ -603,17 +557,17 @@ def _fit_from_tensor_product(
 
     grid_shape = tuple(a.shape[0] for a in node_arrays)
     components = split_components(values, grid_shape)
+    system, mat_dtype = _tensor_collocation(space, node_arrays, None)
 
-    matrices = [
-        _build_collocation_matrix_1d(s, n) for s, n in zip(space.spaces, node_arrays, strict=True)
-    ]
+    value_dtype = _native(values.dtype)
+    # A float NumPy's linalg does not support: the first direction's square system went to
+    # numpy.linalg.solve, which refused it; otherwise the coefficients came back in that dtype and
+    # the constructor refuses them.
+    if not _is_linalg_float(value_dtype) and grid_shape[0] == space.spaces[0].num_basis:
+        raise _unsupported_in_linalg(value_dtype)
 
-    ctrl_components: list[npt.NDArray[np.floating[Any]]] = []
-    for comp in components:
-        coeffs = _solve_kronecker(matrices, comp, tol)
-        ctrl_components.append(coeffs)
-
-    ctrl = np.stack(ctrl_components, axis=-1)
+    stacked = np.stack(components, axis=-1)
+    ctrl = _solve_tensor(system, mat_dtype, stacked, value_dtype, tol)
     return Bspline(space, ctrl)
 
 
@@ -623,7 +577,7 @@ def _fit_from_scattered(
     space: BsplineSpace,
     tol: float | None,
 ) -> Bspline:
-    """Fit from scattered (non-tensor-product) nodes via full SVD solve.
+    """Fit from scattered (non-tensor-product) nodes via the full collocation solve.
 
     Args:
         values (npt.NDArray): Sample values of shape ``(n_pts,)`` or
@@ -636,164 +590,59 @@ def _fit_from_scattered(
         Bspline: The fitted B-spline.
 
     Raises:
-        ValueError: If the system is underdetermined.
+        TypeError: Nodes, or values of a square system, of a float type NumPy's ``linalg`` does
+            not support.
+        ValueError: If the system is underdetermined, the nodes have another number of columns
+            or are outside the domain, integer nodes come without a ``tol``, or the values do not
+            match the nodes.
     """
     from ._bspline import Bspline  # noqa: PLC0415
 
     n_pts = nodes.shape[0]
-    ndim = nodes.shape[1] if nodes.ndim == 2 else 1  # noqa: PLR2004
-
+    ndim = nodes.shape[1]
     if ndim != space.dim:
         raise ValueError(f"Scattered nodes have {ndim} columns, expected {space.dim}.")
-
     n_total_basis = space.num_total_basis
     if n_pts < n_total_basis:
         raise ValueError(
             f"Underdetermined system: {n_pts} points < {n_total_basis} basis functions."
         )
+    if values.ndim not in (1, 2):
+        raise ValueError(
+            f"Values have shape {values.shape}, expected ({n_pts},) (scalar) or "
+            f"({n_pts}, 'rank') (vector)."
+        )
 
-    # Build the full collocation matrix by evaluating each 1D basis and
-    # computing the row-wise outer product.
-    colloc = _build_nd_collocation_matrix(space, nodes)
+    # The previous code built the matrix in the nodes' dtype: integer nodes reached the default
+    # tolerance's machine epsilon, which an integer type has none of, and a float type NumPy's
+    # linalg does not support reached the solve.
+    node_dtype = _native(nodes.dtype)
+    if not np.issubdtype(node_dtype, np.inexact):
+        if tol is None:
+            raise ValueError(f"data type {node_dtype.type!r} not inexact")
+        node_dtype = _F64
+    elif not _is_linalg_float(node_dtype):
+        raise _unsupported_in_linalg(node_dtype)
 
-    # Determine rank from values.
-    if values.ndim == 1:
-        coeffs_flat = _solve_1d(colloc, values, tol)
-        ctrl = coeffs_flat.reshape(*space.num_basis, 1)
-    else:
-        coeffs_flat = _solve_1d(colloc, values, tol)
-        rank = values.shape[1]
-        ctrl = coeffs_flat.reshape(*space.num_basis, rank)
-
-    return Bspline(space, ctrl)
-
-
-def _build_nd_collocation_matrix(
-    space: BsplineSpace,
-    pts: npt.NDArray[np.floating[Any]],
-) -> npt.NDArray[np.floating[Any]]:
-    """Build the full N-D B-spline collocation matrix for scattered points.
-
-    Args:
-        space (BsplineSpace): Target B-spline space.
-        pts (npt.NDArray): Points of shape ``(n_pts, dim)`` or ``(n_pts,)``
-            for 1D.
-
-    Returns:
-        npt.NDArray: Collocation matrix of shape ``(n_pts, n_total_basis)``.
-    """
-    n_pts = pts.shape[0]
-    ndim = space.dim
-
-    if pts.ndim == 1:
-        pts = pts[:, np.newaxis]
-
-    # Evaluate 1D bases per direction.
-    basis_per_dir: list[npt.NDArray[np.floating[Any]]] = []
-    for d, s1d in enumerate(space.spaces):
-        mat_1d = _build_collocation_matrix_1d(s1d, pts[:, d])
-        basis_per_dir.append(mat_1d)
-
-    # Row-wise outer product (Kronecker-like).
-    result = basis_per_dir[0]
-    for d in range(1, ndim):
-        # result: (n_pts, prod(n_basis_0..d-1))
-        # basis_per_dir[d]: (n_pts, n_basis_d)
-        result = (result[:, :, np.newaxis] * basis_per_dir[d][:, np.newaxis, :]).reshape(n_pts, -1)
-
-    return result
+    value_dtype = _native(values.dtype)
+    if not _is_linalg_float(value_dtype) and n_pts == n_total_basis:
+        raise _unsupported_in_linalg(value_dtype)  # the square system went to linalg.solve
+    rank = 1 if values.ndim == 1 else int(values.shape[1])
+    # The coefficients come back in the promotion (float16 values promote to the nodes' dtype;
+    # a longdouble promotion is refused by the constructor, as before).
+    result_dtype = np.result_type(node_dtype, value_dtype)
+    compute = _linalg_dtype(result_dtype)
+    resolved = float(resolve_svd_tolerance(node_dtype, tol))
+    pts = np.ascontiguousarray(nodes, dtype=node_dtype)
+    vals = np.ascontiguousarray(values.reshape(n_pts, rank), dtype=compute)
+    fit = getattr(_cpp, f"fit_scattered_{_tag(node_dtype)}_{_tag(compute)}")
+    ctrl = fit(space._h, pts, vals, resolved)
+    return Bspline(space, np.asarray(ctrl).astype(result_dtype, copy=False))
 
 
 # ---------------------------------------------------------------------------
 # L2 projection
 # ---------------------------------------------------------------------------
-
-
-def _build_l2_mass_and_quad(
-    space: BsplineSpace,
-    n_quad: int | Sequence[int] | None,
-    quadrature: Literal["gauss-legendre", "gauss-lobatto"],
-    boundary_interpolation: bool | Sequence[tuple[bool, bool]],
-) -> tuple[
-    list[npt.NDArray[np.float32 | np.float64]],
-    list[npt.NDArray[np.float32 | np.float64]],
-    list[npt.NDArray[np.float32 | np.float64]],
-    list[tuple[bool, bool]],
-    tuple[int, ...],
-]:
-    """Build the per-direction L2 mass matrices and global quadrature nodes/weights.
-
-    Resolves ``n_quad`` and ``boundary_interpolation`` per direction, assembles each 1D
-    mass matrix via per-element quadrature, and replaces the first/last mass row with a
-    collocation (interpolation) row where requested.  Shared by the serial
-    :func:`l2_project_bspline` and its MPI-distributed counterpart; the result depends
-    only on ``space`` and the quadrature settings, never on any partition, so every rank
-    builds it identically.
-
-    Args:
-        space (BsplineSpace): The target B-spline space.
-        n_quad (int | Sequence[int] | None): Quadrature points per element per direction.
-            ``None`` defaults to ``degree + 1`` per direction.
-        quadrature (Literal["gauss-legendre", "gauss-lobatto"]): Quadrature rule type.
-        boundary_interpolation (bool | Sequence[tuple[bool, bool]]): Boundary
-            interpolation flags (see :func:`l2_project_bspline`).
-
-    Returns:
-        tuple: ``(mass_matrices, quad_nodes_per_dir, quad_weights_per_dir, bi_flags,
-        n_quads)`` -- per-direction mass matrices (boundary rows applied), global
-        quadrature nodes and weights, the resolved per-direction ``(left, right)``
-        boundary flags, and the resolved per-direction quadrature-point counts.
-
-    Raises:
-        ValueError: If ``n_quad`` or ``boundary_interpolation`` is inconsistent with
-            ``space``.
-    """
-    from ..quad import get_gauss_legendre_1d, get_gauss_lobatto_legendre_1d  # noqa: PLC0415
-
-    ndim = space.dim
-
-    # Resolve n_quad per direction.
-    if n_quad is None:
-        n_quads = tuple(s.degree + 1 for s in space.spaces)
-    elif isinstance(n_quad, int):
-        n_quads = tuple(n_quad for _ in range(ndim))
-    else:
-        n_quads = tuple(n_quad)
-        if len(n_quads) != ndim:
-            raise ValueError(f"n_quad has length {len(n_quads)}, expected {ndim}")
-
-    # Resolve boundary interpolation flags.
-    bi_flags = _resolve_boundary_interpolation(boundary_interpolation, space)
-
-    mass_matrices: list[npt.NDArray[np.float32 | np.float64]] = []
-    quad_nodes_per_dir: list[npt.NDArray[np.float32 | np.float64]] = []
-    quad_weights_per_dir: list[npt.NDArray[np.float32 | np.float64]] = []
-
-    quad_func = (
-        get_gauss_legendre_1d if quadrature == "gauss-legendre" else get_gauss_lobatto_legendre_1d
-    )
-
-    for d, s1d in enumerate(space.spaces):
-        nq = n_quads[d]
-        mass, q_nodes, q_weights = _assemble_mass_and_quad_1d(s1d, nq, quad_func)
-
-        # Apply boundary interpolation if requested.
-        bi_left, bi_right = bi_flags[d]
-        if bi_left and not s1d.periodic:
-            a = s1d.domain[0]
-            colloc_row = _build_collocation_matrix_1d(s1d, np.array([a], dtype=s1d.dtype))
-            mass[0, :] = colloc_row[0, :]
-
-        if bi_right and not s1d.periodic:
-            b = s1d.domain[1]
-            colloc_row = _build_collocation_matrix_1d(s1d, np.array([b], dtype=s1d.dtype))
-            mass[-1, :] = colloc_row[0, :]
-
-        mass_matrices.append(mass)
-        quad_nodes_per_dir.append(q_nodes)
-        quad_weights_per_dir.append(q_weights)
-
-    return mass_matrices, quad_nodes_per_dir, quad_weights_per_dir, bi_flags, n_quads
 
 
 def l2_project_bspline(  # noqa: PLR0913
@@ -839,9 +688,10 @@ def l2_project_bspline(  # noqa: PLR0913
         best approximation of ``func`` in the given space.
 
     Raises:
+        ValueError: If ``tol`` is NaN or infinite.
         TypeError: If ``space`` is not a :class:`BsplineSpace`.
-        ValueError: If ``n_quad`` or ``boundary_interpolation`` is
-            inconsistent with ``space``.
+        ValueError: If ``space`` has no direction, or ``n_quad`` or
+            ``boundary_interpolation`` is inconsistent with ``space``.
 
     Example:
         >>> import numpy as np
@@ -855,300 +705,107 @@ def l2_project_bspline(  # noqa: PLR0913
 
     if not isinstance(space, BsplineSpace):
         raise TypeError(f"Expected BsplineSpace, got {type(space).__name__}")
+    if space.dim == 0:
+        # The previous release's message (its lattice constructor raised it here).
+        raise ValueError("Points lattice must have at least 1 dimension")
 
-    # Build per-direction mass matrices (with boundary-interpolation rows applied),
-    # global quadrature nodes/weights, and the normalized n_quad / boundary flags.
-    mass_matrices, quad_nodes_per_dir, quad_weights_per_dir, bi_flags, _n_quads = (
-        _build_l2_mass_and_quad(space, n_quad, quadrature, boundary_interpolation)
-    )
+    projection, _, _ = _l2_projection(space, n_quad, quadrature, boundary_interpolation)
+    # Refuse a bad tol before the callable is sampled: it may be costly or have side effects.
+    resolved = float(resolve_svd_tolerance(space.dtype, tol))
 
-    # Build quadrature lattice and evaluate function.
+    # Sample the function on the quadrature lattice.
+    quad_nodes_per_dir = list(projection.nodes)
     quad_lattice = PointsLattice(quad_nodes_per_dir)
     quad_grid_shape = tuple(a.shape[0] for a in quad_nodes_per_dir)
     components, out_dtype = _evaluate_func_on_lattice(func, quad_lattice, quad_grid_shape)
 
-    # Assemble load vectors per direction and solve.
-    ctrl_components = _l2_solve_components(
-        func,
-        space,
-        components,
-        out_dtype,
-        mass_matrices,
-        quad_nodes_per_dir,
-        quad_weights_per_dir,
-        bi_flags,
-        tol,
-    )
+    compute = np.result_type(space.dtype, out_dtype)
+    n_traces = len(projection.traces)
+    n_components = len(components)
+    ctrl_components: list[npt.NDArray[np.floating[Any]]] = []
+    for comp_idx, comp in enumerate(components):
+        # The traces are sampled per component, in the order the previous code sampled them.
+        traces = [
+            _trace_values(func, projection, t, comp_idx, n_components, compute)
+            for t in range(n_traces)
+        ]
+        project = projection.project_f32 if compute == _F32 else projection.project_f64
+        ctrl_components.append(project(np.ascontiguousarray(comp, dtype=compute), traces, resolved))
 
     ctrl = np.stack(ctrl_components, axis=-1)
     return Bspline(space, ctrl)
 
 
-def _l2_solve_components(  # noqa: PLR0913
-    func: Callable[..., npt.ArrayLike],
+def _l2_projection(
     space: BsplineSpace,
-    components: list[npt.NDArray[np.floating[Any]]],
-    out_dtype: np.dtype[np.float32] | np.dtype[np.float64],
-    mass_matrices: list[npt.NDArray[np.float32 | np.float64]],
-    quad_nodes_per_dir: list[npt.NDArray[np.float32 | np.float64]],
-    quad_weights_per_dir: list[npt.NDArray[np.float32 | np.float64]],
-    bi_flags: list[tuple[bool, bool]],
-    tol: float | None,
-) -> list[npt.NDArray[np.floating[Any]]]:
-    """Assemble load vectors and solve the L2 system for each component.
+    n_quad: int | Sequence[int] | None,
+    quadrature: Literal["gauss-legendre", "gauss-lobatto"],
+    boundary_interpolation: bool | Sequence[tuple[bool, bool]],
+) -> tuple[Any, list[tuple[bool, bool]], tuple[int, ...]]:
+    """Resolve the L2 settings as before and build the compiled projection.
 
     Args:
-        func (Callable): Function being projected.
-        space (BsplineSpace): Target B-spline space.
-        components (list[npt.NDArray]): Per-component quadrature values.
-        out_dtype: Output floating dtype.
-        mass_matrices (list[npt.NDArray]): Per-direction mass matrices.
-        quad_nodes_per_dir (list[npt.NDArray]): Per-direction quadrature nodes.
-        quad_weights_per_dir (list[npt.NDArray]): Per-direction quadrature weights.
-        bi_flags (list[tuple[bool, bool]]): Per-direction boundary interpolation flags.
-        tol (float | None): SVD truncation tolerance.
+        space (BsplineSpace): The target space.
+        n_quad (int | Sequence[int] | None): Quadrature points per element per direction.
+        quadrature (Literal["gauss-legendre", "gauss-lobatto"]): Any value other than
+            ``"gauss-legendre"`` selects Gauss-Lobatto, as before.
+        boundary_interpolation (bool | Sequence[tuple[bool, bool]]): Boundary flags.
 
     Returns:
-        list[npt.NDArray]: Per-component coefficient arrays.
+        tuple: ``(projection, bi_flags, n_quads)``: the compiled projection, the resolved
+        per-direction flags and the resolved point counts.
+
+    Raises:
+        ValueError: If ``n_quad`` or ``boundary_interpolation`` is inconsistent with ``space``,
+            or a count is below the rule's minimum.
+        TypeError: ``n_quad`` or a flag entry of the wrong type.
     """
-    ctrl_components: list[npt.NDArray[np.floating[Any]]] = []
-    n_components = len(components)
-
-    for comp_idx, comp in enumerate(components):
-        load: npt.NDArray[np.floating[Any]] = np.array(comp, dtype=out_dtype)
-        for d, s1d in enumerate(space.spaces):
-            load = _assemble_load_1d(
-                s1d,
-                load,
-                quad_nodes_per_dir[d],
-                quad_weights_per_dir[d],
-                d,
-            )
-
-        # Apply boundary interpolation to load vector.
-        _apply_boundary_load(
-            func,
-            space,
-            quad_nodes_per_dir,
-            quad_weights_per_dir,
-            bi_flags,
-            load,
-            comp_idx,
-            n_components,
-        )
-
-        # Solve mass system per direction.
-        coeffs = _solve_kronecker(mass_matrices, load, tol)
-        ctrl_components.append(coeffs)
-
-    return ctrl_components
-
-
-def _apply_boundary_load(  # noqa: PLR0913
-    func: Callable[..., npt.ArrayLike],
-    space: BsplineSpace,
-    quad_nodes_per_dir: list[npt.NDArray[np.float32 | np.float64]],
-    quad_weights_per_dir: list[npt.NDArray[np.float32 | np.float64]],
-    bi_flags: list[tuple[bool, bool]],
-    load: npt.NDArray[np.floating[Any]],
-    comp_idx: int,
-    n_components: int,
-) -> None:
-    """Apply boundary-trace load values to the load tensor in-place.
-
-    The right-hand side of a Kronecker row is the tensor product of the
-    per-direction rows: a collocation row in every direction whose boundary row
-    was replaced, a mass row elsewhere.  An entry whose index sits on the
-    boundary of the directions in a set ``S`` must therefore hold the load
-    integrals over the directions **not** in ``S`` of the function restricted
-    to the boundary coordinates of ``S`` -- the boundary face traces, edge
-    traces, down to plain point values at corners where every direction is
-    collocated.  Subsets are processed by increasing size so the higher-order
-    intersections (edges, corners) overwrite the face values they sit on.
-
-    Args:
-        func (Callable): Function being projected.
-        space (BsplineSpace): Target B-spline space.
-        quad_nodes_per_dir (list[npt.NDArray]): Per-direction quadrature nodes.
-        quad_weights_per_dir (list[npt.NDArray]): Per-direction quadrature weights.
-        bi_flags (list[tuple[bool, bool]]): Per-direction boundary flags.
-        load (npt.NDArray): Load tensor to modify in-place.
-        comp_idx (int): Which output component is being processed.
-        n_components (int): Total number of output components.
-    """
-    # Per direction, the flagged (slice_index, boundary_coordinate) sides.
-    sides_per_dir: dict[int, list[tuple[int, float]]] = {}
-    for d, s1d in enumerate(space.spaces):
-        if s1d.periodic:
-            continue
-        bi_left, bi_right = bi_flags[d]
-        sides: list[tuple[int, float]] = []
-        if bi_left:
-            sides.append((0, float(s1d.domain[0])))
-        if bi_right:
-            sides.append((-1, float(s1d.domain[1])))
-        if sides:
-            sides_per_dir[d] = sides
-
-    flagged_dirs = sorted(sides_per_dir)
-    for size in range(1, len(flagged_dirs) + 1):
-        for dirs in itertools.combinations(flagged_dirs, size):
-            for chosen in itertools.product(*(sides_per_dir[d] for d in dirs)):
-                fixed = {d: coord for d, (_, coord) in zip(dirs, chosen, strict=True)}
-                value = _boundary_trace_load(
-                    func,
-                    space,
-                    quad_nodes_per_dir,
-                    quad_weights_per_dir,
-                    fixed,
-                    comp_idx,
-                    n_components,
-                )
-                slices: list[int | slice] = [slice(None)] * load.ndim
-                for d, (idx, _) in zip(dirs, chosen, strict=True):
-                    slices[d] = idx
-                load[tuple(slices)] = value
-
-
-def _assemble_mass_and_quad_1d(
-    space: BsplineSpace1D,
-    n_quad: int,
-    quad_func: Callable[..., tuple[npt.NDArray[Any], npt.NDArray[Any]]],
-) -> tuple[
-    npt.NDArray[np.float32 | np.float64],
-    npt.NDArray[np.float32 | np.float64],
-    npt.NDArray[np.float32 | np.float64],
-]:
-    """Assemble the 1D mass matrix and collect global quadrature nodes/weights.
-
-    Uses per-element quadrature mapped from ``[0, 1]`` to each knot span.
-
-    Args:
-        space (BsplineSpace1D): The 1D B-spline space.
-        n_quad (int): Quadrature points per element.
-        quad_func (Callable): Quadrature rule factory (returns nodes, weights
-            on ``[0, 1]``).
-
-    Returns:
-        tuple: ``(mass, global_nodes, global_weights)`` where *mass* has shape
-        ``(num_basis, num_basis)`` and *global_nodes* / *global_weights* have
-        shape ``(num_intervals * n_quad,)``.
-    """
-    ref_nodes, ref_weights = quad_func(n_quad, dtype=space.dtype)
-    unique_knots = space.get_unique_knots_and_multiplicity(in_domain=True)[0]
-    n_intervals = len(unique_knots) - 1
-
-    global_nodes_list: list[npt.NDArray[np.float32 | np.float64]] = []
-    global_weights_list: list[npt.NDArray[np.float32 | np.float64]] = []
-
-    for e in range(n_intervals):
-        a_e = unique_knots[e]
-        b_e = unique_knots[e + 1]
-        h = b_e - a_e
-        if h <= 0:
-            continue
-        global_nodes_list.append(a_e + h * ref_nodes)
-        global_weights_list.append(h * ref_weights)
-
-    global_nodes = np.concatenate(global_nodes_list)
-    global_weights = np.concatenate(global_weights_list)
-
-    # Build the full collocation matrix and assemble mass via B^T diag(w) B.
-    B = _build_collocation_matrix_1d(space, global_nodes)
-    mass = B.T @ (global_weights[:, np.newaxis] * B)
-
-    return mass, global_nodes, global_weights
-
-
-def _assemble_load_1d(
-    space: BsplineSpace1D,
-    func_values: npt.NDArray[np.floating[Any]],
-    quad_nodes: npt.NDArray[np.float32 | np.float64],
-    quad_weights: npt.NDArray[np.float32 | np.float64],
-    axis: int,
-) -> npt.NDArray[np.floating[Any]]:
-    """Contract function values along one direction to form load vector entries.
-
-    For direction ``axis``, computes:
-    ``L_i = sum_q w_q * N_i(x_q) * f(x_q, ...)``
-
-    The result has the same shape as *func_values* except that axis ``axis``
-    changes from ``n_quad_nodes`` to ``n_basis``.
-
-    Args:
-        space (BsplineSpace1D): The 1D B-spline space.
-        func_values (npt.NDArray): Function values with quadrature-sized axis.
-        quad_nodes (npt.NDArray): Global quadrature nodes.
-        quad_weights (npt.NDArray): Global quadrature weights.
-        axis (int): The axis to contract.
-
-    Returns:
-        npt.NDArray: Load contribution with basis-sized axis.
-    """
-    n_basis = space.num_basis
-    n_quad_total = quad_nodes.shape[0]
-    order = space.degree + 1
-
-    basis_vals, first_basis = space.tabulate_basis(quad_nodes)
-
-    # Build the full weighted-basis matrix: W[q, i] = w_q * N_i(x_q)
-    # Each row q has `order` nonzero entries starting at first_basis[q].
-    weighted_basis = np.zeros((n_quad_total, n_basis), dtype=quad_nodes.dtype)
-    local_offsets = np.arange(order)[np.newaxis, :]  # (1, order)
-    q_idx = np.arange(n_quad_total)[:, np.newaxis]  # (n_quad, 1)
-
-    if space.periodic:
-        col_idx = (first_basis[:, np.newaxis] + local_offsets) % n_basis
+    ndim = space.dim
+    if n_quad is None:
+        n_quads = tuple(s.degree + 1 for s in space.spaces)
+    elif isinstance(n_quad, int):
+        n_quads = tuple(n_quad for _ in range(ndim))
     else:
-        col_idx = first_basis[:, np.newaxis] + local_offsets
+        n_quads = tuple(n_quad)
+        if len(n_quads) != ndim:
+            raise ValueError(f"n_quad has length {len(n_quads)}, expected {ndim}")
 
-    weighted_vals = quad_weights[:, np.newaxis] * basis_vals[:, :order]
-    np.add.at(weighted_basis, (q_idx, col_idx), weighted_vals)
+    bi_flags = _resolve_boundary_interpolation(boundary_interpolation, space)
+    flags: list[tuple[bool, bool]] = []
+    for d in range(ndim):
+        bi_left, bi_right = bi_flags[d]
+        flags.append((bool(bi_left), bool(bi_right)))
 
-    # Contract: result[..., i, ...] = sum_q weighted_basis[q, i] * func_values[..., q, ...]
-    result = np.tensordot(weighted_basis.T, func_values, axes=([1], [axis]))
-    # tensordot puts the contracted axis at position 0; move it back.
-    result = np.moveaxis(result, 0, axis)
-    return result
+    cls = _cpp.L2ProjectionF32 if space.dtype == _F32 else _cpp.L2ProjectionF64
+    projection = cls(space._h, list(n_quads), quadrature != "gauss-legendre", flags)
+    return projection, bi_flags, n_quads
 
 
-def _boundary_trace_load(  # noqa: PLR0913
+def _trace_values(  # noqa: PLR0913
     func: Callable[..., npt.ArrayLike],
-    space: BsplineSpace,
-    quad_nodes_per_dir: list[npt.NDArray[np.float32 | np.float64]],
-    quad_weights_per_dir: list[npt.NDArray[np.float32 | np.float64]],
-    fixed: dict[int, float],
+    projection: Any,  # noqa: ANN401
+    trace: int,
     comp_idx: int,
     n_components: int,
-) -> npt.NDArray[np.floating[Any]] | np.floating[Any]:
-    """Compute the load tensor of a boundary trace of ``func``.
-
-    Samples ``func`` on the lattice that pins the directions in ``fixed`` at
-    their boundary coordinates and uses quadrature nodes elsewhere, then
-    contracts every non-fixed direction with its weighted basis
-    (:func:`_assemble_load_1d`).  The result is the right-hand side matching a
-    Kronecker row that is collocated exactly in the ``fixed`` directions: the
-    load integrals of the trace ``func(.., fixed values, ..)`` -- a plain point
-    value when every direction is fixed (a corner).
+    dtype: np.dtype[Any],
+) -> npt.NDArray[np.floating[Any]]:
+    """Sample one component of ``func`` on a boundary trace's lattice.
 
     Args:
-        func (Callable): Function to evaluate.
-        space (BsplineSpace): Target B-spline space.
-        quad_nodes_per_dir (list[npt.NDArray]): Quadrature nodes per direction.
-        quad_weights_per_dir (list[npt.NDArray]): Quadrature weights per direction.
-        fixed (dict[int, float]): Boundary coordinate per collocated direction.
+        func (Callable): Function being projected.
+        projection (Any): The compiled projection.
+        trace (int): The trace's index.
         comp_idx (int): Which output component to extract.
         n_components (int): Total number of output components.
+        dtype (np.dtype): The computation dtype.
 
     Returns:
-        Trace load values shaped over the non-fixed directions' basis indices
-        (the fixed axes are squeezed out); a scalar when all axes are fixed.
+        npt.NDArray: The component's values over the trace lattice, contiguous in ``dtype``.
+
+    Raises:
+        ValueError: The function returned an array that does not reshape to the lattice.
     """
-    dtype = quad_nodes_per_dir[0].dtype
-    boundary_nodes = [
-        np.array([fixed[d]], dtype=dtype) if d in fixed else quad_nodes_per_dir[d]
-        for d in range(space.dim)
-    ]
+    boundary_nodes = list(projection.trace_nodes(trace))
     lattice = PointsLattice(boundary_nodes)
     grid_shape = tuple(a.shape[0] for a in boundary_nodes)
 
@@ -1156,21 +813,16 @@ def _boundary_trace_load(  # noqa: PLR0913
     if not np.issubdtype(raw.dtype, np.floating):
         raw = raw.astype(np.float64)
 
-    trace: npt.NDArray[np.floating[Any]]
     if n_components > 1:
-        # Vector-valued: reshape to (*grid_shape, rank) and extract component.
-        trace = np.asarray(raw.reshape(*grid_shape, n_components)[..., comp_idx])
+        values = raw.reshape(*grid_shape, n_components)[..., comp_idx]
     else:
-        trace = np.asarray(raw.reshape(grid_shape))
+        values = raw.reshape(grid_shape)
+    return np.ascontiguousarray(values, dtype=dtype)
 
-    for d, s1d in enumerate(space.spaces):
-        if d in fixed:
-            continue
-        trace = _assemble_load_1d(s1d, trace, quad_nodes_per_dir[d], quad_weights_per_dir[d], d)
-    squeezed = trace.squeeze(axis=tuple(sorted(fixed)))
-    if squeezed.ndim == 0:
-        return squeezed[()]
-    return squeezed
+
+# ---------------------------------------------------------------------------
+# The boundary interpolation flags
+# ---------------------------------------------------------------------------
 
 
 def _resolve_boundary_interpolation(

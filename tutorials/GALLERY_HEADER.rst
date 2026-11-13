@@ -21,12 +21,7 @@ The 2-D plots are drawn with `matplotlib <https://matplotlib.org>`_ and the inte
 itself -- they are used only by these tutorial scripts (PaNTr's own rendering lives in
 :mod:`pantr.viz`, which needs only PyVista).
 
-The 3-D scenes are interactive -- drag to rotate, scroll to zoom. The plotting scripts
-use Numba kernels; on a fresh process you may hit a Numba background-warmup threading
-error, in which case run with JIT disabled (the documentation build does this
-automatically)::
-
-    NUMBA_DISABLE_JIT=1 python tutorials/05_approximation.py
+The 3-D scenes are interactive -- drag to rotate, scroll to zoom.
 
 The path, in order:
 

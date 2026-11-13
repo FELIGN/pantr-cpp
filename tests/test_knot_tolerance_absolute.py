@@ -11,7 +11,7 @@ of the derived one -- which is harmless on a unit domain and catastrophic on a l
 one.
 
 (The presets in :mod:`pantr.tolerance` are dimensionless relative factors; it is
-``_bspline_knots._knot_tolerance`` that turns one into the absolute length this file
+``pantr._testing.knot_tolerance`` that turns one into the absolute length this file
 is about. ``TestDerivedKnotTolerance`` at the end pins that derivation and the
 properties the knot layer rests on.)
 
@@ -38,23 +38,14 @@ import numpy as np
 import pytest
 from numpy import typing as npt
 
+from pantr._testing import find_knot_index_and_multiplicity as _find_knot_index_and_multiplicity
+from pantr._testing import knot_tolerance, unique_knots_and_multiplicity
 from pantr.bspline import (
     Bspline,
     BsplineSpace,
     BsplineSpace1D,
     THBSplineSpace,
     create_uniform_space,
-)
-from pantr.bspline._bspline_knots import (
-    _find_knot_index_and_multiplicity,
-    _get_unique_knots_and_multiplicity_impl,
-    _is_in_domain_impl,
-    _knot_tolerance,
-)
-from pantr.bspline._bspline_product import _get_boundary_mults
-from pantr.bspline._bspline_restrict import (
-    _compute_boundary_knots_to_insert,
-    _validate_restrict_bounds,
 )
 from pantr.grid import hierarchical_grid, uniform_grid
 
@@ -67,6 +58,36 @@ SCALES = (1.0, 100.0, 1e6)
 INSIDE_LEAK = 1e-6
 
 
+def _in_domain(
+    knots: npt.NDArray[np.float64], tol: float, pts: npt.NDArray[np.float64]
+) -> npt.NDArray[np.bool_]:
+    """Return, per point, whether a degree-2 space with tolerance ``tol`` accepts it.
+
+    The space is built with the stored tolerance ``tol`` (``_from_state``) and the points are
+    probed one at a time through ``tabulate_basis``, which refuses a point outside the domain.
+
+    Args:
+        knots (npt.NDArray[np.float64]): The knot vector, taken as stored.
+        tol (float): The absolute tolerance of the space.
+        pts (npt.NDArray[np.float64]): The points.
+
+    Returns:
+        npt.NDArray[np.bool_]: ``False`` where the point is refused as outside the domain.
+    """
+    space = BsplineSpace1D._from_state(knots, 2, False, tol)
+    out = np.empty(pts.shape, dtype=np.bool_)
+    for i, p in enumerate(pts):
+        try:
+            space.tabulate_basis(np.array([p]))
+        except ValueError as exc:
+            if "outside the knot vector domain" not in str(exc):
+                raise
+            out[i] = False
+        else:
+            out[i] = True
+    return out
+
+
 class TestMultiplicityCounting:
     """Knot-multiplicity counts must not absorb a near-but-distinct knot."""
 
@@ -74,7 +95,7 @@ class TestMultiplicityCounting:
     def test_periodic_num_basis_ignores_near_first_knot(self, base: float) -> None:
         """A periodic space's ``num_basis`` must not depend on a ``1e-6``-relative gap.
 
-        ``_get_multiplicity_of_first_knot_in_domain_impl`` counts how many of
+        The multiplicity of the first knot in the domain counts how many of
         ``knots[:degree+1]`` equal ``knots[degree]``. The leak made two knots a
         relative ``1e-6`` below it count as equal, raising the multiplicity from 1
         to 3, driving the periodic regularity correction from ``degree - 1 == 1``
@@ -116,19 +137,21 @@ class TestMultiplicityCounting:
 
     @pytest.mark.parametrize("base", SCALES)
     def test_boundary_multiplicities_ignore_a_near_boundary_knot(self, base: float) -> None:
-        """``_get_boundary_mults`` must report the true multiplicity at any scale.
+        """The boundary multiplicities must report the true multiplicity at any scale.
 
-        Shared by the product-space knot construction and, through the same
-        pattern, by ``to_open_bspline`` / ``to_periodic``.
+        Read as the first and last in-domain multiplicities of the space. The end-run count the
+        product's boundary conversion uses (``detail::boundary_multiplicities`` in
+        ``include/pantr/bspline/product.hpp``) is pinned on the same data in
+        ``cpp/tests/test_bspline_product.cpp``.
         """
         knots = np.array([1.0, 1.0, 1.0, 1.5, 2.0, 2.0, 2.0]) * base
         knots[0] -= INSIDE_LEAK * base
         knots[-1] += INSIDE_LEAK * base
         space = BsplineSpace1D(knots, 2, snap_knots=False)
 
-        m_left, m_right = _get_boundary_mults(space, space.tolerance)
+        _, mults = space.get_unique_knots_and_multiplicity(in_domain=True)
 
-        assert (m_left, m_right) == (2, 2)
+        assert (int(mults[0]), int(mults[-1])) == (2, 2)
 
 
 class TestDomainGate:
@@ -146,7 +169,7 @@ class TestDomainGate:
         tol = 1e-10
         pts = np.array([hi + INSIDE_LEAK * hi, hi + 10.0])
 
-        assert not np.any(_is_in_domain_impl(knots, 2, pts, tol))
+        assert not np.any(_in_domain(knots, tol, pts))
 
     @pytest.mark.parametrize("hi", SCALES)
     def test_gate_is_symmetric_in_undershoot_and_overshoot(self, hi: float) -> None:
@@ -170,8 +193,8 @@ class TestDomainGate:
         just_in = np.array([-0.5 * tol, hi + 0.5 * tol])
         just_out = np.array([-2.0 * tol, hi + 2.0 * tol])
 
-        np.testing.assert_array_equal(_is_in_domain_impl(knots, 2, just_in, tol), [True, True])
-        np.testing.assert_array_equal(_is_in_domain_impl(knots, 2, just_out, tol), [False, False])
+        np.testing.assert_array_equal(_in_domain(knots, tol, just_in), [True, True])
+        np.testing.assert_array_equal(_in_domain(knots, tol, just_out), [False, False])
 
     def test_band_stays_tol_wide_when_tol_falls_below_one_ulp(self) -> None:
         """The admitted band must be ``tol`` wide even where ``tol < ulp(knot_end)``.
@@ -199,7 +222,7 @@ class TestDomainGate:
         just_past = np.array([np.nextafter(hi, np.inf)])
         assert float(just_past[0]) - hi > tol
 
-        assert not bool(_is_in_domain_impl(knots, 2, just_past, tol)[0])
+        assert not bool(_in_domain(knots, tol, just_past)[0])
 
     @pytest.mark.parametrize("hi", SCALES)
     def test_evaluate_rejects_an_out_of_domain_point(self, hi: float) -> None:
@@ -254,8 +277,8 @@ class TestCardinalClassification:
     def test_near_uniform_operators_are_not_replaced_by_the_identity(self, rel: float) -> None:
         """A misclassified interval had its exact operator discarded for ``np.eye``.
 
-        ``_tabulate_Bspline_cardinal_1D_extraction_impl`` computes the exact
-        operator and then overwrites it with the identity on every interval flagged
+        The cardinal extraction operators (``cardinal_extraction_1d``) compute the exact
+        operator and then overwrite it with the identity on every interval flagged
         cardinal, so a misclassification did not merely mislabel: it substituted a
         wrong operator for a correct one that had already been computed two lines
         earlier.
@@ -372,18 +395,24 @@ class TestSplitMultiplicity:
 class TestRestrictBounds:
     """Restriction bounds must be snapped and validated absolutely.
 
-    These exercise the Layer-2 helpers rather than ``Bspline.restrict`` itself: the
-    public method is independently broken for any bound above roughly 8 in
-    magnitude by an unrelated defect at ``_bspline_restrict.py:183-184``, where an
-    absolute ``+/- tol`` nudge fed to ``np.searchsorted`` underflows below one ulp
-    and the wrong end of a repeated-knot block is selected. That defect predates
-    this fix and is untouched by it.
+    These exercise ``Bspline.restrict`` itself (they exercised the Layer-2 helpers
+    ``_validate_restrict_bounds`` and ``_compute_boundary_knots_to_insert`` before those moved
+    into the compiled library): the snapping shows in the domain of the restricted B-spline, and
+    the knots that needed inserting show in its knot vector. The tolerance is the space's own,
+    ``8 eps max(span, |knots[0]|, |knots[-1]|)``.
     """
 
     @staticmethod
     def _knots(base: float) -> npt.NDArray[np.float64]:
         """Clamped degree-2 knot vector on ``[base, 3 * base]``."""
         return np.array([1.0, 1.0, 1.0, 2.0, 3.0, 3.0, 3.0]) * base
+
+    @staticmethod
+    def _curve(base: float) -> Bspline:
+        """A degree-2 curve on the knots of :meth:`_knots`."""
+        knots = TestRestrictBounds._knots(base)
+        space = BsplineSpace([BsplineSpace1D(knots, 2)])
+        return Bspline(space, np.arange(4.0).reshape(4, 1))
 
     @pytest.mark.parametrize("base", SCALES)
     def test_a_bound_inside_the_domain_is_not_snapped_to_the_end(self, base: float) -> None:
@@ -399,20 +428,27 @@ class TestRestrictBounds:
         a_new = a + INSIDE_LEAK * base
         b_new = b - INSIDE_LEAK * base
 
-        snapped_a, snapped_b = _validate_restrict_bounds(knots, 2, 1e-15, a_new, b_new)
+        domain = self._curve(base).restrict((a_new, b_new)).space.spaces[0].domain
 
-        assert snapped_a == a_new
-        assert snapped_b == b_new
+        assert (float(domain[0]), float(domain[1])) == (a_new, b_new)
 
     @pytest.mark.parametrize("base", SCALES)
     def test_a_bound_at_the_domain_end_is_still_snapped(self, base: float) -> None:
-        """The tightened snap must still fire on an exact endpoint."""
+        """A bound within the tolerance of an end is that end, exactly.
+
+        The tightened snap must still fire: a bound half a tolerance off each end (inside it,
+        and far inside the leaked window) lands on the stored end value.
+        """
         knots = self._knots(base)
         a, b = float(knots[2]), float(knots[-3])
+        tol = knot_tolerance(knots)
+        mid = 2.0 * base
 
-        snapped_a, snapped_b = _validate_restrict_bounds(knots, 2, 1e-15, a, b)
+        lower = self._curve(base).restrict((a + 0.5 * tol, mid)).space.spaces[0].domain
+        upper = self._curve(base).restrict((mid, b - 0.5 * tol)).space.spaces[0].domain
 
-        assert (snapped_a, snapped_b) == (a, b)
+        assert float(lower[0]) == a
+        assert float(upper[1]) == b
 
     @pytest.mark.parametrize("base", SCALES)
     def test_interior_bounds_still_require_boundary_knots(self, base: float) -> None:
@@ -426,12 +462,13 @@ class TestRestrictBounds:
         a_new = a + INSIDE_LEAK * base
         b_new = b - INSIDE_LEAK * base
 
-        to_insert = _compute_boundary_knots_to_insert(knots, 2, 1e-15, a_new, b_new)
+        restricted = self._curve(base).restrict((a_new, b_new))
 
-        # Neither bound coincides with an existing knot, so each needs degree + 1.
-        assert to_insert.size == 6
-        np.testing.assert_array_equal(to_insert[:3], [a_new] * 3)
-        np.testing.assert_array_equal(to_insert[3:], [b_new] * 3)
+        # Neither bound coincides with an existing knot, so each gets degree + 1 copies; the
+        # interior knot stays.
+        np.testing.assert_array_equal(
+            restricted.space.spaces[0].knots, [a_new] * 3 + [2.0 * base] + [b_new] * 3
+        )
 
 
 class TestTHBRootBounds:
@@ -567,18 +604,17 @@ class TestDerivedKnotTolerance:
     @staticmethod
     @pytest.mark.parametrize("dtype", [np.float32, np.float64])
     def test_classes_partition_the_knot_vector(dtype: type[np.floating]) -> None:
-        """``np.repeat(unique, mults)`` rebuilds the whole vector, which ``_snap_knots`` needs.
+        """``np.repeat(unique, mults)`` rebuilds the whole vector, as snapping needs.
 
-        ``BsplineSpace1D._snap_knots`` *is* that ``np.repeat``, so if the
-        multiplicities stopped summing to ``knots.size`` the space would silently
-        change length. Checked directly on the kernel, with ``in_domain=False``.
+        The grouping must be exactly the one the C++ space snaps with (each class onto its
+        first knot), so if the multiplicities stopped summing to ``knots.size`` a vector
+        rebuilt from them would change length. Checked directly on the knot-class kernel,
+        with ``in_domain=False``.
         """
         raw = np.asarray([0.0, 0.0, 0.0, 0.25, 0.5, 0.5, 0.75, 1.0, 1.0, 1.0], dtype=dtype)
         space = BsplineSpace1D(raw, 2)
         knots = np.asarray(space.knots)
-        unique, mults = _get_unique_knots_and_multiplicity_impl(
-            knots, space.degree, space.tolerance, False
-        )
+        unique, mults = unique_knots_and_multiplicity(knots, space.degree, space.tolerance, False)
         assert int(mults.sum()) == knots.size
         assert np.array_equal(np.repeat(np.asarray(unique), mults), knots)
         assert np.all(np.isin(np.asarray(unique), knots)), "reported knots must be stored knots"
@@ -587,23 +623,23 @@ class TestDerivedKnotTolerance:
     def test_a_knot_vector_with_no_scale_compares_exactly() -> None:
         """An identically-zero knot vector leaves no magnitude to be relative to.
 
-        ``_knot_scale`` returns 0.0 and the tolerance with it, so grouping falls back
+        ``knot_scale`` returns 0.0 and the tolerance with it, so grouping falls back
         to exact equality. That is the only defensible answer -- there is no scale to
         read off the input -- and the vector is all one knot either way. Pinned
         because a zero tolerance is the kind of degenerate value that invites a
         well-meaning floor.
 
         Exercised through the knot layer rather than through a space, because
-        ``_knot_scale`` is ``max(span, |knots[0]|, |knots[-1]|)`` and so vanishes only
+        ``knot_scale`` is ``max(span, |knots[0]|, |knots[-1]|)`` and so vanishes only
         when the whole vector is zero -- which is exactly the zero-interval case
         ``BsplineSpace1D`` refuses since issue #320. The scale-free regime is
         therefore reachable in the knot layer and nowhere above it, and that is a
         property of the derivation worth stating rather than a gap in the test.
         """
         knots = np.zeros(8, dtype=np.float64)
-        assert _knot_tolerance(knots) == 0.0
+        assert knot_tolerance(knots) == 0.0
 
-        unique, mults = _get_unique_knots_and_multiplicity_impl(knots, 3, 0.0, False)
+        unique, mults = unique_knots_and_multiplicity(knots, 3, 0.0, False)
         assert unique.tolist() == [0.0]
         assert mults.tolist() == [8]
 

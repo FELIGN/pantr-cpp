@@ -48,12 +48,8 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
-from pantr._numba_compat import wait_for_jit_warmup
+from pantr._testing import knot_tolerance
 from pantr.bspline import Bspline, BsplineSpace, BsplineSpace1D
-from pantr.bspline._bspline_knots import _knot_tolerance
-
-wait_for_jit_warmup()
-
 
 TICKET_KNOTS = np.full(4, 5.0)
 """The exact knot vector from the ticket's reproduction."""
@@ -143,9 +139,10 @@ def test_an_interior_knot_that_swallows_the_domain_is_refused_too(
 def test_periodic_and_unsnapped_construction_are_covered_as_well() -> None:
     """Neither ``periodic=True`` nor ``snap_knots=False`` is a way back in.
 
-    ``snap_knots=False`` matters because the library uses it internally
-    (``_bspline_split``, ``_bspline_restrict``, ``_bspline_roots``); had the check
-    ridden on snapping, those paths would have kept the hole open.
+    ``snap_knots=False`` matters because the library uses it internally (the C++ ``restrict``
+    and ``split`` in ``include/pantr/bspline/restrict.hpp``, and the root finder in
+    ``include/pantr/bspline/roots.hpp``); had the check ridden on snapping, those paths would
+    have kept the hole open.
     """
     with pytest.raises(ValueError, match=_NO_INTERVAL):
         BsplineSpace1D(np.full(4, 5.0), 1, periodic=True)
@@ -194,7 +191,7 @@ def test_the_message_stays_true_when_the_domain_ends_are_not_close() -> None:
     assert "every step between them is at most" in message, message
     # The premise of the test: the ends are genuinely further apart than the
     # tolerance the message quotes, so a span-based claim would have been wrong.
-    assert hi - lo > _knot_tolerance(raw)
+    assert hi - lo > knot_tolerance(raw)
 
 
 def test_a_space_with_a_single_interval_is_untouched() -> None:

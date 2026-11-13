@@ -1,0 +1,72 @@
+{
+ "pantr_file": "src/pantr/__init__.py",
+ "commit": "365ef21d88236bac7c948b8509e80bb97805950f-dirty",
+ "extension": "pantr._pantr_v4 (v4, _pantr_v4.abi3.so)",
+ "threads": 8,
+ "python": "3.14.6 | packaged by conda-forge | (main, Aug 11 2026, 10:26:15) [GCC 14.4.0]",
+ "machine": {
+  "cpu": "Intel(R) Xeon(R) Gold 6148 CPU @ 2.40GHz",
+  "platform": "Linux-5.15.0-144-generic-x86_64-with-glibc2.35",
+  "affinity": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7
+  ],
+  "governor": "schedutil"
+ },
+ "env": {
+  "OMP_NUM_THREADS": "1",
+  "OPENBLAS_NUM_THREADS": "1",
+  "MKL_NUM_THREADS": "1",
+  "NUMBA_NUM_THREADS": "8",
+  "PANTR_NUM_THREADS": null,
+  "PANTR_ISA": null
+ },
+ "repeats": 30,
+ "cases": {
+  "S1.tabulate_legendre_1d.large": {
+   "what": "tabulate_legendre_1d(3, 1000000 points)",
+   "stage": "S1",
+   "size": "large",
+   "loops": 3,
+   "per_call_ns": [
+    641369.3333333334,
+    636396.6666666666,
+    636444.6666666666,
+    625392.6666666666,
+    618143.0,
+    615456.3333333334,
+    625983.0,
+    614044.3333333334,
+    623317.6666666666,
+    609305.6666666666,
+    609648.0,
+    590628.3333333334,
+    595437.3333333334,
+    597247.6666666666,
+    599151.3333333334,
+    594505.3333333334,
+    592581.6666666666,
+    597348.6666666666,
+    589762.3333333334,
+    594501.0,
+    584751.6666666666,
+    591020.6666666666,
+    582449.6666666666,
+    590006.0,
+    577867.6666666666,
+    577952.0,
+    589736.3333333334,
+    573610.6666666666,
+    576046.3333333334,
+    598694.0
+   ],
+   "median_ns": 596342.5
+  }
+ }
+}

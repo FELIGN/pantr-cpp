@@ -33,9 +33,11 @@ import numpy as np
 import pytest
 from numpy import typing as npt
 
+from pantr._testing import BINCOEFF_MAX_N as _BINCOEFF_MAX_N
+from pantr._testing import bincoeff as _bincoeff
+from pantr._testing import check_bincoeff_envelope
 from pantr.bezier import Bezier
 from pantr.bspline import Bspline, BsplineSpace, BsplineSpace1D
-from pantr.bspline._bspline_degree_core import _BINCOEFF_MAX_N, _bincoeff
 
 # One inside the envelope, one outside. Both are exercised at every entry point so a
 # test cannot pass by rejecting everything.
@@ -58,22 +60,19 @@ class TestKernelEnvelope:
         for k in range(_BINCOEFF_MAX_N + 1):
             assert _bincoeff(_BINCOEFF_MAX_N, k) == float(math.comb(_BINCOEFF_MAX_N, k))
 
-    def test_wraps_one_past_the_declared_bound(self) -> None:
-        """One past the bound a coefficient wraps, and does so negative.
+    def test_the_guard_refuses_one_past_the_declared_bound(self) -> None:
+        """At the bound the guard passes; one past it, it refuses with the envelope message.
 
-        This is what makes the envelope load-bearing rather than cosmetic: the
-        failure is a sign flip, not a rounding error, so it propagates as gross
-        geometry corruption.
-
-        The ``errstate`` is deliberate and is itself part of the point: with
-        ``NUMBA_DISABLE_JIT=1`` the recurrence runs on numpy scalars, which do warn on
-        overflow, but the compiled kernel this test exists for wraps in silence.
+        The Numba kernel wrapped one past the bound, silently and with a sign flip, so the
+        guard was the only thing between a caller and gross geometry corruption. The compiled
+        kernel computes in unsigned 64-bit arithmetic and is exact one past the bound (the
+        C++ suite pins that), so the property to keep is that the *guard* stands where the
+        old kernel's contract ended: a request is accepted or refused exactly as before.
         """
-        with np.errstate(over="ignore"):
-            wrapped = _bincoeff(OUTSIDE, OUTSIDE // 2)
+        check_bincoeff_envelope(_BINCOEFF_MAX_N, "the request")
 
-        assert wrapped < 0.0
-        assert wrapped != float(math.comb(OUTSIDE, OUTSIDE // 2))
+        with pytest.raises(ValueError, match=ENVELOPE_MSG):
+            check_bincoeff_envelope(OUTSIDE, "the request")
 
     def test_bound_is_the_int64_limit_not_the_float_limit(self) -> None:
         """The declared bound is the exact-integer limit (61), not the float one (56).

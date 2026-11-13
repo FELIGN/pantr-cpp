@@ -6,6 +6,8 @@ MPI is not available in the test environment, so the communicator is duck-typed 
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pytest
 
@@ -37,12 +39,32 @@ from pantr.mpi import (
 )
 
 
-class _FakeComm:
-    """Minimal stand-in for an mpi4py communicator (rank/size only)."""
+class _GatherHub:
+    """The shared state of the ranks of one simulated run, simulated one after another.
 
-    def __init__(self, rank: int, size: int) -> None:
+    Each rank's ``allgather`` records what it sent; the result holds, at every rank's slot,
+    what that rank sent if it has already run, and an empty array of the same dtype otherwise.
+    Simulating rank 0 first therefore gives every later rank rank 0's payload, which is all the
+    partition broadcast of ``create_distributed_space`` reads.
+    """
+
+    def __init__(self) -> None:
+        self.sent: dict[int, Any] = {}
+
+
+class _FakeComm:
+    """Minimal stand-in for an mpi4py communicator.
+
+    ``rank`` and ``size``, and an ``allgather`` simulated through a shared :class:`_GatherHub`
+    (one per simulated run, each rank on its own ``_FakeComm``). Without a hub only a lone
+    rank 0 can gather: its own payload, and empty arrays for the other ranks.
+    """
+
+    def __init__(self, rank: int, size: int, hub: _GatherHub | None = None) -> None:
         self._rank = rank
         self._size = size
+        self._hub = _GatherHub() if hub is None else hub
+        self.gathers = 0
 
     @property
     def rank(self) -> int:
@@ -51,6 +73,12 @@ class _FakeComm:
     @property
     def size(self) -> int:
         return self._size
+
+    def allgather(self, obj: Any) -> list[Any]:
+        self.gathers += 1
+        self._hub.sent[self._rank] = obj
+        empty = np.asarray(obj)[:0]
+        return [self._hub.sent.get(r, empty) for r in range(self._size)]
 
 
 def _assert_local_equal(a: LocalSpace, b: LocalSpace) -> None:
@@ -234,8 +262,9 @@ class TestCreateDistributedSpace:
     def test_grid_method_matches_explicit_tp(self) -> None:
         space = create_uniform_space([2, 2], [4, 4])
         part = partition_grid(tensor_product_grid(space), 4)
+        hub = _GatherHub()
         for rank in range(4):
-            comm = _FakeComm(rank, 4)
+            comm = _FakeComm(rank, 4, hub)
             got = create_distributed_space(space, comm)  # method="grid" default
             ref = DistributedSpace(space, part, comm)
             if got.local is not None:
@@ -249,8 +278,9 @@ class TestCreateDistributedSpace:
         grid.refine(0, [0], [2])
         thb = THBSplineSpace(root, grid)
         part = partition_grid(thb.grid, 2)
+        hub = _GatherHub()
         for rank in range(2):
-            comm = _FakeComm(rank, 2)
+            comm = _FakeComm(rank, 2, hub)
             got = create_distributed_space(thb, comm)
             ref = DistributedSpace(thb, part, comm)
             if got.local is not None:
@@ -261,8 +291,9 @@ class TestCreateDistributedSpace:
     def test_graph_method_matches_explicit(self) -> None:
         space = create_uniform_space([2, 2], [4, 4])
         part = partition_graph(coupling_graph(space), 3)
+        hub = _GatherHub()
         for rank in range(3):
-            comm = _FakeComm(rank, 3)
+            comm = _FakeComm(rank, 3, hub)
             got = create_distributed_space(space, comm, method="graph")
             ref = DistributedSpace(space, part, comm)
             if got.local is not None:
@@ -299,6 +330,66 @@ class TestCreateDistributedSpace:
     def test_grid_method_invalid_type_raises(self) -> None:
         with pytest.raises(TypeError, match="BsplineSpace or THBSplineSpace"):
             create_distributed_space(object(), _FakeComm(0, 2))  # type: ignore[arg-type]
+
+
+class TestPartitionBroadcast:
+    """create_distributed_space computes the partition on rank 0 and sends it to the others."""
+
+    def test_every_rank_holds_rank_zeros_partition(self) -> None:
+        # The other ranks ask for another backend, whose partition differs from rank 0's: they
+        # hold rank 0's all the same, since only rank 0 computes it.
+        space = create_uniform_space([2, 2], [4, 4])
+        grid = tensor_product_grid(space)
+        block = partition_grid(grid, 4, backend="block").cell_owner
+        rcb = partition_grid(grid, 4, backend="rcb", cell_weights=np.arange(16.0) + 1).cell_owner
+        assert not np.array_equal(block, rcb)  # the oracle could tell them apart
+        hub = _GatherHub()
+        got = [create_distributed_space(space, _FakeComm(0, 4, hub), backend="block")]
+        for rank in range(1, 4):
+            comm = _FakeComm(rank, 4, hub)
+            weights = np.arange(16.0) + 1
+            got.append(create_distributed_space(space, comm, backend="rcb", cell_weights=weights))
+        for ds in got:
+            np.testing.assert_array_equal(ds.partition.cell_owner, block)
+            assert ds.n_parts == 4
+
+    def test_other_ranks_do_not_compute(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import pantr.mpi._create as create_module  # noqa: PLC0415
+
+        calls: list[int] = []
+        real = partition_grid
+
+        def counting(*args: Any, **kwargs: Any) -> Any:
+            calls.append(1)
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(create_module, "partition_grid", counting)
+        space = create_uniform_space([2, 2], [4, 4])
+        hub = _GatherHub()
+        for rank in range(3):
+            create_distributed_space(space, _FakeComm(rank, 3, hub))
+        assert len(calls) == 1
+
+    def test_rank_zero_failure_raises_on_every_rank(self) -> None:
+        space = create_uniform_space([2, 2], [4, 4])
+        hub = _GatherHub()
+        with pytest.raises(ValueError, match="Unknown backend|backend"):
+            create_distributed_space(space, _FakeComm(0, 2, hub), backend="bogus")
+        with pytest.raises(ValueError, match="rank 0 could not compute the partition"):
+            create_distributed_space(space, _FakeComm(1, 2, hub), backend="bogus")
+
+    def test_one_rank_sends_nothing(self) -> None:
+        space = create_uniform_space([2, 2], [4, 4])
+        comm = _FakeComm(0, 1)
+        ds = create_distributed_space(space, comm)
+        assert comm.gathers == 0
+        np.testing.assert_array_equal(ds.partition.cell_owner, np.zeros(16, dtype=np.int32))
+
+    def test_several_ranks_send_once(self) -> None:
+        space = create_uniform_space([2, 2], [4, 4])
+        comm = _FakeComm(0, 2)
+        create_distributed_space(space, comm)
+        assert comm.gathers == 1
 
 
 # --------------------------------------------------------------------------- #
@@ -397,8 +488,9 @@ class TestDistributedFunction:
         space = create_uniform_space([2, 2], [4, 4])
         cp = np.random.default_rng(4).standard_normal(space.num_total_basis)
         fn = Bspline(space, cp)
+        hub = _GatherHub()
         for rank in range(4):
-            comm = _FakeComm(rank, 4)
+            comm = _FakeComm(rank, 4, hub)
             dfn = create_distributed_function(fn, comm)
             ref = create_distributed_space(space, comm).localize(cp)
             assert dfn.rank == rank and dfn.n_parts == 4
@@ -414,8 +506,9 @@ class TestDistributedFunction:
         space = create_uniform_space([2, 2], [4, 4])
         cp = np.random.default_rng(10).standard_normal((space.num_total_basis, 2))
         gfn = Bspline(space, cp)
+        hub = _GatherHub()
         for rank in range(4):
-            dfn = create_distributed_function(gfn, _FakeComm(rank, 4))
+            dfn = create_distributed_function(gfn, _FakeComm(rank, 4, hub))
             if dfn.local is None:
                 continue
             assert isinstance(dfn.local, Bspline) and dfn.local.control_points.shape[-1] == 2

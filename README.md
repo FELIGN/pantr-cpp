@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](https://github.com/FELIGN/pantr/blob/main/LICENSE)
 [![Documentation Status](https://readthedocs.org/projects/pantr/badge/?version=latest)](https://pantr.readthedocs.io/en/latest/?badge=latest)
 
-Polynomial and NURBS Toolkit (**PaNTr**) is a pure Python 3.11–3.14 library for geometric modeling and numerical analysis using [NumPy](https://numpy.org), [SciPy](https://scipy.org), and [Numba](https://numba.pydata.org).
+Polynomial and NURBS Toolkit (**PaNTr**) is a library for geometric modeling and numerical analysis: header-only C++20, with a Python 3.12–3.14 API built on [NumPy](https://numpy.org) and [SciPy](https://scipy.org).
 
 **Documentation:** [pantr.readthedocs.io](https://pantr.readthedocs.io)
 
@@ -26,8 +26,9 @@ Polynomial and NURBS Toolkit (**PaNTr**) is a pure Python 3.11–3.14 library fo
 - **Quadrature and change of basis** — Gauss–Legendre and tensor-product
   rules, plus exact change of basis operators between Bernstein, Lagrange,
   monomial, and cardinal B-spline bases.
-- **Fast and typed** — Numba-JIT kernels parallelized over CPU cores, with
-  strict type hints across the public API.
+- **Fast and typed** — compiled C++ kernels parallelized over CPU cores on
+  PaNTr's own thread pool, with strict type hints across the public API, and the
+  same library usable from C++ through CMake (`find_package(pantr)`).
 - **Dependency-gated MPI and visualization** — `pantr.mpi` distributes spaces across
   ranks once [`mpi4py`](https://github.com/mpi4py/mpi4py) is installed, and `pantr.viz`
   renders exact higher-order geometry through [PyVista](https://docs.pyvista.org) /
@@ -40,8 +41,13 @@ Polynomial and NURBS Toolkit (**PaNTr**) is a pure Python 3.11–3.14 library fo
 pip install pantr
 ```
 
-Requires Python 3.11–3.14. The serial core depends only on NumPy, SciPy,
-Numba, and [threadpoolctl](https://github.com/joblib/threadpoolctl).
+Requires Python 3.12–3.14. The serial core depends only on NumPy and SciPy;
+the wheel carries the compiled extension.
+
+Wheels exist for Linux x86_64 and aarch64 (glibc 2.28 or later, `manylinux_2_28`), macOS 14 or later
+on arm64 (Apple silicon) and Windows on x86_64 (amd64), one `cp312-abi3` wheel per platform for every
+supported Python. On any other platform (musllinux, Intel macOS, 32-bit or arm64 Windows) pip builds
+from the sdist, which needs the toolchain and network access described below.
 
 To install the latest development version from source:
 
@@ -50,6 +56,14 @@ git clone https://github.com/FELIGN/pantr.git
 cd pantr
 pip install .
 ```
+
+A source build (`pip install .`, or pip building the sdist) needs a C++20 compiler, CMake 3.28 or
+later and git: at configure time CMake clones five header-only dependencies, each pinned to a
+commit (Eigen, Spectra, Kokkos mdspan, Boost.Multiprecision and Boost.Config; see
+`THIRD_PARTY_NOTICES.md`). To build offline, clone them first and pass
+`-DFETCHCONTENT_SOURCE_DIR_PANTR_EIGEN=<checkout>` (likewise `_PANTR_SPECTRA`, `_PANTR_MDSPAN`,
+`_PANTR_BOOST_MULTIPRECISION`, `_PANTR_BOOST_CONFIG`) with `-DFETCHCONTENT_FULLY_DISCONNECTED=ON`,
+for example through pip's `--config-settings=cmake.define.<NAME>=<value>`.
 
 ## Quick start
 
@@ -80,26 +94,31 @@ for a full walkthrough from this first curve to NURBS, CAD modeling, and refinem
 Every install of PaNTr includes **all** of its modules — `pantr.viz` and `pantr.mpi`
 among them. Those two stay dormant until their third-party backend is importable, and
 activate automatically once it is; until then, calling into them raises a clear,
-actionable error (nothing else is affected). The "extras" below add **no PaNTr code** —
-they are just a convenience that installs the backend for you, so `pip install
-"pantr[viz]"` and `pip install pyvista` are equivalent.
+actionable error (nothing else is affected). The "extras" below are a convenience that
+installs the backend for you, so `pip install "pantr[viz]"` and `pip install pyvista` are
+equivalent. The `mpi` extra is the exception: besides `mpi4py` it installs `pantr-mpi`,
+pantr's own MPI glue, built for one MPI family, which an `mpi4py` communicator needs.
 
 | Capability | Module | Backend it needs | Install (extra or direct) |
 |---|---|---|---|
 | Visualization & VTK export | `pantr.viz` | [`pyvista`](https://docs.pyvista.org) (+ [VTK](https://vtk.org)) | `pip install "pantr[viz]"` · or `pip install pyvista` |
-| Distributed (MPI) spaces | `pantr.mpi` | [`mpi4py`](https://github.com/mpi4py/mpi4py) (+ an MPI library) | `pip install "pantr[mpi]"` |
+| Distributed (MPI) spaces | `pantr.mpi` | [`mpi4py`](https://github.com/mpi4py/mpi4py) and `pantr-mpi` (+ an MPI library) | `pip install "pantr[mpi]"` |
 | METIS partitioning backend | `pantr.bspline.partition_graph` | [`pymetis`](https://github.com/inducer/pymetis) | `pip install "pantr[metis]"` |
 
 The serial core (`pantr.grid`, `pantr.bspline`, …) never imports `pantr.mpi`, so a plain
 `pip install pantr` behaves identically with or without these backends. Contributors can
 grab everything — including the docs toolchain ([Sphinx](https://www.sphinx-doc.org)) —
-with `pip install -e ".[dev]"`.
+with `make install` in a clone (see below).
 
 ## Development
 
 ```bash
-pip install -e ".[dev]"   # includes all optional feature extras
+make install   # every optional extra and the build tools, then `make ext`
 ```
+
+There is no editable install: `make ext` compiles the extension (a C++20 compiler, CMake 3.28
+or later and Ninja are needed) into `src/pantr`, where the test suite imports it. Run it again
+after changing C++ code; the test session refuses a module older than its sources.
 
 ## License
 

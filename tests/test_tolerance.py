@@ -206,3 +206,24 @@ class TestTolerance:
         """
         assert get_conservative(np.float16) == 4.0
         assert get_default(np.float16) < 1.0
+
+
+def test_a_dtype_like_answer_does_not_depend_on_call_order() -> None:
+    """A float64 scalar seen first must not make a float32 scalar read float64's epsilon.
+
+    ``np.float64(1.0) == np.float32(1.0)`` and their hashes agree, so a cache keyed on the
+    caller's argument served the first answer for both. The result for a dtype-like must depend
+    on ``np.dtype(arg)`` only.
+    """
+    assert get_machine_epsilon(np.float64(1.0)) == float(np.finfo(np.float64).eps)
+    assert get_machine_epsilon(np.float32(1.0)) == float(np.finfo(np.float32).eps)
+    assert get_default(np.float32(1.0)) == 64.0 * float(np.finfo(np.float32).eps)
+
+    class Holder:
+        def __init__(self, dtype: np.dtype[np.floating[Any]]) -> None:
+            self.dtype = dtype
+
+    holder = Holder(np.dtype(np.float32))
+    assert get_machine_epsilon(holder) == float(np.finfo(np.float32).eps)
+    holder.dtype = np.dtype(np.float64)
+    assert get_machine_epsilon(holder) == float(np.finfo(np.float64).eps)

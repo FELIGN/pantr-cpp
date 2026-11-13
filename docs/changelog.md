@@ -2,7 +2,101 @@
 
 ## Unreleased
 
+### Added
+- **`pantr.bezier.set_root_provider` and `get_root_provider`** select which root finder
+  `find_roots` and `find_monotone_root` use: `"builtin"` (pantr's own) or `"berf"` (BeRF-FR,
+  from the `pantr-berf` package). The initial choice comes from the `PANTR_ROOT_PROVIDER`
+  environment variable, read on first use (an unknown name raises `ValueError` then, not at
+  import); without it, `"berf"` when `pantr-berf` is installed, else `"builtin"`. Asking for
+  `"berf"` without the package raises `ImportError`. `pantr-berf` is not published yet, so
+  `"builtin"` is the only provider available for now; the switch is where the certified finder
+  will plug in once it is.
+- **A METIS graph partitioner for C++ users** (`pantr::metis::Partitioner`, target `pantr::metis`,
+  CMake option `PANTR_WITH_METIS`, off by default), against a METIS the user installs. It does what
+  `partition_graph(backend="metis")` does through pymetis. The Python package does not use it:
+  `backend="metis"` still needs `pymetis` (`pip install 'pantr[metis]'`).
+
+- **`pantr-mpi`, the MPI part of `pantr.mpi`, is a separate distribution.** `pantr.mpi`'s
+  distributed algorithms are compiled into pantr's extension, which links no MPI; an
+  `mpi4py` communicator reaches them through `pantr-mpi`, which is built for one MPI family
+  (Open MPI, or the MPICH ABI: MPICH, Intel MPI, MVAPICH). `pip install "pantr[mpi]"` installs
+  `mpi4py` 4.0 or later and `pantr-mpi` at pantr's own version (the previous extra installed
+  `mpi4py` 3.1 or later alone). The first time an `mpi4py` communicator is used, the family
+  `pantr-mpi` was built for is compared with the library `mpi4py` loaded
+  (`MPI.Get_library_version()`): a mismatch, or an extension that fails to load, raises
+  `ImportError` naming the family built for and the library loaded, and a missing `pantr-mpi`
+  raises `ImportError` asking for `pantr[mpi]`. A duck-typed communicator (any object with
+  `rank`, `size`, `allgather` and `allreduce`) needs neither `mpi4py` nor `pantr-mpi`. The C++
+  API has the same algorithms (`include/pantr/mpi/`, MPI-free except `mpi_table.hpp` and
+  `mpi_communicator.hpp`, over a `Communicator` concept) and an `MpiCommunicator` (in
+  `mpi_communicator.hpp`) on the `pantr::mpi` target.
+- **The pantr wheel ships pantr's C++ headers and a CMake package**, under `pantr/include` and
+  `pantr/share/cmake/pantr`, and **`pantr.cmake_dir()`** returns the package's directory, to pass to
+  CMake as `pantr_DIR` (it raises `FileNotFoundError` in a source checkout, which has none). The
+  wheel does not carry the third-party headers a CMake install of pantr bundles, so its package
+  provides `find_package(pantr COMPONENTS mpi-capsule)` only and refuses `pantr::pantr` with a
+  message saying so. This is what `pantr-mpi`'s source distribution builds against, so
+  `pip install --no-binary pantr-mpi pantr-mpi` builds it for a local MPI, provided the `pantr`
+  the build finds is this release's wheel (see the distributed guide on build isolation).
+
 ### Rejected where it used to be accepted
+- **`Bezier.multiply` and `Bspline.multiply` of finite control points whose product overflows**
+  raise `OverflowError`; the previous release returned `inf` control points with NumPy's
+  "overflow encountered in multiply" `RuntimeWarning`. With two or more parametric directions the
+  formula forms products of binomial coefficients and control points before scaling, so it can
+  overflow (and raise) for `float64` control points near `1e150` whose product is representable. NaN or infinite control points are not
+  refused: they propagate to the product control points that read them.
+- **`create_uniform_open_knots` and `create_uniform_periodic_knots` with a NaN or infinite
+  domain end** raise `ValueError` ("domain must be finite, ..."); the previous release returned
+  NaN or infinite knots.
+- **`pantr.bezier.find_roots` and `find_monotone_root` with `tol=inf` or `tol=nan`** raise
+  `ValueError` ("tol must be positive and finite"). With `tol=inf`, `find_roots`
+  returned no roots and `find_monotone_root` a value, without a warning; with NaN, `find_roots`
+  could report one root several times.
+- **`THBSplineSpace.refine` and `refine_region` on a `float32` knot vector whose knots within one
+  refinement window lie more than the `float32` range apart** (for example degree 2 on
+  `[-2e38, 0, 2e38]`) raise `OverflowError`, as does a space built on such a refined grid: the
+  two-scale matrix between the levels overflows. The previous release built the refined space, and its
+  `prolongation_to` returned NaN entries without a warning.
+- **`pantr.bezier.find_roots` and `find_monotone_root`, single and batch, with a NaN or infinite
+  coefficient** raise `ValueError` ("coefficients must be finite", naming the first such row in
+  batch mode). The previous release answered: `find_monotone_root` of three NaN coefficients
+  returned about `1`, and `find_roots` returned no roots for it, or roots for a polynomial with one
+  NaN or infinite coefficient among finite ones.
+- **`Bezier.minimize_degree` with `tol=inf` or `tol=nan`** raises `ValueError` ("tol must be
+  finite"); the previous release reduced any Bézier to degree 0 with either, without a warning. A
+  finite zero or negative `tol` still keeps the input; `tol=-inf`, which kept it, now raises too.
+- **`pantr.bspline.find_roots` with `tol=nan` or `tol=inf`** raises `ValueError` ("tol must be
+  positive and finite"); the previous release returned no roots for NaN, and for `inf` raised that
+  the spline vanishes identically.
+- **`pantr.bspline.find_roots` of a spline with a NaN or infinite control point, or an infinite
+  weight,** raises `ValueError` ("coefficients must be finite", as for the Bézier roots; a NaN
+  weight is refused first as a weight that is not strictly positive, as before). The previous
+  release returned no roots for a NaN, even for the spans the NaN does not touch, and for an
+  infinite control point raised that the spline vanishes identically.
+- **A raw `BVH` whose internal node has a `node_cell` below `-1`** raises `ValueError`; the
+  documented encoding is `-1`, and the previous release accepted any negative value.
+- **`THBSplineSpace` whose grid's root bounds miss a small axis of the root space's domain**
+  raises `ValueError` ("grid root bounds must match root_space domain"). Each axis is now held to
+  its own knot tolerance; the previous release used the largest over the axes, so beside a
+  `[0, 1e6]` axis a `[0, 1e-3]` axis's bound off by `1e-9` was accepted.
+- **`create_distributed_space` and `create_distributed_function` with a duck-typed communicator
+  of more than one rank that has no `allgather`** raise `AttributeError`: the partition is now
+  sent from rank 0 (see under Changed). The previous release read only `rank` and `size`.
+- **`pantr.mpi.configure_threads` has no `limit_blas` argument**: passing it raises `TypeError`.
+  It limited BLAS threads through `threadpoolctl`; the dense solves of the distributed algorithms
+  are compiled Eigen, which starts no thread of its own.
+- **`pantr.num_threads` has no `limit_blas` argument**: `pantr.num_threads(n, limit_blas=True)`
+  raises `TypeError`. It limited BLAS threads through `threadpoolctl`, which pantr no longer
+  depends on. pantr's dense solves are compiled Eigen, which starts no thread of its own, but some
+  calls still reach NumPy's BLAS (for example `THBSplineSpace.restriction_to`, through
+  `numpy.linalg.pinv`). To limit the BLAS threads of those and of NumPy or SciPy calls in your
+  code, use `threadpoolctl.threadpool_limits` directly.
+- **An `mpi4py` communicator of an MPI initialized below `MPI_THREAD_FUNNELED`** is refused with
+  `RuntimeError` (`mpi4py` asks for `MPI_THREAD_MULTIPLE` by default). pantr calls MPI only from
+  the thread that calls the distributed algorithm, outside its thread pool; at
+  `MPI_THREAD_FUNNELED` exactly, that thread must be the one that initialized MPI, and a
+  collective called from another thread is refused too.
 - **`num_intervals=0` is refused by all three knot-vector factories.**
   `create_uniform_open_knots` and `create_uniform_periodic_knots` documented
   `num_intervals` as *"must be non-negative"* and their shared validator enforced exactly
@@ -34,7 +128,10 @@
 - **`Bspline.derivative(keep_degree=True)` refuses an unclamped direction**, and so does a
   rational `derivative()` in either setting, since both re-elevate. It used to return a
   function that disagrees with the true derivative. A non-rational `derivative()` with
-  `keep_degree=False`, and a direction of degree 1, are unaffected.
+  `keep_degree=False`, and a non-rational direction of degree 1, are unaffected. A rational
+  direction of degree 1 that is not clamped at both ends (unclamped, or clamped at one end only)
+  is differentiated, where the previous release raised `ValueError` (see the rational `derivative`
+  under Changed); a periodic one whose seam is `C^0` is refused as before.
 - **A rational `derivative()` on a periodic direction with a C^0 seam is refused**
   (seam multiplicity equal to the degree). The derivative is discontinuous at the seam and
   has no periodic form; the error says so. Before, the same input raised a misleading
@@ -42,12 +139,124 @@
 - **`reduce_degree` on a rational `Bezier` or `Bspline` refuses a reduction that makes a
   control weight zero or negative.** The result would have a pole on the domain and would
   not be a NURBS. `Bezier.minimize_degree` already declined such reductions.
-- **The extraction dispatchers refuse an identity-flagged operator that is not square.**
-  The identity branch of the kernels assumes a square operator and used to read past the
-  operand. No public path builds such an operator; direct callers of the Layer 2 helpers
-  were exposed.
+- **The raw Kronecker application refuses an identity-flagged operator that is not square**
+  (`pantr._testing.kron_apply` and the C++ `pantr::bspline::apply_kron`, which replace the
+  private Layer 2 extraction dispatchers). The identity branch assumes a square operator and
+  used to read past the operand. No public path builds such an operator.
+- **Complex `PointsLattice` coordinates are refused** (`ValueError`), and a non-integer
+  point count given to `create_lagrange_points_lattice` raises `TypeError` instead of being
+  truncated. A complex lattice used to keep its dtype, which no tabulation could use.
+- **An unknown Lagrange variant is refused** by `tabulate_lagrange_1d`, `tabulate_lagrange`,
+  `create_lagrange_points_lattice` and `compute_lagrange_to_bernstein_1d` with a `ValueError`
+  (`'...' is not a valid LagrangeVariant`). Any value that was not one of the five used to select
+  the Chebyshev second-kind nodes silently. The variant is now converted once, for the C++
+  library, which knows the five families and nothing else; except in `tabulate_lagrange`, which
+  still checks its degrees first, it is checked before the count or degree
+  (`compute_bernstein_to_lagrange_1d` already refused it). The same holds for
+  `BsplineSpace1D.tabulate_Lagrange_extraction_operators` and for `SpanwiseElementExtraction`
+  with `target="lagrange"`, which treated any other value as the Chebyshev second-kind variant;
+  lower-case string values are still accepted, and the other targets still ignore the variant.
+- **`Bspline.remove_knots` refuses a knot that is not an interior knot of the domain** (a knot
+  outside the domain of an unclamped direction): `ValueError` "Cannot remove knot v: it is not
+  an interior knot of the domain [lo, hi]." The previous kernel indexed past its arrays for such
+  a knot; it returned the B-spline unchanged in most cases, and one with other values under a
+  large `tol`.
+- **A knot repeated more than `degree + 1` times is refused** with a `ValueError` naming the
+  knot, its multiplicity and the degree: by `Bspline.remove_knots` when it is the knot to
+  remove, and by `elevate_degree`, `reduce_degree`, `derivative(keep_degree=True)` and the
+  rational `derivative` for any such knot in a direction they work on. The algorithms index their
+  arrays assuming at most `degree + 1` copies of a knot, and the C++ code refuses rather than
+  read past them. For the knot to remove, the previous release returned the B-spline unchanged by
+  default and with `num=1`, and removed up to `degree` copies under a large `tol` (through a
+  wrapped negative index). In the other operations the result depended on where the excess
+  stood: `elevate_degree`, `reduce_degree` and `derivative(keep_degree=True)` returned the right
+  function for most excesses at the first knot, and `reduce_degree` for most interior ones;
+  otherwise they raised an unrelated error ("The number of control points must be a multiple of
+  ...", "Inserting these knots would exceed the maximum multiplicity", `ZeroDivisionError`) or
+  ended the process, except that `reduce_degree` returned another function in one sampled
+  degree-1 case; the rational `derivative` raised, ended the process or, in a sampled degree-1
+  case, returned another function. The non-rational `derivative()` with `keep_degree=False` still works on such a B-spline.
+- **`Bspline.reduce_degree` refuses a direction whose knot vector is not clamped** ("needs a
+  clamped knot vector"); the previous release returned a different function or raised another
+  error ("knots must be non-decreasing", "knot vector spans no interval", "A periodic knot vector
+  needs a boundary multiplicity").
+- **A NaN `value` in `Bspline.slice`** raises `ValueError` ("value nan is outside the domain");
+  it was an `IndexError` raised after reading past the knots.
+- **A `scratch` array of `SpanwiseElementExtraction`'s `apply` family that overlaps the operand
+  or `out`** raises `ValueError` ("scratch must not overlap the operand or out"). The previous
+  kernels used it as working memory: depending on the overlap, the identity pattern and the
+  number of directions, the result was right or corrupted.
+- **`SpanwiseElementExtraction` of a `BsplineSpace` with no direction** raises `IndexError`; the
+  previous release built one.
+- **A `BVH` built from node arrays that do not form a tree** raises `ValueError` ("the node
+  arrays do not encode a tree"): every node must be reachable from the root exactly once, which the
+  compiled traversal relies on. The previous release accepted node arrays whose internal nodes
+  share a child, and a query then returned a cell once per path to it (8 ids from a 4-cell
+  hierarchy whose nodes each point both children at the next node).
+- **A `BVH` whose node arrays leave a node unreachable from the root** raises the same
+  `ValueError`; the previous release accepted it.
+- **A `BVH` whose child pointers form a cycle** raises the same `ValueError`; the previous release
+  raised a `ValueError` saying the tree exceeded the traversal's stack depth.
+- **Refining a `HierarchicalGrid` to a level with more than 2**63 - 1 cells along one axis** raises
+  `OverflowError` and leaves the grid unchanged. The previous release refined the grid; its
+  `collect_cell_bounds` then returned wrong bounds (NaN, inverted, or finite but wrong) for a level
+  whose `factor ** level` exceeded 2**63 - 1, and right ones where only the product with the root
+  cell count exceeded it.
+- **`HierarchicalGrid.level_cells_per_axis` for a level with more than 2**63 - 1 cells along one
+  axis** raises `OverflowError`; the previous release returned the count as a Python integer.
+- **A `TensorProductGrid` with 2**63 cells or more** raises `OverflowError`, from its constructor,
+  `uniform_grid`, `tensor_product_grid` and `overlay` alike; the previous release built it.
+- **`partition_graph` refuses a `CouplingGraph` whose `vertex_weights` are negative or not
+  finite** (`ValueError`, "vertex_weights must be finite and non-negative."). The previous release
+  partitioned it: the bisection cuts where a running sum of the weights reaches half their total,
+  and with a negative or NaN weight that sum is not monotone or not a number, so the cut was
+  arbitrary.
+- **`partition_graph` checks the arrays of the `CouplingGraph` it is given** and raises
+  `ValueError` naming the array when `xadj` does not hold `num_vertices + 1` non-decreasing entries
+  from 0 to `len(adjncy)`, when `edge_weights` or `vertex_weights` has the wrong length, or when an
+  `adjncy` entry is outside `[0, num_vertices)`. The previous release raised scipy's `ValueError`
+  ("index pointer size 4 should be 5") or an `IndexError` for some of these. For others what
+  happened depended on the values and on memory: a `vertex_weights` longer than `num_vertices` and
+  an `xadj` ending before `len(adjncy)` were accepted silently; a decreasing `xadj` or an `adjncy`
+  entry outside `[0, num_vertices)` was sometimes partitioned silently, sometimes raised an
+  unrelated error (a `RuntimeError` from scipy for a decreasing `xadj` with `backend="metis"`), and
+  sometimes ended the process.
+- **`partition_graph` refuses a `CouplingGraph` whose `edge_weights` are not integers in the
+  64-bit range** (`ValueError`): a fraction, an infinity, NaN, a float outside
+  `[-2**63, 2**63)`, or an unsigned integer past `2**63 - 1`. Integer values held in a float array
+  are accepted. The previous release used the float values in the spectral backend and rounded
+  them in the METIS backend. An object array (of Python ints) now raises `TypeError`, where the
+  previous release accepted it.
 
 ### Changed
+- **`TensorProductGrid.is_uniform` judges an axis's spacings relative to its scale**: uniform when
+  their spread is at most `16 eps max(span, |b[0]|, |b[-1]|)`, where the previous release took an
+  absolute `1e-10`. That read spacings of `1e-13` and `9e-13` as uniform, and most `linspace`
+  grids of span `1e6` or offset by `1e6` as not; both now read the other way. An axis whose span
+  overflows the double range makes that tolerance infinite, so it reads as uniform only when its
+  spacings are exactly equal: `[-1e308, -5e307, 0, 1e308]` is not uniform, as before.
+- **`partition_grid` with more parts than the grid has cells raises at once.** The error is the
+  same; the previous release raised it only after searching the divisors of `n_parts`, whose cost
+  grows with its square root, so a huge count held the caller.
+- **`overlay` of two grids whose domains overlap on an axis by more than the largest double**
+  raises `ValueError` "overlay(): the overlap of the domains on axis N, [lo, hi], is wider than
+  the largest double."; the previous release said that the domains do not overlap.
+- **pantr needs Python 3.12 or later.** pantr is becoming a C++ library with a compiled
+  Python extension, built for CPython's stable ABI so that one wheel per platform serves
+  every Python from 3.12 on; the binding library's stable-ABI support starts at 3.12.
+  Python 3.11 is no longer supported.
+- **pantr is built with scikit-build-core and ships compiled extension modules.** A source
+  install needs a C++20 compiler and CMake 3.28 or later. In a source checkout, `make ext`
+  builds the extension into `src/pantr` (there is no editable install), and importing pantr
+  fails with a message saying so when the module is missing or was built from other
+  bindings.
+- **The macOS wheel (arm64) needs macOS 14 or later**: the compiled library uses floating-point
+  `std::to_chars`, which macOS 13 provides only from a minor release, and a wheel tag cannot name a
+  minor version, so it is tagged and built for 14.0. pip installs it on no earlier macOS; there a source build is
+  needed. The previous release was pure Python.
+- **The wheels carry the licences of the code compiled into them**, in `.dist-info/licenses`: the
+  `pantr` wheel those of Eigen, Spectra, Kokkos mdspan, Boost, nanobind and robin_map, and
+  `THIRD_PARTY_NOTICES.md`; the `pantr-mpi` wheel those of nanobind and robin_map.
 - `PointsLattice` copies the arrays it is given and freezes the copies, so a later change
   to the caller's arrays no longer alters the lattice. Its arrays are read-only, and
   `pts_per_dir` returns fresh read-only views on each access. Code that wrote through
@@ -58,10 +267,1298 @@
 - `to_periodic` grades the seam in control-point units, from the control points' scale and
   dtype. The budget no longer depends on the knot vector's magnitude or on the parametric
   `tol`.
-- Every Layer 2 entry point over a `parallel=True` kernel now waits for the JIT warmup
-  thread before its first call, which avoids a process abort when a call races the warmup.
+- **Quadrature, tolerance, basis tabulation and change of basis run in pantr's C++
+  library** (`pantr.quad`, `pantr.tolerance`, `pantr.basis`, `pantr.change_basis` are thin
+  wrappers over it; names, signatures and defaults are unchanged, and messages too except as
+  listed below). Floating-point results can move in the last bits, and an ill-conditioned
+  change-of-basis matrix by up to the accuracy bound its builder documents (past degree 10 in
+  float64 for the cardinal-to-Bernstein one, a bound above 100%): Gauss-Legendre and Gauss-Lobatto nodes come from
+  Newton's iteration on the Legendre recurrence instead of NumPy's eigenvalue route, the
+  tanh-sinh step from a Lambert W evaluation of pantr's own, and the change-of-basis
+  matrices from Eigen's LU instead of LAPACK's. `compute_monomial_to_bernstein_1d` is
+  unchanged to the bit, every entry the double nearest `C(i, j) / C(degree, j)`.
+- **The Lagrange basis is evaluated by pantr's barycentric formula**, with weights
+  accumulated as mantissa and exponent so they neither overflow nor underflow, instead of
+  SciPy's `BarycentricInterpolator` and its seeded random permutation of the products. The
+  values are the same polynomial to the accuracy of the formula, reproducible on every
+  platform and with every SciPy version; they are not bit-identical to the previous
+  release's. The 16-epsilon snap to the Kronecker row at a node is kept.
+- **The basis tabulations run on pantr's own thread pool and release the GIL** while a
+  large batch is computed, so several Python threads can tabulate at once. Results do not
+  depend on the thread count. `pantr.set_num_threads` sets their parallelism.
+- **`PANTR_NUM_THREADS` caps pantr's C++ thread pool** (the previous release ignored it): unset
+  or empty, the pool may use every CPU the process may run on, and a larger count is lowered to
+  that. It is read once, on the first call that needs the thread count (`get_num_threads`,
+  `set_num_threads`, `num_threads`, or a call that runs on the pool), not at import. A value that is not a positive decimal
+  integer (`abc`, `0`, `-1`, `+2`, `" 2"`, `2.5`), or one above 18446744073709551609 on a 64-bit
+  platform, makes each call that uses the pool raise `ValueError` "PANTR_NUM_THREADS must be a
+  positive integer, got '...'": among them a basis tabulation or a B-spline or Bézier evaluation
+  large enough to run on the pool, `pantr.get_num_threads`, `pantr.set_num_threads` and
+  `pantr.num_threads`.
+- **The thread count is the C++ pool's, and `NUMBA_NUM_THREADS` is no longer read.**
+  `pantr.get_num_threads`, `pantr.set_num_threads` and `pantr.num_threads` act on pantr's own
+  thread pool, still per thread. Their maximum, the default of every thread, is the pool's
+  capacity: the CPUs the process may run on, lowered by `PANTR_NUM_THREADS`. The previous
+  release's was Numba's, `NUMBA_NUM_THREADS` when set; so with `NUMBA_NUM_THREADS=2` on four
+  CPUs, `get_num_threads()` was 2 and `set_num_threads(3)` raised, and they are now 4 and
+  accepted, while `PANTR_NUM_THREADS=2` now makes them 2 and `ValueError`. A count above the CPUs
+  the process may run on, which `NUMBA_NUM_THREADS` allowed, is no longer possible. The
+  `ValueError` for a count above the maximum names the pool's capacity instead of
+  `NUMBA_NUM_THREADS`.
+- **`PANTR_NUM_THREADS`, not `NUMBA_NUM_THREADS`, disables `pantr.mpi`'s default thread
+  policy.** The policy, one thread per rank on the first `DistributedSpace` or `from_dolfinx`,
+  is skipped when the thread count was configured explicitly: by `pantr.set_num_threads`,
+  `pantr.num_threads` or `pantr.mpi.configure_threads`, as before, or now by a non-empty
+  `PANTR_NUM_THREADS` in the environment, which replaces `NUMBA_NUM_THREADS` there. With
+  `PANTR_NUM_THREADS=3` a rank keeps 3 threads where the previous release cut it to 1, and with
+  `NUMBA_NUM_THREADS=3` it is cut to 1 where it kept 3. The policy reads the variable each time it
+  applies, while the capacity is read once: a value set after the first parallel call disables the
+  policy without lowering the capacity.
+- **Compiled calls release the GIL when they run on pantr's thread pool or are long**, so other
+  Python threads run meanwhile. `Bezier.split`, `slice` and `restrict`, like the evaluations and
+  tabulations, release it when their nets are large enough to use the thread pool.
+  `Bezier.multiply`, `compose`, `reduce_degree`, `degree_reduction_error` and `minimize_degree`,
+  and the compiled parts of `fit_bezier`, `interpolate_bezier`, `fit_bspline`,
+  `interpolate_bspline`, `l2_project_bspline` and `quasi_interpolate_bspline`, never use the pool
+  and release it only when their estimated work is about the default switch interval
+  (`sys.getswitchinterval()`) or more, or when a degree reduction first builds an exact operator:
+  while another Python thread is busy, releasing costs the caller about a switch interval, more
+  than a shorter call computes. A call on the pool releases from a far smaller size, so Python
+  threads that each run pantr calls scale, and a mid-size pool call can wait up to a switch
+  interval when another Python thread is busy. `THBSpline.prolong_to`, the THB prolongation and
+  multipatch interface detection release it only when their work reaches the pool, where they
+  used to release it always.
+- **numba and threadpoolctl are no longer dependencies**, and `import pantr` imports neither:
+  every Numba kernel is replaced by C++ compiled into pantr's extension, and its thread pool
+  replaces Numba's. Nor does the import start a background thread to compile kernels, and the
+  private `pantr._numba_compat` (with `wait_for_jit_warmup`) is gone. `NUMBA_DISABLE_JIT`,
+  `NUMBA_THREADING_LAYER` and the other Numba settings have no effect on pantr.
+- **`PointsLattice` stores coordinates of a dtype other than float32 and float64 as
+  float64.** The lattice is a C++ value of one of those two types; an integer lattice used
+  to keep its dtype, and no tabulation could use it.
+- **Masked point arrays are refused by the Lagrange tabulations at every degree >= 1, first**:
+  the previous release refused them only on reaching SciPy (after the degree, variant and `out`
+  checks); the C++ kernel would otherwise tabulate the masked-out values as data.
+- **`PointsLattice` and `QuadratureRule` pickle and copy through their constructor**
+  (`__reduce__`), since they now hold a C++ value that Python cannot pickle by itself. A
+  `copy.deepcopy` of either is therefore immutable like the original: its arrays are read-only
+  (a deep copy used to give writable arrays).
+- `PointsLattice.get_all_points("C")` returns a C-contiguous array (it was a transposed,
+  F-contiguous view); the values are unchanged. The C++ lattice builds the points in the order
+  asked for, so no transpose is left to return.
+- **Results are NumPy arrays that do not own their data**: a tabulation, rule or matrix is a C++
+  buffer handed to NumPy without a copy (`flags.owndata` is `False`), so `ndarray.resize` raises
+  on it where it used to work; copy the array first.
+- **Dtype arguments in another byte order** (`">f8"`, `np.dtype(">f4")`) give native-order
+  results; the C++ library computes in native `float` or `double`, and the previous release cast
+  to the requested order. `compute_lagrange_to_bernstein_1d` and
+  `compute_bernstein_to_lagrange_1d` now accept such a dtype, which they refused with
+  "Output array has dtype ...".
+- **Integer-like counts and degrees are accepted** by the 1D rules, `create_lagrange_points_lattice`
+  and the change-of-basis builders: an object with `__index__` (or a 0-d integer array) is
+  converted as an integer by the compiled binding, where the previous release raised `TypeError`
+  or NumPy's "Series must have maximum degree of at least 1". The 1D and tensor tabulations and
+  `gauss_legendre_quadrature` refuse them as before (a `float` `ndim` there is now the binding's
+  `TypeError`; it used to be accepted).
+- **No `RuntimeWarning` from the tabulations** at infinite or subnormal points: the values are
+  the same, computed in C++ rather than through NumPy operations that warned.
+- **A `PointsLattice` of strings is refused** ("could not convert string to float"); it used to
+  be built with a string dtype no tabulation could use (non-float coordinates are converted to
+  float64, see above).
+- **Counts and degrees outside the annotated types or past memory** may be refused with another
+  exception or message than before, because the C++ library's binding and allocation now see
+  them first. In the 1D rules, `create_lagrange_points_lattice`, the 1D tabulations and the
+  change-of-basis builders, a count or degree that is not an integer (a float, even `2.0`, a
+  string, `None`) or an integer outside the int64 range is a `TypeError` from the compiled
+  binding; the previous release raised assorted `ValueError`, `OverflowError`, `IndexError`,
+  `MemoryError` and `TypeError`s, and some rules accepted it (a float count in the Lobatto and
+  Chebyshev rules, `2**63` and `2**63 - 1` in the two Chebyshev ones). A `bool` is accepted as
+  the integer it is. A degree above `2**31 - 1`, the C++ `int`, is a `ValueError` ("exceeds the
+  largest supported degree") in the 1D and tensor tabulations and the builders; a
+  change-of-basis matrix too large to allocate is a `ValueError` ("... more elements than fit in
+  memory") raised before any work; an allocation that fails in C++ is a `MemoryError` reading
+  "std::bad_alloc" (a 1D tabulation's output is still allocated by NumPy, with NumPy's text); and a rule of `2**62` points is a `ValueError` naming the C++ container's
+  limit where NumPy raised "array is too big" or a `MemoryError`. `gauss_legendre_quadrature`
+  still converts its counts (not `ndim`) with `int()` and checks `ndim` first (a `bool` `ndim` is now quoted
+  as `1` in its message), and the tensor tabulations still refuse a non-integer degree with "All
+  degrees must be non-negative integers". The 1D tabulations convert their points before
+  checking the degree, so a call with both invalid reports the points.
+- **An invalid `funcs_order`** in the tensor tabulations is a `ValueError` ("funcs_order must be
+  'C' or 'F'") checked first. The previous release treated it as `'C'` for an array of points and
+  raised NumPy's `einsum` error for a `PointsLattice`; an unchecked value is a silent ordering.
+- `tensor_product_quadrature` accepts any iterable of `(nodes, weights)` pairs (an iterator
+  used to raise `TypeError` for want of `len`): the pairs are converted once, in order, for the
+  C++ call. So an empty iterator is "rules must have at least one axis" and a non-iterable a
+  `TypeError` reading "... is not iterable" rather than "... has no len()".
+- **Which of two invalid arguments is reported** follows the wrappers' order: the Lagrange
+  variant first (before points, dtype, `out` and counts, except the tensor `tabulate_lagrange`,
+  which checks its degrees first), then the dtype, then the points, then sizes; a lattice's
+  complex coordinates are reported before its empty ones. A non-integer degree in the 1D
+  tabulations reads "'<=' not supported" (the wrapper's range check) where it read "'<' not
+  supported".
+- **A parallel tabulation can fail to start pool threads** under a tight address-space limit
+  (`ulimit -v`): the call raises `RuntimeError` ("Resource temporarily unavailable"), and
+  `pantr.set_num_threads(1)` runs it on the calling thread.
+- When both the size (`n_pts`, `degree` or a lattice's counts) and `dtype` are invalid, the
+  quadrature functions and the change-of-basis builders report the `dtype` first, because the
+  wrapper selects the `float` or `double` C++ function before calling it; each is reported as
+  before when it is the only invalid argument. The private imports `pantr.quad` and
+  `pantr.change_basis` used to re-export by accident (NumPy's `chebyshev` and `legendre`,
+  `functools`, `comb`, a few pantr functions; `Callable` from `pantr.change_basis`) are gone from
+  their namespaces. Other names that modules imported for their own use changed too, none in
+  `__all__`: `pantr` no longer has `sys`, `logging`, `threading` or `TYPE_CHECKING`, and
+  `pantr.geometry` no longer has `Final`; `pantr.geometry`, `pantr.transform` and
+  `pantr.bspline.spanwise_element_extraction` gain `ext` and `Any`, and the last also `cast` and
+  `math`.
+- **`AABB`, `AffineTransform` and the `Bezier` value type run in pantr's C++ library**
+  (`pantr.geometry`, `pantr.transform` and `pantr.bezier.Bezier` are thin wrappers over it;
+  names, signatures and defaults are unchanged, and messages too except as listed below).
+  Results can move in the last bits: Bézier contractions are summed point by point in C++ instead of by
+  `einsum`/`tensordot` (on a lattice, in whichever order of directions writes fewer values),
+  the 1D evaluation seeds its recurrence with an exact integer power instead of `pow`, a
+  polynomial curve's derivative is evaluated on its hodograph (the forward differences of its
+  control points, a Bézier of lower degree) instead of the derivative basis, which is several
+  times faster, and affine maps and transforms are applied by plain loops instead of BLAS.
+  Evaluation, and `AffineTransform.__call__` on many points, run on pantr's thread pool with the
+  GIL released (NumPy's `@` ran on BLAS's threads). Where a result overflows, the plain loops can
+  leave NaN where BLAS left `inf` (or the reverse), and NumPy's `RuntimeWarning`s for overflow and
+  invalid values in these operations are no longer emitted. The sign of a zero result can differ (the values
+  compare equal): the `-0.0` against `+0.0` tie in `AABB.union` and `intersect`, a zero bound
+  from `AABB.transform`, a zero entry of `AffineTransform.inverse`'s offset.
+- A derivative of a polynomial `Bezier` above its degree in some direction is computed as the
+  exact zero it is, without the derivative table, at any order: an order of `2**31 - 1` or more is
+  refused as "derivative order N is too large" (`ValueError`), where the table used to be
+  allocated and fail with a `MemoryError` past memory. At a point with a NaN or infinite
+  coordinate it is NaN; the previous release gave NaN only when such a coordinate lay in a
+  direction whose derivative order was below its degree, and zero otherwise. A component whose
+  control points hold a NaN or an infinity is NaN there too, as in the previous release.
+- At a point with an infinite coordinate, derivatives within the degree can be NaN where the
+  previous release gave `inf` or `-inf` (or the reverse), since the evaluation order differs.
+- **A `Bezier` is immutable**, as the C++ values are (they are shared rather than copied, which
+  is what makes them cheap to pass and safe across threads): the constructor copies the control
+  points, so a later write to the array it was given no longer changes the Bézier;
+  `control_points` is a read-only view; `reverse()` returns an independent Bézier (it shared
+  memory with the original through `np.flip`); `reverse`, `permute_directions` and `transform`
+  with `in_place=True` replace the value the object holds, so a `control_points` array read
+  before the call keeps the values it had. The conversions between `Bezier` and `Bspline` with
+  `copy=False` are described with `Bspline` below.
+- **`Bezier` keeps `float32` and stores every other real dtype as `float64`**: integers as
+  before, and now booleans, `float16`, `longdouble` and byte-swapped arrays (`">f4"` becomes
+  native `float32`). The previous release stored those dtypes as given and then failed in
+  evaluation (or, for booleans, computed in boolean arithmetic). Complex control points are a
+  `TypeError`. The C++ library instantiates the two storage types only.
+- **`Bezier`, `AABB` and `AffineTransform` pickle and copy explicitly** (`__reduce__`; for
+  `Bezier` also `__copy__` and `__deepcopy__`, which share the immutable value), since they now
+  hold a C++ value Python cannot pickle by itself. A deep copy is immutable like the original:
+  its arrays are read-only, where they used to be writable. A `Bezier` or `AffineTransform`
+  pickled by the previous release still loads: its plain attributes rebuild the value.
+- `AABB.lo` and `hi`, `AffineTransform.matrix` and `offset`, `Bezier.control_points` and the
+  Bézier results are NumPy arrays over C++ buffers that do not own their data
+  (`flags.owndata` is `False`); the read-only ones cannot be made writeable
+  (`flags.writeable = True` raises `ValueError`, where `AABB.lo` and the matrix of an
+  `AffineTransform` used to allow it, being arrays the object owned). `Bezier.control_points` is a
+  cached property and `AABB` has an extra slot; assigning or deleting `control_points` is
+  refused as before.
+- `AffineTransform.inverse` refuses a matrix whose LU factorisation meets a NaN pivot
+  ("Cannot invert a singular affine transformation."), as it refuses an exactly zero one;
+  NumPy returned NaNs there or raised, depending on where the NaN sat. One rule for the C++
+  library, NumPy's for the zero pivot. Which numerically singular matrices meet an exactly zero
+  pivot also changes, since Eigen's elimination rounds differently from LAPACK's:
+  `[[1, 2, 3], [4, 5, 6], [7, 8, 9]]` is now inverted (to entries of order `1e15`, noise, as any
+  inverse of it is) where it was refused, and some other near-singular matrices are refused where
+  they were inverted. A matrix with a zero row or a zero column is refused as before. A matrix
+  with equal rows is refused up to 16 dimensions (the previous release inverted some of them to
+  noise, depending on BLAS rounding); above that size neither library refuses them reliably. Results can move in the last bits for a well-conditioned matrix;
+  for an ill-conditioned one they move within the bound the condition number gives.
+- `AABB.transform` given an offset without `ndim` entries is a `ValueError` ("affine.offset must
+  have shape ..."). NumPy broadcast a one-entry or 0-d offset to every axis and raised a
+  broadcasting error for other lengths; the C++ library checks every input.
+- **Inputs outside the annotated types, and calls with two invalid arguments**, in
+  `pantr.geometry`, `pantr.transform` and `Bezier`, may raise another exception or message than
+  before, since the compiled binding converts an argument (an index, a float) before the checks
+  run and most checks now run in C++: for example a `bool` direction can be quoted as `1`, a
+  non-numeric `factor` or `angle` is a `TypeError` from the binding before any range check, an
+  integer outside the int64 range for a `direction`, `axis`, `ndim`, `n`, `dim`, `component` or
+  degree increment is a `TypeError` from the binding (it was a `ValueError` from the range
+  check), and a `center` of the wrong rank in the factories reports its ravelled shape. A `bool`
+  given for an integer is the integer it is (`True` is `1`) everywhere: `AABB.empty(True)`,
+  `AABB.unbounded(True)`, `AffineTransform.identity(True)` and `Bezier.permute_directions` with
+  `bool` entries are accepted where they were a `TypeError`; `AffineTransform.shear` with a `bool`
+  `component` or `direction` (`True` or `False`) shears along that axis (the previous release used
+  it as a mask); `Bezier.evaluate_derivatives(points, True)` and a list of `bool` orders are the
+  first derivative; the previous release raised `ValueError` for a surface or volume and, for a
+  curve, returned the table of orders 0 and 1 with an extra axis. `False` is order 0 (it raised
+  `IndexError` for a curve). Messages can still echo a `bool` as given. Bounds and split
+  values given as NumPy scalars are converted to `double` by the binding, whatever their
+  precision: `restrict` with two `np.float32` bounds on a `float64` Bézier computes in `float64`
+  (it computed in `float32`, because both bounds kept their `float32` type).
+- **Under a tight address-space limit** (`ulimit -v`), the first parallel `Bezier.evaluate` or
+  `AffineTransform.__call__` can fail to start pool threads, as the tabulations can (above):
+  `RuntimeError` ("Resource temporarily unavailable") or `MemoryError` ("std::bad_alloc"), and
+  `pantr.set_num_threads(1)` runs it on the calling thread.
+- The private modules `pantr.bezier._bezier_core`, `_bezier_eval`, `_bezier_derivative`,
+  `_bezier_compose`, `_bezier_collapse`, `_bezier_split`, `_bezier_slice` and `_bezier_restrict`,
+  and `_bezier_degree._degree_elevate_bezier`, are gone with the Numba kernels they held, as are
+  the private helpers `pantr.geometry._BOUNDS_NDIM`, `_BOUNDS_AXIS_LEN` and `_require_same_ndim`,
+  `pantr.transform._apply_center` and `_with_optional_center`, the helpers
+  `pantr.bezier._bezier_product._multiply_bezier`, `_multiply_nonrational`, `_multiply_rational`,
+  `_ensure_rational_ctrl` and `_append_unit_weight_column`,
+  `_bezier_utils._tabulate_Bernstein_basis_1D_core`,
+  `_bezier_degree._degree_elevate_bezier_1d_core` and `_tabulate_Bernstein_basis_1D_serial_core`,
+  and the attribute `Bezier._control_points`, whose work is now done in C++.
+
+- **Degree reduction (`Bezier.reduce_degree`, `degree_reduction_error`, `minimize_degree`),
+  fitting (`interpolate_bezier`, `fit_bezier`) and root finding (`find_roots`,
+  `find_monotone_root`) run in pantr's C++ library**; `pantr.bezier` is now a thin wrapper
+  over it, with the names, signatures and defaults it had. The reduction operators are
+  assembled in exact rationals as before (now Boost.Multiprecision) and are the same bits.
+  `reduce_degree` reproduces the previous release's values bit for bit on `float32` and
+  `float64`, and so does `find_roots` when the largest coefficient magnitude is 1 (otherwise its roots can
+  move within the change of the zero floor, under "Changed"), except where
+  Bezier clipping used to drop roots or report a multiple root more than once (under "Fixed") and
+  in the depth-cap case below (measured over random, constructed and special-value inputs).
+  `find_monotone_root`'s solve now has a bisection safeguard (under "Fixed"): at a simple root
+  it moves within `tol` of the previous release's root wherever that release's solve converged;
+  at a root of odd multiplicity three or more the two agree only within the root's rounding band,
+  which is far wider than `tol`.
+  `degree_reduction_error` sums its Gram contraction in another order and
+  moves within that contraction's rounding, which grows with the degree: from the last bits at
+  low degree, to about `1e-6` relative at degree 20 for random coefficients (`1e-1` for smooth
+  ones), `1e-3` at degree 25 and tens of percent and more near degree 30, where the
+  previous release's own value was as far from the exact one; its docstring no longer calls the
+  value exact. `minimize_degree` rests its decisions on the same contraction: it makes the
+  previous release's decisions up to degree about 23, and above that its final degree can differ
+  (neither is reliably the exact greedy answer there). `degree_reduction_error` and
+  `minimize_degree` no longer emit NumPy's `RuntimeWarning`s (invalid value, overflow) on
+  non-finite or overflowing control points; the results are the same, except `minimize_degree`
+  of non-finite control points (under "Fixed"). The fits' singular value
+  decomposition is Eigen's instead of LAPACK's, so a fit moves within the bound the Vandermonde
+  matrix's conditioning gives (a few units in the last place on a small well-conditioned grid,
+  growing with the node count and the conditioning). Batch root finding runs on pantr's thread
+  pool with the GIL released. Like the other C++ results, the arrays `find_roots` and
+  `find_monotone_root` return do not own their data (`ndarray.resize` refuses them), except the
+  empty results of `find_roots([])` and `find_monotone_root([])`.
+- **`find_roots` warns when Bézier clipping gives up on part of `[0, 1]`** (`RuntimeWarning`,
+  "... exhausted the root finder's subdivision budget ..."). Clipping abandons an interval that
+  is still wider than `tol` after 64 levels of subdivision; it used to do so silently. Before
+  `tol` stopped setting the floor of the zero tests (under "Changed"), some straight lines written
+  at a higher degree reached it with a `tol` below the spacing of doubles at the root; now
+  clipping stops first on an interval whose polynomial is flat within the floor, and no input is
+  known to reach the cap through `find_roots`. The warning stays for that case, for the iteration
+  cap of Yuksel's path (under "Fixed"), and for a provider that reports a gap.
+  A root found there can differ from the previous release's by a unit in the last place.
+- **`pantr.bspline.find_roots` names the tolerance when a knot interval vanishes within it but
+  not exactly**: "The spline vanishes identically, to within the zero tolerance ... Lower tol if
+  it is what makes the coefficients there read as zero, ...". A `tol` near 1 or above makes every
+  coefficient read as zero, and the previous message blamed the spline. The message for
+  coefficients that are exactly zero is unchanged.
+- **`pantr.bezier.find_roots`'s `tol` bounds the error in a root's parameter only.** An explicit
+  `tol` also served as an absolute floor on the coefficient values, so a polynomial whose
+  coefficients all lay below `tol` had no roots; it now has its roots, within `tol` in the
+  parameter. The zero tests use a floor of `get_strict(dtype)` times the polynomial's largest
+  coefficient, whatever `tol` is, and a root found within `tol` in the parameter is accepted when
+  its residual is within that floor plus a bound on the slope over the bracket times the bracket's
+  width. A root provider (`set_root_provider`) receives the relative `get_strict(dtype)` as
+  `value_tol`. At a coarse explicit `tol` this acceptance is a backward-error bound: the accepted
+  point is a root of coefficients that differ from the input's by the residual, not necessarily
+  within `tol` of a root of the input. Two roots closer than about `tol` that fall in one bracket
+  can be reported as one point, and a point where the polynomial nearly touches
+  zero can be reported as a root. With `tol=1e-2`, where the previous release's absolute floor
+  often reported a pair of roots a few thousandths apart as a point more than `tol` from either,
+  such a pair is now found within `tol`.
+- **`fit_bezier` and `interpolate_bezier` with `float16`, `longdouble` or byte-swapped values
+  compute in `float64`** (nodes included) and return a `float64` Bézier (also for byte-swapped
+  `float32`, which `Bezier` itself would store as native `float32`). `fit_bezier` failed in the previous release's Numba basis kernel
+  (`NotImplementedError` for `float16`, a Numba `TypingError` for `longdouble` and byte-swapped
+  arrays) whenever a direction had more than one node, and returned the values' dtype with one
+  node per direction. `interpolate_bezier` returned `longdouble` for `longdouble` values, and the
+  values' dtype with one node per direction; it now returns `float64` in both cases.
+- **`reduce_degree`, `degree_reduction_error`, `minimize_degree`, `find_roots` and
+  `find_monotone_root` accept a Bézier built from `float16`, `longdouble`, boolean or
+  byte-swapped control points**, which `Bezier` now stores as `float64` (or native `float32`).
+  For `float16`, `longdouble` and byte-swapped arrays the previous release failed in its kernels
+  (`NotImplementedError`, a Numba `TypingError`), and root finding raised `TypeError` ("... must
+  be a float32 or float64 ndarray ..."). For boolean control points its `reduce_degree` returned a
+  boolean Bézier whose every point was `True` (silently wrong), `degree_reduction_error` raised
+  NumPy's boolean-subtract `TypeError` and `minimize_degree` a `ValueError` ("... not inexact");
+  all now compute on the `float64` values.
+- **A NaN or infinite node in `fit_bezier` or `interpolate_bezier`** (or a scattered point), in a
+  direction with more than one node, raises `ValueError` ("SVD did not converge"), as before, but
+  no longer `numpy.linalg.LinAlgError` (a `ValueError` subclass), since the decomposition is no
+  longer NumPy's.
+- **A NaN or infinite `tol`** in `fit_bezier`, `interpolate_bezier`, `fit_bspline`,
+  `interpolate_bspline`, `l2_project_bspline`, `pantr.multipatch.detect_interfaces` and
+  `pantr.multipatch.MultiPatch` raises `ValueError` ("tol must be finite, got nan"), as do the
+  distributed fits in `pantr.mpi`. The
+  Bézier fits, and the B-spline fits whenever their system is rectangular or singular, used to
+  truncate every singular value and return all-zero control points; `interpolate_bspline`,
+  `l2_project_bspline` and `fit_bspline` on a regular square system never read `tol`, so a NaN or
+  infinite one was ignored and now raises. `detect_interfaces` returned no interface for a NaN
+  `tol` and every pair of faces for an infinite one; so did `MultiPatch` when it detected the
+  interfaces, and with an infinite `tol` it accepted a supplied interface between patches that do
+  not touch. A zero or negative `tol` is accepted as before.
+  `interpolate_bezier`, `interpolate_bspline`, `l2_project_bspline`,
+  `interpolate_bspline_distributed` and `l2_project_bspline_distributed` check `tol` before they
+  call the function to project, so a non-finite `tol` is reported even where the
+  function would raise its own error, which used to come first.
+- **A negative `degree` for scattered `fit_bezier` nodes** is a `ValueError` ("degree must be
+  non-negative"); the previous release raised `IndexError` for `-1` and NumPy's "negative
+  dimensions are not allowed" below it. An empty sequence of node arrays is a `ValueError`
+  ("fit_tensor: values need ... one node array ... per direction") for scalar or 1-D values; the
+  previous release returned a Bézier. An empty node array is a `ValueError` ("bernstein_pinv needs 0 <=
+  degree < len(nodes) ..."); it was an `IndexError`.
+- **Inputs outside the annotated types** of `fit_bezier`, `interpolate_bezier`, `minimize_degree`,
+  `find_roots` and `find_monotone_root`, as for `Bezier` above, can be accepted where they were
+  refused or refused with another exception and message, since the binding converts `tol` to a
+  `double`: a NumPy `float16`, `longdouble` or `bool` scalar, a 0-d array, a `Fraction` or a
+  `Decimal` `tol` is accepted (the previous release failed in Numba for several of them in the
+  root finders). A one-element array `tol`, accepted before by `fit_bezier`, `interpolate_bezier`,
+  `minimize_degree` and (for one polynomial) the root finders, is now a `TypeError`; a list or a
+  string was and is a `TypeError`, with a new message in the first three.
+- The private modules `pantr.bezier._bezier_degree`, `_bezier_utils`, `_root_finding_core`,
+  `_yuksel_core`, `_clipping_core` and `_batch_core`, and the helpers
+  `_bezier_interpolate._bernstein_interpolate`, `_bernstein_vandermonde_svd`,
+  `_build_bernstein_pinv`, `_build_nd_bernstein_vandermonde`, `_fit_from_scattered`,
+  `_fit_from_values`, `_find_roots._validate_coeff_array`, `_dispatch_single`,
+  `_CLIP_MIN_DEGREE`, `_CLIP_COEFF_RANGE_LIMIT` and `_SUPPORTED_DTYPES`, are gone with the Numba
+  kernels and NumPy code they held, whose work is now done in C++.
+- **`BsplineSpace1D`, `BsplineSpace`, the knot factories (`create_uniform_open_knots`,
+  `create_uniform_periodic_knots`, `create_cardinal_knots`, `create_uniform_space`) and
+  `get_greville_abscissae` run in pantr's C++ library**; names, signatures, defaults and messages
+  are unchanged except as listed below. The knot vectors, knot classes, tolerances, interval
+  counts, first-basis indices, cardinal-interval flags, windowed spaces (`restrict`) and Greville
+  abscissae are the previous release's to the bit. Basis values and derivatives can move in the
+  last bits. On a space with more than one interval the cause is the C++ build fusing a multiply
+  and an add on the AVX2 and AVX-512 builds (the generic build reproduces the previous values); a
+  Bézier-like space's values come from pantr's Bernstein recurrence (the one
+  `tabulate_bernstein_1d` uses), which moves their last bits on every build from degree 3; its
+  derivatives move only on the AVX builds, except with `float64` knots and `float32` points, where
+  they move on every build. Observed over sweeps of degrees up to 16 on an AVX-512 machine (maxima
+  of finite samples, not bounds): values within about 1.7 `degree` units in the last place of the
+  type they are computed in; derivatives of order up to 2 within about twice `degree` units in the
+  last place of the largest entry of their row, growing at higher orders (at degree 16 to about 27
+  `degree` for a Bézier-like space and for a knotted one with repeated interior knots, and about
+  8.5 `degree` for a uniform knotted one, where both releases are far from the exact values
+  already). The values are held in the points' type, from knot differences formed in the knots'
+  type (so a `float32` space's values at `float64` points are accurate to `float32`, as before);
+  the derivatives are computed in the knots' type for a knotted space (a `float32` space's
+  derivatives at `float64` points are computed in `float32`, as before) and in the points' type
+  for a Bézier-like one.
+- **The basis tabulations of `BsplineSpace1D` and `BsplineSpace` run on pantr's thread pool and
+  release the GIL** for a large batch; results do not depend on the thread count, and
+  `pantr.set_num_threads` sets their parallelism. The serial kernel the previous release used for
+  fewer than 4096 points is gone (the pool decides from the work per point).
+- **`BsplineSpace1D` and `BsplineSpace` pickle and copy explicitly** (`__reduce__`): a space
+  rebuilds from its stored knots and tolerance, so the copy equals the original, and a pickle of
+  the previous release still loads. `copy.copy` and `copy.deepcopy` of a `BsplineSpace1D` share
+  its immutable C++ value; a subclass instance keeps its class and its own attributes through
+  copy and pickle, as before.
+- **A space is immutable** (its C++ value is; the Python-side cached `domain` can still be
+  assigned, as before): `knots` and the arrays of
+  `get_unique_knots_and_multiplicity` and `first_basis_per_interval` are read-only views that do not
+  own their data, and their `writeable` flag can no longer be set back to `True` (the previous
+  release's arrays could be made writeable and written); arrays of a deep copy or an unpickled
+  space are read-only views as well (the previous release's `knots` of a deep copy, or of a space
+  unpickled with protocol 0 to 4, was a writeable copy, as was a `first_basis_per_interval` array
+  cached before the copy; its other arrays were read-only already but could be made writeable).
+  `num_basis` and `num_intervals` are read-only properties (assigning to them used to overwrite a
+  cached value).
+- **A masked knot array is accepted** by `BsplineSpace1D`: its data is used, the mask is ignored,
+  and `knots` is a plain read-only array. The previous release refused it with Numba's
+  `NumbaTypeError` ("Unsupported array type: numpy.ma.MaskedArray") in a process that had not yet
+  passed a plain array of that dtype to `BsplineSpace1D`, and accepted it (ignoring the mask) after
+  that; an all-masked array gave "knots must be non-decreasing", and a masked first or last element
+  a `UserWarning` ("converting a masked element to nan").
+- **`degree=True` or `False` is the integer it is** (`1` or `0`) in `BsplineSpace1D`; the previous
+  release failed in Numba's typing (`TypingError`) on every knot vector that reached its kernels.
+- **A `float32` point array on a `float64` Bézier-like space** is accepted by
+  `BsplineSpace1D.tabulate_basis` (tabulated in `float32`, the points' dtype) and by
+  `BsplineSpace.tabulate_basis` with such a direction (in the space's dtype at scattered points,
+  the lattice's on a lattice), and points of a dtype other than the space's by a one-direction
+  `BsplineSpace.tabulate_basis` (in the space's dtype): the previous release refused `float32` /
+  `float64` swaps, and integer or boolean points on a `float32` space, with "Output array has dtype
+  ..." (`tabulate_basis_derivatives` accepted them, and still does), `float16` points with
+  `NotImplementedError` and `longdouble` points with a Numba `TypingError`; the last two are now
+  accepted by `BsplineSpace.tabulate_basis` of any dimension. A list of points, a tuple or any
+  object with `__array__` is accepted by `BsplineSpace.tabulate_basis`, which raised
+  `AttributeError` ("... has no attribute 'ndim'"); a `numpy.matrix` or a `memoryview` is accepted
+  too (they raised `ValueError` and `TypeError`).
+- **`tabulate_basis_derivatives` raises `ZeroDivisionError` at every batch size** when the
+  derivative recurrence divides by zero, at order `n_deriv >= 1`. That happens only on an empty
+  clamped span: a point left of the domain (within the tolerance) is assigned the first in-domain
+  span, empty when `knots[degree] == knots[degree + 1]` (for instance a first knot repeated more
+  than `degree + 1` times), and a point at or right of the domain end the last one, empty when
+  `knots[-degree - 2] == knots[-degree - 1]`. Whether an empty span divides by zero depends on how
+  many knots coincide there and on `n_deriv`; at degree 0 it never does. The previous release
+  raised it below 4096 points and returned without an error for a larger batch, in the same cases.
+- **No `RuntimeWarning` from `create_uniform_open_knots`, `create_uniform_periodic_knots` or
+  `BsplineSpace1D`** at an infinite domain end or a span that overflows the dtype; the knot vectors
+  and tolerances are the same.
+- **Inputs outside the annotated types, and integers past 64 bits**, in `BsplineSpace1D`,
+  `BsplineSpace` and the knot factories raise another exception or message than before, since the
+  compiled binding converts a degree, a count, a continuity, an `n_deriv` or a `restrict` bound to
+  a 64-bit integer before the C++ checks run (the Python-side checks of the knots, and NumPy's
+  allocation for a positive `n_deriv`, still come first): a finite non-negative `float` degree in
+  `BsplineSpace1D` is a `TypeError` from the binding (it was Numba's `TypingError`; a negative,
+  infinite or too-large one was a `ValueError`); a `float`, a NumPy `bool_` or a one-element array
+  as a count, degree or continuity in the three knot factories is a `TypeError` with the binding's
+  message (NumPy's message, or accepted, before; a one-element array as `create_cardinal_knots`'s
+  count was a `ValueError`), and `create_uniform_space` is unchanged; a Python integer outside the
+  64-bit range as a degree, a count, a continuity or a `restrict` bound is a `TypeError` (it was
+  the range check's `ValueError`, or in a factory NumPy's `IndexError`, `OverflowError` or
+  `ValueError`); as `n_deriv`, a negative one is a `TypeError` and a positive one still NumPy's
+  `ValueError` ("Maximum allowed dimension exceeded"). A knot count past a quarter of
+  `long long`'s range (2**61 - 1) is a `ValueError` ("knot vector too large"), one past
+  `std::vector::max_size()` below that a `ValueError` ("cannot create std::vector larger than
+  max_size()"), and an allocation that fails below it a `MemoryError` (`std::bad_alloc`), where
+  NumPy raised `IndexError`, `MemoryError` or its own allocation error. Tabulating on an empty
+  `BsplineSpace([])` at an `(n, 0)` point array raises `AttributeError` (it was an `IndexError`).
+- The private module `pantr.bspline._bspline_basis_multidim`, and the helpers
+  `_bspline_basis_core._tabulate_Bspline_basis_1D_impl`, `_tabulate_Bspline_basis_deriv_1D_impl`,
+  `_find_spans_and_first_basis`, the Bernstein-like and serial kernels and `_PARALLEL_MIN_NUM_PTS`,
+  `_bspline_knots._knot_scale`, `_knot_tolerance`, `_KNOT_MERGE_SAFETY`,
+  `_check_snapping_kept_an_interval`, `_check_space_has_an_interval`, `_validate_knot_input`,
+  `_get_last_knot_smaller_equal_impl`, `_bspline_space_1d._cached_unique_knots_and_multiplicity`,
+  and the private methods and cached attributes of `BsplineSpace1D` (`_snap_knots`,
+  `_validate_input`, `_get_domain_indices`, `_left_end_open`, `_right_end_open`,
+  `_bezier_like_knots`, `_first_basis_per_interval_cached`), together with
+  `_bspline_basis_core._normalize_points_1D`, `_reshaped_out`, `_validate_out_array`,
+  `_compute_final_output_shape_1D`, `_compute_final_output_shape_1D_deriv`,
+  `_tabulate_Bernstein_basis_1D_impl`, `_tabulate_Bernstein_basis_deriv_1D_core`,
+  `_tabulate_Bernstein_basis_deriv_1D_serial_core` and `_bspline_knots._validate_float_dtype`, are
+  gone with the Numba kernels and
+  NumPy code they held, whose work is now done in C++.
+- **`Bspline` and `SpanwiseElementExtraction` are C++ values** behind their Python classes, and
+  every `Bspline` operation of this section's list runs in C++: evaluation and derivatives, knot
+  insertion and removal, `to_open_bspline`, `to_periodic`, `subdivide`, `restrict`, `split`,
+  `elevate_degree`, `reduce_degree`, the non-rational `derivative`, `slice`, `boundary`,
+  `reverse`, `permute_directions`, `transform`, `to_bezier` and `to_beziers`, together with
+  `BsplineSpace1D.insert_knots`, `subdivide` and its three `tabulate_*_extraction_operators`.
+  (`multiply`, `find_roots`, `locate` and the rational `derivative`, which uses `multiply`, run in
+  C++ as well, see below.)
+- **`Bspline.control_points` is a cached property**, as `Bezier.control_points` is (it was a
+  plain property); assigning or deleting it is refused as before.
+- **`pantr.bspline.multilevel_extraction` no longer exposes `SpanwiseElementExtraction`**, which it
+  imported for its own use and has no `__all__` to withhold; import it from `pantr.bspline` or
+  `pantr.bspline.spanwise_element_extraction`. The module now also shows `Any`, `copy` and `ext`
+  (the compiled extension).
+- **A `Bspline` is immutable**, as a `Bezier` is: the constructor copies the control points
+  (into a C-contiguous array whatever the input layout), so a later write to the array it was
+  given no longer changes the B-spline; `control_points` is a read-only view that cannot be made
+  writable; the B-splines returned by `reverse`, `slice`, `boundary` and `permute_directions`
+  hold read-only, C-contiguous control points (`reverse()` returned a view of the original
+  through a flip in most cases, and the others writable arrays); `reverse`, `permute_directions`
+  and `transform` with `in_place=True` replace the value the object holds (and, for the first
+  two, its space), so an array read before the call keeps its values and `control_points` is a
+  new array afterwards. `is_rational` is the `bool` of the argument given (it returned the
+  argument as given). `evaluate_derivatives` returns an array owning its data (it could be a view).
+  `Bezier.to_bspline(copy=False)` and `create_from_bezier(copy=False)` copy, so the B-spline no
+  longer shares the Bézier's array. `Bspline.to_bezier(copy=False)` and
+  `create_from_bspline(..., copy=False)` share the B-spline's own buffer, read-only, so an
+  in-place operation on the B-spline no longer shows in that Bézier; for a B-spline that is not
+  open, the Bézier retains one copy of the open form's control points where the previous release
+  retained more, although the conversion's peak memory is higher. Constructing a `Bspline`
+  therefore takes time proportional to its control points, where it took a constant time, plus
+  the call that builds the compiled value.
+- **`Bspline` and `SpanwiseElementExtraction` pickle and copy explicitly** (`__reduce__`,
+  `__copy__`, `__deepcopy__`, which share the immutable value). Subclasses and their attributes
+  survive. A `Bspline` pickled by the previous release still loads; one pickled now does not load
+  in the previous release. The cached Bézier decomposition and point-inversion state of a
+  `Bspline` are not pickled, so a B-spline on which `locate` ran now pickles with protocols 0 and
+  1 too (it raised there).
+- **Values move in the last bits**, since the C++ code orders its sums and products differently
+  and the build may contract multiply-adds. In samples of a few hundred random B-splines (one to
+  three directions, degree up to 5, open, non-open and periodic knots, rational and polynomial,
+  `float32` and `float64`, two instruction sets), the largest difference seen against the previous
+  release, in units of `eps * max(1, |largest value|)` of the dtype, was: evaluation 2.5,
+  derivatives 38 (rational `float32` on a lattice; 12 otherwise), knot insertion, `subdivide`,
+  `to_periodic`, `to_open_bspline`, `restrict` and `split` 4.0, `elevate_degree` 5.1,
+  `reduce_degree` 3.5, `derivative` 22, `slice` 2.9, `boundary` 1.4, `to_beziers` 3.1, the Bézier
+  extraction operators 1.0, the Lagrange extraction operators 2.5, the extraction applications
+  4.3. These are maxima of samples, not bounds. Knot vectors are unchanged. Knot removal removes
+  the same knots with the same control points on the generic instruction set; `reverse` and
+  `permute_directions` give the same values, and `transform` gives the same values on the
+  default build and differs by up to 1.8 of these units on the generic instruction set. The cardinal extraction operators inherit the differences of the
+  cardinal-to-Bernstein matrix computed in C++ (above), which grow with the degree and with
+  non-uniform knots (largest seen: 22 at degree 3 and 1 383 at degree 5 for uniform open knots on
+  one instruction set, 3 426 at degree 5 on another, 29 904 at degree 5 on non-uniform knots).
+- **`Bspline` evaluation runs on pantr's thread pool**, as do the batch applications of
+  `SpanwiseElementExtraction` and the decomposition of `to_beziers` (whose Python Bézier objects
+  are then built with the GIL held), with the GIL released. A lattice of two or more directions
+  is contracted direction by direction; the value on such a lattice and at the same points agree
+  to rounding, as before. A one-direction B-spline with Bézier-like knots is evaluated through the
+  Bernstein basis, as several directions already were. A one-direction `PointsLattice` of the
+  other float dtype is evaluated with the basis in the lattice's dtype (it was the B-spline's).
+- **`Bspline.evaluate_derivatives` checks `orders` as integers in every dimension.** With one
+  direction, `len(orders) != 1` raises `ValueError` "len(orders) must equal spline.dim (1), got
+  n" (the previous release raised `IndexError` for `[]` and ignored the extra entries otherwise),
+  and a negative order reads "orders[0] must be >= 0, got -1" (it read "n_deriv must be >= 0,
+  got -1"). `orders` may be any iterable of integers (a set, a generator), each going through
+  `operator.index`: `bool` and objects with `__index__` are accepted, a float order is a
+  `TypeError`, a NumPy scalar passed as the whole of `orders` is a `TypeError` (it was an
+  `IndexError`), an order from `2**31` raises `ValueError` "derivative order N is too large"
+  (the previous release tried to allocate the derivative table and failed with a `MemoryError`,
+  ran out of memory, or from `2**58` raised a NumPy `ValueError`, "array is too big" (from
+  `2**63 - 1`, "Maximum allowed dimension exceeded" for a rational B-spline or with two
+  directions)) and one from
+  `2**63` a `TypeError`. The orders are checked before the
+  points.
+- **A derivative whose recurrence divides by zero** (a point inside the tolerance band of an
+  empty span) raises `ZeroDivisionError` in every dimension and at any number of points. The
+  previous release returned NaN, `±inf` or 0.0 with one direction, and with two or three
+  raised up to 4 095 points and returned NaN from 4 096; at such a point an order above the
+  degree returned 0.0 with one direction, and with two or three from 4 096 points (it raised
+  below), and now raises too.
+- A rational B-spline with a zero or NaN weight evaluates to `inf` or NaN without the NumPy
+  `RuntimeWarning`s (such as "invalid value encountered in divide") the previous release emitted.
+- The out-of-domain messages of `Bspline.evaluate` and `evaluate_derivatives` print the domain
+  with Python floats (`(0.0, 1.0)`, not `(np.float64(0.0), np.float64(1.0))`; a `float32` domain
+  prints as its `float64` value, `0.10000000149011612`, not `np.float32(0.1)`), and
+  `Bspline.slice`'s domain message prints a `float32` domain at `float32` precision (`2e-09`, not
+  `1.999999943436137e-09`). With one direction, an invalid `out` is reported before an
+  out-of-domain point, as several directions already did.
+- **Arguments of the ported `Bspline` operations are read as the C++ entry points take them:**
+  - `restrict` and `split` read bounds and values as Python floats: `np.float16` and
+    `np.float32` bounds now work (they raised an unrelated "knots must have at least
+    2*degree+2 elements" or returned a B-spline restricted to another domain), a `Decimal` or any
+    object with `__float__` is accepted, a string is a `TypeError` ("expected a real number, got
+    str"), and `split(0, 10**400)` raises `OverflowError` (it raised `ValueError`). For a
+    `float32` B-spline, `restrict` compares an `np.float64` bound in `float32`, as a Python float
+    was (the previous release compared it in `float64`); `split` compares its value in `float64`,
+    as before.
+  - `remove_knots`' `tol` is read as a Python float: `np.float16`, `Decimal`, `Fraction` and
+    objects with `__float__` are accepted (the previous release refused them); on NumPy 2.4 and
+    later a one-element array is a `TypeError` (it was accepted), while earlier NumPy versions
+    convert it with a `DeprecationWarning`; a list or tuple is still refused, now with a
+    `TypeError` instead of Numba's `TypingError`.
+  - Directions, axes, counts, `regularity`, `num` and permutation entries go through
+    `operator.index`: a float is a `TypeError`, where `subdivide(2, regularity=1.0)` (on
+    `Bspline` and on `BsplineSpace1D`) and `remove_knots(..., num=1.0)` were accepted,
+    `Bspline.subdivide([1.0])` skipped the direction and `[0.5]` raised `ValueError`; a float, a
+    `bool` array or another non-integer axis or direction is a `TypeError` (some were a
+    `ValueError`, from the range check that ran first); objects with `__index__` are accepted, as
+    is a list of booleans as a permutation; `remove_knots` accepts a 0-d integer `num` (it raised
+    Numba's `TypingError`). `boundary`'s `side` keeps the previous handling.
+  - An integer argument past 64 bits is reported saturated at `9223372036854775807` in the
+    message, and `subdivide(10**30)` (on `Bspline` and `BsplineSpace1D`) raises `ValueError` "...
+    would insert more knots than an array can hold." (NumPy's "Maximum allowed size exceeded"
+    before).
+  - Messages print values as floats where they echoed an integer argument ("got 1.0.", "value
+    2.0 is outside"), `True` as `1`, and list every out-of-domain knot to insert at full
+    precision without NumPy's array formatting. `insert_knots` checks that every direction's
+    `new_knots` is one-dimensional before inserting any.
+  - A singular least-squares system in `to_periodic` would raise `ValueError` "Singular matrix"
+    (`numpy.linalg.LinAlgError`, a `ValueError` subclass, before); no input reaching it was found.
+- **Inputs outside the annotated types, and calls with two invalid arguments, in `Bspline`,
+  `SpanwiseElementExtraction` and `find_roots`** can raise another exception or message than
+  before: a conversion error (of an index, a real value, a Lagrange variant or the orders) is
+  reported before a range or shape error (for example `slice(10, "x")` is now a `TypeError` for
+  the value, where it was a `ValueError` for the axis, and `SpanwiseElementExtraction` of a
+  periodic space with an invalid variant raises `ValueError` for the variant, where it raised
+  `NotImplementedError`), and an object that is not a space, or `orders=1.0`, fails with another
+  message. `find_roots` checks `tol` straight after the type of its first argument, so a `tol`
+  that is not positive, cannot be compared with `0.0` or cannot be converted to a float (a
+  one-dimensional one-element array on NumPy 2.4, an integer past the range of a float) is
+  reported before a B-spline that is not univariate, not scalar valued, of degree 0 or rational
+  with a non-positive weight (the previous release reported those first). A `Bezier` with the
+  B-spline's number of directions, dtype and rank given as `other` to `multiply` raises
+  `TypeError` from the binding, where it raised `AttributeError` ("... has no attribute
+  'space'").
+- **`SpanwiseElementExtraction` takes any number of directions** (its `apply` family raised
+  `NotImplementedError` beyond three) and **any memory layout** for the operand, `out`, `scratch`
+  and the cell indices, through a temporary where needed. The previous kernels raised Numba's
+  typing errors for strided and some Fortran-ordered arrays, and for a masked array until the
+  function had been called once with an ordinary array in the process (afterwards it was
+  accepted), and returned wrong values
+  for a Fortran-ordered matrix in one-cell `apply_MT_K_M` and `apply_M_K_MT` with two or three
+  directions. A masked `out` of `BsplineSpace1D.tabulate_*_extraction_operators` is accepted on
+  every call (it was refused until the function had been called once with an ordinary array in
+  the process). `compact_ops_1d`, `idx_maps_1d` and `is_identity_mask_1d` are read-only views
+  over the C++ value. A first argument that is not a `BsplineSpace` raises `AttributeError` for
+  `None` and `TypeError` for a `BsplineSpace1D` (both raised `AttributeError` on `.spaces`). When
+  a call has two faults, a read-only or wrongly typed `scratch` is reported before a too-small
+  one. `ExtractionStructView` keeps its fields, now holding those views; the Numba kernels it was
+  meant to feed are gone.
+- **`Bspline.multiply`, the rational `Bspline.derivative` and `pantr.bspline.find_roots` run in
+  pantr's C++ library**; names, signatures, defaults and messages are unchanged except as listed
+  here and in the entries on inputs outside the annotated types above. The rational `derivative`
+  is the quotient rule over `multiply`, so it moves with it.
+  - **Product values move in the last bits; knot vectors do not.** The knot vectors, degrees,
+    boundary types (open, periodic or unclamped, per direction), tolerances, rank, dtype and
+    `is_rational` of a product are the previous release's to the bit in all 1 811 random products
+    sampled and in 960 more that pair each boundary type with each of the three (degrees 0 to 3,
+    polynomial and rational, `float32` and `float64`). The control points are not: the C++ code
+    orders its sums and products differently, and solves the least-squares projections (onto the
+    minimal product knot vectors, and onto a periodic or unclamped boundary) by a banded QR where
+    the previous release called LAPACK's SVD-based solver through NumPy. The QR's answer is kept
+    only where it shows the system has full rank well clear of that solver's cutoff, and the
+    SVD (Eigen's) solves the rest. For a product with an open direction the cost of that
+    projection then grows about with the square of the number of intervals rather than its cube;
+    the conversion to a periodic or unclamped boundary still forms a dense matrix product first,
+    as the previous release did, whose cost is cubic, so those products gain less. Over 1 575 of
+    the random products
+    (one to three directions, open, unclamped and periodic operands in any pairing, polynomial and
+    rational, `float32` and `float64`, domains of length 3e-4 to 3e3), the largest difference seen
+    against the previous release, in units of `eps * max(1, |largest control value|)` of the
+    dtype, was 182 for `float64` and 29 for `float32`; it was 69 and 3.1 when all operands were
+    open, so the largest differences are those of products with a periodic or unclamped operand.
+    The 960 paired products differed by at most 7.6 (`float64`) and 4.4 (`float32`). These are
+    maxima of samples, not bounds. On domains of other lengths the largest seen in `float64` was
+    also 182; in `float32`, three two-direction products differed by up to `8.4e6` units, all
+    of them products in which the previous release read control points it had never written (see
+    the `multiply` entry under Fixed). In those products the projection is also rank deficient,
+    so the two releases' minimum-norm solutions can differ by thousands of units in `float64` as
+    well, even where the unwritten control points are zero.
+  - **The rational `derivative` moves in the last bits as well**, with the same knot vectors,
+    degrees and boundary types to the bit (485 sampled derivatives, `keep_degree` either way). Over
+    420 of them (one or two directions, open or periodic differentiated direction, `float32` and
+    `float64`, domains of length 3e-4 to 3e3) the largest difference was 7.0 units, as above, in
+    `float64` and 23 in `float32`.
+  - **A rational `derivative()` of a direction of degree 1 that is not clamped at both ends**
+    (unclamped, or clamped at one end only) returns the derivative, open in that direction, for
+    either `keep_degree`. The previous release raised `ValueError` ("all the input array
+    dimensions except for the concatenation axis must match exactly ..."). A direction of degree 2
+    or more that is not clamped is still refused, as above.
+  - **A NaN or infinite control point or weight no longer makes `multiply` or the rational
+    `derivative` emit NumPy's `RuntimeWarning`s** ("invalid value encountered in ..."; the
+    sampled ones were in `add`, `at`, `multiply`, `subtract`, `reduce` and `divide`). With one
+    such value placed at random in an operand
+    (open, one or two directions, `float32` and `float64`), the previous release warned in 89 of
+    300 products and 107 of 200 derivatives and the new release in none. The result is non-finite
+    in both releases in all 300 products, and at the same control points in all 200 derivatives;
+    the number of non-finite control points can differ between the releases, in either direction.
+  - **The domain-mismatch message of `multiply` prints the domain ends as Python floats**
+    (`f and g must share the same parametric domain. Got (0.0, 1.0) and (0.0, 2.0).`, or
+    `... domain in direction 1. Got ...` for several directions), where it printed NumPy scalars
+    (`(np.float64(0.0), np.float64(1.0))`); a `float32` domain prints as its `float64` value
+    (`0.10000000149011612`, not `np.float32(0.1)`), as the out-of-domain messages of `evaluate`
+    do. Which domains are refused is unchanged: 108 sampled pairs whose domains differ at one end
+    by 0.25 to 10 times the tolerance of the first operand's space (open, periodic and unclamped
+    operands, `float32` and `float64`) were accepted or refused alike by both releases, as were
+    the other mismatches probed.
+  - **A rational `derivative()` of a direction with an interior knot of multiplicity `degree + 1`
+    or more** (a `C^-1` knot at `degree + 1`, which the space accepts) raises `ValueError` with
+    the degree-preserving derivative's message ("Degree-preserving derivative in direction 0 (its
+    degree-1 hodograph) cannot walk a knot vector that repeats the knot 0.5 3 times at degree 1:
+    a knot may repeat at most degree + 1 = 2 times."), for either `keep_degree`. The previous
+    release raised `ValueError` "The number of control points must be a multiple of the number
+    of basis functions" in most of the 30 cases sampled (degrees 1 to 5, multiplicities `degree + 1`
+    to `degree + 3`) and ended the process in some runs of the others, with either
+    `keep_degree` (which cases crash varies from run to run). A
+    multiplicity of `degree` is accepted by both.
+  - **`find_roots` returns the previous release's roots to the bit for an open B-spline**, and
+    raises its exceptions with its messages: 885 sampled successful calls and 95 failing ones
+    (degrees 1 to 8, 1 to 10 intervals, interior knots of multiplicity up to the degree, polynomial
+    and rational, `float32` and `float64`, domains of length 1e-6 to 1e6, `tol` of `None`, `1e-6`,
+    `1e-10` and `1e-14`; 160 of the 980 calls have a polynomial's known roots at degrees 2 to 7 and
+    120 have a NaN or infinite coefficient). The two `RuntimeWarning`s for an exhausted insertion
+    budget keep their text, category and stack level (reached by lowering the budget, at 24
+    combinations of budget, `tol` and dtype). A periodic or unclamped B-spline is converted to open
+    form first, by the C++ conversion of `to_open_bspline` (above), so its roots move in the last
+    bits: 7 of 171 sampled `float64` calls differed, by at most 2.4e-16 times the largest root, and
+    79 of 170 `float32` calls, by at most 4.1e-8 times the largest root; the number of roots was
+    the same in every call.
+  - **`find_roots` reads `tol` as a Python float** for the C++ call. A `Decimal`, a `Fraction`, a
+    NumPy `float16` or `longdouble` scalar and an object that has `__float__` and orders against
+    `0.0` are accepted; the previous release raised `TypeError` for a `Decimal` and for such an
+    object, Numba's `TypingError` for a `Fraction` and a `longdouble`, and `NotImplementedError`
+    ("float16") for a `float16`. A one-dimensional one-element array is a `TypeError` ("only
+    0-dimensional arrays can be converted to Python scalars") on NumPy 2.4.6, where it was
+    accepted; a 1x1 array raised another error before and raises this one now. Another 31 values
+    (a `bool`, an `int`, NumPy `float32`, `float64`, integer and `bool` scalars, a 0-d and a
+    two-element array, `None`, NaN, infinities, zero, negative and subnormal values, a string, a
+    list, a complex number, an object with only `__float__`, an integer too large for a float) give
+    the previous release's roots or exception and message, on `float64` and `float32` B-splines.
+  - **The array `find_roots` returns does not own its data** (`ndarray.resize` raises); the
+    previous release's did own it in 13 of 1 226 sampled successful calls.
+- The private modules `pantr.bspline._bspline_basis_core`, `_bspline_knot_insertion_core`,
+  `_bspline_restrict`, `_bspline_split`, `_bspline_blossom`, `_bspline_blossom_core`,
+  `_bspline_degree`, `_bspline_degree_core`, `_bspline_knot_removal`,
+  `_bspline_knot_removal_core`, `_bspline_slice`, `_bspline_to_beziers`, `_bspline_extraction`,
+  `_extraction_kernels`, `_extraction_helpers` and `pantr._transform_control_points`, the
+  evaluation kernels of `_bspline_eval`, every function of `_bspline_knot_insertion` but
+  `_compute_oslo_matrix_1d_core`, the non-rational helpers of `_bspline_derivative`,
+  `Bspline._control_points`, `SpanwiseElementExtraction._ops_for_cell`, and the helpers
+  `_bspline_knots._is_in_domain_impl`, `_check_spline_info`, `_find_span`, `_count_multiplicity`,
+  `_find_knot_index_and_multiplicity` and `_get_Bspline_cardinal_intervals_1D_core` and `_impl`,
+  `_control_points_utils._reverse_control_points` and `_permute_control_points`, and
+  `spanwise_element_extraction._bezier_structural_identity_mask` and
+  `_lagrange_structural_identity_mask`, are gone with the Numba kernels and NumPy code they held.
+  What tests reach of them is in `pantr._testing`.
+- The private modules `pantr.bspline._bspline_roots_core`, `_bspline_product` and
+  `_bspline_product_nd`, the helpers `_bspline_knots._get_unique_knots_and_multiplicity_impl`,
+  `_get_Bspline_num_basis_1D_impl` and `_get_multiplicity_of_first_knot_in_domain_impl`, the
+  functions `_bspline_roots._check_connected`, `_max_insertions`, `_merge_certified`,
+  `_merge_radii`, `_scalar_numerator`, `_slope_bound` and `_validate_bspline_for_roots` with the
+  constants `_CURVATURE_DEGREE`, `_INSERTIONS_BASE`, `_INSERTIONS_PER_DEGREE`, `_STOP_SLACK` and
+  `_ZERO_TOL_SAFETY`, and `_bspline_derivative._derivative_rational`,
+  `_derivative_rational_open`, `_refine_to_common_space_1d` and `_tile_scalar_bspline`, are gone
+  with the Numba kernels and NumPy code they held, whose work is now done in C++.
+  What tests reach of the root finder and of the knot classes is in `pantr._testing`.
+- **B-spline fitting (`interpolate_bspline`, `fit_bspline`, `l2_project_bspline`,
+  `quasi_interpolate_bspline`) runs in pantr's C++ library**, with the names, signatures, defaults
+  and dtype rules it had: which dtype a solve runs in, which values are refused and with which
+  exception (except as listed below), the error raised before the user's function is called, and how
+  often that function is called (once per boundary trace and output component in
+  `l2_project_bspline`, as before) and on lattices of the same shape, order and count, whose
+  quadrature nodes agree with the previous release's to a few ulps. Each solve keeps the previous
+  rule (LU with partial pivoting for a square system, the truncated SVD with `tol` for a rectangular
+  one or where LU meets an exactly zero pivot), but a square system with a narrow band is now
+  factored within its band, and a rectangular one is first offered to a banded QR that answers only
+  where it certifies full rank well clear of that rule's cutoff; the mass matrices and loads of the
+  L2 projection are accumulated over the quadrature points rather than by dense products. A fit
+  still stores its matrices dense, so its cost per direction grows with the square of the number of
+  basis functions rather than the cube. Results move within the rounding of the system's
+  conditioning, measured against the previous release over sampled cases (scalar and vector, 1D and
+  2D, open and periodic, `float32` and `float64`, square, over- and underdetermined, with and
+  without boundary constraints), with two exceptions. Where `float32` nodes (scattered, or a
+  `float32` `PointsLattice`) are fitted into a `float64` space through the SVD, the previous release
+  rounded the SVD factors to `float32`; the result now keeps `float64` accuracy and moves by up to
+  the `float32` rounding of that solve. And where the system is singular (for example
+  `l2_project_bspline` with fewer quadrature points than `degree + 1`), whether LU or the SVD
+  answers depends on the last bits of the matrix, so such a result is not reproducible across
+  releases. The `RuntimeWarning` "divide by zero encountered in
+  divide" that the SVD path emitted for an exactly zero singular value is gone: with `tol >= 0` the
+  value was dropped either way, and with a negative `tol` its reciprocal is still infinite, now
+  without that warning or the "invalid value encountered in matmul" one that followed it.
+- **A `tol` that Python's `float()` rejects raises what `float()` raises in the B-spline fits,
+  on every system**: `ValueError` for a non-numeric string, `TypeError` for any other type (a
+  list, a tuple, an object, a complex number, an array with `ndim > 0`). The previous release
+  raised `TypeError` from the SVD path for a string, list, tuple or object, accepted a complex or
+  one-element-array `tol` there, and ignored `tol` on a system that LU solved. A numeric string,
+  bytes or `Decimal` `tol`, which the SVD path refused, is now accepted.
+- **`fit_bspline` refuses or accepts some unusual dtypes differently.** `longdouble` values on a
+  `float64` space whose first direction is rectangular and a later one square raise `ValueError`
+  ("The control points must have the same dtype as the B-spline space ..."), where they raised
+  `TypeError` ("array type float128 is unsupported in linalg"). A `PointsLattice` of `float16`
+  or `longdouble` coordinates is fitted (the lattice stores them as `float64`), where it raised
+  that `TypeError`. Scattered nodes of object dtype raise `ValueError` ("not inexact") where they
+  raised NumPy's casting `TypeError`, and complex scattered nodes raise `TypeError` where they
+  raised `ValueError` with a `ComplexWarning`. An `n_quad` entry of the wrong type is still a
+  `TypeError`, with the binding's "incompatible function arguments" message.
+- **The "invalid value encountered in matmul" or "in dot" `RuntimeWarning`** for an infinite
+  value given to `interpolate_bspline`, `fit_bspline` or `quasi_interpolate_bspline` is gone; the
+  result is the previous release's.
+- **Error messages of the B-spline fits that changed wording, not type** (besides the ones
+  above): a node outside the
+  domain names the domain as `(0.0, 1.0)` rather than `(np.float64(0.0), np.float64(1.0))`, as
+  the B-spline evaluation messages already do, and a tensor fit with no node in a later
+  direction reports the first direction's extent in its reshape message.
+- **`fit_bspline` with scattered integer nodes and an explicit `tol` fits the basis values.**
+  The previous release built the collocation matrix in the nodes' integer dtype, truncating
+  every basis value to an integer, and returned a fit to that matrix; with `tol=None` it raised
+  `ValueError` ("data type ... not inexact"), which it still does.
+- **`fit_bspline` with scattered nodes reports values of the wrong shape with its own message**
+  (`ValueError` "Values have shape ...", or a reshape error for the wrong number of rows) instead
+  of NumPy's `matmul` or `solve` message; the exception type is unchanged.
+- **The `ValueError` for a singular local block in `quasi_interpolate_bspline`** no longer
+  carries the two notes (the knot hint and the points) that it carried as exception notes; its
+  message is unchanged. The block is singular (to rounding) only when a knot interval is so short,
+  relative to the coordinate, that the `degree + 1` points placed in it collide in floating
+  point. Some such spaces that the previous release refused now return a spline, and some are
+  still refused.
+- **The grids run in pantr's C++ library.** `TensorProductGrid`, `HierarchicalGrid`, `BVH`,
+  `CellTags`, `FacetTags`, `Partition`, `cell_quadrature`, `overlay` and `partition_grid` are thin
+  wrappers over it; names, signatures and defaults are unchanged. In a sweep of calls against the
+  previous release, one process each (construction, queries, location, refinement and
+  coarsening, tags, hierarchies, partitions, quadrature, overlays, pickling and copying), every
+  returned cell id, owner and tag array was equal, and every returned coordinate array had the
+  same bytes, except in the cases the entries below describe.
+- **`copy.copy` of a grid, a `CellTags` or a `FacetTags` gives an independent tag registry.** In
+  the previous release `copy.copy(grid).cell_tags is grid.cell_tags` held once the grid's registry
+  existed, and a tag set on a shallow copy of a registry appeared on the original; now it does
+  not.
+- **`copy.deepcopy` of a grid, a tag registry, a `BVH` or a `Partition` returns read-only arrays**
+  (`breakpoints`, `bounds`, the tag ids and values, the node arrays, `cell_owner`), as the
+  originals are; the previous release's deep copies had writable arrays.
+- **Pickles of the grid classes written by this release do not load in the previous release**
+  (`TensorProductGrid`, `HierarchicalGrid`, `BVH`, `CellTags` and `FacetTags` raise
+  `AttributeError` there).
+  Pickles written by the previous release still load, except pickles of grids that the entries
+  above now refuse (2**63 cells or more, or a level past 2**63 - 1 cells along an axis), which
+  raise `OverflowError`. Pickle protocols 0 and 1 now work for the grid classes (they raised
+  `TypeError`), and arrays unpickled with protocols 2 to 4 are read-only (they were writable).
+- **`Grid`, `TensorProductGrid` and `HierarchicalGrid` can no longer be subclassed**: defining a
+  subclass raises `TypeError` when the class is created. The grids are C++ values with no
+  run-time polymorphism, so a method a subclass overrode would be ignored by the operations that
+  take a grid (`partition_grid`, `cell_quadrature`, `query_aabb`). `isinstance(x, Grid)` still
+  holds for both grids.
+- **`BVH` and `Partition` copy the arrays they are given.** The previous release made the caller's
+  arrays read-only in place when they were already contiguous and of the stored dtype, and
+  `Partition(owner, n).cell_owner` was then `owner` itself. The caller's arrays now stay writable,
+  and the stored arrays are read-only copies.
+- **Inputs outside the annotated types, integers past 64 bits, and calls with two invalid
+  arguments in `pantr.grid`** can raise another exception or message than before, since the
+  binding converts ids and levels to 64-bit integers before the C++ checks run. A cell id past the
+  64-bit range is a `TypeError` from the binding (it was an `IndexError`). `Partition.owned_cells`
+  converts its rank with `int()`, so `owned_cells(1.5)` returns rank 1's cells (it returned an
+  empty array). `name in tags` is `False` for an unhashable `name` (it raised `TypeError`).
+  `TensorProductGrid` accepts any iterable of breakpoint arrays, a generator included (a generator
+  raised `TypeError`). In `HierarchicalGrid.refine` and `coarsen`, an index that `int()` cannot
+  convert is reported before an out-of-range level. In `CellTags.set` and `FacetTags.set`, an error
+  in `values` is reported before an out-of-range or duplicate id (an id or key array of the wrong
+  dtype or shape is still reported first); in the `BVH` constructor, a wrong dtype of
+  an index array before a wrong shape of `node_lo`; in `cell_quadrature`, a dtype or shape error in
+  `cells` before a dimension mismatch with the rule. Some integers past 64 bits that the previous
+  release accepted are refused with `TypeError` or `OverflowError` (`CellTags(2**70)`,
+  `FacetTags(2**70, 4)`, `Partition([0], 2**70)`, `HierarchicalGrid(root, 2**70)`,
+  `HierarchicalGrid.cell_id(2**64, ...)`, which returned `None`), and some that made the previous
+  release run without bound (`level_cells_per_axis(2**63)`, `partition_grid(grid, 2**64)`) now
+  raise at once. `Partition.owned_cells` accepts any rank `int()` converts (`-0.5`, `2.5`, `"1"`)
+  and refuses a one-element array.
+- **The read-only arrays of the grids** (`breakpoints`, `bounds`, the tag arrays, the `BVH` node
+  arrays, `cell_owner`) refuse `setflags(write=True)` with `ValueError`; the previous release let
+  a caller make them writable again. `copy.copy` of a `BVH` or a `Partition` no longer shares its
+  arrays.
+- **`HierarchicalGrid.locate` of a point in a zero-width cell** (a root cell one unit in the last
+  place wide, refined) returns the cell's id, as `locate_many` does; the previous release raised
+  `ValueError` or `OverflowError` with a `RuntimeWarning`. `locate_many` of a point in such a cell
+  can return another child than the previous release did: refining `[0, 5e-324, 1e-323]` by 2 and
+  locating `0`, `5e-324` and `1e-323` gives `[0, 1, 3]`, the cells the same grid scaled by `2^1074`
+  (`[0, 1, 2]`) gives, where the previous release gave `[0, 0, 2]`. A `TensorProductGrid` whose
+  width overflows (`[[-1.7e308, 1.7e308]]`) no longer warns "overflow encountered in subtract".
+- **`Bspline.locate` runs in C++**, candidate search and Newton solve alike, with the previous
+  release's thresholds, line search and iteration budgets; the default thresholds agree to within a
+  few units in the last place (up to 2.6e-16 relative in the sample). A batch is solved one point at
+  a time over the thread pool, so it uses `pantr.set_num_threads` and no point's answer depends on
+  the number of threads. Compared with the previous release over dimensions 1 to 3, degrees 1 to 5,
+  rational and `float32` B-splines, repeated knots, physical and parametric offsets, explicit `tol`,
+  `max_iter=1` and points off the image, the same points are found except in the cases below, and
+  the exceptions, messages, dtypes and read-only flags are the same except as listed here. The
+  reference coordinates differ, because the evaluations, and the Jacobian's singular values and
+  solve, are computed by other code: each is within its threshold of the query, so the images of the
+  two releases' coordinates are within twice that of each other. So a point within that distance of
+  an interior knot line can be reported in the other cell of that line; the tie rule applies to the
+  coordinates returned.
+  - **A point whose only preimage sits at a discontinuity** (a knot of multiplicity `degree + 1`, as
+    at the closed end of knots `[0, 0, 0, 1, 2, 2, 2, 3]` at degree 2) can be found in one release
+    and not in the other.
+  - **An explicit `tol` of a few units in the last place of the physical coordinates or less**
+    leaves whether a point is found to rounding, in this release as in the previous one, so the two
+    can differ there (in the sample, at 3 units or fewer and not from 4).
+  - **With control points near `1e200` to `1e307`, or NURBS coordinates near `1e300`, and an
+    explicit `tol`,** the points found can differ from the previous release's, whose computation
+    overflowed there; in the sample the new release found more in 17 of the 18 calls that
+    differed.
+  - **When a B-spline has a non-finite projected control point** (including a finite one whose
+    projection overflows), the error about it is now raised before the errors about `max_iter`,
+    `tol` and `points` (the previous release checked those first).
+  - **Where a Newton step reaches a Jacobian that is undefined or not finite**, the candidate is now
+    abandoned, as a rank-deficient one is, instead of raising `numpy.linalg.LinAlgError` ("SVD did
+    not converge", with one direction or from 4 096 points) or `ZeroDivisionError` ("division by
+    zero", with two or three directions below that): at the end of a domain closed by a knot of full
+    multiplicity before a trailing knot (knots `[0, 0, 0, 1, 2, 2, 2, 3]` at degree 2), or with an
+    infinite NURBS weight. The point is reported not found unless another candidate or start finds
+    it.
+  - **A query point near `1.7e308` with a `tol` of that size** is reported not found, where the
+    previous release raised `ValueError` for a point outside the knot vector domain.
+  - **The `RuntimeWarning`s numpy emitted on overflow** (control points near `1e300`, weights near
+    `1e-300`) are gone; the errors raised there are unchanged.
+
+- **`coupling_graph` and `partition_graph` run in pantr's C++ library.** Names, signatures and
+  defaults are unchanged, `CouplingGraph` is still the same named tuple (built by
+  `coupling_graph` with read-only `int64` and `float64` arrays, and constructible by hand), and
+  `backend="metis"` still calls pymetis. In a sweep of calls against the previous release, one
+  process each (tensor-product and THB graphs in one to three dimensions, `float32` spaces, reduced
+  continuity, cell weights given as masked, byte-swapped, `float16`, `longdouble`, integer and
+  boolean arrays, part counts and masks of several types, hand-built graphs, and the METIS backend),
+  every graph and every METIS partition was equal; the spectral partitions and the other
+  differences are the entries below and above.
+- **`THBSplineSpace`, `THBSpline`, `MultiLevelExtraction`, `quasi_interpolate_thb_spline`,
+  `compute_halo`, `dof_owner`, `dof_owner_windowed` and `build_local` run in pantr's C++ library.**
+  Names, signatures and defaults are unchanged. In a sweep of calls against the previous release,
+  one process each (1D and 2D spaces of degrees 2 and 3 and 3D spaces of degrees 2 and 3,
+  anisotropic degrees and factors, truncated and not, subdivision factors 2 and 3, graded and
+  ungraded refinement, reduced regularity, `float32` roots), the active functions of every
+  cell, the coupling graph, `build_local`'s maps and masks and the prolongation's sparsity were
+  equal; tabulated values and derivatives, prolongation entries and extraction operators agreed
+  to rounding, and quasi-interpolation coefficients agreed to rounding except where a function's
+  leaf cell differs (see the entry on the leaf cell below). One 3D case with factor 3 was too slow
+  to compare and is not counted. The other differences are the entries below.
+- The private modules `pantr.bspline._thb_eval_core`, `_local_space_core` and
+  `_bspline_knot_insertion` (whose last function, `_compute_oslo_matrix_1d_core`, the entry above
+  kept), the helpers `_bspline_quasi_interpolation._interval_interior_points`,
+  `_local_weight_row`, `_tensor_point_grid` and `_contract_weights`, and the private attributes
+  the THB classes kept their state in, are gone with the Numba kernels and NumPy code they held.
+  What tests reach of them is in `pantr._testing`.
+- **On a `float32` root, `MultiLevelExtraction`'s operators (every target),
+  `tabulate_basis_derivatives` and `THBSpline.evaluate_derivatives`** can differ from the previous release by `float32` rounding.
+- **Which entries of `prolongation_to` and `prolongation_to_sparse` are exactly zero, and which are
+  a negative zero,** changed: the local systems are solved by a Householder QR (a Jacobi SVD where
+  the QR cannot certify the system's rank) instead of LAPACK's SVD, so an entry of rounding size
+  (about `1e-15`) can come out as `0.0` where it did not, or the reverse, and `count_nonzero` or
+  `eliminate_zeros()` can give another count. The sparsity pattern stored is the same.
+- **`coarsen` can number the cells of the coarsened grid differently.** It visits the parents of
+  one level in index order, where the previous release followed the iteration order of a Python
+  set; the cells, their levels and the space built on them are the same, but their flat ids, and
+  with them `active_basis(cid)` and `tabulate_basis(cid, ...)`, can follow another order.
+- **`quasi_interpolate_thb_spline` chooses the leaf cell of a function deterministically** (the
+  nearest cell centre to the function's Greville point, the first in cell-id order on a tie). The
+  previous release measured the distance with `numpy.linalg.norm`, whose rounding depends on the
+  BLAS, so where two candidate cells are equally near up to rounding the two releases can choose
+  different cells. Both choices are valid quasi-interpolants and reproduce every THB spline.
+- **A THB space whose subdivision knots fall within the root space's tolerance of each other** is
+  refused with `ValueError` ("level 1 has 4 knot intervals along axis 0 but the grid has 6 cells
+  there; ..."). The previous release built it, with a level space that has fewer intervals than
+  the grid has cells.
+- **The point-membership error of `tabulate_basis` and `tabulate_basis_derivatives`** prints the
+  cell bounds and the slack as Python lists of floats (`lo=[0.0, 0.5]`), where it printed NumPy
+  arrays (`lo=[0.  0.5]`); the message starts as before.
+- **`tabulate_basis_derivatives(cid, pts, True)`** evaluates the first derivative in every
+  direction; the previous release raised `ValueError`. An object with `__index__` is accepted as
+  `refine_region`'s `level` and as an entry of `regularity` (the previous release raised
+  `TypeError`).
+- **A deep copy of a `THBSpline`** has read-only `control_points`, as the original has; the
+  previous release's deep copy was writable.
+- **`compute_halo`, `dof_owner` and `dof_owner_windowed` of a `BsplineSpace` with no directions**
+  raise `ValueError` "a B-spline space needs at least one direction". The previous release
+  returned an empty halo for an empty request; `dof_owner` and `dof_owner_windowed` raised
+  `ValueError` about the partition's cell count, except for a one-cell partition, where `dof_owner`
+  raised `ValueError` "need at least one array to concatenate" and `dof_owner_windowed` raised it
+  too, or returned an empty array when asked for no DOFs.
+- **`prolongation_to`, `prolongation_to_sparse` and `restriction_to` between spaces whose roots
+  have different dtypes** (a `float32` root and a `float64` one) raise `TypeError`: the compiled
+  space exists once per dtype. The previous release computed them.
+- **Pickles of `THBSplineSpace`, `THBSpline` and `MultiLevelExtraction` written by the previous
+  release load**, a stale space staying stale (it is rebuilt on its grid as it now is, so its
+  counts are those of the current grid), except a `THBSpline` whose space was already stale when
+  it was pickled, which raises `ValueError` on loading. Pickle protocols 0 and 1, which the
+  previous release could not use for these classes, now work. A subclass that declares its own
+  `__slots__` loses those attributes when copied or pickled; the previous release kept them.
+- **Truncated THB functions evaluate above 24 directions**, where the previous release raised
+  `NotImplementedError`; the space's construction tables grow as `2^dim`, so memory is the limit.
+  Where a table no longer fits a `std::vector` (from 60 directions on Linux x86-64) the
+  construction raises `ValueError`, and from 64 directions its message names the summed-area
+  table.
+- **A `regularity` that is not an integer** (`1.5`, `numpy.float64(1.0)`) raises `TypeError`. The
+  previous release accepted some such values and built a space from them, or raised `ValueError`.
+- **Inputs outside the annotated types, and calls with two invalid arguments, in the THB classes
+  and the local-space functions** can raise another message than before (an unhashable cell id, a
+  non-integer `level`, an integer `regularity` beyond 32 bits, and a `refine_region` level or box
+  bound or a negative derivative order beyond 62 bits, each clamped before it is printed). With two
+  invalid arguments another one can be reported first: on a stale space, the stale space; on a
+  valid one, for example an out-of-range cell id before invalid `orders`. A few such inputs change
+  outcome: `admissible_class=float("inf")` raises `OverflowError` and `float("nan")` raises
+  `ValueError` (the previous release built the space, or for `refine` with NaN raised
+  `AssertionError`),
+  a `numpy.float64` `level` for `refine_region` and a one-element array as a `regularity` entry
+  raise `TypeError`, `create_thb_space` with a factor past 64 bits raises `TypeError`, and
+  `THBSpline.evaluate_derivatives` accepts `orders=True` and huge orders (zero derivatives), where
+  the previous release raised.
+- **Spectral partitions can change, at any size, where a Fiedler vector the bisection uses is not
+  determined by the graph**: the whole graph's, or, with three parts or more, that of a part the
+  recursive bisection splits again. The eigenvector of the second-smallest Laplacian eigenvalue is
+  now computed by Eigen up to 512 vertices and by Spectra above, not by LAPACK and ARPACK.
+  When that eigenvalue is repeated
+  (a square grid of cells, as in a uniform space with as many intervals in each direction), every
+  vector of its eigenspace is a Fiedler vector and the two releases use different ones, so the
+  parts differ and the cut weight can be larger or smaller; when the graph or the part is
+  symmetric under reversing the vertex order (or under reflecting one direction of a
+  tensor-product grid) and its Fiedler vector is antisymmetric (a 1D space,
+  or the first four of the six cells of a quadratic 1D space with a double knot after the second,
+  inside a graph that is not symmetric), the vector's two largest entries (in absolute value) tie
+  up to rounding, with opposite signs, so the sign chosen for it, and with it the order of the
+  vertices, depends on rounding, and the parts can come out mirrored; and where several vertices'
+  entries are equal up to rounding where the order is split, which of them falls on each side
+  depends on rounding. Without cell weights the parts' sizes are those of the previous release,
+  since the split balances the cell count. For the same reasons a partition can differ between the
+  extension's builds for different processors (it does not depend on the number of threads), in
+  the parts' labels or in the cut, with cell weights or without (they move where the order is
+  split, not the Fiedler vector).
+- **`partition_graph` with arguments that are not `int`.** `n_parts` and the graph's
+  `num_vertices` are converted with `int()` before the part count is compared with the active
+  cells, so a float is truncated (`partition_graph(graph, 4.5)` on four cells now partitions into 4
+  parts; it raised `ValueError`, and the message for a part count that exceeds the active cells now
+  prints the converted value) and a numeric string `num_vertices` (`"4"`) or a float one is
+  accepted (the previous release raised `TypeError`). An `n_parts` past the 64-bit range raises
+  `TypeError` and `float("inf")` raises `OverflowError` (both raised `ValueError`). A
+  `CouplingGraph` whose arrays are Python lists is accepted (the previous release raised
+  `AttributeError`).
+- **`coupling_graph` of a `BsplineSpace` with no directions** raises `ValueError` "a B-spline space
+  needs at least one direction" (it raised `ValueError` "multiple indices are not supported for 0d
+  arrays"), and for a periodic space with `cell_weights` that are not 1-D, the error about the
+  weights' shape is raised before the one about periodicity.
+- **`make_compat`, `create_line`, `create_circle`, `create_bilinear`, `create_trilinear`,
+  `create_ruled`, `create_revolution`, `create_coons_surface`, `create_coons_volume` and `join`
+  (`pantr.cad`), and `Interface`'s checks, `match_face_cps`, `detect_interfaces` and `MultiPatch`
+  (`pantr.multipatch`), run in pantr's C++ library.** Names, signatures, defaults and the types
+  returned are unchanged; `create_extrusion`, `create_sweep`, `create_rectangle`, `create_disk` and
+  `create_cylinder` are the same Python code as before (`create_disk` calls the compiled
+  `create_circle` and `create_ruled`, and `create_cylinder` the compiled `create_circle` and the
+  Python `create_extrusion`, all through the public functions). In a sweep against
+  the previous release (calls of the CAD functions on random and edge inputs, in `float32`,
+  `float64` and mixed precision, rational and not; random multipatch inputs in one to three
+  dimensions), the interfaces found, the accepted and refused inputs and the exception types were
+  the same, and control points agreed to rounding, except in the entries below.
+- **A NumPy array quoted in a CAD mismatch message is printed as a list:** `join` reports "the
+  first B-spline gives [1.0, 0.0, 0.0]" where the previous release printed "[1. 0. 0.]". The gap,
+  tolerance and scale the messages report are unchanged.
+- **Where the previous release failed inside NumPy, the CAD and multipatch functions raise a
+  `ValueError` of their own** (it was a `ValueError` from NumPy before): `create_ruled` of two
+  B-splines whose control points have different widths (a second B-spline of width one is still
+  broadcast and accepted), `join` and the Coons constructions of pieces of different ranks,
+  `create_revolution` with an axis of more than three coordinates ("Rotation axis must have at
+  most 3 coordinates, got 4."), `join` of two pieces whose transverse knots differ by a rounding
+  ("junction faces of different shapes"), and `detect_interfaces` of a patch with fewer
+  coordinates than the rank of an earlier one. `create_circle`, `create_disk` and
+  `create_revolution` with `angle=inf` raise the same `ValueError` as before without the
+  `RuntimeWarning`s NumPy emitted first, and `create_circle(radius=inf)` and `create_revolution`
+  with a `point` near the largest double no longer emit NumPy's `RuntimeWarning`s.
+- **Inputs of mixed precision are converted to the precision of the result before the operation.**
+  `create_ruled` (the first B-spline's precision), the Coons constructions (the first curve's or
+  face's) and `join` (`float64`) used to compute each `float32` input in `float32` and convert
+  afterwards, so their control points can differ from the previous release by `float32` rounding.
+  The tolerance of their checks is still read at the coarsest precision supplied. Where the
+  `float32` and `float64` inputs carry one knot in their two precisions, the previous release
+  counted its two readings as two knots. A mixed-precision `create_ruled` or Coons construction of
+  such inputs could be refused (with a multiplicity error, or with a `ValueError` from NumPy when
+  the two pieces came out with different numbers of control points) and is built now. A `join`
+  whose first piece is `float64` could be refused with the multiplicity error and is built now; a
+  `join` of surfaces or volumes whose first piece is `float32` is still refused (with the dtype
+  error; it was a NumPy `ValueError` when the knots differed). One that was built can now have
+  fewer control points, the same surface to `float32` rounding: a degree-2 Coons patch whose
+  `float64` curve has the knot `0.3` and whose `float32` curve has `0.3f` had 6 x 2 basis
+  functions with the interior knots `0.3`, `0.3f`, `0.3f`, and now has 5 x 2 with `0.3` and
+  `0.3f`; with a `float32` first curve it had 6 x 2 with `0.3f` three times and now has 4 x 2
+  with `0.3f` once. `make_compat` of mixed precisions computes in `float64` and returns each
+  B-spline in its own precision, so a `float32` knot and a `float64` knot one `float32` rounding
+  apart give both B-splines the same number of basis functions, where the previous release could
+  give them different numbers. For the same reason a mixed-precision `make_compat` is built
+  where the previous release refused it with the multiplicity error, and is refused with that
+  error where two readings of one knot now exceed the degree's maximum multiplicity (the previous
+  release returned B-splines with different knot vectors there).
+- **A `float64` control point or weight above the largest `float32` (3.4028234663852886e+38),
+  converted to `float32` by a mixed-precision `create_ruled` or Coons construction, raises
+  `ValueError`** ("The value 1e+300 is outside the range of the target floating-point type.").
+  The previous release stored `inf` and warned (`RuntimeWarning: overflow encountered in cast`)
+  from 3.4028235677973366e+38 up, and stored the largest `float32` without a warning for values
+  between the two.
+- **An `Interface` patch id, face id or axis, or a `match_face_cps` face id or axis, past the
+  signed 64-bit range raises `TypeError`.** The previous release built `Interface(2**70, 1,
+  2**70 + 1, 0, (1,), (False,))` and refused an out-of-range face with `ValueError`.
+- **Inputs outside the annotated types, and calls with two invalid arguments,** in `pantr.cad` and
+  `pantr.multipatch`, may be refused with another exception or message: a float id in `Interface`
+  raises `TypeError` (it was accepted), `MultiPatch` reports a patch of another dtype before a patch
+  of another dimension, rank or rationality that stands earlier in the list, and also when one
+  patch differs in both (the previous release reported the dimension, rank or rationality first),
+  and `create_revolution` with an
+  out-of-range integer `axis` raises its `IndexError` before the checks of the B-spline and of
+  `point`.
+- **A `bool` `axis` of `join` is taken as the integer it equals:** `join(c1, c2, axis=False)` joins
+  two curves along their only axis, where the previous release raised `TypeError` "an integer is
+  required for the axis", and a refused `True` is printed as `1` ("axis must be in [0, 1), got
+  1."). An axis past the signed 64-bit range in `join` or `make_compat` is printed as
+  `9223372036854775807` (`-9223372036854775808` below the range) in the refusal, rather than as
+  given. `make_compat(axes=True)` reports "Axis 1 out of range" (it said "Axis True"),
+  `join(axis=numpy.True_)` raises `TypeError` where it raised `ValueError`, and
+  `join(axis=numpy.False_)` still raises `TypeError`, with another message.
+- The private helpers of `pantr.cad` and `pantr.multipatch` are gone with the Python code they
+  held: `_validation._ColumnGroup`, `_EUCLIDEAN_COLUMNS`, `_HOMOGENEOUS_COLUMNS`, `_column_groups`
+  and `_coarsest_dtype`; every private function, class and constant of `_compat`, `_join` and
+  `_coons`; those of `_primitives` and `_operations` except `_primitives._linear_space_1d` and
+  `_operations._MAX_DIM_FOR_OPERATIONS`, which the Python extrusion and sweep still use;
+  `_interface.face_axis_side` and `tangential_axes`; `_match.face_index_grids`,
+  `_face_slab_index` and `_validate_face`; and `_detect.verify_interface` with every private
+  function and class of `_detect`. What the tests reach of them
+  is in `pantr._testing` (`coons_edge_pairs`).
+
+- **`create_distributed_space` and `create_distributed_function` compute the partition on rank 0
+  only and send it to the other ranks**, whenever the communicator has more than one rank. Before,
+  every rank computed it and the docstrings stated that this needed no communication, but a
+  partition computed in floating point (the spectral graph partition, a weighted recursive
+  bisection) can differ between two ranks' machines, for instance between two builds of the
+  extension for different processors, and the ranks must agree on it. The partition is sent with
+  one `comm.allgather` (see under Rejected for a communicator without one). With one rank nothing
+  is sent, as before. `method`, and for `method="grid"` the type of `global_space`, are checked on
+  every rank; any other error from computing the partition is raised on rank 0 as before, and
+  every other rank raises `ValueError` "rank 0 could not compute the partition" instead of
+  waiting in the collective. Which cut rank 0 computes with `method="graph"` is the one described
+  under the spectral partitions above, so on most tensor-product graphs, symmetric or not (a few
+  small ones, such as a quadratic one-dimensional space of five cells, are unchanged), it can
+  differ from the previous release's, in the parts' labels or in the cut; `method="grid"` gives
+  the previous release's partitions.
+- **The message of `require_mpi`** no longer suggests `pip install mpi4py` alone, since an
+  `mpi4py` communicator also needs `pantr-mpi`.
+- **The distributed fits run in the compiled extension; some of their error messages, checks
+  and call pattern change.** `from_dolfinx`'s inconsistent-gather message says `comm.size` where
+  it said `mesh.comm.size`; it accepts a gather that returns a generator (the previous release
+  raised `TypeError`), and a gather that returns `None`, a float `n_cells` such as `8.0` and an
+  `n_cells` too large to allocate (up to 2**63 - 1) raise the same exception types with other
+  messages; an `n_cells` of 2**63 or more raises `TypeError` where the previous release raised
+  `ValueError`. In
+  `interpolate_bspline_distributed` and `fit_bspline_distributed`, value blocks that cover more
+  grid points than there are raise the "do not tile" `ValueError`
+  (the previous release raised NumPy's broadcasting error, unless every row past the end of the
+  grid arrived in a block of one row lying wholly past it, in which case it also reported "do not
+  tile"), and a block with another number of
+  components than the first raises `ValueError` naming the rank (the previous release raised
+  NumPy's reshape or broadcasting error); a scalar first block followed by `(m, 1)` blocks, a 0-d
+  gathered entry and list blocks are accepted, and in `fit_bspline_distributed` an own `values`
+  block of three or more dimensions is refused (`ValueError`; the previous release accepted a
+  trailing axis of 1). Both build the collocation system before the gather, so too many
+  `boundary_derivatives` or nodes outside the domain raise before any `allgather` (the previous
+  release raised after it). The distributed collocation and quasi-interpolation functions, and
+  `from_dolfinx`, refuse a gather that
+  returns another number of entries than `comm.size` (`ValueError` "allgather returned N entries
+  but comm.size is M"; the previous release accepted it everywhere but in `from_dolfinx`). The
+  quasi-interpolants refuse a gathered DOF that two ranks own, or outside the global range, with
+  `ValueError` (the previous release kept the last duplicate, wrapped a negative index and raised
+  NumPy's `IndexError` past the end), and their component-count mismatch message is "rank r sent
+  k DOFs and c coefficients; expected n per DOF" (the previous release raised NumPy's reshape or
+  broadcasting error, except that the THB quasi-interpolant gave an entry that NumPy broadcasts
+  over the rank's DOFs, namely a 0-d array or one of shape `(1,)`, `(1, 1)`, `(1, c)` or `(c,)`,
+  to all of that rank's DOFs); DOF ids gathered as a `(k, 1)` array are accepted (the previous
+  release raised NumPy's broadcasting error), and the THB quasi-interpolant accepts a scalar
+  coefficient entry shaped `(k, 1)` and a c-component entry flattened to `(k·c,)`, as the
+  B-spline one already did (the previous release raised NumPy's broadcasting error). None of these arises with a correct
+  communicator. `l2_project_bspline_distributed` calls `func` once per boundary trace for all
+  components together, where the previous release called it once per trace and
+  component; the values are the same. Its `comm.allreduce` payload is C-contiguous, where the
+  previous release's was not for a space of two or more dimensions; dtype, shape and values are
+  unchanged except as under Fixed.
 
 ### Fixed
+- **The Linux `pantr-mpi` wheels no longer bundle MPICH's `libmpicxx`.** The module uses only the
+  MPI C API and now links `MPI::MPI_C`; CI checks that the wheel vendors no library and carries its
+  licence files.
+- **`Bezier.multiply` of `float32` Béziers of high degree** returns finite control points where
+  the product is finite. It formed each coefficient `C(p, i) C(q, j) / C(p + q, i + j)` in
+  `float32`, whose intermediate product of binomials overflows from about degree 66 per operand for
+  a curve (lower per direction for a surface or a volume),
+  so the product of two constants had infinite or NaN control points. The coefficients are now
+  formed in `double` (and the tensor-product formula runs in `double`), so `float32` products
+  can differ from the port's earlier build in the last bits; `float64` products do not (they differ
+  from the previous release's in the last bits, as other Bézier operations do).
+  Inherited from the previous release.
+- **`Bezier.minimize_degree` keeps the degree of a Bézier with a NaN or infinite control point.**
+  A trial reduction was rejected when its error reached `tol`, and a NaN error never does, so
+  such a Bézier was reduced as far as it went (to degree 0 for a curve). Inherited from the
+  previous release.
+- **`pantr.bezier.find_monotone_root` raises `RuntimeError` instead of returning a point far
+  from the root**, and `find_roots` warns where its own solve reaches that cap. Their
+  Newton/bisection solve stops after a fixed number of iterations, and when a Newton sequence
+  approaches the root from one side the far end of its bracket never moves: the midpoint it
+  returned could be far from the root, silently (about `2/3` for `(t - 1/3)^3`; for `float32`
+  coefficients, where rounding stalls the Newton step, also for simple roots such as that of
+  `(t - 5/8)(t + 1)^3`). `find_monotone_root` now raises where it reaches its cap, naming the
+  bracket (and in batch mode the row); `find_roots` reports the bracket as a part of
+  `[0, 1]` it did not resolve, with the `RuntimeWarning` it gives for Bézier clipping's depth cap.
+  A `tol` below the spacing of doubles at the root reaches the cap too, and raises there, where
+  the previous release's value was as close as doubles allow. Inherited from the previous release.
+- **`pantr.bezier.find_monotone_root` converges on `float32` simple roots** such as that of
+  `(t - 5/8)(t + 1)^3`, which reached the iteration cap above (and in the previous release gave a
+  value far from the root). Its solve now bisects whenever a step fails to halve the bracket,
+  takes the Newton step from the bracket's end with the smaller value, keeps each Newton point at
+  least `tol / 2` inside the bracket, and returns a point where the polynomial evaluates to an
+  exact zero; at a simple root it moves within `tol` of the previous release's root wherever that
+  release converged. Since the bracket at least halves every two iterations, its cap is 102
+  iterations, `2 (ceil(log2(1 / tol)) + 1)` at the strict `float64` tolerance, for both dtypes
+  (the previous release stopped after 64), which reaches any `tol` from that one up, on multiple
+  roots too: `(t - 1/3)^3` and `(t - 5/8)^3` converge in `float64`, and a `float32` polynomial at a
+  `tol` finer than its own strict tolerance converges. A `tol` below the spacing of doubles at the
+  root still reaches the cap and raises.
+  `find_roots` keeps the previous solve, so a `float32` stall there warns as described above.
+- **A knot vector whose first domain knot repeats past `knots[degree]`** (a non-clamped vector
+  with `knots[degree] == knots[degree + 1]`, or a first knot repeated more than `degree + 1`
+  times) gets correct Bézier, Lagrange and cardinal extraction operators, `to_beziers` pieces,
+  cardinal-interval flags (`get_cardinal_intervals`), and `slice` at the start of the domain. Each assumed the first interval started at
+  `knots[degree]` rather than at the last copy of that knot, so the first interval's operator and
+  Bézier piece were wrong (for the knots `[-0.5, -0.25, 0, 0, 0.5, 1, 1.25, 1.5]` at degree 2, a
+  constant piece where the spline varies), the cardinal flags of the interior intervals were
+  shifted, and `slice` at the domain start returned a control point the spline does not take
+  there. Inherited from the previous release.
+- **`pantr.bezier.find_roots` gives the same roots when the coefficients are scaled.** Its zero
+  tests, its flatness test, two tests on the derivative and the radius within which it merges
+  duplicate roots were absolute, in the units of the coefficients: a polynomial with six simple
+  roots lost some of them once its coefficients were small enough, and merged distinct roots into
+  one once they were large enough. Each bound is now relative to the polynomial's largest
+  coefficient (each row's, for a sequence of Béziers), and scaling the coefficients by a power of
+  two leaves the roots unchanged to the bit wherever nothing underflows or overflows. A multiple
+  root that clipping reached from two sides is now reported once in more cases (a triple root
+  beside a small cofactor was reported twice). With an explicit `tol`, each simple root is
+  reported within `tol` of it (the previous release could miss by more than `tol`, as it did
+  for the root `0.1` of that polynomial at `tol=1e-5`). Inherited from the previous release.
+- **`quasi_interpolate_bspline_distributed` leaves a coefficient that no rank owns at `0`.** Such
+  a DOF exists when `cell_active` excludes every cell of its support; the previous release
+  assembled the global field with `numpy.empty` and left that coefficient uninitialized.
+  `quasi_interpolate_thb_spline_distributed` did the same, and now leaves such a coefficient at
+  `0` too.
+- **`l2_project_bspline_distributed` on a `float64` space with a `float32` function** sums the
+  ranks' loads in `float64`, the precision the serial `l2_project_bspline` computes in; the
+  previous release reduced them in `float32`, so on one rank its coefficients differed from the
+  serial ones by `float32` rounding, and now they are equal. On a `float32` space the distributed
+  L2 coefficients differ from the previous release's by `float32` rounding.
+- **`detect_interfaces` and `MultiPatch` of patches whose joint bounding box has a diagonal
+  from about `1.34e154` (the square root of the largest double) up to the largest double** find
+  the interfaces there are; beyond that the tolerance is infinite, as before. The previous release
+  took the length of the patches' joint bounding box with `numpy.linalg.norm`, whose sum of
+  squares overflowed to `inf`, so the tolerance became infinite and every face was matched with
+  every face.
+- **`detect_interfaces` and `MultiPatch` of a patch whose knot vector sits far from the origin
+  relative to its span** find the interfaces there are. The knots are compared after mapping
+  each vector onto `[0, 1]`, whose rounding grows with that ratio, against the bare relative
+  tolerance: two patches sharing an edge exactly, one knot vector shifted by a few tens of its
+  span or more (from `16` for knots at thirds of `[0, 1]`), had no interface. Each matched
+  direction now adds its space's knot tolerance over its knot span (`8 eps` times the knot
+  magnitude over the span, `eps` of the patch's own dtype, also in a list of both dtypes), which is
+  also the comparison's resolution: a normalized knot moved by less than the sum of the two
+  patches' is not seen. Inherited from the previous release.
+- **`partition_graph` bisects graphs above 512 vertices along their Fiedler vector.** It asked
+  ARPACK for the two smallest eigenpairs of the Laplacian and took the second, which is the
+  Fiedler pair only if the first is the constant vector's (eigenvalue 0). The start vector is
+  orthogonal to the constant vector, so in exact arithmetic ARPACK never finds it; in floating
+  point rounding brings it in on some graphs and not on others, so the vector used was sometimes
+  that of the third-smallest eigenvalue: the 32 x 27 grid graph was split along
+  its short axis (35 edges cut) instead of its long one (27). The partitioner now solves for one
+  eigenpair of the Laplacian with the constant direction deflated (moved above the rest of the
+  spectrum), which is the Fiedler pair whatever the start vector holds. Partitions of graphs above
+  512 vertices can change: they now follow the true Fiedler vector. This is a fix, not a
+  consequence of the port.
+- **`partition_graph` no longer reads outside its arrays on a `CouplingGraph` with an `adjncy`
+  entry outside `[0, num_vertices)` or a decreasing `xadj`.** The previous release's outcome
+  depended on the values and memory: it partitioned silently, raised an unrelated error, or ended
+  the process (a segmentation fault, in scipy with the spectral backend or in pymetis with
+  `backend="metis"`, or an abort). All of these raise `ValueError` now (see above).
+- **`Bspline.multiply` no longer returns values that depend on memory it never wrote.** The
+  product groups the knots of every direction at the largest tolerance of any direction, so in a
+  direction much shorter than another (in `float32`, one a few `1e-6` long beside one of length
+  1) knots closer than the other direction's tolerance merge into one breakpoint of multiplicity
+  above `degree + 1`, and the product's Bézier form then has control points that no element
+  writes. The previous release read them as `numpy.empty` left them, so the result could change
+  from call to call on the same input, up to `1e37` or NaN. They are now zero and the result is
+  repeatable. It is still not `f g` on such input, as it was not before: the grouping itself is
+  unchanged. The previous release could also raise `numpy.linalg.LinAlgError` ("SVD did not
+  converge in Linear Least Squares") there; no such input raising it on the new release was
+  found.
+- **`SpanwiseElementExtraction`'s batch applications no longer race on an overlapping `out`.**
+  A batch of cells whose operators are all the identity accepted any `out` overlapping the
+  operand, and its cells then read entries other cells had written, so the result depended on the
+  number of threads. Such a batch now overwrites its operand only when `out` is the operand
+  itself; any other overlap is refused with the existing "out must not alias the operand"
+  message.
+- **`find_roots` no longer loses roots that Bezier clipping found.** Clipping collected its
+  candidates in a fixed buffer of `3 * degree + 4` entries and silently dropped any past it, which
+  polynomials with many exact, evenly spaced roots fill: at degree 7 with roots `1/8, ..., 7/8`,
+  the previous release returned six of the seven (the same at degrees 11, 15, 23, 31 and for
+  other dyadic families). The candidate list now grows.
+- `AABB` can be pickled and copied (`pickle`, `copy.copy`, `copy.deepcopy`); each raised
+  `AttributeError` from the immutability guard, which refused the state the default protocol
+  restores.
+- `AffineTransform(matrix)`, `AffineTransform.translation` and the other factories no longer make
+  the caller's own float64 array read-only (the constructor set `writeable = False` on it when it
+  needed no conversion); the C++ value holds its own copy.
+- Multi-dimensional tabulations at zero points in three or more dimensions return an empty
+  `(0, n_functions)` array; they raised a NumPy reshape error.
+- `get_modified_chebyshev_nodes_1d` honors `dtype` when `n_pts` is a NumPy integer; it returned
+  float64.
+- High-order Bernstein derivatives (reached by `Bezier.evaluate_derivatives` and the
+  Bezier-like B-spline paths) are now correct where the scaling `degree! / (degree - k)!`
+  passes 2^63, for example from order 14 at degree 30. The scaling
+  was an `int64` that wrapped; it now switches to double precision when it would overflow.
+- `create_lagrange_points_lattice` given a one-shot iterable of counts (a generator) now
+  builds the lattice it describes. The counts were read twice: the validation exhausted the
+  generator, and the construction then saw no direction and raised "Points lattice must
+  have at least 1 dimension".
 - `reduce_degree` on a periodic B-spline now succeeds for a smooth spline. The closure
   step used to compare the reduction's own approximation error against round-off and
   refused nearly every case.
@@ -75,6 +1572,9 @@
   of multiplying the two values, which flushed to zero for tiny coefficients, and the
   test for a vanishing coefficient no longer carries an absolute floor, so rescaling a
   polynomial no longer changes its roots.
+- **A `BVH` built with a negative `n_cells` and no nodes** returns an empty array from
+  `query_aabb`. The previous release read past its empty node arrays and returned a cell id taken
+  from that memory.
 
 ## 0.7.0 (2026-08-19)
 

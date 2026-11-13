@@ -6,6 +6,9 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
+from pantr._testing import func_support_1d as _func_support_1d
+from pantr._testing import thb_dof_owner as _thb_dof_owner
+from pantr._testing import thb_halo as _thb_halo
 from pantr.bspline import (
     BsplineSpace,
     BsplineSpace1D,
@@ -13,12 +16,12 @@ from pantr.bspline import (
     THBSplineSpace,
     build_local,
     compute_halo,
+    create_thb_space,
     create_uniform_periodic_knots,
+    create_uniform_space,
     dof_owner,
     dof_owner_windowed,
 )
-from pantr.bspline._local_space import _thb_dof_owner, _thb_halo
-from pantr.bspline._thb_spline_space import _func_support_1d
 from pantr.grid import Partition, hierarchical_grid, uniform_grid
 
 
@@ -700,3 +703,19 @@ def test_dof_owner_windowed_validation() -> None:
     )
     with pytest.raises(ValueError, match="periodic"):
         dof_owner_windowed(periodic, Partition(np.zeros(4, dtype=np.int32), 1), [0])
+
+
+@pytest.mark.parametrize("rank", [0.5, 1.5])
+@pytest.mark.parametrize("hierarchical", [False, True])
+def test_build_local_refuses_a_rank_no_cell_has(rank: float, hierarchical: bool) -> None:
+    """A rank that is not an integer owns no cell: cells are owned by integer ranks only.
+
+    The previous release compared the owners with the rank as given, found no cell and raised; the
+    owned cells must not be looked up for a truncated rank while the masks compare with the
+    untruncated one, which would return a local space owning nothing.
+    """
+    root = create_uniform_space([2, 2], [4, 4])
+    space: BsplineSpace | THBSplineSpace = create_thb_space(root) if hierarchical else root
+    part = Partition(np.arange(16, dtype=np.int32) % 2, 2)
+    with pytest.raises(ValueError, match="owns no cells"):
+        build_local(space, part, rank)  # type: ignore[arg-type]

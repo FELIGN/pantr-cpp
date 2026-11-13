@@ -11,15 +11,20 @@ exactly over the rank's owned cells.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, get_args
+from typing import TYPE_CHECKING, Any, get_args
 
 import numpy as np
 
-from ..bspline import Bspline, BsplineSpace
-from ..bspline._bspline_quasi_interpolation import QIKind, quasi_interpolate_bspline
+from .._ext import ext
+from ..bspline import Bspline, BsplineSpace, quasi_interpolate_bspline
+from ..bspline._bspline_quasi_interpolation import QIKind
+from ._comm import as_communicator
 from ._distributed_function import DistributedFunction
 from ._distributed_space import DistributedSpace
 from ._thread_policy import _ensure_default_thread_policy
+
+_cpp: Any = ext.mpi
+"""The compiled distributed algorithms (private)."""
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -100,9 +105,7 @@ def quasi_interpolate_bspline_distributed(
         valid = ", ".join(repr(v) for v in get_args(QIKind))
         raise ValueError(f"Unknown kind {kind!r}; expected one of {valid}.")
 
-    comm = distributed_space.comm
     local = distributed_space.local
-
     if local is not None:
         # local.space is BsplineSpace because global_space is BsplineSpace (checked above).
         assert isinstance(local.space, BsplineSpace)
@@ -110,43 +113,25 @@ def quasi_interpolate_bspline_distributed(
         local_bspline = quasi_interpolate_bspline(func, local.space, kind=kind)
         # Flatten control points to (n_local_dofs, rank_dim); shape is (*num_basis, rank_dim).
         cp = np.asarray(local_bspline.control_points, dtype=np.float64)
-        cp_flat = cp.reshape(local.space.num_total_basis, -1)
-        # Restrict to owned DOFs and record their global indices.
-        owned_mask = local.owned_dof_mask
-        owned_global_dofs: npt.NDArray[np.int64] = local.local_to_global_dof[owned_mask]
-        owned_coeffs: npt.NDArray[np.float64] = cp_flat[owned_mask]
+        cp_flat = np.ascontiguousarray(cp.reshape(local.space.num_total_basis, -1))
+        local_to_global = np.ascontiguousarray(local.local_to_global_dof, dtype=np.int64)
+        owned_mask = np.ascontiguousarray(local.owned_dof_mask, dtype=np.bool_)
     else:
-        owned_global_dofs = np.empty(0, dtype=np.int64)
-        owned_coeffs = np.empty((0, 0), dtype=np.float64)
+        local_to_global = np.empty(0, dtype=np.int64)
+        owned_mask = np.empty(0, dtype=np.bool_)
+        cp_flat = np.empty((0, 0), dtype=np.float64)
 
-    # Single MPI collective: each rank contributes its owned-DOF (index, coefficient) pairs.
-    gathered: list[tuple[npt.NDArray[np.int64], npt.NDArray[np.float64]]] = list(
-        comm.allgather((owned_global_dofs, owned_coeffs))
+    # One collective: every rank sends its owned (global DOF, coefficient) pairs.
+    global_cp_flat, _ = _cpp.gather_owned(
+        as_communicator(distributed_space.comm),
+        global_space.num_total_basis,
+        local_to_global,
+        owned_mask,
+        cp_flat,
     )
-
-    # Determine rank_dim from the first non-empty contribution.
-    rank_dim = 1
-    for _, coeffs in gathered:
-        c = np.asarray(coeffs)
-        if c.ndim == 2 and c.shape[0] > 0:  # noqa: PLR2004
-            rank_dim = int(c.shape[1])
-            break
-
-    # Assemble global control points from per-rank contributions.
-    n_global = global_space.num_total_basis
-    global_cp_flat = np.empty((n_global, rank_dim), dtype=global_space.dtype)
-    for gdofs, coeffs in gathered:
-        gdofs_arr = np.asarray(gdofs, dtype=np.int64)
-        if gdofs_arr.size == 0:
-            continue
-        coeffs_arr = np.asarray(coeffs, dtype=global_space.dtype)
-        global_cp_flat[gdofs_arr] = coeffs_arr.reshape(gdofs_arr.size, rank_dim)
-
-    # Reshape to Bspline convention: (*num_basis, rank_dim).
     num_basis = tuple(global_space.num_basis)
-    global_cp = global_cp_flat.reshape(*num_basis, rank_dim)
-
-    global_bspline = Bspline(global_space, global_cp)
+    global_cp = np.asarray(global_cp_flat).astype(global_space.dtype, copy=False)
+    global_bspline = Bspline(global_space, global_cp.reshape(*num_basis, -1))
     return DistributedFunction(global_bspline, distributed_space)
 
 

@@ -14,16 +14,20 @@ exactly over the rank's owned cells.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, get_args
+from typing import TYPE_CHECKING, Any, get_args
 
 import numpy as np
 
-from ..bspline import THBSpline, THBSplineSpace
+from .._ext import ext
+from ..bspline import THBSpline, THBSplineSpace, quasi_interpolate_thb_spline
 from ..bspline._bspline_quasi_interpolation import QIKind
-from ..bspline._thb_quasi_interpolation import quasi_interpolate_thb_spline
+from ._comm import as_communicator
 from ._distributed_function import DistributedFunction
 from ._distributed_space import DistributedSpace
 from ._thread_policy import _ensure_default_thread_policy
+
+_cpp: Any = ext.mpi
+"""The compiled distributed algorithms (private)."""
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -110,57 +114,34 @@ def quasi_interpolate_thb_spline_distributed(
         valid = ", ".join(repr(v) for v in get_args(QIKind))
         raise ValueError(f"Unknown kind {kind!r}; expected one of {valid}.")
 
-    comm = distributed_space.comm
     local = distributed_space.local
-
     if local is not None:
         # local.space is THBSplineSpace because global_space is (checked above).
         assert isinstance(local.space, THBSplineSpace)
         # Run serial Speleers-Manni QI on the windowed local space.  THBSpline stores
         # coefficients per active dof already: (num_total_basis,) scalar or
-        # (num_total_basis, rank) vector.  Preserve that rank so scalar funcs stay
-        # scalar, matching the serial quasi-interpolant exactly.
+        # (num_total_basis, rank) vector.  That rank is kept, so scalar funcs stay scalar,
+        # matching the serial quasi-interpolant.
         local_thb = quasi_interpolate_thb_spline(func, local.space, kind=kind)
-        cp = np.asarray(local_thb.control_points, dtype=np.float64)
-        # Restrict to owned DOFs and record their global indices.
-        owned_mask = local.owned_dof_mask
-        owned_global_dofs: npt.NDArray[np.int64] = local.local_to_global_dof[owned_mask]
-        owned_coeffs: npt.NDArray[np.float64] = cp[owned_mask]
+        cp = np.ascontiguousarray(local_thb.control_points, dtype=np.float64)
+        local_to_global = np.ascontiguousarray(local.local_to_global_dof, dtype=np.int64)
+        owned_mask = np.ascontiguousarray(local.owned_dof_mask, dtype=np.bool_)
     else:
-        owned_global_dofs = np.empty(0, dtype=np.int64)
-        owned_coeffs = np.empty(0, dtype=np.float64)
+        local_to_global = np.empty(0, dtype=np.int64)
+        owned_mask = np.empty(0, dtype=np.bool_)
+        cp = np.empty(0, dtype=np.float64)
 
-    # Single MPI collective: each rank contributes its owned-DOF (index, coefficient) pairs.
-    gathered: list[tuple[npt.NDArray[np.int64], npt.NDArray[np.float64]]] = list(
-        comm.allgather((owned_global_dofs, owned_coeffs))
+    # One collective: every rank sends its owned (global DOF, coefficient) pairs.  THBSpline
+    # always stores float64, so the global control points are float64 whatever
+    # global_space.dtype is (consistent with the serial quasi-interpolant).
+    global_cp, _ = _cpp.gather_owned(
+        as_communicator(distributed_space.comm),
+        global_space.num_total_basis,
+        local_to_global,
+        owned_mask,
+        cp,
     )
-
-    # Detect scalar vs. vector (and its rank) from the first non-empty contribution.
-    # Every global DOF is owned by exactly one rank, so for any non-empty space at
-    # least one rank contributes a non-empty array (the loop always breaks).
-    scalar = True
-    rank_dim = 1
-    for _, coeffs in gathered:
-        c = np.asarray(coeffs)
-        if c.shape[0] == 0:
-            continue
-        scalar = c.ndim == 1
-        rank_dim = 1 if scalar else int(c.shape[1])
-        break
-
-    # Assemble the global coefficient field.  THBSpline always stores float64, so the
-    # global control points are float64 regardless of global_space.dtype (consistent
-    # with the serial quasi-interpolant).
-    n_global = global_space.num_total_basis
-    shape: tuple[int, ...] = (n_global,) if scalar else (n_global, rank_dim)
-    global_cp = np.empty(shape, dtype=np.float64)
-    for gdofs, coeffs in gathered:
-        gdofs_arr = np.asarray(gdofs, dtype=np.int64)
-        if gdofs_arr.size == 0:
-            continue
-        global_cp[gdofs_arr] = np.asarray(coeffs, dtype=np.float64)
-
-    global_thb = THBSpline(global_space, global_cp)
+    global_thb = THBSpline(global_space, np.asarray(global_cp))
     return DistributedFunction(global_thb, distributed_space)
 
 

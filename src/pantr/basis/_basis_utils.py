@@ -120,22 +120,6 @@ def _validate_out_array(
         raise ValueError("Output array is not writeable")
 
 
-def _compute_output_shape_multidimensional(
-    n_points: int,
-    n_basis_functions: int,
-) -> tuple[int, int]:
-    """Compute the expected output shape for multidimensional basis functions.
-
-    Args:
-        n_points (int): The number of points at which to evaluate.
-        n_basis_functions (int): The total number of basis functions.
-
-    Returns:
-        tuple[int, int]: The expected output shape (n_points, n_basis_functions).
-    """
-    return (n_points, n_basis_functions)
-
-
 def _allocate_or_validate_out(
     out: npt.NDArray[np.float32 | np.float64] | None,
     expected_shape: tuple[int, ...],

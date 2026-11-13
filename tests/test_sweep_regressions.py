@@ -48,6 +48,7 @@ from types import FrameType
 import numpy as np
 import pytest
 
+from pantr._testing import degree_elevate_1d
 from pantr.basis import LagrangeVariant, tabulate_lagrange_1d
 from pantr.bspline import (
     Bspline,
@@ -58,7 +59,6 @@ from pantr.bspline import (
     create_uniform_periodic_knots,
     find_roots,
 )
-from pantr.bspline._bspline_degree_core import _degree_elevate_1d_core
 from pantr.change_basis import compute_cardinal_to_bernstein_1d
 from pantr.quad import get_tanh_sinh_1d
 from pantr.tolerance import get_machine_epsilon
@@ -111,7 +111,7 @@ def test_degree_elevation_outputs_are_mutually_consistent() -> None:
     # changes, not one: what looked like a single defect with two faces is two defects
     # that happened to share a symptom.
     #
-    # What it was: `_degree_elevate_1d_core` returns (control_points, knots), usable
+    # What it was: the elevation kernel returns (control_points, knots), usable
     # together only when `control_points.shape[0] == knots.size - new_degree - 1`. Those
     # come from counters `cind` and `kind` maintained independently through the
     # Piegl-Tiller A5.9 walk, and they diverged by the number of interior knots at
@@ -137,7 +137,7 @@ def test_degree_elevation_outputs_are_mutually_consistent() -> None:
         )
         n_basis = knots.size - degree - 1
         control = np.arange(2 * n_basis, dtype=np.float64).reshape(n_basis, 2)
-        new_control, new_knots = _degree_elevate_1d_core(degree, control, knots, 1)
+        new_control, new_knots = degree_elevate_1d(degree, control, knots, 1)
         implied = new_knots.size - (degree + 1) - 1
         assert new_control.shape[0] == implied, (
             f"degree {degree}, interior multiplicity {mult}: kernel wrote "
@@ -165,8 +165,8 @@ def test_degree_elevation_outputs_are_mutually_consistent() -> None:
 
 
 def test_degree_elevation_preserves_float32() -> None:
-    # FIXED by allocating the kernel's knot output in the knot vector's own dtype, in both
-    # `_degree_elevate_1d_core` and `_degree_reduce_1d_core`. Kept as a regression guard
+    # FIXED by allocating the kernel's knot output in the knot vector's own dtype, in both the
+    # elevation and the reduction kernel. Kept as a regression guard
     # with its original triggering data, per this repository's convention that the fix PR
     # un-xfails the tests it closes.
     #
@@ -187,7 +187,7 @@ def test_degree_elevation_preserves_float32() -> None:
     # dtype promotion is invisible until something downstream compares dtypes, and it
     # doubles memory and halves throughput without a word.
     #
-    # `_degree_reduce_1d_core` carried the identical hardcoded allocation and raised the
+    # The reduction kernel carried the identical hardcoded allocation and raised the
     # identical error, so the third assertion below covers the round trip.
     knots = np.array([0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0], dtype=np.float32)
     clamped = _scalar_spline(knots, 2, [1.0, 2.0, 3.0, 4.0])
@@ -270,12 +270,14 @@ def test_out_of_domain_points_are_rejected_at_large_knot_magnitude() -> None:
     # space's stated tolerance is 1e-15.
     #
     # It was one root cause with 26 sites: every `np.isclose(..., atol=tol)` in
-    # `pantr.bspline` leaves `rtol` at its default, across `_bspline_restrict.py` (10),
+    # `pantr.bspline` leaves `rtol` at its default, across the Python restriction module (10),
     # `_bspline_knots.py` (5), `_bspline_knot_insertion.py` (4),
     # `_bspline_knot_removal.py` (2), `_bspline_product.py` (2),
-    # `_bspline_space_1d.py` (2) and `_bspline_split.py` (1) -- not one of them passed
-    # `rtol`. (A 27th call, in `_bspline_quasi_interpolation.py`, is inside a doctest and
-    # so not a library site.) Consequences measured at the time, all at |knot| ~ 1e6:
+    # `_bspline_space_1d.py` (2) and the Python splitting module (1) -- not one of them passed
+    # `rtol`. (Restriction, splitting and products are now C++, `include/pantr/bspline/restrict.hpp`
+    # and `product.hpp`; the counts are those of the Python modules at the time.) (A 27th call, in
+    # `_bspline_quasi_interpolation.py`, is inside a doctest and so not a library site.)
+    # Consequences measured at the time, all at |knot| ~ 1e6:
     # `tabulate_basis` accepted a point 10 units outside a unit-length domain and returned
     # a polynomial extrapolation (max|B| = 640 at degree 2, 4.3e43 at degree 62) instead of
     # raising; `remove_knots` refused to remove the interior knot 1000000.3125, calling it
@@ -434,7 +436,8 @@ def test_the_snapping_refusal_does_not_claim_a_vector_that_arrived_flat() -> Non
     """The *snapping* diagnosis fires only when snapping destroyed the mesh.
 
     A vector that arrived flat is refused too -- issue #320 moved that to
-    ``_check_space_has_an_interval``, because a space with no interval has no cell and
+    ``check_space_has_an_interval`` (C++, ``include/pantr/bspline/knots.hpp``), because a
+    space with no interval has no cell and
     three of its consumers answered ``0.0`` or ``NaN`` rather than raising. What this
     test guards is that the two keep their own messages: "this mesh is finer than
     float32 resolves here" tells a caller who supplied a flat vector something false,
@@ -466,7 +469,7 @@ def test_the_snapping_refusal_does_not_claim_a_vector_that_arrived_flat() -> Non
 
 def test_snapping_keeps_knots_the_format_can_resolve() -> None:
     # FIXED by deriving the snapping tolerance from the knot vector's own magnitude
-    # instead of from the dtype alone (`_bspline_knots._knot_tolerance`), and by grouping
+    # instead of from the dtype alone (`pantr::bspline::knot_tolerance`), and by grouping
     # knots by relative gap rather than by rounding them onto a grid. Kept as a regression
     # guard with its original triggering data, per this repository's convention that the
     # fix PR un-xfails the tests it closes.
@@ -507,8 +510,9 @@ def test_snapping_keeps_knots_the_format_can_resolve() -> None:
 
 
 def test_lagrange_tabulation_is_reproducible() -> None:
-    # FIXED by passing a fixed seed to the scipy interpolator
-    # (`_basis_lagrange._BARYCENTRIC_SEED`). Kept as a regression guard with its original
+    # FIXED by passing a fixed seed to the scipy interpolator, then superseded by the C++
+    # barycentric formula, whose weights involve no random permutation at all
+    # (include/pantr/basis/lagrange.hpp). Kept as a regression guard with its original
     # triggering data, per this repository's convention that the fix PR un-xfails the
     # tests it closes.
     #
@@ -609,7 +613,8 @@ def test_tanh_sinh_nodes_are_interior_and_distinct() -> None:
 
 
 def test_knot_factories_agree_on_zero_intervals() -> None:
-    # FIXED by requiring at least one interval in `_validate_knot_input`, the validator
+    # FIXED by requiring at least one interval in the knot factories' validator (now
+    # `validate_knot_input` in C++), the validator
     # both accepting factories already called. Kept as a regression guard with its
     # original triggering data, per this repository's convention that the fix PR
     # un-xfails the tests it closes.
@@ -748,7 +753,8 @@ def test_find_roots_returns_only_genuine_roots() -> None:
     # 0.0208 on a curve whose values are bounded by 1.
     #
     # The mechanism, traced through a line-for-line pure-Python mirror of
-    # `_bspline_roots_core.py` that reproduced the same wrong roots bit for bit:
+    # the Numba `_bspline_roots_core.py` (now `include/pantr/bspline/roots.hpp`) that
+    # reproduced the same wrong roots bit for bit:
     # `_track_zero` treated a repeated iterate (`x == previous_x`) as a certificate of
     # convergence, per Morken-Reimers Lemma 13/Corollary 14, and `_morken_reimers_roots`
     # then gated acceptance on
@@ -846,8 +852,8 @@ def test_restrict_spans_the_requested_window() -> None:
     # worth as much as the bug: `Bspline.restrict` carried no invariant in the sweep, so
     # the case was graded only on whether it raised.
     #
-    # `_restrict_bspline_impl` (`_bspline_restrict.py`, the extraction step) locates the
-    # end of the restricted knot vector with
+    # The extraction step of `Bspline.restrict` (then Python, now `restrict_1d` in
+    # `include/pantr/bspline/restrict.hpp`) located the end of the restricted knot vector with
     #
     #     i_end = int(np.searchsorted(refined_knots, b_new + tol)) - 1
     #
@@ -1024,7 +1030,8 @@ def test_unique_knots_are_knots_of_the_space() -> None:
     # answered 2.0e-7, 5.0e-7 and 8.0e-7 -- each moved by 20% of its own value, to a knot
     # the space does not have.
     #
-    # `_get_unique_knots_and_multiplicity_impl` rounded
+    # The Numba `_get_unique_knots_and_multiplicity_impl` (now
+    # `unique_knots_and_multiplicity` in `include/pantr/bspline/knots.hpp`) rounded
     # onto a grid of width `tol` to decide which knots are the same,
     #
     #     scale = dtype.type(1.0 / tol)
@@ -1035,8 +1042,8 @@ def test_unique_knots_are_knots_of_the_space() -> None:
     # `knots[...]` would have returned the knots themselves. Its sibling `_snap_knots`
     # did the same grouping and deliberately did not make this mistake: it wrote back
     # `np.mean(self._knots[mask])`, with a comment about the care being taken. Two
-    # implementations of one idea, disagreeing. There is now one: `_snap_knots` calls this
-    # helper and repeats its classes, so the space and its accessor cannot diverge.
+    # implementations of one idea, disagreeing. The space now snaps and reports its classes
+    # from one C++ classification, so the two cannot diverge.
     #
     # `tol` was the space's absolute tolerance (`get_strict(float32) = 1e-7`), so the
     # grid was coarse compared with a 2.5e-7 spacing and 2.5 rounded to 2 while 7.5

@@ -6,7 +6,7 @@ the cross-rank DOF coupling that geometric backends (``block`` / ``rcb`` in
 :func:`pantr.grid.partition_grid`) cannot see. Two backends, both serial (the partition
 is computed redundantly per rank -- no MPI):
 
-- ``"spectral"`` (default) -- recursive Fiedler bisection; pure ``scipy``, no extra
+- ``"spectral"`` (default) -- recursive Fiedler bisection, compiled; no extra
   dependency; weight- and activity-aware.
 - ``"metis"`` -- METIS via the optional ``pymetis`` package (``pip install
   'pantr[metis]'``); higher-quality min-cut. Raises a clear error if ``pymetis`` is
@@ -23,18 +23,15 @@ from types import ModuleType
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
-from scipy import sparse
-from scipy.sparse import csgraph
-from scipy.sparse.linalg import ArpackError, eigsh
 
+from .._ext import ext
 from ..grid import Partition
 from ._coupling_graph import CouplingGraph
 
 if TYPE_CHECKING:
     import numpy.typing as npt
 
-_DENSE_FIEDLER_MAX = 512
-"""Subgraphs with at most this many vertices use a dense eigensolver."""
+_cpp: Any = ext.bspline
 
 _BACKENDS = ("spectral", "metis")
 """Graph-partition backends recognized by :func:`partition_graph`."""
@@ -72,8 +69,9 @@ def partition_graph(
     Raises:
         TypeError: If ``coupling`` is not a :class:`CouplingGraph`.
         ValueError: If ``backend`` is unknown; if ``n_parts < 1``; if ``cell_active`` has
-            the wrong shape or marks no cell active; or if ``n_parts`` exceeds the number
-            of active cells.
+            the wrong shape or marks no cell active; if ``n_parts`` exceeds the number
+            of active cells; or if the graph's arrays are inconsistent, its edge weights
+            not integers or its vertex weights negative or not finite.
         ImportError: If ``backend="metis"`` but ``pymetis`` is not installed.
     """
     if not isinstance(coupling, CouplingGraph):
@@ -84,81 +82,84 @@ def partition_graph(
     if n_parts < 1:
         raise ValueError(f"n_parts must be >= 1; got {n_parts}.")
 
-    n = coupling.num_vertices
-    active = _validate_active(cell_active, n)
-    active_idx = np.arange(n) if active is None else np.flatnonzero(active)
-    n_active = int(active_idx.size)
-    if n_parts > n_active:
-        raise ValueError(
-            f"n_parts={n_parts} exceeds the number of active cells ({n_active}); "
-            f"cannot assign every rank a cell."
-        )
     n_parts = int(n_parts)
-
-    adjacency = sparse.csr_matrix(
-        (coupling.edge_weights.astype(np.float64), coupling.adjncy, coupling.xadj),
-        shape=(n, n),
-    )
-    if active is not None:
-        adjacency = adjacency[active_idx][:, active_idx]
-    weights = coupling.vertex_weights[active_idx]
-
+    n = int(coupling.num_vertices)
+    active = _coerce_active(cell_active, n)
+    arrays = _graph_arrays(coupling)
     if backend == "spectral":
-        owner_active = _spectral_partition(adjacency, weights, n_parts)
-    else:  # "metis"
-        adjacency.sort_indices()
-        owner_active = _metis_partition(
-            adjacency.indptr, adjacency.indices, adjacency.data, weights, n_parts
-        )
-
+        return Partition._from_handle(_cpp.partition_graph_spectral(n, *arrays, n_parts, active))
+    # "metis": the compiled side checks the request and extracts the active subgraph (rows
+    # sorted), pymetis partitions it, and the owners go back through the compiled Partition.
+    active_idx, xadj, adjncy, edge_weights, vertex_weights = _cpp.graph_active_subgraph(
+        n, *arrays, n_parts, active
+    )
     owner = np.full(n, -1, dtype=np.int32)
-    owner[active_idx] = owner_active
+    owner[active_idx] = _metis_partition(xadj, adjncy, edge_weights, vertex_weights, n_parts)
     return Partition(owner, n_parts)
 
 
-def _spectral_partition(
-    adjacency: Any,  # noqa: ANN401 -- a scipy sparse matrix (scipy is untyped)
-    weights: npt.NDArray[np.float64],
-    n_parts: int,
-) -> npt.NDArray[np.int32]:
-    """Partition by recursive spectral (Fiedler) bisection.
+def _graph_arrays(
+    coupling: CouplingGraph,
+) -> tuple[
+    npt.NDArray[np.int64], npt.NDArray[np.int64], npt.NDArray[np.int64], npt.NDArray[np.float64]
+]:
+    """Coerce a coupling graph's arrays to C-contiguous ``int64`` / ``float64``.
 
-    Splits the part count ``k -> (k // 2, k - k // 2)``, orders each subgraph's vertices
-    by its Fiedler vector, and cuts at the weighted split point -- clamped so each half
-    receives at least as many vertices as it has parts (no rank is left empty).
+    Their lengths and values are checked by the compiled partitioner.
 
     Args:
-        adjacency (Any): ``(n_active, n_active)`` weighted ``scipy`` sparse adjacency.
-        weights (npt.NDArray[np.float64]): Per-vertex weights.
-        n_parts (int): Number of parts (``>= 1``).
+        coupling (CouplingGraph): The graph.
 
     Returns:
-        npt.NDArray[np.int32]: Per-vertex owner in ``range(n_parts)``.
+        tuple[npt.NDArray[np.int64], npt.NDArray[np.int64], npt.NDArray[np.int64],
+        npt.NDArray[np.float64]]: ``xadj``, ``adjncy``, ``edge_weights``, ``vertex_weights``.
+
+    Raises:
+        ValueError: If ``edge_weights`` holds a value that is not an integer in the ``int64``
+            range.
     """
-    owner = np.empty(int(adjacency.shape[0]), dtype=np.int32)
+    edge_weights = np.asarray(coupling.edge_weights)
+    if not _int64_representable(edge_weights):
+        # A conversion to int64 would truncate, wrap or (for inf, NaN and floats past 2**63) be
+        # undefined, silently.
+        raise ValueError("edge_weights must be integers within the int64 range.")
+    return (
+        np.ascontiguousarray(coupling.xadj, dtype=np.int64),
+        np.ascontiguousarray(coupling.adjncy, dtype=np.int64),
+        np.ascontiguousarray(edge_weights, dtype=np.int64),
+        np.ascontiguousarray(coupling.vertex_weights, dtype=np.float64),
+    )
 
-    def bisect(idx: npt.NDArray[np.intp], part_lo: int, part_hi: int) -> None:
-        k = part_hi - part_lo
-        if k == 1:
-            owner[idx] = part_lo
-            return
-        ordered = idx[_spectral_order(adjacency[idx][:, idx])]
-        cumw = np.cumsum(weights[ordered])
-        k_left = k // 2
-        target = float(cumw[-1]) * k_left / k
-        split = int(np.searchsorted(cumw, target, side="left")) + 1
-        split = max(k_left, min(split, int(ordered.size) - (k - k_left)))
-        bisect(ordered[:split], part_lo, part_lo + k_left)
-        bisect(ordered[split:], part_lo + k_left, part_hi)
 
-    bisect(np.arange(owner.size), 0, n_parts)
-    return owner
+def _int64_representable(values: npt.NDArray[Any]) -> bool:
+    """Tell whether every value converts to ``int64`` exactly.
+
+    Args:
+        values (npt.NDArray[Any]): An array of any real dtype.
+
+    Returns:
+        bool: ``True`` for integers in ``[-2**63, 2**63)``: any signed integer dtype of at most
+        64 bits, an unsigned one whose values stay below ``2**63``, or floats that are finite,
+        integral and in that range (``2.0**63`` is exact, so the comparisons are too).
+    """
+    if np.issubdtype(values.dtype, np.signedinteger):
+        return True
+    if np.issubdtype(values.dtype, np.unsignedinteger):
+        return values.size == 0 or int(values.max()) <= int(np.iinfo(np.int64).max)
+    # Typed bounds: a Python float would be cast to the array's dtype, and 2**63 overflows float16.
+    low, high = np.float64(-(2.0**63)), np.float64(2.0**63)
+    with np.errstate(invalid="ignore"):
+        return bool(
+            np.all(np.isfinite(values))
+            and np.all(values == np.rint(values))
+            and np.all((values >= low) & (values < high))
+        )
 
 
 def _metis_partition(
-    xadj: Any,  # noqa: ANN401 -- scipy CSR indptr; dtype (int32/int64) is scipy-version-dependent
-    adjncy: Any,  # noqa: ANN401 -- scipy CSR indices; dtype (int32/int64) is scipy-version-dependent
-    edge_weights: npt.NDArray[np.float64],
+    xadj: npt.NDArray[np.int64],
+    adjncy: npt.NDArray[np.int64],
+    edge_weights: npt.NDArray[np.int64],
     vertex_weights: npt.NDArray[np.float64],
     n_parts: int,
 ) -> npt.NDArray[np.int32]:
@@ -166,18 +167,18 @@ def _metis_partition(
 
     Vertex weights are rounded to integers (clamped to ``>= 1``, as METIS requires
     positive integer weights) and edge weights to integers (must be ``> 0``); METIS then
-    minimizes the cut while balancing the integer vertex weights. Unlike
-    :func:`_spectral_partition`, METIS does not guarantee every part is non-empty.
+    minimizes the cut while balancing the integer vertex weights. Unlike the spectral
+    backend, METIS does not guarantee every part is non-empty.
 
     METIS implements the multilevel k-way partitioning scheme of
     :cite:t:`karypis1998metis`.
 
     Args:
-        xadj (Any): CSR row pointers of the (active) subgraph (scipy-version-dependent
-            dtype; coerced to ``pymetis.zero_copy_dtype()`` internally).
-        adjncy (Any): CSR neighbour indices (same dtype note as ``xadj``).
-        edge_weights (npt.NDArray[np.float64]): Per-edge weights aligned with ``adjncy``;
-            must round to integers ``>= 1``.
+        xadj (npt.NDArray[np.int64]): CSR row pointers of the (active) subgraph (coerced to
+            ``pymetis.zero_copy_dtype()`` internally).
+        adjncy (npt.NDArray[np.int64]): CSR neighbour indices, ascending per row.
+        edge_weights (npt.NDArray[np.int64]): Per-edge weights aligned with ``adjncy``;
+            must be ``>= 1``.
         vertex_weights (npt.NDArray[np.float64]): Per-vertex weights.
         n_parts (int): Number of parts (``>= 1``).
 
@@ -201,7 +202,7 @@ def _metis_partition(
         np.asarray(xadj, dtype=idx_dtype),
         np.asarray(adjncy, dtype=idx_dtype),
     )
-    eweights = np.rint(edge_weights).astype(idx_dtype)
+    eweights = np.asarray(edge_weights).astype(idx_dtype)
     zero_count = int(np.sum(eweights <= 0))
     if zero_count > 0:
         raise ValueError(
@@ -242,71 +243,27 @@ def _require_pymetis() -> ModuleType:
         ) from exc
 
 
-def _spectral_order(sub_adjacency: object) -> npt.NDArray[np.intp]:
-    """Order a subgraph's vertices by its Fiedler vector (or by component).
+def _coerce_active(cell_active: npt.ArrayLike | None, n: int) -> npt.NDArray[np.bool_] | None:
+    """Coerce ``cell_active`` to a 1-D boolean array.
 
-    For a connected subgraph, returns the permutation sorting vertices by the Fiedler
-    vector (second-smallest Laplacian eigenvector); the sign is canonicalized so the
-    ordering is deterministic. A disconnected subgraph is ordered by connected-component
-    label instead, which both avoids a singular Laplacian and keeps each component whole.
-
-    Args:
-        sub_adjacency (object): The ``(m, m)`` weighted adjacency (``scipy`` sparse
-            matrix) of the subgraph, with ``m >= 2``.
-
-    Returns:
-        npt.NDArray[np.intp]: A length-``m`` permutation of ``range(m)``.
-
-    Note:
-        ``m >= 2`` is assumed; the caller guarantees this because subgraphs of size 1
-        are assigned directly without further bisection.
-    """
-    m = sub_adjacency.shape[0]  # type: ignore[attr-defined]
-    n_components, labels = csgraph.connected_components(sub_adjacency, directed=False)
-    if n_components > 1:
-        return np.argsort(labels, kind="stable")
-
-    laplacian = csgraph.laplacian(sub_adjacency, normed=False)
-    if m <= _DENSE_FIEDLER_MAX:
-        dense = laplacian.toarray() if sparse.issparse(laplacian) else np.asarray(laplacian)
-        _, vectors = np.linalg.eigh(dense)
-        fiedler = vectors[:, 1]
-    else:
-        v0 = np.arange(m, dtype=np.float64) - (m - 1) / 2.0
-        try:
-            values, vectors = eigsh(laplacian.tocsr().astype(np.float64), k=2, which="SA", v0=v0)
-            fiedler = vectors[:, int(np.argsort(values)[1])]
-        except ArpackError:
-            _, vectors = np.linalg.eigh(laplacian.toarray())
-            fiedler = vectors[:, 1]
-
-    # Canonicalize the sign (largest-magnitude entry positive) for determinism.
-    fiedler = fiedler * np.sign(fiedler[int(np.argmax(np.abs(fiedler)))])
-    return np.argsort(fiedler, kind="stable")
-
-
-def _validate_active(cell_active: npt.ArrayLike | None, n: int) -> npt.NDArray[np.bool_] | None:
-    """Validate and coerce ``cell_active`` to a ``(n,)`` boolean array.
+    The length and the presence of an active cell are checked by the compiled partitioner.
 
     Args:
         cell_active (npt.ArrayLike | None): Candidate activity mask, or ``None``.
-        n (int): Expected length (number of graph vertices).
+        n (int): Expected length (number of graph vertices, for the message).
 
     Returns:
         npt.NDArray[np.bool_] | None: The coerced mask, or ``None`` if input was ``None``.
 
     Raises:
-        ValueError: If the shape is not ``(n,)`` or no cell is active.
+        ValueError: If the mask is not 1-D.
     """
     if cell_active is None:
         return None
     active = np.asarray(cell_active)
-    if active.shape != (n,):
+    if active.ndim != 1:
         raise ValueError(f"cell_active must have shape ({n},); got {active.shape}.")
-    active = active.astype(bool)
-    if not bool(active.any()):
-        raise ValueError("cell_active must mark at least one cell active.")
-    return cast("npt.NDArray[np.bool_]", active)
+    return np.ascontiguousarray(active.astype(bool))
 
 
 __all__ = ["partition_graph"]

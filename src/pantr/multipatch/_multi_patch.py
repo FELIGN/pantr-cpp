@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ._detect import detect_interfaces, verify_interface
+from .._ext import ext
+from ._interface import _from_tuples, _wire
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -54,44 +55,27 @@ class MultiPatch:
         if not patches:
             raise ValueError("A MultiPatch needs at least one patch")
 
+        # The dtype is the one rule the compiled collection cannot state: it holds one dtype.
         first = patches[0]
         for index, patch in enumerate(patches[1:], start=1):
-            for attribute in ("dim", "rank", "is_rational"):
-                expected, actual = getattr(first, attribute), getattr(patch, attribute)
-                if expected != actual:
-                    raise ValueError(
-                        f"All patches must share {attribute}; patch 0 has {expected!r} "
-                        f"but patch {index} has {actual!r}"
-                    )
             if patch.dtype != first.dtype:
                 raise ValueError(
                     f"All patches must share dtype; patch 0 has {first.dtype} "
                     f"but patch {index} has {patch.dtype}"
                 )
 
+        # The remaining checks (dimension, rank, rationality, the supplied interfaces and their
+        # verification, the detection) are the compiled collection's, with its messages.
+        found = ext.multipatch.multi_patch_interfaces(
+            [patch._h for patch in patches],
+            None if interfaces is None else [_wire(i) for i in interfaces],
+            tol,
+        )
         self._patches = tuple(patches)
-
-        if interfaces is None:
-            self._interfaces = detect_interfaces(self._patches, tol=tol)
+        if interfaces is not None:
+            self._interfaces = tuple(interfaces)
             return
-
-        n_patches = len(self._patches)
-        for interface in interfaces:
-            for side, index in (("patch_a", interface.patch_a), ("patch_b", interface.patch_b)):
-                if not 0 <= index < n_patches:
-                    raise ValueError(
-                        f"Interface {side}={index} is out of range for {n_patches} patches"
-                    )
-            if interface.dim != first.dim:
-                raise ValueError(
-                    f"Interface implies dim={interface.dim} but the patches are {first.dim}D"
-                )
-            if not verify_interface(self._patches, interface, tol=tol):
-                raise ValueError(
-                    f"Interface does not hold for the given geometry: {interface}. "
-                    "The matched control points or the tangential knot vectors disagree."
-                )
-        self._interfaces = tuple(interfaces)
+        self._interfaces = _from_tuples(found)
 
     @property
     def patches(self) -> tuple[Bspline, ...]:

@@ -1,14 +1,19 @@
 [build-system]
-requires = ["hatchling>=1.27"]
-build-backend = "hatchling.build"
+# Both pinned exactly. nanobind's pin is the one every pantr extension module builds against
+# (_pantr here; _pantr_mpi and _pantr_berf in their own distributions): modules that exchange
+# nanobind objects must share its ABI, and bindings/CMakeLists.txt refuses any other version.
+requires = ["scikit-build-core==1.1.1", "nanobind==3.1.0"]
+build-backend = "scikit_build_core.build"
 
 [project]
 name = "pantr"
 description = "Polynomial And NURBS Toolkit"
 readme = "README.md"
-requires-python = ">=3.11, <3.15"
+requires-python = ">=3.12, <3.15"
 license = "MIT"
-license-files = ["LICENSE"]
+# The wheel carries compiled code from the dependencies THIRD_PARTY_NOTICES.md lists; their
+# licence texts (licenses/) ship with it, in the wheel's .dist-info/licenses.
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md", "licenses/*"]
 authors = [{ name = "Pablo Antolin", email = "pablo.antolin@epfl.ch" }]
 keywords = [
   "nurbs",
@@ -29,7 +34,6 @@ classifiers = [
   "Programming Language :: Python",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
-  "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
@@ -39,14 +43,18 @@ classifiers = [
 # visualization) live in `[project.optional-dependencies]` and are opt-in.
 dependencies = [
   "numpy>=1.26,<3",
-  "scipy>=1.15,<2",  # 1.15 added BarycentricInterpolator's `rng`, which Lagrange tabulation needs to be reproducible
-  "numba>=0.63,<0.66",  # 0.66.0 broke mypy's view of get_num_threads/config.NUMBA_NUM_THREADS
-  "threadpoolctl>=3.0",
+  # Only to return a scipy.sparse.csr_array (THB prolongation_to_sparse). The 1.15 floor is the
+  # previous release's (its Python Lagrange tabulation needed BarycentricInterpolator's `rng`),
+  # kept rather than re-derived for that one use.
+  "scipy>=1.15,<2",
 ]
 
 [project.optional-dependencies]
+# pantr-mpi is built from bindings/mpi at the same version (tests/test_mpi.py checks the pin);
+# tools/requirements.py leaves it out, since `make ext` builds it in the tree.
 mpi = [
-  "mpi4py>=3.1,<5",
+  "mpi4py>=4.0,<5",
+  "pantr-mpi==0.7.0",
 ]
 metis = [
   "pymetis>=2025.2",
@@ -78,8 +86,8 @@ docs = [
   "trame-vuetify>=2,<4",
   "nest-asyncio2>=1,<2",
 ]
-# `dev` pulls in every optional feature extra so a single
-# `pip install -e ".[dev]"` yields a complete contributor environment and CI runs
+# `dev` pulls in every optional feature extra so that `make install` (these requirements, then
+# `make ext`; there is no editable install) yields a complete contributor environment and CI runs
 # the full suite (no silently skipped viz/MPI/METIS tests).
 dev = [
   "pytest>=7.4,<9",
@@ -87,6 +95,9 @@ dev = [
   "pytest-xdist>=3,<4",
   "mypy>=1.10,<2",
   "ruff>=0.12.0,<0.13",
+  # Pinned exactly: clang-format's output changes between major versions, and CI checks the
+  # C++ sources against this one (`clang-format --dry-run --Werror`).
+  "clang-format==18.1.8",
   "pre-commit>=3.6,<4",
   "import-linter>=2.0,<3",
   "pantr[mpi]",
@@ -101,16 +112,71 @@ Documentation = "https://pantr.readthedocs.io"
 Source = "https://github.com/FELIGN/pantr"
 Issues = "https://github.com/FELIGN/pantr/issues"
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/pantr"]
+[tool.scikit-build]
+minimum-version = "build-system.requires"
+# The version's single source is `__version__` in the package __init__ (CMakeLists.txt checks
+# that include/pantr/version.hpp agrees).
+metadata.version.provider = "scikit_build_core.metadata.regex"
+metadata.version.input = "src/pantr/__init__.py"
+metadata.version.regex = '^__version__[^=]*=\s*"(?P<value>[^"]+)"'
+# One cp312-abi3 wheel per platform serves every CPython >= 3.12 (nanobind STABLE_ABI; the CMake
+# side asks for Python's SABIModule component when PANTR_STABLE_ABI is ON).
+wheel.py-api = "cp312"
+wheel.packages = ["src/pantr"]
+# The extension modules, and pantr's own headers and CMake package (component `development`, under
+# pantr/include and pantr/share/cmake/pantr, found by pantr.cmake_dir()) so that pantr-mpi builds
+# from its sdist against this wheel. Not the bundled third-party headers (component `third_party`),
+# which only a CMake install carries, nor the test-only modules (component `testing`).
+install.components = ["python", "development"]
+# scikit-build-core strips at install by default; keep the symbols, and with NOMINSIZE in the CMake
+# the -O3 the release build asks for (design/packaging.md).
+install.strip = false
+build-dir = "build/skbuild/{wheel_tag}"
+sdist.exclude = [".claude", "benchmarks/results"]
 
-# Single source of truth for the version: `__version__` in the package __init__.
-# The explicit pattern is required because the assignment carries a type
-# annotation (`__version__: Final[str] = "..."`), which hatchling's default
-# regex does not match.
-[tool.hatch.version]
-path = "src/pantr/__init__.py"
-pattern = '^__version__[^=]*=\s*"(?P<version>[^"]+)"'
+[tool.scikit-build.cmake]
+build-type = "Release"
+version = ">=3.28"
+
+[tool.scikit-build.cmake.define]
+PANTR_BUILD_PYTHON = "ON"
+PANTR_BUILD_TESTS = "OFF"
+PANTR_INSTALL = "ON"
+CMAKE_INSTALL_INCLUDEDIR = "pantr/include"
+PANTR_INSTALL_CMAKEDIR = "pantr/share/cmake/pantr"
+PANTR_NATIVE_ARCH = "OFF"
+PANTR_STABLE_ABI = "ON"
+PANTR_MULTI_ISA = "ON"
+# _pantr_mpi ships in its own distribution (bindings/mpi/pyproject.toml), never in this wheel.
+PANTR_BUILD_MPI_MODULE = "OFF"
+# Nor pantr::mpi's CMake export: without this an MPI found on the build host would put
+# pantrMpiTargets in the wheel's package, so the wheel's contents would depend on the host.
+CMAKE_DISABLE_FIND_PACKAGE_MPI = "ON"
+
+[tool.cibuildwheel]
+# One cp312-abi3 wheel per platform (R8: Linux x86_64 and aarch64, macOS arm64, Windows amd64),
+# built by CI leg 11. No musllinux, no 32-bit Windows (the x86-64 rungs have no 32-bit target).
+build = ["cp312-*"]
+skip = ["*-musllinux_*", "*-win32"]
+build-verbosity = 1
+manylinux-x86_64-image = "manylinux_2_28"
+manylinux-aarch64-image = "manylinux_2_28"
+# The suite against the installed wheel, under the rung the ladder picks and then under generic
+# (tools/wheel_test.py sets PANTR_TEST_INSTALLED=1 and empties pytest.ini's pythonpath, so the
+# checkout's src is never imported).
+test-requires = ["pytest>=7.4,<9", "pytest-xdist>=3,<4"]
+test-command = "python {project}/tools/wheel_test.py {project} -n 4"
+
+[tool.cibuildwheel.linux]
+# The manylinux container builds with its own GCC, not the workflow's CC: refuse one older than 14,
+# the first whose -ffp-contract=on contracts within expressions (design section 1.3).
+before-build = "test \"$(gcc -dumpversion | cut -d. -f1)\" -ge 14"
+
+[tool.cibuildwheel.macos]
+# Floating-point std::to_chars needs macOS 13.4 (design DR-8), and a wheel tag for macOS 11 or later
+# carries no minor version: a 13.4 target is tagged macosx_13_0, which pip would install on 13.0-13.3,
+# where the binary cannot load. 14.0 is the lowest target whose tag says what the binary needs.
+environment = { MACOSX_DEPLOYMENT_TARGET = "14.0" }
 
 [tool.importlinter]
 root_package = "pantr"

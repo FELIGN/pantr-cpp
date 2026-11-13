@@ -1,0 +1,32 @@
+| case | main stat (ns) | main range | branch stat (ns) | branch range | flags |
+|---|---|---|---|---|---|
+| S4.bspline_space_1d_construct.large@t1 | 39929654 | 2138696 | 38317064 | 3903656 |  |
+| S4.bspline_space_1d_construct.large@t8 | 41375843 | 4525195 | 38021642 | 4897694 |  |
+| S4.bspline_space_1d_construct.medium@t1 | 51503 | 5755 | 11967 | 4404 |  |
+| S4.bspline_space_1d_construct.medium@t8 | 51724 | 22165 | 12371 | 2062 |  |
+| S4.bspline_space_1d_construct.tiny@t1 | 36573 | 5983 | 3527 | 8222 |  |
+| S4.bspline_space_1d_construct.tiny@t8 | 42963 | 25188 | 3616 | 3147 |  |
+| S4.bspline_tabulate_basis_1d.large@t1 | 43350906 | 2916080 | 33982076 | 2192696 |  |
+| S4.bspline_tabulate_basis_1d.large@t8 | 12936171 | 4441844 | 7379543 | 3599292 |  |
+| S4.bspline_tabulate_basis_1d.medium@t1 | 142520 | 26347 | 32696 | 1933 |  |
+| S4.bspline_tabulate_basis_1d.medium@t8 | 143060 | 12506 | 32713 | 736 |  |
+| S4.bspline_tabulate_basis_1d.tiny@t1 | 11101 | 954 | 3470 | 196 |  |
+| S4.bspline_tabulate_basis_1d.tiny@t8 | 11231 | 955 | 3528 | 225 |  |
+| S4.bspline_tabulate_basis_2d.large@t1 | 16522662 | 3047733 | 11248759 | 1319496 |  |
+| S4.bspline_tabulate_basis_2d.large@t8 | 12281303 | 2810634 | 3994220 | 1796192 |  |
+| S4.bspline_tabulate_basis_2d.medium@t1 | 411996 | 93465 | 110201 | 21326 |  |
+| S4.bspline_tabulate_basis_2d.medium@t8 | 481684 | 161050 | 112179 | 11282 |  |
+| S4.bspline_tabulate_basis_2d.tiny@t1 | 56219 | 10757 | 6265 | 664 |  |
+| S4.bspline_tabulate_basis_2d.tiny@t8 | 69697 | 25646 | 6114 | 879 |  |
+| S4.bspline_tabulate_basis_2d_lattice.large@t1 | 24418362 | 2490343 | 9907160 | 1199774 |  |
+| S4.bspline_tabulate_basis_2d_lattice.large@t8 | 23941850 | 2814746 | 2132302 | 595203 |  |
+| S4.bspline_tabulate_basis_2d_lattice.medium@t1 | 167352 | 19482 | 48183 | 3784 |  |
+| S4.bspline_tabulate_basis_2d_lattice.medium@t8 | 165549 | 17448 | 48638 | 17058 |  |
+| S4.bspline_tabulate_basis_2d_lattice.tiny@t1 | 72151 | 8099 | 12323 | 2015 |  |
+| S4.bspline_tabulate_basis_2d_lattice.tiny@t8 | 73808 | 6678 | 12890 | 4646 |  |
+| S4.bspline_tabulate_basis_3d.large@t1 | 56300398 | 2009531 | 34840591 | 2187090 |  |
+| S4.bspline_tabulate_basis_3d.large@t8 | 49291716 | 4431910 | 15009298 | 3384042 |  |
+| S4.bspline_tabulate_basis_3d.medium@t1 | 805976 | 155862 | 206893 | 28370 |  |
+| S4.bspline_tabulate_basis_3d.medium@t8 | 810313 | 72673 | 207166 | 71892 |  |
+| S4.bspline_tabulate_basis_3d.tiny@t1 | 79641 | 9351 | 6645 | 638 |  |
+| S4.bspline_tabulate_basis_3d.tiny@t8 | 78852 | 11425 | 6848 | 6804 |  |

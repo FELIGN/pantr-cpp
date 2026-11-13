@@ -1,0 +1,2763 @@
+{
+ "protocol": {
+  "k": 10,
+  "repeats": 30,
+  "threads": [
+   1,
+   8
+  ],
+  "cpus": "0-7",
+  "reference": "main",
+  "argv": [
+   "benchmarks/compare.py",
+   "--out-dir",
+   "benchmarks/results/2026-11-03-s6-thb-ac6",
+   "--side",
+   "main=<main src>",
+   "--side",
+   "branch=<branch src>",
+   "--k",
+   "10",
+   "--threads",
+   "1",
+   "8",
+   "--cpus",
+   "0-7",
+   "--filter",
+   "^S6\\.(thb_|quasi_interpolate_thb|multilevel_extraction|coupling_graph_thb|build_local_thb|compute_halo|dof_owner)"
+  ]
+ },
+ "sides": {
+  "main": {
+   "commit": "11ab436abd94edf8f414d1ec2d9ed0bf77e38e89",
+   "extension": "none"
+  },
+  "branch": {
+   "commit": "2bfa0d9259a7db6426f4d3b68219dd715edb47e9",
+   "extension": "pantr._pantr_v4 (v4, _pantr_v4.abi3.so)"
+  }
+ },
+ "machine": {
+  "cpu": "Intel(R) Xeon(R) Gold 6148 CPU @ 2.40GHz",
+  "platform": "Linux-5.15.0-144-generic-x86_64-with-glibc2.35",
+  "affinity": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7
+  ],
+  "governor": "schedutil"
+ },
+ "cases": {
+  "S6.thb_construct.tiny@t1": {
+   "what": {
+    "main": "THBSplineSpace, 3 levels, 4^2 root",
+    "branch": "THBSplineSpace, 3 levels, 4^2 root"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 5396858.75,
+     "range_ns": 323198.0,
+     "process_medians_ns": [
+      5403449.0,
+      5390268.5,
+      5323061.0,
+      5437236.0,
+      5575094.0,
+      5292045.0,
+      5378522.5,
+      5466577.0,
+      5424402.5,
+      5251896.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 46405.36047979798,
+     "range_ns": 22462.25,
+     "process_medians_ns": [
+      66921.91666666667,
+      47203.01190476191,
+      47046.94318181818,
+      45763.77777777778,
+      48600.319444444445,
+      44459.66666666667,
+      48277.21428571429,
+      45083.420454545456,
+      44908.125,
+      44546.92222222222
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.thb_refine.tiny@t1": {
+   "what": {
+    "main": "THBSplineSpace.refine of one cell, 4^2 root",
+    "branch": "THBSplineSpace.refine of one cell, 4^2 root"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 5673455.25,
+     "range_ns": 234543.0,
+     "process_medians_ns": [
+      5690651.5,
+      5579888.5,
+      5656259.0,
+      5581360.0,
+      5814431.5,
+      5734720.0,
+      5616277.0,
+      5698660.5,
+      5617049.5,
+      5716787.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 58501.27321428571,
+     "range_ns": 5095.377880184336,
+     "process_medians_ns": [
+      57148.18571428571,
+      61723.8064516129,
+      59105.12857142858,
+      57061.45714285714,
+      58086.375,
+      56628.428571428565,
+      60864.66666666667,
+      58916.171428571426,
+      57051.957142857136,
+      59347.65714285715
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.thb_tabulate_basis.tiny@t1": {
+   "what": {
+    "main": "tabulate_basis, every cell, 4^2",
+    "branch": "tabulate_basis, every cell, 4^2"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 18142751.5,
+     "range_ns": 785588.0,
+     "process_medians_ns": [
+      18266555.0,
+      18125940.0,
+      17964593.5,
+      18031573.0,
+      18381362.0,
+      17881078.5,
+      17981938.5,
+      18666666.5,
+      18207066.5,
+      18159563.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 310146.35714285716,
+     "range_ns": 21783.92857142852,
+     "process_medians_ns": [
+      310475.2857142857,
+      309903.85714285716,
+      310388.85714285716,
+      328463.9285714285,
+      309826.0,
+      306680.0,
+      309664.5,
+      308465.7142857143,
+      311595.25,
+      310903.6666666666
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.quasi_interpolate_thb_spline.tiny@t1": {
+   "what": {
+    "main": "THB QI, 4^2 root",
+    "branch": "THB QI, 4^2 root"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 12454790.75,
+     "range_ns": 449178.0,
+     "process_medians_ns": [
+      12438024.5,
+      12299235.0,
+      12596844.5,
+      12429686.0,
+      12748413.0,
+      12335201.5,
+      12491373.0,
+      12654709.5,
+      12467531.5,
+      12442050.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 140507.26666666666,
+     "range_ns": 7023.799999999988,
+     "process_medians_ns": [
+      140485.43333333332,
+      140529.09999999998,
+      141760.8,
+      140016.3,
+      139964.73333333334,
+      140005.6,
+      143757.26666666666,
+      146988.53333333333,
+      140148.4,
+      144656.36666666667
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.multilevel_extraction.tiny@t1": {
+   "what": {
+    "main": "MultiLevelExtraction, every cell, 4^2",
+    "branch": "MultiLevelExtraction, every cell, 4^2"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 10768808.25,
+     "range_ns": 616928.0,
+     "process_medians_ns": [
+      10746794.5,
+      10624166.0,
+      10852997.0,
+      10790822.0,
+      11227333.0,
+      10917352.5,
+      10745201.5,
+      11112866.0,
+      10610405.0,
+      10700843.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 619001.625,
+     "range_ns": 41570.875,
+     "process_medians_ns": [
+      614668.5,
+      618809.25,
+      649443.75,
+      632674.0,
+      607872.875,
+      626738.5,
+      610143.5,
+      639174.3333333334,
+      618514.25,
+      619194.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.coupling_graph_thb.tiny@t1": {
+   "what": {
+    "main": "coupling_graph of the THB fixture, 4^2",
+    "branch": "coupling_graph of the THB fixture, 4^2"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 462229.45,
+     "range_ns": 35405.34999999998,
+     "process_medians_ns": [
+      468409.625,
+      458436.30000000005,
+      452277.25,
+      477011.69999999995,
+      487682.6,
+      453338.30000000005,
+      470947.4,
+      466022.6,
+      454400.9,
+      455348.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 27414.85687785388,
+     "range_ns": 1787.8580316742082,
+     "process_medians_ns": [
+      27668.17361111111,
+      27218.17361111111,
+      27561.381944444445,
+      27775.118055555555,
+      27260.1301369863,
+      27307.253424657534,
+      27035.259615384617,
+      27336.609589041094,
+      28823.117647058825,
+      27493.104166666664
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.build_local_thb.tiny@t1": {
+   "what": {
+    "main": "build_local, rank 0 of 4, 4^2 root",
+    "branch": "build_local, rank 0 of 4, 4^2 root"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 6750470.25,
+     "range_ns": 448686.0,
+     "process_medians_ns": [
+      6700169.5,
+      6804988.0,
+      6564205.0,
+      6549428.5,
+      6891246.5,
+      6763919.0,
+      6737021.5,
+      6998114.5,
+      6821390.0,
+      6647194.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 151779.98214285716,
+     "range_ns": 11029.961538461532,
+     "process_medians_ns": [
+      153834.53846153844,
+      151663.9642857143,
+      149141.39285714284,
+      149058.2142857143,
+      147844.0,
+      151896.0,
+      156756.17857142858,
+      158873.96153846153,
+      154046.39285714284,
+      149163.96153846153
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.thb_construct.medium@t1": {
+   "what": {
+    "main": "THBSplineSpace, 3 levels, 16^2 root",
+    "branch": "THBSplineSpace, 3 levels, 16^2 root"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 14052624.25,
+     "range_ns": 920161.5,
+     "process_medians_ns": [
+      14427934.5,
+      13907494.0,
+      14009125.5,
+      13732306.5,
+      14652468.0,
+      14294795.5,
+      13937352.0,
+      14451474.0,
+      14096123.0,
+      13818279.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 225495.27777777775,
+     "range_ns": 20321.111111111095,
+     "process_medians_ns": [
+      244022.77777777778,
+      242363.5,
+      224251.27777777778,
+      224928.66666666666,
+      223837.5,
+      223701.6666666667,
+      242675.27777777778,
+      229841.05555555556,
+      226061.88888888888,
+      224538.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.thb_refine.medium@t1": {
+   "what": {
+    "main": "THBSplineSpace.refine of one cell, 16^2 root",
+    "branch": "THBSplineSpace.refine of one cell, 16^2 root"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 14448857.25,
+     "range_ns": 799647.5,
+     "process_medians_ns": [
+      14583161.0,
+      14419930.5,
+      14439804.0,
+      14168170.0,
+      14967817.5,
+      14378267.0,
+      14457910.5,
+      14803383.5,
+      14501305.0,
+      14276224.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 246865.38888888888,
+     "range_ns": 19572.944444444438,
+     "process_medians_ns": [
+      244273.55555555556,
+      263398.5,
+      246390.27777777778,
+      256141.88888888888,
+      244684.5,
+      243825.55555555556,
+      262973.0625,
+      247340.5,
+      244448.38888888888,
+      258238.16666666666
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.thb_tabulate_basis.medium@t1": {
+   "what": {
+    "main": "tabulate_basis, every cell, 16^2",
+    "branch": "tabulate_basis, every cell, 16^2"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 123013229.75,
+     "range_ns": 5021532.5,
+     "process_medians_ns": [
+      124641793.5,
+      123151849.0,
+      121465703.0,
+      122372156.0,
+      126487235.5,
+      122659406.0,
+      122874610.5,
+      123946050.5,
+      122231260.0,
+      123272569.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 3799632.25,
+     "range_ns": 362722.5,
+     "process_medians_ns": [
+      3853176.0,
+      3781893.5,
+      3773383.0,
+      3834993.5,
+      3817371.0,
+      3929302.5,
+      3730187.5,
+      3742474.5,
+      3713939.5,
+      4076662.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.quasi_interpolate_thb_spline.medium@t1": {
+   "what": {
+    "main": "THB QI, 16^2 root",
+    "branch": "THB QI, 16^2 root"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 170382555.5,
+     "range_ns": 7766932.5,
+     "process_medians_ns": [
+      171813210.0,
+      169325075.5,
+      170244501.5,
+      168431534.0,
+      175689741.0,
+      169354308.0,
+      170520609.5,
+      173431022.5,
+      171266331.5,
+      167922808.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 1551435.0,
+     "range_ns": 61885.75,
+     "process_medians_ns": [
+      1570026.75,
+      1546918.25,
+      1604894.75,
+      1549268.75,
+      1601901.75,
+      1543009.0,
+      1557992.75,
+      1552138.25,
+      1546394.25,
+      1550731.75
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.multilevel_extraction.medium@t1": {
+   "what": {
+    "main": "MultiLevelExtraction, every cell, 16^2",
+    "branch": "MultiLevelExtraction, every cell, 16^2"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 96104415.75,
+     "range_ns": 4014276.5,
+     "process_medians_ns": [
+      96043399.0,
+      95769661.0,
+      95103668.0,
+      95669649.5,
+      99117944.5,
+      96273589.5,
+      96168813.5,
+      98089283.5,
+      95952687.5,
+      96165432.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 8867893.25,
+     "range_ns": 551372.0,
+     "process_medians_ns": [
+      8753490.0,
+      8645599.5,
+      8757333.5,
+      9196971.5,
+      8749518.0,
+      9159655.0,
+      8965065.5,
+      8878555.5,
+      9118694.0,
+      8857231.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.coupling_graph_thb.medium@t1": {
+   "what": {
+    "main": "coupling_graph of the THB fixture, 16^2",
+    "branch": "coupling_graph of the THB fixture, 16^2"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 3300321.5,
+     "range_ns": 139829.5,
+     "process_medians_ns": [
+      3350735.0,
+      3267953.5,
+      3295296.5,
+      3345974.5,
+      3344957.5,
+      3263909.0,
+      3288692.0,
+      3305346.5,
+      3403607.5,
+      3263778.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 319221.9285714285,
+     "range_ns": 8299.0,
+     "process_medians_ns": [
+      315646.64285714284,
+      314704.0714285714,
+      317659.5,
+      318423.0714285714,
+      320020.7857142857,
+      321212.2142857143,
+      321666.4285714285,
+      321014.2857142857,
+      322531.2857142857,
+      314232.2857142857
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.build_local_thb.medium@t1": {
+   "what": {
+    "main": "build_local, rank 0 of 4, 16^2 root",
+    "branch": "build_local, rank 0 of 4, 16^2 root"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 14410562.5,
+     "range_ns": 818827.5,
+     "process_medians_ns": [
+      14556715.5,
+      14433510.0,
+      14193969.5,
+      14387615.0,
+      14946318.0,
+      14194577.0,
+      14587517.0,
+      14764801.5,
+      14184515.0,
+      14127490.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 300152.5714285714,
+     "range_ns": 11249.785714285797,
+     "process_medians_ns": [
+      304109.9285714286,
+      309603.0714285715,
+      299620.2857142857,
+      302157.14285714284,
+      298353.2857142857,
+      300684.85714285716,
+      302079.1666666666,
+      299483.0714285715,
+      298737.14285714284,
+      299217.64285714284
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.thb_construct.large@t1": {
+   "what": {
+    "main": "THBSplineSpace, 3 levels, 48^2 root",
+    "branch": "THBSplineSpace, 3 levels, 48^2 root"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 53802817.5,
+     "range_ns": 3069141.5,
+     "process_medians_ns": [
+      53577291.5,
+      53674551.0,
+      53970572.5,
+      53045081.5,
+      56114223.0,
+      53886492.0,
+      53282338.5,
+      56026678.5,
+      54459638.0,
+      53719143.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 1442864.625,
+     "range_ns": 139311.25,
+     "process_medians_ns": [
+      1420323.5,
+      1551857.25,
+      1466244.25,
+      1461205.0,
+      1483030.0,
+      1417600.0,
+      1556911.25,
+      1419415.25,
+      1424524.25,
+      1420380.75
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.thb_refine.large@t1": {
+   "what": {
+    "main": "THBSplineSpace.refine of one cell, 48^2 root",
+    "branch": "THBSplineSpace.refine of one cell, 48^2 root"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 54140266.75,
+     "range_ns": 5377492.5,
+     "process_medians_ns": [
+      54155121.0,
+      53775071.0,
+      53553058.5,
+      53423926.0,
+      56906309.0,
+      53874824.0,
+      58801418.5,
+      56729869.5,
+      54125412.5,
+      54682312.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 1461808.625,
+     "range_ns": 166410.0,
+     "process_medians_ns": [
+      1460150.75,
+      1618274.75,
+      1483228.5,
+      1463466.5,
+      1488118.0,
+      1456231.25,
+      1620258.0,
+      1457248.5,
+      1453848.0,
+      1455741.25
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.thb_tabulate_basis.large@t1": {
+   "what": {
+    "main": "tabulate_basis, every cell, 48^2",
+    "branch": "tabulate_basis, every cell, 48^2"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 750445704.5,
+     "range_ns": 61516346.0,
+     "process_medians_ns": [
+      747488430.0,
+      753402979.0,
+      742652805.5,
+      744369721.5,
+      764941665.0,
+      753676142.5,
+      804169151.5,
+      755525725.0,
+      746204177.0,
+      746773478.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 33125131.75,
+     "range_ns": 1746982.5,
+     "process_medians_ns": [
+      33326195.5,
+      33063815.0,
+      33307009.5,
+      33104657.0,
+      33145606.5,
+      32317669.5,
+      32519378.0,
+      33462827.5,
+      32497141.5,
+      34064652.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.quasi_interpolate_thb_spline.large@t1": {
+   "what": {
+    "main": "THB QI, 48^2 root",
+    "branch": "THB QI, 48^2 root"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 1512884004.75,
+     "range_ns": 65661519.0,
+     "process_medians_ns": [
+      1510656669.0,
+      1505983799.5,
+      1507341437.0,
+      1506038266.0,
+      1565190841.0,
+      1519433477.0,
+      1515111340.5,
+      1547682044.5,
+      1520069221.0,
+      1499529322.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 14237526.0,
+     "range_ns": 1353268.5,
+     "process_medians_ns": [
+      14336738.5,
+      14594807.5,
+      13321341.0,
+      14206026.0,
+      14269026.0,
+      13370838.5,
+      14318801.0,
+      13354308.0,
+      14292435.5,
+      13241539.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.multilevel_extraction.large@t1": {
+   "what": {
+    "main": "MultiLevelExtraction, every cell, 48^2",
+    "branch": "MultiLevelExtraction, every cell, 48^2"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 783250275.75,
+     "range_ns": 94647218.0,
+     "process_medians_ns": [
+      783181144.0,
+      783319407.5,
+      774104302.0,
+      775185892.5,
+      806808421.0,
+      783794973.5,
+      778818666.5,
+      798582294.0,
+      782545466.0,
+      868751520.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 78265991.5,
+     "range_ns": 4696759.0,
+     "process_medians_ns": [
+      78399434.0,
+      76884971.5,
+      77791156.5,
+      81581730.5,
+      77420626.0,
+      79988442.0,
+      77176502.5,
+      78696469.0,
+      78132549.0,
+      78953643.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.coupling_graph_thb.large@t1": {
+   "what": {
+    "main": "coupling_graph of the THB fixture, 48^2",
+    "branch": "coupling_graph of the THB fixture, 48^2"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 27969264.75,
+     "range_ns": 1909618.5,
+     "process_medians_ns": [
+      26669414.5,
+      27835894.5,
+      28258124.0,
+      28106892.5,
+      28579033.0,
+      27620434.0,
+      27749702.0,
+      28102635.0,
+      28203643.0,
+      27733566.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 4704946.75,
+     "range_ns": 555000.0,
+     "process_medians_ns": [
+      4714197.0,
+      4712669.5,
+      4697224.0,
+      4787608.5,
+      4762954.5,
+      4351244.5,
+      4779451.5,
+      4232608.5,
+      4445064.5,
+      4690468.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.build_local_thb.large@t1": {
+   "what": {
+    "main": "build_local, rank 0 of 4, 48^2 root",
+    "branch": "build_local, rank 0 of 4, 48^2 root"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 75427213.75,
+     "range_ns": 3219338.0,
+     "process_medians_ns": [
+      75069255.5,
+      76686909.0,
+      73979685.0,
+      74638876.5,
+      77199023.0,
+      74143344.0,
+      75785172.0,
+      76568594.0,
+      74798552.5,
+      77051946.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 1298090.5,
+     "range_ns": 52053.25,
+     "process_medians_ns": [
+      1333026.25,
+      1341189.5,
+      1302466.75,
+      1330494.75,
+      1291045.75,
+      1289136.25,
+      1309064.25,
+      1293018.75,
+      1293714.25,
+      1292035.5
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.thb_prolongation_to_sparse.tiny@t1": {
+   "what": {
+    "main": "prolongation_to_sparse to a refinement, 4^2 root",
+    "branch": "prolongation_to_sparse to a refinement, 4^2 root"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 271273329.25,
+     "range_ns": 10489213.5,
+     "process_medians_ns": [
+      275350639.0,
+      273452535.5,
+      271340366.0,
+      269623778.0,
+      278398265.5,
+      267909052.0,
+      270260724.5,
+      276933279.0,
+      271206292.5,
+      270485790.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 37630678.75,
+     "range_ns": 1804839.5,
+     "process_medians_ns": [
+      37441569.5,
+      37350316.5,
+      37613758.5,
+      37359020.5,
+      38029372.0,
+      37336155.0,
+      38138483.5,
+      39140994.5,
+      37905233.0,
+      37647599.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.thb_prolongation_to_sparse.medium@t1": {
+   "what": {
+    "main": "prolongation_to_sparse to a refinement, 8^2 root",
+    "branch": "prolongation_to_sparse to a refinement, 8^2 root"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 578569405.75,
+     "range_ns": 25222533.5,
+     "process_medians_ns": [
+      584215148.5,
+      578282447.5,
+      579950467.0,
+      576859332.5,
+      599395321.0,
+      575504571.5,
+      577408336.0,
+      593194607.5,
+      578856364.0,
+      574172787.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 40192597.0,
+     "range_ns": 416615.0,
+     "process_medians_ns": [
+      40461494.0,
+      40051520.0,
+      40352699.5,
+      40304162.5,
+      40212007.0,
+      40173187.0,
+      40084182.0,
+      40328871.5,
+      40044879.0,
+      40126252.5
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.thb_prolongation_to_sparse.large@t1": {
+   "what": {
+    "main": "prolongation_to_sparse to a refinement, 16^2 root",
+    "branch": "prolongation_to_sparse to a refinement, 16^2 root"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 1269845759.5,
+     "range_ns": 65928436.0,
+     "process_medians_ns": [
+      1275345846.0,
+      1266901864.5,
+      1269539694.0,
+      1262069421.0,
+      1321432180.0,
+      1260652003.0,
+      1270151825.0,
+      1304618941.0,
+      1273492011.0,
+      1255503744.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 67221040.5,
+     "range_ns": 1028967.5,
+     "process_medians_ns": [
+      67258217.5,
+      66963798.5,
+      67220810.0,
+      67489628.0,
+      67221271.0,
+      67892612.0,
+      66935411.0,
+      66972665.5,
+      66863644.5,
+      67566415.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.thb_spline_evaluate.tiny@t1": {
+   "what": {
+    "main": "THBSpline.evaluate, 1 points",
+    "branch": "THBSpline.evaluate, 1 points"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 163925.6346153846,
+     "range_ns": 5362.702797202801,
+     "process_medians_ns": [
+      167135.31818181818,
+      164575.25,
+      164289.23076923075,
+      162832.96153846153,
+      167060.25,
+      163562.03846153844,
+      162337.42307692306,
+      165359.76923076925,
+      162657.5,
+      161772.61538461538
+     ]
+    },
+    "branch": {
+     "statistic_ns": 6054.5585338574465,
+     "range_ns": 554.7123252830861,
+     "process_medians_ns": [
+      6048.555194805194,
+      6104.063122923588,
+      6062.853503184713,
+      6381.314236111111,
+      5880.257731958763,
+      6004.361563517916,
+      6060.561872909699,
+      5826.601910828025,
+      5977.2356902356905,
+      6180.201320132013
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.thb_spline_evaluate.medium@t1": {
+   "what": {
+    "main": "THBSpline.evaluate, 1000 points",
+    "branch": "THBSpline.evaluate, 1000 points"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 70469652.0,
+     "range_ns": 2806847.5,
+     "process_medians_ns": [
+      71355916.5,
+      71491080.5,
+      70327848.0,
+      70047994.0,
+      71615505.5,
+      70611456.0,
+      69924599.0,
+      72399592.0,
+      70047671.5,
+      69592744.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 588551.4375,
+     "range_ns": 22047.375,
+     "process_medians_ns": [
+      585041.5,
+      585726.875,
+      602318.5,
+      603456.0,
+      588533.25,
+      588569.625,
+      588525.625,
+      589231.625,
+      607088.875,
+      586547.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.thb_spline_evaluate.large@t1": {
+   "what": {
+    "main": "THBSpline.evaluate, 100000 points",
+    "branch": "THBSpline.evaluate, 100000 points"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 208939935.75,
+     "range_ns": 5913770.5,
+     "process_medians_ns": [
+      212180702.5,
+      209070880.5,
+      209280215.5,
+      206916540.5,
+      210319908.0,
+      206266932.0,
+      207528382.5,
+      210969980.5,
+      208808991.0,
+      207542518.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 31029226.25,
+     "range_ns": 239618.0,
+     "process_medians_ns": [
+      31017241.5,
+      31034686.5,
+      31201549.0,
+      31023766.0,
+      31016257.5,
+      30967827.0,
+      31039397.5,
+      31140160.0,
+      31129566.0,
+      30961931.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.compute_halo.tiny@t1": {
+   "what": {
+    "main": "compute_halo of a quarter, 4^2",
+    "branch": "compute_halo of a quarter, 4^2"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 98063.23739495798,
+     "range_ns": 5464.2238095238135,
+     "process_medians_ns": [
+      99772.44444444444,
+      96691.5,
+      97207.35714285714,
+      96551.225,
+      101701.7,
+      99216.025,
+      97137.19047619047,
+      98919.11764705883,
+      101435.45238095238,
+      96237.47619047618
+     ]
+    },
+    "branch": {
+     "statistic_ns": 4502.22926677964,
+     "range_ns": 322.35745630675046,
+     "process_medians_ns": [
+      4532.7542997543,
+      4443.2317961165045,
+      4744.671465968586,
+      4453.9756446991405,
+      4523.142679900744,
+      4422.314009661835,
+      4468.146627565982,
+      4481.315853658536,
+      4636.590330788804,
+      4527.707594936709
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.dof_owner.tiny@t1": {
+   "what": {
+    "main": "dof_owner, 4 parts, 4^2",
+    "branch": "dof_owner, 4 parts, 4^2"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 50410.8125,
+     "range_ns": 4214.5,
+     "process_medians_ns": [
+      50937.22857142857,
+      53582.7625,
+      50411.525,
+      49368.2625,
+      52640.46052631579,
+      49862.46052631579,
+      49855.7875,
+      50410.100000000006,
+      50504.98275862069,
+      49786.4
+     ]
+    },
+    "branch": {
+     "statistic_ns": 4005.1123504273505,
+     "range_ns": 325.6832018631203,
+     "process_medians_ns": [
+      3969.2608225108224,
+      4279.128735632184,
+      4174.232026143791,
+      4020.7811111111114,
+      3978.3952483801295,
+      4159.919134396356,
+      4027.910714285714,
+      3958.0424628450105,
+      3989.4435897435897,
+      3953.4455337690633
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.compute_halo.medium@t1": {
+   "what": {
+    "main": "compute_halo of a quarter, 32^2",
+    "branch": "compute_halo of a quarter, 32^2"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 256096.53125,
+     "range_ns": 9149.8125,
+     "process_medians_ns": [
+      257465.875,
+      255107.0625,
+      256614.9375,
+      252572.75,
+      261722.5625,
+      253656.6875,
+      257402.5,
+      256100.375,
+      256092.6875,
+      252995.125
+     ]
+    },
+    "branch": {
+     "statistic_ns": 21968.38230337079,
+     "range_ns": 1639.503309943073,
+     "process_medians_ns": [
+      22096.402173913044,
+      21929.95,
+      22006.814606741573,
+      22283.90909090909,
+      21929.08791208791,
+      22295.429347826088,
+      21503.15934065934,
+      21900.021739130432,
+      21581.9010989011,
+      23142.66265060241
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.dof_owner.medium@t1": {
+   "what": {
+    "main": "dof_owner, 4 parts, 32^2",
+    "branch": "dof_owner, 4 parts, 32^2"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 211675.43611111114,
+     "range_ns": 20810.9375,
+     "process_medians_ns": [
+      211684.65000000002,
+      210622.5,
+      210917.40000000002,
+      210892.55555555556,
+      231433.4375,
+      217825.45,
+      219721.55,
+      211666.22222222222,
+      212771.25,
+      210679.15
+     ]
+    },
+    "branch": {
+     "statistic_ns": 31397.928571428572,
+     "range_ns": 1279.0583333333307,
+     "process_medians_ns": [
+      32020.91935483871,
+      31573.793103448275,
+      31385.74603174603,
+      31315.97619047619,
+      31320.603174603173,
+      31410.11111111111,
+      31440.5,
+      31287.95,
+      32567.00833333333,
+      31340.775
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.compute_halo.large@t1": {
+   "what": {
+    "main": "compute_halo of a quarter, 256^2",
+    "branch": "compute_halo of a quarter, 256^2"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 7223886.25,
+     "range_ns": 267971.5,
+     "process_medians_ns": [
+      7254093.5,
+      7193679.0,
+      7406392.0,
+      7141477.0,
+      7192914.5,
+      7260755.0,
+      7300868.5,
+      7138420.5,
+      7300995.5,
+      7165697.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 1182519.75,
+     "range_ns": 52459.75,
+     "process_medians_ns": [
+      1171802.25,
+      1184467.25,
+      1180572.25,
+      1222600.75,
+      1219624.0,
+      1209134.5,
+      1173648.0,
+      1170141.0,
+      1178999.5,
+      1186336.25
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.dof_owner.large@t1": {
+   "what": {
+    "main": "dof_owner, 4 parts, 256^2",
+    "branch": "dof_owner, 4 parts, 256^2"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 7233170.25,
+     "range_ns": 359363.0,
+     "process_medians_ns": [
+      7271811.0,
+      7106863.5,
+      7190860.0,
+      7436353.5,
+      7424261.5,
+      7188598.0,
+      7218122.5,
+      7183216.0,
+      7466226.5,
+      7248218.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 1626294.75,
+     "range_ns": 55962.5,
+     "process_medians_ns": [
+      1618224.25,
+      1674186.75,
+      1638504.75,
+      1618750.5,
+      1621360.25,
+      1618605.25,
+      1620736.5,
+      1631229.25,
+      1662577.0,
+      1653173.75
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.thb_construct.tiny@t8": {
+   "what": {
+    "main": "THBSplineSpace, 3 levels, 4^2 root",
+    "branch": "THBSplineSpace, 3 levels, 4^2 root"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 5378019.75,
+     "range_ns": 377860.5,
+     "process_medians_ns": [
+      5388917.0,
+      5367122.5,
+      5616004.0,
+      5350542.5,
+      5632872.0,
+      5348534.0,
+      5255011.5,
+      5437643.5,
+      5433754.0,
+      5285208.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 47218.93095238095,
+     "range_ns": 22206.72777777777,
+     "process_medians_ns": [
+      66295.78333333333,
+      44644.64772727273,
+      46910.01666666666,
+      47527.84523809524,
+      47674.34523809524,
+      48271.482142857145,
+      45522.58888888889,
+      45029.375,
+      48244.256097560974,
+      44089.055555555555
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.thb_refine.tiny@t8": {
+   "what": {
+    "main": "THBSplineSpace.refine of one cell, 4^2 root",
+    "branch": "THBSplineSpace.refine of one cell, 4^2 root"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 5715487.5,
+     "range_ns": 342871.0,
+     "process_medians_ns": [
+      5605789.5,
+      5587062.5,
+      5620199.0,
+      5919828.0,
+      5844381.0,
+      5723611.0,
+      5576957.0,
+      5820799.0,
+      5774811.5,
+      5707364.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 59799.42134581105,
+     "range_ns": 4923.029004329008,
+     "process_medians_ns": [
+      57272.47142857143,
+      57699.92647058824,
+      60551.27272727273,
+      60148.15151515152,
+      61757.0,
+      59450.69117647059,
+      56879.22857142857,
+      61802.257575757576,
+      61618.43548387097,
+      57535.25714285714
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.thb_tabulate_basis.tiny@t8": {
+   "what": {
+    "main": "tabulate_basis, every cell, 4^2",
+    "branch": "tabulate_basis, every cell, 4^2"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 18357437.5,
+     "range_ns": 1210241.0,
+     "process_medians_ns": [
+      18307963.0,
+      18404667.5,
+      17862818.0,
+      18478249.5,
+      19038398.5,
+      18310207.5,
+      18120643.5,
+      18672736.0,
+      18753780.0,
+      17828157.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 313919.25,
+     "range_ns": 17274.25,
+     "process_medians_ns": [
+      311235.0,
+      321549.0,
+      312118.5,
+      306461.0,
+      323735.25,
+      310138.2857142857,
+      315720.0,
+      315997.30000000005,
+      310302.35714285716,
+      317010.14285714284
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.quasi_interpolate_thb_spline.tiny@t8": {
+   "what": {
+    "main": "THB QI, 4^2 root",
+    "branch": "THB QI, 4^2 root"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 12475070.25,
+     "range_ns": 642605.0,
+     "process_medians_ns": [
+      12419309.5,
+      12699891.0,
+      12270723.5,
+      12431337.5,
+      12877944.5,
+      12410736.0,
+      12235339.5,
+      12545868.0,
+      12518803.0,
+      12539626.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 140955.43333333335,
+     "range_ns": 7349.058333333349,
+     "process_medians_ns": [
+      140178.32142857142,
+      142312.7857142857,
+      140004.73333333334,
+      141055.46666666667,
+      140456.43333333335,
+      140855.40000000002,
+      140149.5,
+      142632.32142857142,
+      144614.2,
+      147353.7916666667
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.multilevel_extraction.tiny@t8": {
+   "what": {
+    "main": "MultiLevelExtraction, every cell, 4^2",
+    "branch": "MultiLevelExtraction, every cell, 4^2"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 10788236.0,
+     "range_ns": 416269.0,
+     "process_medians_ns": [
+      10710927.0,
+      10760664.0,
+      10787779.0,
+      10788693.0,
+      10936479.5,
+      10847767.0,
+      10652503.0,
+      11038651.5,
+      10933838.0,
+      10622382.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 619254.3541666666,
+     "range_ns": 36221.625,
+     "process_medians_ns": [
+      608041.625,
+      606086.875,
+      639062.5,
+      636948.0,
+      617629.375,
+      616726.25,
+      618745.375,
+      642308.5,
+      624323.875,
+      619763.3333333333
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.coupling_graph_thb.tiny@t8": {
+   "what": {
+    "main": "coupling_graph of the THB fixture, 4^2",
+    "branch": "coupling_graph of the THB fixture, 4^2"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 469734.0,
+     "range_ns": 31349.400000000023,
+     "process_medians_ns": [
+      473823.1,
+      455788.8,
+      455473.5,
+      461068.19999999995,
+      469353.5,
+      481195.5,
+      449846.1,
+      472588.1,
+      470114.5,
+      476328.7
+     ]
+    },
+    "branch": {
+     "statistic_ns": 27369.964897260274,
+     "range_ns": 2103.881752305664,
+     "process_medians_ns": [
+      27156.68918918919,
+      29239.780303030304,
+      28021.594202898552,
+      27156.342465753427,
+      27135.89855072464,
+      27494.636986301368,
+      28859.479166666664,
+      27385.054794520547,
+      27354.875,
+      27295.79861111111
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.build_local_thb.tiny@t8": {
+   "what": {
+    "main": "build_local, rank 0 of 4, 4^2 root",
+    "branch": "build_local, rank 0 of 4, 4^2 root"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 6665851.0,
+     "range_ns": 290628.0,
+     "process_medians_ns": [
+      6649877.0,
+      6712682.0,
+      6568346.0,
+      6681348.5,
+      6858974.0,
+      6647162.5,
+      6650353.5,
+      6833255.0,
+      6831294.0,
+      6581290.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 150304.4642857143,
+     "range_ns": 8663.082417582424,
+     "process_medians_ns": [
+      146708.84615384616,
+      152309.64285714284,
+      149916.61538461538,
+      150252.0,
+      153061.76923076925,
+      155371.92857142858,
+      150335.25,
+      150273.67857142858,
+      152451.53846153844,
+      148627.89285714287
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.thb_construct.medium@t8": {
+   "what": {
+    "main": "THBSplineSpace, 3 levels, 16^2 root",
+    "branch": "THBSplineSpace, 3 levels, 16^2 root"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 14246364.0,
+     "range_ns": 1020652.5,
+     "process_medians_ns": [
+      14064659.5,
+      14202575.5,
+      13810175.0,
+      14200923.0,
+      14798990.0,
+      14290152.5,
+      14313168.0,
+      14497674.0,
+      14462250.5,
+      13778337.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 229914.97222222222,
+     "range_ns": 27066.555555555562,
+     "process_medians_ns": [
+      224300.94444444444,
+      225259.66666666666,
+      226046.94444444444,
+      244143.125,
+      244163.6875,
+      251367.5,
+      225897.61111111112,
+      226025.0,
+      244101.625,
+      233783.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.thb_refine.medium@t8": {
+   "what": {
+    "main": "THBSplineSpace.refine of one cell, 16^2 root",
+    "branch": "THBSplineSpace.refine of one cell, 16^2 root"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 14429820.75,
+     "range_ns": 1045054.5,
+     "process_medians_ns": [
+      14386458.5,
+      14419975.0,
+      14383147.0,
+      14651727.5,
+      15268167.5,
+      14439666.5,
+      14223113.0,
+      14818908.0,
+      14841482.5,
+      14277940.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 253695.9375,
+     "range_ns": 28634.069444444438,
+     "process_medians_ns": [
+      247553.72222222222,
+      249046.3125,
+      246393.1666666667,
+      261681.5,
+      264364.875,
+      273038.625,
+      245286.6875,
+      244404.55555555556,
+      262424.0625,
+      258345.5625
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.thb_tabulate_basis.medium@t8": {
+   "what": {
+    "main": "tabulate_basis, every cell, 16^2",
+    "branch": "tabulate_basis, every cell, 16^2"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 123024532.0,
+     "range_ns": 6274876.0,
+     "process_medians_ns": [
+      123575333.0,
+      121971999.5,
+      122361513.5,
+      125603761.5,
+      128144392.0,
+      122473731.0,
+      121890744.0,
+      125984944.5,
+      124572558.0,
+      121869516.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 3822616.0,
+     "range_ns": 261042.0,
+     "process_medians_ns": [
+      3756664.0,
+      3905527.0,
+      3752020.5,
+      3729935.0,
+      3791031.5,
+      3854200.5,
+      3761399.5,
+      3896639.0,
+      3990977.0,
+      3909246.5
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.quasi_interpolate_thb_spline.medium@t8": {
+   "what": {
+    "main": "THB QI, 16^2 root",
+    "branch": "THB QI, 16^2 root"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 169869228.75,
+     "range_ns": 4448542.0,
+     "process_medians_ns": [
+      170196981.0,
+      168665699.5,
+      169541476.5,
+      169462769.5,
+      173050960.5,
+      171140760.0,
+      168602418.5,
+      171662300.5,
+      172214155.0,
+      169379544.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 1562749.25,
+     "range_ns": 143695.5,
+     "process_medians_ns": [
+      1686864.25,
+      1547730.0,
+      1602298.75,
+      1549025.0,
+      1543168.75,
+      1577410.5,
+      1549153.5,
+      1576345.0,
+      1641936.0,
+      1547995.75
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.multilevel_extraction.medium@t8": {
+   "what": {
+    "main": "MultiLevelExtraction, every cell, 16^2",
+    "branch": "MultiLevelExtraction, every cell, 16^2"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 96663998.0,
+     "range_ns": 4827198.5,
+     "process_medians_ns": [
+      96760781.5,
+      95516296.0,
+      96322379.0,
+      98475120.5,
+      99583656.5,
+      96567214.5,
+      94756458.0,
+      99496871.0,
+      97598392.5,
+      94840315.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 8927617.0,
+     "range_ns": 711779.5,
+     "process_medians_ns": [
+      8804701.5,
+      8555572.5,
+      9022466.0,
+      8940758.5,
+      9267352.0,
+      8914475.5,
+      8839493.5,
+      9232124.0,
+      9042275.5,
+      8826168.5
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.coupling_graph_thb.medium@t8": {
+   "what": {
+    "main": "coupling_graph of the THB fixture, 16^2",
+    "branch": "coupling_graph of the THB fixture, 16^2"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 3337168.75,
+     "range_ns": 241027.0,
+     "process_medians_ns": [
+      3340406.0,
+      3225771.0,
+      3311490.0,
+      3381868.5,
+      3351454.5,
+      3333931.5,
+      3223572.0,
+      3464599.0,
+      3319694.5,
+      3394530.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 317856.75,
+     "range_ns": 12781.685714285704,
+     "process_medians_ns": [
+      315923.0,
+      315929.2857142857,
+      315219.7142857143,
+      319681.85714285716,
+      320522.28571428574,
+      324937.64285714284,
+      316469.7142857143,
+      328001.4,
+      317753.35714285716,
+      317960.14285714284
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.build_local_thb.medium@t8": {
+   "what": {
+    "main": "build_local, rank 0 of 4, 16^2 root",
+    "branch": "build_local, rank 0 of 4, 16^2 root"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 14495432.5,
+     "range_ns": 681482.5,
+     "process_medians_ns": [
+      14558233.5,
+      14132917.5,
+      14162124.5,
+      14625076.5,
+      14721164.5,
+      14647454.5,
+      14432631.5,
+      14814400.0,
+      14430721.5,
+      14325026.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 302675.50595238095,
+     "range_ns": 19405.071428571362,
+     "process_medians_ns": [
+      297712.7857142857,
+      297328.7142857143,
+      316733.7857142857,
+      302667.4285714286,
+      305028.7857142857,
+      299921.4285714285,
+      299191.14285714284,
+      311429.1666666667,
+      315141.35714285716,
+      302683.5833333334
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.thb_construct.large@t8": {
+   "what": {
+    "main": "THBSplineSpace, 3 levels, 48^2 root",
+    "branch": "THBSplineSpace, 3 levels, 48^2 root"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 54449394.25,
+     "range_ns": 6001175.5,
+     "process_medians_ns": [
+      54811676.0,
+      53434432.5,
+      52930411.0,
+      55459666.5,
+      58776285.0,
+      54087112.5,
+      53225964.0,
+      55609371.5,
+      56241005.5,
+      52775109.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 1472185.5,
+     "range_ns": 192205.5,
+     "process_medians_ns": [
+      1492097.0,
+      1420082.5,
+      1430308.0,
+      1595896.0,
+      1608697.75,
+      1557831.5,
+      1423283.0,
+      1452274.0,
+      1561493.25,
+      1416492.25
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.thb_refine.large@t8": {
+   "what": {
+    "main": "THBSplineSpace.refine of one cell, 48^2 root",
+    "branch": "THBSplineSpace.refine of one cell, 48^2 root"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 54273747.25,
+     "range_ns": 6610719.5,
+     "process_medians_ns": [
+      54430023.5,
+      53584616.5,
+      53109848.0,
+      56314223.0,
+      59339461.5,
+      54117471.0,
+      53695826.5,
+      56285038.0,
+      56401082.5,
+      52728742.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 1552732.75,
+     "range_ns": 219191.5,
+     "process_medians_ns": [
+      1458364.75,
+      1457482.0,
+      1534945.75,
+      1676673.5,
+      1590745.0,
+      1594043.5,
+      1459101.75,
+      1462657.75,
+      1596149.0,
+      1570519.75
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.thb_tabulate_basis.large@t8": {
+   "what": {
+    "main": "tabulate_basis, every cell, 48^2",
+    "branch": "tabulate_basis, every cell, 48^2"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 751045423.0,
+     "range_ns": 39808661.0,
+     "process_medians_ns": [
+      752782219.0,
+      748301332.0,
+      749308627.0,
+      762473071.5,
+      780273859.0,
+      746130333.5,
+      746872206.5,
+      770968224.5,
+      763171806.5,
+      740465198.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 32979455.25,
+     "range_ns": 2372972.0,
+     "process_medians_ns": [
+      32903905.5,
+      32840923.5,
+      32388753.0,
+      32309207.5,
+      32952803.5,
+      33438143.5,
+      33006107.0,
+      34682179.5,
+      33393248.0,
+      33768176.5
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.quasi_interpolate_thb_spline.large@t8": {
+   "what": {
+    "main": "THB QI, 48^2 root",
+    "branch": "THB QI, 48^2 root"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 1516802735.0,
+     "range_ns": 36367933.0,
+     "process_medians_ns": [
+      1527370501.5,
+      1502066724.5,
+      1513362004.5,
+      1514227683.0,
+      1537475826.5,
+      1519309806.5,
+      1505083313.5,
+      1533645643.5,
+      1538434657.5,
+      1514295663.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 14299426.0,
+     "range_ns": 1091719.5,
+     "process_medians_ns": [
+      14310667.5,
+      13400182.5,
+      14313791.5,
+      14414254.5,
+      13365886.0,
+      14281180.0,
+      14288184.5,
+      14252166.0,
+      14457605.5,
+      14373509.5
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.multilevel_extraction.large@t8": {
+   "what": {
+    "main": "MultiLevelExtraction, every cell, 48^2",
+    "branch": "MultiLevelExtraction, every cell, 48^2"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 792486881.75,
+     "range_ns": 33984263.5,
+     "process_medians_ns": [
+      808960672.5,
+      777357595.0,
+      782967601.0,
+      796020795.5,
+      805870060.5,
+      788952968.0,
+      782965246.0,
+      809843578.5,
+      798306437.0,
+      775859315.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 78070607.25,
+     "range_ns": 5242999.5,
+     "process_medians_ns": [
+      77228195.0,
+      75600331.0,
+      80560605.5,
+      78084511.5,
+      77207994.5,
+      77861587.5,
+      78056703.0,
+      80843330.5,
+      80118778.0,
+      79089224.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.coupling_graph_thb.large@t8": {
+   "what": {
+    "main": "coupling_graph of the THB fixture, 48^2",
+    "branch": "coupling_graph of the THB fixture, 48^2"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 28097795.5,
+     "range_ns": 1295117.0,
+     "process_medians_ns": [
+      27934810.5,
+      27458409.0,
+      27579241.5,
+      28302058.0,
+      27758918.5,
+      28753526.0,
+      27663614.0,
+      28691343.5,
+      28325568.5,
+      28260780.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 4720921.75,
+     "range_ns": 717023.0,
+     "process_medians_ns": [
+      4690318.0,
+      4703308.0,
+      4738535.5,
+      4896696.5,
+      4926203.5,
+      4933655.0,
+      4894284.5,
+      4282467.0,
+      4691830.0,
+      4216632.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.build_local_thb.large@t8": {
+   "what": {
+    "main": "build_local, rank 0 of 4, 48^2 root",
+    "branch": "build_local, rank 0 of 4, 48^2 root"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 75648247.0,
+     "range_ns": 4702803.5,
+     "process_medians_ns": [
+      76461464.5,
+      74357947.5,
+      74778956.5,
+      77800046.0,
+      76600567.0,
+      75732589.0,
+      74642331.5,
+      79010868.0,
+      75563905.0,
+      74308064.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 1296621.125,
+     "range_ns": 60911.75,
+     "process_medians_ns": [
+      1291130.0,
+      1312517.25,
+      1294235.25,
+      1306059.75,
+      1345478.75,
+      1284567.0,
+      1292045.0,
+      1299007.0,
+      1288901.75,
+      1316056.25
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.thb_prolongation_to_sparse.tiny@t8": {
+   "what": {
+    "main": "prolongation_to_sparse to a refinement, 4^2 root",
+    "branch": "prolongation_to_sparse to a refinement, 4^2 root"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 271126861.0,
+     "range_ns": 12993496.5,
+     "process_medians_ns": [
+      271103985.0,
+      270586369.5,
+      270676789.5,
+      273632020.0,
+      281221163.0,
+      271149737.0,
+      268227666.5,
+      280693457.5,
+      277596138.5,
+      269761638.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 7209817.75,
+     "range_ns": 302121.0,
+     "process_medians_ns": [
+      7186473.5,
+      7233162.0,
+      7309377.5,
+      7251170.0,
+      7163601.0,
+      7116659.0,
+      7275526.5,
+      7105731.5,
+      7064492.5,
+      7366613.5
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.thb_prolongation_to_sparse.medium@t8": {
+   "what": {
+    "main": "prolongation_to_sparse to a refinement, 8^2 root",
+    "branch": "prolongation_to_sparse to a refinement, 8^2 root"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 579150566.0,
+     "range_ns": 31989374.0,
+     "process_medians_ns": [
+      578592249.0,
+      573536168.5,
+      578373388.0,
+      585610382.5,
+      603608617.5,
+      579708883.0,
+      571619243.5,
+      597931893.5,
+      594456431.0,
+      572809115.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 8083578.5,
+     "range_ns": 49050.0,
+     "process_medians_ns": [
+      8104294.0,
+      8068991.0,
+      8118041.0,
+      8103425.5,
+      8083577.0,
+      8072197.5,
+      8083580.0,
+      8108734.0,
+      8083499.5,
+      8080590.5
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.thb_prolongation_to_sparse.large@t8": {
+   "what": {
+    "main": "prolongation_to_sparse to a refinement, 16^2 root",
+    "branch": "prolongation_to_sparse to a refinement, 16^2 root"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 1281034676.25,
+     "range_ns": 66172393.0,
+     "process_medians_ns": [
+      1272451130.0,
+      1262554145.0,
+      1264653090.0,
+      1291057805.5,
+      1325500692.5,
+      1289618222.5,
+      1259328299.5,
+      1318183548.5,
+      1313206085.0,
+      1264620613.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 12659323.5,
+     "range_ns": 363895.5,
+     "process_medians_ns": [
+      12343160.5,
+      12655690.5,
+      12634179.0,
+      12678529.0,
+      12697103.5,
+      12621584.5,
+      12671777.0,
+      12707056.0,
+      12662956.5,
+      12615968.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.thb_spline_evaluate.tiny@t8": {
+   "what": {
+    "main": "THBSpline.evaluate, 1 points",
+    "branch": "THBSpline.evaluate, 1 points"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 188799.5,
+     "range_ns": 7773.54545454547,
+     "process_medians_ns": [
+      189067.95454545453,
+      185459.95454545453,
+      185741.45454545453,
+      191800.5,
+      190561.5909090909,
+      188531.04545454547,
+      189823.68181818182,
+      192648.7272727273,
+      186438.27272727274,
+      184875.18181818182
+     ]
+    },
+    "branch": {
+     "statistic_ns": 6046.690889573929,
+     "range_ns": 564.054254200506,
+     "process_medians_ns": [
+      6044.625806451613,
+      5973.70979020979,
+      5961.5235690235695,
+      5973.249201277955,
+      6125.972491909385,
+      6048.755972696245,
+      5948.6514195583595,
+      6512.7056737588655,
+      6252.477443609023,
+      6191.172354948805
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.thb_spline_evaluate.medium@t8": {
+   "what": {
+    "main": "THBSpline.evaluate, 1000 points",
+    "branch": "THBSpline.evaluate, 1000 points"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 71297288.0,
+     "range_ns": 3915509.0,
+     "process_medians_ns": [
+      71511812.5,
+      70586243.0,
+      70909240.5,
+      71939735.5,
+      73861451.5,
+      71082763.5,
+      70963276.5,
+      73229365.5,
+      72281651.0,
+      69945942.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 382972.625,
+     "range_ns": 10408.583333333372,
+     "process_medians_ns": [
+      386892.5,
+      381698.9166666666,
+      382902.4166666666,
+      381120.8333333334,
+      383042.8333333333,
+      378636.4166666666,
+      381558.19999999995,
+      383647.9166666666,
+      385453.25,
+      389045.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.thb_spline_evaluate.large@t8": {
+   "what": {
+    "main": "THBSpline.evaluate, 100000 points",
+    "branch": "THBSpline.evaluate, 100000 points"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 204776036.25,
+     "range_ns": 6852124.5,
+     "process_medians_ns": [
+      204030495.0,
+      204579243.5,
+      204671949.5,
+      209232944.5,
+      208776374.0,
+      204096545.5,
+      204880123.0,
+      208875994.0,
+      207345952.5,
+      202380820.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 15691318.75,
+     "range_ns": 145286.5,
+     "process_medians_ns": [
+      15679782.0,
+      15676034.0,
+      15697311.5,
+      15699921.0,
+      15628851.0,
+      15774137.5,
+      15685326.0,
+      15657202.0,
+      15710209.5,
+      15738734.5
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.compute_halo.tiny@t8": {
+   "what": {
+    "main": "compute_halo of a quarter, 4^2",
+    "branch": "compute_halo of a quarter, 4^2"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 98360.03571428571,
+     "range_ns": 7688.952380952382,
+     "process_medians_ns": [
+      96911.32500000001,
+      101362.44736842105,
+      96061.92857142858,
+      99391.30952380953,
+      100171.025,
+      97328.7619047619,
+      96912.35714285714,
+      103745.0,
+      100022.92857142858,
+      96056.04761904762
+     ]
+    },
+    "branch": {
+     "statistic_ns": 4600.168197821176,
+     "range_ns": 249.4111883502128,
+     "process_medians_ns": [
+      4534.434508816121,
+      4661.933842239186,
+      4581.16282051282,
+      4498.953634085214,
+      4551.524050632912,
+      4492.637592137592,
+      4682.90234375,
+      4742.048780487805,
+      4619.173575129534,
+      4639.462915601023
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.dof_owner.tiny@t8": {
+   "what": {
+    "main": "dof_owner, 4 parts, 4^2",
+    "branch": "dof_owner, 4 parts, 4^2"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 51111.9375,
+     "range_ns": 3612.613141025642,
+     "process_medians_ns": [
+      50337.95,
+      51232.294871794875,
+      49696.9125,
+      53309.52564102564,
+      52759.69736842105,
+      50516.48717948718,
+      50121.375,
+      52253.02702702703,
+      51226.5,
+      50997.375
+     ]
+    },
+    "branch": {
+     "statistic_ns": 4022.7173038229375,
+     "range_ns": 247.32623130918319,
+     "process_medians_ns": [
+      3882.7521097046415,
+      4049.994131455399,
+      4056.70177383592,
+      3995.440476190476,
+      3950.21714922049,
+      3939.6230068337127,
+      3920.6434878587197,
+      4130.078341013825,
+      4110.415919282512,
+      4092.496629213483
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.compute_halo.medium@t8": {
+   "what": {
+    "main": "compute_halo of a quarter, 32^2",
+    "branch": "compute_halo of a quarter, 32^2"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 259540.76785714284,
+     "range_ns": 25217.3125,
+     "process_medians_ns": [
+      255837.5,
+      261976.75,
+      253434.75,
+      266649.4375,
+      259128.875,
+      260973.125,
+      277501.25,
+      259515.75,
+      259565.7857142857,
+      252283.9375
+     ]
+    },
+    "branch": {
+     "statistic_ns": 22379.54697410148,
+     "range_ns": 1597.6704559808022,
+     "process_medians_ns": [
+      22040.14835164835,
+      23159.154320987655,
+      23207.96590909091,
+      23616.25287356322,
+      22104.592391304348,
+      22018.582417582416,
+      22259.210227272728,
+      22084.53846153846,
+      22499.88372093023,
+      22893.2037037037
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.dof_owner.medium@t8": {
+   "what": {
+    "main": "dof_owner, 4 parts, 32^2",
+    "branch": "dof_owner, 4 parts, 32^2"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 216342.475,
+     "range_ns": 12543.049999999988,
+     "process_medians_ns": [
+      213097.45,
+      216370.8,
+      212368.77777777778,
+      219377.61111111112,
+      216314.15000000002,
+      224672.7,
+      219179.75,
+      212129.65000000002,
+      212442.44444444444,
+      216492.8333333333
+     ]
+    },
+    "branch": {
+     "statistic_ns": 31584.125396825395,
+     "range_ns": 1166.7936507936502,
+     "process_medians_ns": [
+      31306.492063492064,
+      32438.641666666666,
+      31367.65079365079,
+      31364.666666666664,
+      31747.81746031746,
+      32304.23275862069,
+      31420.433333333334,
+      32473.285714285714,
+      32029.966666666667,
+      31412.125
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.compute_halo.large@t8": {
+   "what": {
+    "main": "compute_halo of a quarter, 256^2",
+    "branch": "compute_halo of a quarter, 256^2"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 7213050.5,
+     "range_ns": 258440.0,
+     "process_medians_ns": [
+      7203480.0,
+      7289098.5,
+      7374917.0,
+      7192467.5,
+      7222621.0,
+      7199676.5,
+      7130903.5,
+      7268286.5,
+      7389343.5,
+      7133870.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 736993.8333333334,
+     "range_ns": 202752.33333333337,
+     "process_medians_ns": [
+      755600.3333333334,
+      717292.0,
+      760186.3333333333,
+      724774.3333333334,
+      731002.1666666667,
+      701559.0,
+      782996.3333333334,
+      904311.3333333334,
+      742985.5,
+      707023.8333333334
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S6.dof_owner.large@t8": {
+   "what": {
+    "main": "dof_owner, 4 parts, 256^2",
+    "branch": "dof_owner, 4 parts, 256^2"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 7288339.25,
+     "range_ns": 343028.5,
+     "process_medians_ns": [
+      7180933.0,
+      7295796.0,
+      7280882.5,
+      7305330.5,
+      7483810.5,
+      7364826.0,
+      7254906.0,
+      7316485.0,
+      7244118.0,
+      7140782.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 772983.0,
+     "range_ns": 94909.66666666674,
+     "process_medians_ns": [
+      739801.1666666667,
+      775013.6666666667,
+      772360.6666666666,
+      743753.5,
+      773605.3333333333,
+      784898.6666666667,
+      771622.0,
+      691325.1666666666,
+      786234.8333333334,
+      777161.6666666667
+     ],
+     "flagged": false
+    }
+   }
+  }
+ }
+}

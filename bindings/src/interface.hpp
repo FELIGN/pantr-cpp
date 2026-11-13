@@ -1,0 +1,157 @@
+// What every translation unit of the _pantr extension shares: the interface version and the
+// registration functions of each part of the module.
+#pragma once
+
+#include <nanobind/nanobind.h>
+
+namespace pantr::bindings {
+
+/// Version of the module's interface. pantr/_ext.py refuses a module whose version differs from
+/// its EXPECTED_INTERFACE, so a stale build fails at import instead of as a phantom regression.
+/// Bump both together with any change to what the module exposes.
+inline constexpr int kInterfaceVersion = 19;
+
+/// Register the translation of pantr's C++ exceptions to Python exceptions.
+void register_errors(nanobind::module_& m);
+
+/// Register the thread settings over the C++ pool and the shared-parallelism capsule.
+void register_parallel(nanobind::module_& m);
+
+/// Register the `quad` submodule (1D rules, PointsLattice, QuadratureRule).
+void register_quad(nanobind::module_& m);
+
+/// Register the `tolerance` submodule (the preset factors).
+void register_tolerance(nanobind::module_& m);
+
+/// Register the `basis` submodule (1D and tensor-product tabulation).
+void register_basis(nanobind::module_& m);
+
+/// Register the `change_basis` submodule (builders and process tables).
+void register_change_basis(nanobind::module_& m);
+
+/// Register the `geometry` submodule (AABB).
+void register_geometry(nanobind::module_& m);
+
+/// Register the `transform` submodule (AffineTransform).
+void register_transform(nanobind::module_& m);
+
+/// Register the `bezier` submodule (the Bezier value type and its operations).
+void register_bezier(nanobind::module_& m);
+
+/// Register the Bernstein product of raw coefficient arrays in the `_testing` submodule.
+void register_bezier_testing(nanobind::module_& m);
+
+/// Register degree reduction and fitting in the `bezier` submodule.
+void register_bezier_approx(nanobind::module_& m);
+
+/// Register the reduction operators and the fitting internals in the `_testing` submodule.
+void register_bezier_approx_testing(nanobind::module_& m);
+
+/// Register the `roots` submodule (the Builtin root provider).
+void register_roots(nanobind::module_& m);
+
+/// Register the root provider's internals in the `_testing` submodule.
+void register_roots_testing(nanobind::module_& m);
+
+/// Register the `bspline` submodule (BsplineSpace1D, BsplineSpace, the knot factories).
+void register_bspline(nanobind::module_& m);
+/// Register the knot scale, tolerance and snapping check in the `_testing` submodule.
+void register_bspline_testing(nanobind::module_& m);
+
+/// Register the Bspline value type and its evaluation in the `bspline` submodule.
+void register_bspline_ops(nanobind::module_& m);
+
+/// Register the refinement methods of the Bspline classes (knot insertion, conversion to open and
+/// periodic form, subdivision, restriction, splitting) and the knot-vector functions of the
+/// `bspline` submodule. After `register_bspline_ops`.
+void register_bspline_refine(nanobind::module_& m);
+
+/// Register degree elevation and reduction, knot removal and the derivative of the Bspline
+/// classes, and the common refinement of two B-splines, in the `bspline` submodule. After
+/// `register_bspline_ops`.
+void register_bspline_modify(nanobind::module_& m);
+
+/// Register the extraction operators of the 1D spaces and the conversion of a Bspline to Bezier
+/// form in the `bspline` submodule. After `register_bspline_ops`.
+void register_bspline_extraction(nanobind::module_& m);
+
+/// Register the raw extraction operators and cardinal intervals in the `_testing` submodule.
+void register_bspline_extraction_testing(nanobind::module_& m);
+
+/// Register the spanwise element extraction (the element operators of a space, applied to one cell
+/// or a batch) in the `bspline` submodule.
+void register_bspline_spanwise(nanobind::module_& m);
+
+/// Register the Kronecker application on arbitrary factors, its scratch size and the structural
+/// Lagrange identity mask in the `_testing` submodule.
+void register_bspline_spanwise_testing(nanobind::module_& m);
+
+/// Register the product, the rational derivative and the roots of a B-spline (methods of the
+/// `BsplineF64` / `BsplineF32` classes, which must exist) and the root status codes in the
+/// `bspline` submodule.
+void register_bspline_product(nanobind::module_& m);
+
+/// Register the staged B-spline fits (tensor-product collocation, scattered fit, L2 projection,
+/// quasi-interpolation) and the solve and load kernels the distributed fits reach, in the
+/// `bspline` submodule. After `register_bspline`.
+void register_bspline_fit(nanobind::module_& m);
+
+void register_bspline_locate(nanobind::module_& m);
+
+void register_bspline_locate_testing(nanobind::module_& m);
+
+/// Register the Morken-Reimers kernel, its merge and its insertion budget, and the knot classes
+/// of a raw knot vector at an explicit tolerance, in the `_testing` submodule.
+void register_bspline_product_testing(nanobind::module_& m);
+
+/// Register the knot-removal tolerances, the binomial kernel and the 1D degree kernels in the
+/// `_testing` submodule.
+void register_bspline_modify_testing(nanobind::module_& m);
+
+/// Register the blossom and the Oslo matrix (banded and dense) in the `_testing` submodule.
+void register_bspline_blossom_testing(nanobind::module_& m);
+
+/// Register the `grid` submodule (the grids, the BVH, the tag registries, the partition and the
+/// generic consumers).
+void register_grid(nanobind::module_& m);
+
+/// Register the truncated hierarchical B-spline classes (the space, the spline, the multi-level
+/// extraction and the quasi-interpolant) and the windowing functions of a distributed space in the
+/// `bspline` submodule. Call it after `register_bspline`. Its functions take the `grid` submodule's
+/// types, which must be registered before any of them is called.
+void register_thb(nanobind::module_& m);
+
+/// Register the THB space's tolerances and the support of a 1D space in the `_testing` submodule.
+void register_thb_testing(nanobind::module_& m);
+
+/// The coupling graph and the graph partitioners, in the `bspline` submodule.
+void register_partition_graph(nanobind::module_& m);
+
+/// The spectral partitioner with its solver options, in the `_testing` submodule.
+void register_partition_graph_testing(nanobind::module_& m);
+
+/// Register the `multipatch` submodule (the interface check, the face matching, the detection of
+/// interfaces among patches and the validation of a collection of patches). After
+/// `register_bspline` and `register_bspline_ops`: the patches it takes are the Bspline classes.
+void register_multipatch(nanobind::module_& m);
+
+/// Register the `cad` submodule (the primitives, make_compat, the ruled, revolved and Coons
+/// constructions and join). After `register_bspline` and `register_bspline_ops`: the B-splines it
+/// takes and returns are the Bspline classes.
+void register_cad(nanobind::module_& m);
+
+/// Register the Coons edge readings in the `_testing` submodule.
+void register_cad_testing(nanobind::module_& m);
+
+/// Register the `mpi` submodule (the distributed algorithms over a capsule or a duck-typed
+/// communicator). After `register_bspline_fit`, `register_thb` and `register_grid`: it takes their
+/// classes.
+void register_mpi(nanobind::module_& m);
+
+/// Register the block and factorization helpers of the grids in the `_testing` submodule.
+void register_grid_testing(nanobind::module_& m);
+
+/// Register the `_testing` submodule (probes for tests and benchmarks; not a public API).
+void register_testing(nanobind::module_& m);
+
+}  // namespace pantr::bindings

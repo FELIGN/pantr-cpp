@@ -16,11 +16,14 @@ The main modules are:
 - :mod:`pantr.bezier`: Bézier curves/surfaces and root finding for Bernstein polynomials.
 - :mod:`pantr.mpi`: Optional MPI-distributed B-spline / THB-spline spaces (``mpi`` extra).
 - :mod:`pantr.viz`: Optional PyVista/VTK visualization of geometries (``viz`` extra).
+- :func:`pantr.cmake_dir`: The installed CMake package, for building against pantr's C++ headers.
 """
 
-import sys
 from typing import Final
 
+# The compiled extension first: a missing, stale or mismatched module fails the import here, with
+# a message saying how to rebuild it, rather than at the first call that reaches it.
+from . import _ext  # noqa: F401  # isort: skip
 from . import (
     basis,
     bezier,
@@ -33,6 +36,7 @@ from . import (
     tolerance,
     transform,
 )
+from ._cmake import cmake_dir
 from ._parallel import get_num_threads, num_threads, set_num_threads
 from .basis import _basis_utils  # noqa: F401
 
@@ -50,6 +54,7 @@ __all__ = [
     "bspline",
     "cad",
     "change_basis",
+    "cmake_dir",
     "geometry",
     "get_num_threads",
     "grid",
@@ -59,73 +64,3 @@ __all__ = [
     "tolerance",
     "transform",
 ]
-
-# Defer numba JIT compilation warmups to a background thread to prevent
-# blocking module import, allowing immediate interaction unless Numba
-# functions are called right away.
-import logging
-import threading
-from typing import TYPE_CHECKING
-
-if not TYPE_CHECKING:
-
-    def _async_warmup() -> None:
-        from ._numba_compat import _warmup_complete  # noqa: PLC0415
-
-        try:
-            logger = logging.getLogger(__name__)
-            logger.debug("Starting Numba JIT warmup...")
-            from .bspline import (  # noqa: PLC0415
-                _bspline_basis_core,
-                _bspline_eval,
-                _bspline_extraction,
-                _bspline_knot_insertion_core,
-                _bspline_knot_removal_core,
-                _bspline_knots,
-            )
-
-            # _basis_core kernels use parallel=True. Numba's default threading
-            # layer (workqueue) is not safe for concurrent parallel calls from
-            # multiple Python threads.  Compiling them here (from a background
-            # thread) while the main thread may also call them leads to a crash.
-            # Instead they compile lazily on first user call (always from the
-            # main / caller thread) and are cached to disk by Numba's cache=True.
-            _bspline_basis_core._warmup_numba_functions()
-            _bspline_eval._warmup_numba_functions()
-            _bspline_extraction._warmup_numba_functions()
-            _bspline_knot_insertion_core._warmup_numba_functions()
-            _bspline_knot_removal_core._warmup_numba_functions()
-            _bspline_knots._warmup_numba_functions()
-            from .bspline import _bspline_blossom_core, _bspline_roots_core  # noqa: PLC0415
-
-            _bspline_blossom_core._warmup_numba_functions()
-            _bspline_roots_core._warmup_numba_functions()
-            from .bezier import _bezier_core  # noqa: PLC0415
-
-            _bezier_core._warmup_numba_functions()
-            from .bezier import (  # noqa: PLC0415
-                _batch_core,
-                _clipping_core,
-                _root_finding_core,
-                _yuksel_core,
-            )
-
-            _root_finding_core._warmup_numba_functions()
-            _yuksel_core._warmup_numba_functions()
-            _clipping_core._warmup_numba_functions()
-            _batch_core._warmup_numba_functions()
-            logger.debug("Finished Numba JIT warmup.")
-        except Exception as exc:
-            # During process teardown (e.g. short scripts), background Numba caching
-            # fails because module locators become unavailable.  Distinguish teardown
-            # (DEBUG) from real compilation errors (WARNING) so that cache corruption
-            # or wrong type specialisations remain observable without noisy false alarms.
-            if sys.is_finalizing():
-                logger.debug("Numba JIT warmup skipped (process finalizing): %s", exc)
-            else:
-                logger.warning("Numba JIT warmup failed: %s", exc)
-        finally:
-            # Always signal completion so callers are never blocked indefinitely.
-            _warmup_complete.set()
-
-    threading.Thread(target=_async_warmup, daemon=True).start()

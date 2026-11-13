@@ -131,18 +131,19 @@ Two specializations reuse the same model:
 ## Library shape
 
 The serial core ({mod}`pantr.bspline`, {mod}`pantr.bezier`, {mod}`pantr.basis`,
-{mod}`pantr.cad`, {mod}`pantr.grid`, {mod}`pantr.quad`, …) depends only on NumPy, SciPy,
-and Numba. Two further modules ship with every install but are **dependency-gated** —
+{mod}`pantr.cad`, {mod}`pantr.grid`, {mod}`pantr.quad`, …) depends only on NumPy and SciPy
+(its kernels are compiled into PaNTr's extension). Two further modules ship with every install but are **dependency-gated** —
 they need a third-party backend and activate automatically once it is importable (until
 then, using them raises a clear error). They are never imported by the core:
 
 - {mod}`pantr.viz` — PyVista/VTK rendering and export; needs `pyvista`
   ({doc}`/guide/visualization`).
-- {mod}`pantr.mpi` — MPI-distributed spaces; needs `mpi4py`
+- {mod}`pantr.mpi` — MPI-distributed spaces; needs `mpi4py` and `pantr-mpi`
   ({doc}`/guide/distributed`).
 
-The `viz` / `mpi` / `metis` install extras are just a convenience that pulls those
-backends in; installing the backend directly (e.g. `pip install pyvista`) is equivalent.
+The `viz` / `mpi` / `metis` install extras are a convenience that pulls those backends in;
+installing the backend directly (e.g. `pip install pyvista`) is equivalent, except that the
+`mpi` extra also installs `pantr-mpi`, pantr's MPI glue, which an `mpi4py` communicator needs.
 
 Geometric predicates that need a floating-point tolerance (knot-multiplicity tests,
 endpoint detection) draw it from {mod}`pantr.tolerance`, so the whole library shares one

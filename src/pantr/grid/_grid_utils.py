@@ -1,35 +1,36 @@
 """Shared Layer-2 helpers for the grid package.
 
-Re-exports the ``float64`` coercion helper from :mod:`pantr.geometry` (so the
-implementation lives in a single place) and provides small grid-local helpers.
+Re-exports the ``float64`` coercion helper from :mod:`pantr.geometry`, so the
+implementation lives in a single place, and reads the state a previous release pickled.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
-
-import numpy as np
+from typing import Any
 
 from ..geometry import _as_float64
 
-if TYPE_CHECKING:
-    import numpy.typing as npt
 
-__all__ = ["_as_float64", "_mask_nonfinite_locate"]
+def _previous_release_slots(state: Any) -> dict[str, Any]:  # noqa: ANN401
+    """Return the slot name to value map of an object a previous release pickled.
 
-
-def _mask_nonfinite_locate(pts: npt.NDArray[np.floating[Any]], out: npt.NDArray[np.int64]) -> None:
-    """Mark located cell ids for non-finite query points as ``-1`` (outside).
-
-    The locate kernels' binary search has no NaN/inf handling (such comparisons
-    are all ``False``, silently landing in cell 0), so non-finite rows are
-    masked out here.
+    A previous release gave its grid classes ``__slots__`` and no custom pickling, so the
+    pickle holds the state ``object.__reduce_ex__`` gives for such a class.
 
     Args:
-        pts (npt.NDArray[np.floating[Any]]): Query points, shape ``(n, ndim)``.
-        out (npt.NDArray[np.int64]): Located cell ids, shape ``(n,)``; modified
-            in place.
+        state (Any): ``(dict_state, slots_state)``, either of which may be ``None``; or a
+            bare mapping.
+
+    Returns:
+        dict[str, Any]: The attribute and slot values, by name.
     """
-    finite = np.isfinite(pts).all(axis=1)
-    if not finite.all():
-        out[~finite] = -1
+    if isinstance(state, tuple):
+        merged: dict[str, Any] = {}
+        for part in state:
+            if part is not None:
+                merged.update(part)
+        return merged
+    return dict(state)
+
+
+__all__ = ["_as_float64", "_previous_release_slots"]

@@ -32,11 +32,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from pantr._numba_compat import wait_for_jit_warmup
 from pantr.bspline import BsplineSpace1D
-
-wait_for_jit_warmup()
-
 
 _TOO_MANY = re.compile("last knot may repeat")
 """Match the refusal without pinning the whole message."""

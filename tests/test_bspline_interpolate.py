@@ -521,3 +521,27 @@ class TestErrors:
         space = create_uniform_space(3, 4)
         with pytest.raises(ValueError, match="Function returned shape"):
             interpolate_bspline(lambda lat: np.array([1.0, 2.0]), space)
+
+
+_NON_FINITE = [float("nan"), float("inf"), -float("inf")]
+
+
+@pytest.mark.parametrize("tol", _NON_FINITE)
+@pytest.mark.parametrize("layout", ["tensor", "scattered"])
+def test_fit_bspline_refuses_a_non_finite_tol(tol: float, layout: str) -> None:
+    """A NaN or infinite tol truncates every singular value: refused, not a zero fit."""
+    x = np.linspace(0.0, 1.0, 8)
+    nodes: Any = [x] if layout == "tensor" else x[:, np.newaxis]
+    with pytest.raises(ValueError, match=r"^tol must be finite, got "):
+        fit_bspline(x**2, nodes, create_uniform_space(2, 3), tol=tol)
+
+
+@pytest.mark.parametrize("tol", _NON_FINITE)
+@pytest.mark.parametrize("which", ["interpolate", "l2"])
+def test_callable_fits_refuse_a_non_finite_tol(tol: float, which: str) -> None:
+    """interpolate_bspline and l2_project_bspline share the fit's tolerance check."""
+    space = create_uniform_space(3, 4)
+    func = lambda lat: lat.get_all_points()[:, 0] ** 2  # noqa: E731
+    call = interpolate_bspline if which == "interpolate" else l2_project_bspline
+    with pytest.raises(ValueError, match=r"^tol must be finite, got "):
+        call(func, space, tol=tol)

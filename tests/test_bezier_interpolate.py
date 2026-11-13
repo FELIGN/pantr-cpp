@@ -9,9 +9,10 @@ import numpy.testing as nptest
 import numpy.typing as npt
 import pytest
 
+from pantr._ext import ext
+from pantr._testing import bernstein_interpolate as _bernstein_interpolate
+from pantr.basis import tabulate_bernstein_1d
 from pantr.bezier import fit_bezier, interpolate_bezier
-from pantr.bezier._bezier_interpolate import _bernstein_interpolate
-from pantr.bezier._bezier_utils import _tabulate_bernstein_1d_fast
 from pantr.quad import PointsLattice, get_modified_chebyshev_nodes_1d
 
 
@@ -37,7 +38,7 @@ def _eval_bernstein_on_modified_chebyshev_grid(
         if n == 1:
             continue
         nodes = get_modified_chebyshev_nodes_1d(n, np.float64)
-        bern = _tabulate_bernstein_1d_fast(n - 1, nodes, np.float64)
+        bern = tabulate_bernstein_1d(n - 1, nodes)
         result = np.tensordot(bern, result, axes=([1], [dim]))
         result = np.moveaxis(result, 0, dim)
     return np.asarray(result, dtype=np.float64)
@@ -46,9 +47,8 @@ def _eval_bernstein_on_modified_chebyshev_grid(
 class TestBernsteinInterpolateRoundTrip:
     """Round-trip tests for the N-D ``_bernstein_interpolate`` helper.
 
-    This private helper is consumed across the package boundary by a downstream
-    consumer, so it
-    needs its own coverage: build a known polynomial in Bernstein form, evaluate
+    The helper (now ``pantr._testing.bernstein_interpolate``, a route through
+    :func:`fit_bezier`) needs its own coverage: build a known polynomial in Bernstein form, evaluate
     it on the modified-Chebyshev grid, interpolate, and check the recovered
     coefficients reproduce the original polynomial.
     """
@@ -697,3 +697,89 @@ class TestFitValidation:
         """Values with wrong number of dims raises ValueError."""
         with pytest.raises(ValueError, match="dimensions"):
             fit_bezier(np.ones((2, 3, 4)), np.array([0.0, 1.0]))
+
+
+class TestNonFiniteNodes:
+    """A NaN or infinite node is refused, as LAPACK's SVD refused it ("SVD did not converge")."""
+
+    @pytest.mark.parametrize("bad", [np.nan, np.inf, -np.inf])
+    def test_tensor_node(self, bad: float) -> None:
+        """A non-finite node in a direction with several nodes raises ValueError."""
+        with pytest.raises(ValueError, match="SVD did not converge"):
+            fit_bezier(np.ones(4), np.array([0.0, bad, 0.5, 1.0]))
+
+    def test_scattered_point(self) -> None:
+        """A non-finite scattered point raises ValueError."""
+        pts = np.array([[0.0], [np.nan], [0.2], [0.4], [0.6], [1.0]])
+        with pytest.raises(ValueError, match="SVD did not converge"):
+            fit_bezier(np.ones(6), pts, degree=2)
+
+    def test_single_node_needs_no_decomposition(self) -> None:
+        """A single-node direction passes its value through, whatever the node."""
+        b = fit_bezier(np.array([2.0]), np.array([np.nan]))
+        np.testing.assert_array_equal(b.control_points, [[2.0]])
+
+
+class TestDtypesOutsideTheTwoStorageTypes:
+    """`float16` and `longdouble` values fit in `float64` (changelog), nodes included."""
+
+    @pytest.mark.parametrize("dtype", [np.float16, np.longdouble])
+    def test_fit_bezier_computes_in_float64(self, dtype: type[np.floating[Any]]) -> None:
+        """The fit equals the fit of the same values given as float64, at float64 nodes."""
+        nodes = np.linspace(0.0, 1.0, 7)
+        values = np.linspace(0.0, 1.0, 7).astype(dtype) ** 2
+        b = fit_bezier(values, nodes)
+        assert b.dtype == np.float64
+        expected = fit_bezier(values.astype(np.float64), nodes).control_points
+        np.testing.assert_array_equal(b.control_points, expected)
+
+    @pytest.mark.parametrize("dtype", [np.float16, np.longdouble])
+    def test_interpolate_bezier_returns_float64(self, dtype: type[np.floating[Any]]) -> None:
+        """Values of another dtype give a float64 Bézier, one node or several."""
+        for n in (1, 5):
+            b = interpolate_bezier(lambda lat: lat.get_all_points()[:, 0].astype(dtype), n)
+            assert b.dtype == np.float64
+
+    def test_scattered_negative_degree(self) -> None:
+        """A negative degree for scattered nodes is refused with the basis message."""
+        pts = np.random.default_rng(0).random((6, 1))
+        with pytest.raises(ValueError, match="degree must be non-negative"):
+            fit_bezier(np.ones(6), pts, degree=-1)
+
+
+_NON_FINITE = [float("nan"), float("inf"), -float("inf")]
+
+
+@pytest.mark.parametrize("tol", _NON_FINITE)
+@pytest.mark.parametrize("layout", ["tensor", "scattered"])
+def test_fit_bezier_refuses_a_non_finite_tol(tol: float, layout: str) -> None:
+    """A NaN or infinite tol truncates every singular value: refused, not a zero fit."""
+    x = np.linspace(0.0, 1.0, 8)
+    nodes: Any = [x] if layout == "tensor" else x[:, np.newaxis]
+    with pytest.raises(ValueError, match=r"^tol must be finite, got "):
+        fit_bezier(x**2, nodes, degree=3, tol=tol)
+
+
+@pytest.mark.parametrize("tol", _NON_FINITE)
+def test_interpolate_bezier_refuses_a_non_finite_tol(tol: float) -> None:
+    """The callable path shares the fit's tolerance check."""
+    with pytest.raises(ValueError, match=r"^tol must be finite, got "):
+        interpolate_bezier(lambda lat: lat.pts_per_dir[0] ** 2, 8, degree=3, tol=tol)
+
+
+@pytest.mark.parametrize("tol", _NON_FINITE)
+def test_compiled_fits_refuse_a_non_finite_tol(tol: float) -> None:
+    """The compiled fits refuse it themselves: they used to return all-zero coefficients."""
+    x = np.linspace(0.0, 1.0, 4)
+    with pytest.raises(ValueError, match=r"^tol must be finite, got "):
+        ext.bezier.fit_tensor(x[:, np.newaxis] ** 2, [x], (3,), tol)
+    with pytest.raises(ValueError, match=r"^tol must be finite, got "):
+        ext.bezier.fit_scattered(x[:, np.newaxis] ** 2, x[:, np.newaxis], [3], tol)
+
+
+def test_fit_bezier_keeps_accepting_a_zero_tol() -> None:
+    """Zero truncates nothing: the plain pseudo-inverse, exact on a degree-3 polynomial."""
+    x = np.linspace(0.0, 1.0, 8)
+    b = fit_bezier(x**3, [x], degree=3, tol=0.0)
+    # Separates a fit from the all-zero result of a full truncation; not a precision claim.
+    nptest.assert_allclose(b.control_points.ravel(), [0.0, 0.0, 0.0, 1.0], atol=1e-8)

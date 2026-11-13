@@ -80,12 +80,20 @@ for worked examples; this page is the exhaustive contract.
 
 ## Parallelism & visualization
 
-Thread-pool control for the Numba kernels (see {doc}`/guide/parallelism`):
+Thread-pool control for the compiled kernels (see {doc}`/guide/parallelism`):
 
 ```{eval-rst}
 .. autofunction:: pantr.get_num_threads
 .. autofunction:: pantr.set_num_threads
 .. autofunction:: pantr.num_threads
+```
+
+## Building against pantr's C++ headers
+
+The headers and CMake package that the wheel ships (`find_package(pantr COMPONENTS mpi-capsule)`):
+
+```{eval-rst}
+.. autofunction:: pantr.cmake_dir
 ```
 
 ```{eval-rst}
