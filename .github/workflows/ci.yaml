@@ -37,6 +37,9 @@ env:
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
   # Fetched third-party sources (pinned by SHA), shared by every job that builds C++.
   FETCHCONTENT_BASE_DIR: ${{ github.workspace }}/build/_deps
+  # Eigen's checkout, restored from the cache or fetched by tools/ci_fetch_eigen.sh in each job
+  # that builds C++: Eigen lives only on gitlab.com, whose refusals under load have failed runs.
+  PANTR_EIGEN_SOURCE_DIR: ${{ github.workspace }}/build/ci-deps/eigen
 
 jobs:
   # --- 1 ------------------------------------------------------------------------------------------
@@ -109,8 +112,11 @@ jobs:
           python -m pip install -r requirements.txt "cmake>=3.28" ninja
       - uses: actions/cache@v5
         with:
-          path: build/_deps
-          key: deps-${{ hashFiles('cmake/PantrDependencies.cmake') }}
+          path: build/ci-deps/eigen
+          key: eigen-${{ hashFiles('cmake/PantrDependencies.cmake') }}
+      - name: Eigen from the cache, else from GitLab with retries
+        shell: bash
+        run: tools/ci_fetch_eigen.sh build/ci-deps/eigen
       - name: Build, warnings as errors
         run: make ext EXT_CMAKE_ARGS="-DPANTR_WARNINGS_AS_ERRORS=ON"
       - name: The committed stubs match the build
@@ -209,8 +215,11 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/cache@v5
         with:
-          path: build/_deps
-          key: deps-${{ hashFiles('cmake/PantrDependencies.cmake') }}
+          path: build/ci-deps/eigen
+          key: eigen-${{ hashFiles('cmake/PantrDependencies.cmake') }}
+      - name: Eigen from the cache, else from GitLab with retries
+        shell: bash
+        run: tools/ci_fetch_eigen.sh build/ci-deps/eigen
       - name: Install Ninja
         run: sudo apt-get install -y ninja-build
       - name: Configure, build and test (Release, warnings as errors, no native ISA)
@@ -239,8 +248,11 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/cache@v5
         with:
-          path: build/_deps
-          key: deps-${{ hashFiles('cmake/PantrDependencies.cmake') }}
+          path: build/ci-deps/eigen
+          key: eigen-${{ hashFiles('cmake/PantrDependencies.cmake') }}
+      - name: Eigen from the cache, else from GitLab with retries
+        shell: bash
+        run: tools/ci_fetch_eigen.sh build/ci-deps/eigen
       - name: Install Ninja
         run: sudo apt-get install -y ninja-build
       # The preset sets -fno-sanitize-recover=undefined: without it UBSan reports and exits 0.
@@ -259,8 +271,11 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/cache@v5
         with:
-          path: build/_deps
-          key: deps-${{ hashFiles('cmake/PantrDependencies.cmake') }}
+          path: build/ci-deps/eigen
+          key: eigen-${{ hashFiles('cmake/PantrDependencies.cmake') }}
+      - name: Eigen from the cache, else from GitLab with retries
+        shell: bash
+        run: tools/ci_fetch_eigen.sh build/ci-deps/eigen
       - name: Install Ninja
         run: sudo apt-get install -y ninja-build
       # A runner kernel that randomizes mmap more than the TSan runtime accepts stops it at start;
@@ -282,8 +297,11 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/cache@v5
         with:
-          path: build/_deps
-          key: deps-${{ hashFiles('cmake/PantrDependencies.cmake') }}
+          path: build/ci-deps/eigen
+          key: eigen-${{ hashFiles('cmake/PantrDependencies.cmake') }}
+      - name: Eigen from the cache, else from GitLab with retries
+        shell: bash
+        run: tools/ci_fetch_eigen.sh build/ci-deps/eigen
       - name: Install Ninja, an MPI (the consumer asks for the mpi component) and METIS
         run: |
           sudo apt-get update -q
@@ -327,8 +345,11 @@ jobs:
           python -m pip install -r requirements.txt "cmake>=3.28" ninja
       - uses: actions/cache@v5
         with:
-          path: build/_deps
-          key: deps-${{ hashFiles('cmake/PantrDependencies.cmake') }}
+          path: build/ci-deps/eigen
+          key: eigen-${{ hashFiles('cmake/PantrDependencies.cmake') }}
+      - name: Eigen from the cache, else from GitLab with retries
+        shell: bash
+        run: tools/ci_fetch_eigen.sh build/ci-deps/eigen
       # Built here rather than downloaded: the MPI extension (_pantr_mpi, package pantr_mpi) is built
       # from source against this runner's MPI and mpi4py, in this leg (make ext builds it wherever
       # it finds both).
@@ -369,8 +390,11 @@ jobs:
           python -m pip install -r requirements.txt "cmake>=3.28" ninja
       - uses: actions/cache@v5
         with:
-          path: build/_deps
-          key: deps-${{ hashFiles('cmake/PantrDependencies.cmake') }}
+          path: build/ci-deps/eigen
+          key: eigen-${{ hashFiles('cmake/PantrDependencies.cmake') }}
+      - name: Eigen from the cache, else from GitLab with retries
+        shell: bash
+        run: tools/ci_fetch_eigen.sh build/ci-deps/eigen
       # ASan, UBSan without recovery, and libstdc++'s assertions in every module. The interpreter
       # is not sanitized, so the runtimes are preloaded and leak detection is off (CPython's own
       # allocations alive at exit would be reported).
@@ -447,6 +471,13 @@ jobs:
           python tools/requirements.py build > requirements.txt
           python tools/requirements.py dev | grep -E '^pytest[<>=]' >> requirements.txt
           python -m pip install -r requirements.txt "cmake>=3.28" ninja
+      - uses: actions/cache@v5
+        with:
+          path: build/ci-deps/eigen
+          key: eigen-${{ hashFiles('cmake/PantrDependencies.cmake') }}
+      - name: Eigen from the cache, else from GitLab with retries
+        shell: bash
+        run: tools/ci_fetch_eigen.sh build/ci-deps/eigen
       - name: C++ suite (MSVC, Release, warnings as errors)
         shell: bash
         run: |

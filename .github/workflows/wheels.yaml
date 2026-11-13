@@ -37,6 +37,16 @@ jobs:
           - { os: windows-2022, label: windows-amd64, archs: AMD64 }
     steps:
       - uses: actions/checkout@v7
+      # Eigen lives only on gitlab.com, whose refusals under load have failed runs: a cached
+      # checkout (tools/ci_fetch_eigen.sh) reaches the build through PANTR_EIGEN_SOURCE_DIR, on the
+      # host for macOS and Windows and at the project's path inside the manylinux container.
+      - uses: actions/cache@v5
+        with:
+          path: build/ci-deps/eigen
+          key: eigen-${{ hashFiles('cmake/PantrDependencies.cmake') }}
+      - name: Eigen from the cache, else from GitLab with retries
+        shell: bash
+        run: tools/ci_fetch_eigen.sh build/ci-deps/eigen
       # Builds the cp312-abi3 wheel, repairs it, installs it in a clean environment, checks its
       # contents and runs the suite against it once per rung the runner can execute
       # ([tool.cibuildwheel] in pyproject.toml, tools/wheel_test.py). The Linux wheels build in
@@ -48,6 +58,8 @@ jobs:
           CIBW_ARCHS: ${{ matrix.archs }}
           CC: ${{ matrix.cc || 'gcc-14' }}
           CXX: ${{ matrix.cxx || 'g++-14' }}
+          PANTR_EIGEN_SOURCE_DIR: ${{ github.workspace }}/build/ci-deps/eigen
+          CIBW_ENVIRONMENT_LINUX: PANTR_EIGEN_SOURCE_DIR=/project/build/ci-deps/eigen
       - name: The wheel carries no BeRF-FR file
         shell: bash
         run: |

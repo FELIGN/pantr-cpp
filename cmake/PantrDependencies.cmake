@@ -19,7 +19,14 @@ include(FetchContent)
 set(_pantr_no_subdir "pantr-populate-only")
 
 # Eigen 5.0.1 (MPL-2.0). Chosen over 3.4.1 because Spectra 1.2.0's symmetric eigensolver compiles
-# and passes against it (cpp/tests/test_dependencies.cpp).
+# and passes against it (cpp/tests/test_dependencies.cpp). It is hosted only on gitlab.com, so CI
+# keeps a cached checkout (tools/ci_fetch_eigen.sh) and names it in PANTR_EIGEN_SOURCE_DIR: the
+# environment reaches builds a -D cannot, such as cibuildwheel's. A non-empty
+# -DFETCHCONTENT_SOURCE_DIR_PANTR_EIGEN wins.
+if(NOT FETCHCONTENT_SOURCE_DIR_PANTR_EIGEN AND NOT "$ENV{PANTR_EIGEN_SOURCE_DIR}" STREQUAL "")
+  file(TO_CMAKE_PATH "$ENV{PANTR_EIGEN_SOURCE_DIR}" FETCHCONTENT_SOURCE_DIR_PANTR_EIGEN)
+  message(STATUS "pantr: Eigen from PANTR_EIGEN_SOURCE_DIR=${FETCHCONTENT_SOURCE_DIR_PANTR_EIGEN}")
+endif()
 FetchContent_Declare(
   pantr_eigen
   GIT_REPOSITORY https://gitlab.com/libeigen/eigen.git
