@@ -117,8 +117,8 @@ void register_grid(nanobind::module_& m);
 
 /// Register the truncated hierarchical B-spline classes (the space, the spline, the multi-level
 /// extraction and the quasi-interpolant) and the windowing functions of a distributed space in the
-/// `bspline` submodule. After `register_bspline`, and the `grid` submodule's types must exist when
-/// a call is made.
+/// `bspline` submodule. Call it after `register_bspline`. Its functions take the `grid` submodule's
+/// types, which must be registered before any of them is called.
 void register_thb(nanobind::module_& m);
 
 /// Register the THB space's tolerances and the support of a 1D space in the `_testing` submodule.

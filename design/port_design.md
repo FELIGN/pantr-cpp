@@ -253,7 +253,8 @@ Representation: `std::shared_ptr<const detail::XRep<T>>`. Derived state:
 - **process caches**: only for pure functions of small integer keys with a declared bound: change-of-basis matrices
   and degree-reduction operators keyed on `(kind, degree[, decrement], scalar)`, mutex-guarded, bounded by the
   per-dtype degree limits that already exist. This narrows lesson 1's "no process-global cache": the lesson's hazard
-  (unbounded growth, keys on domain objects) does not apply to a table indexed by `degree <= 26`, and dropping the cache
+  (unbounded growth, keys on domain objects) does not apply to a table indexed by a degree under a stated bound
+  (`change_basis_cache_max_degree`, `reduction_cache_max_degree`), and dropping the cache
   would cost AC6 on repeated `change_basis` calls. Each such table is a TSan target.
 
 Every lazy block and process table has a TSan test that races N threads on first access (AC3).
@@ -276,8 +277,8 @@ Every lazy block and process table has a TSan test that races N threads on first
   hot path, *hot path shape is a performance decision*) and a convenience overload returning
   `pantr::NdArray<T>` (owning, contiguous, runtime extents). The binding hands an `NdArray` to NumPy without a copy
   (capsule-owned buffer; V3).
-- Runtime dimension everywhere (`dim` and `rank` are runtime; no new cap is introduced, the existing
-  `_EINSUM_MAX_DIM = 24` in THB stays as it is).
+- Runtime dimension everywhere (`dim` and `rank` are runtime; no cap is introduced, and the previous release's
+  limit of 24 directions in THB, a limit of its einsum subscripts, is gone).
 
 ### 2.5 Validation and errors (QB1)
 
@@ -655,7 +656,7 @@ outcomes the suite asserts are discrete.
 | Site | Today | Eigen | Discrete hazard and handling |
 |---|---|---|---|
 | `_bspline_interpolate._solve_1d` (square) | `solve` (gesv), SVD fallback on `LinAlgError` | banded LU with partial pivoting (gbtrf's algorithm; a periodic wrap held as dense border columns), `PartialPivLU` for a wide band, a non-finite right-hand side or a periodic L2 mass matrix; fallback when a U pivot is exactly 0 | numpy raises when gesv reports `info > 0` (an exactly zero U pivot; on OpenBLAS also some NaN inputs) and never on conditioning; Eigen never raises, so the test is explicit: a U pivot that is exactly 0 **or NaN** takes the fallback. Whether a near-singular matrix yields an exact zero pivot is BLAS-dependent already, so no test may assert that branch on such a matrix. |
-| `_solve_1d` rectangular, Bezier fits | truncated SVD, `100*eps*s_max` | B-spline fits: banded Givens QR certified against the fit's own cutoff (`try_lstsq_banded` with `rcond`), else the truncated SVD; Bezier fits: `JacobiSVD` (small) / `BDCSVD` | rank at the threshold can flip with last bits; the threshold is relative and derived; tests at the threshold are the hazard (U3). |
+| `_solve_1d` rectangular, Bezier fits | truncated SVD, `100*eps*s_max` | B-spline fits: banded Givens QR certified against the fit's own cutoff (`try_lstsq_banded` with `rcond`), else the truncated SVD; Bezier fits: `BDCSVD` for the tensor-product fit's truncated pseudo-inverse, while the scattered fit applies it through a Householder QR and the SVD of the triangular factor (`truncated_pinv_apply`) | rank at the threshold can flip with last bits; the threshold is relative and derived; tests at the threshold are the hazard (U3). |
 | `change_basis` (4 sites) | `solve(G, C)`, `solve(forward, I)` | `PartialPivLU` | none beyond conditioning, which the degree limits already bound. |
 | `_bspline_knot_insertion.to_periodic` | `qr`, `solve(R, Q.T@b)` | `HouseholderQR` + triangular solve | residual check raises on gross violation: threshold unchanged. |
 | products (`multiply`, 6 sites), THB prolongation | `lstsq(rcond=None)` (gelsd) | products: banded Givens QR (`banded_lstsq.hpp`), kept only where its full-rank certificate clears the cutoff by a margin, else `BDCSVD`; THB: Householder QR with column pivoting where its full-rank certificate holds (`try_lstsq_full_rank_qr`), else the minimum-norm solution of a one-sided Jacobi SVD (`lstsq_min_norm_jacobi`). Cutoff `eps * max(m, n) * s_max` (`_linalg.py:2530`, gelsd's `S(i) <= RCOND*S(1)`) | rank decision at the cutoff; min-norm solution identical in exact arithmetic. The QR path answers only full-rank systems, where the least-squares solution is unique. |
