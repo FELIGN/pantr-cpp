@@ -137,7 +137,12 @@ def create_uniform_periodic_knots(
     """Create a uniform periodic knot vector.
 
     A periodic knot vector extends beyond the domain boundaries to ensure
-    periodicity of the B-spline basis functions.
+    periodicity of the B-spline basis functions: the interior knots are each repeated
+    ``degree - continuity`` times, and ``continuity + 1`` knots are added past each end as their
+    periodic continuation, so that ``K[i + n * m] = K[i] + L`` for ``n`` intervals,
+    ``m = degree - continuity`` and the period ``L = end - start`` (up to the rounding of the
+    knots). Each knot past an end is repeated like the interior ones, the farthest one fewer times
+    when ``continuity + 1`` is not a multiple of ``m``.
 
     Args:
         num_intervals (int): Number of intervals in the domain. Must be at least 1.

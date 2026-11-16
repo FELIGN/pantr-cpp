@@ -161,7 +161,11 @@ template <StorageFloat T>
 
 /// Create a uniform periodic knot vector: the knots of `numpy.linspace(start, end,
 /// num_intervals + 1)` each repeated `degree - continuity` times, extended past both ends by
-/// `continuity + 1` knots at the interval length `(end - start) / num_intervals`.
+/// `continuity + 1` knots at multiples of the interval length `(end - start) / num_intervals`.
+/// The extension is the periodic continuation of the interior knots, so each knot past an end is
+/// repeated like the interior ones (`degree - continuity` times, the farthest one fewer times when
+/// `continuity + 1` is not a multiple of that), and `K[i + num_intervals * (degree - continuity)] =
+/// K[i] + (end - start)` up to the rounding of the knots.
 ///
 /// Args:
 ///     num_intervals (long long): Number of intervals, `>= 1`.
@@ -192,18 +196,36 @@ template <StorageFloat T>
       detail::linspace<T>(start, end, static_cast<std::size_t>(num_intervals) + 1);
   const T span = end - start;
   const T length = span / static_cast<T>(num_intervals);
-  const T reach = length * static_cast<T>(ext);
+  // The knots past an end are the periodic images of interior knots, each repeated `mult` times
+  // like them: `ghosts = ceil(ext / mult)` distinct values per end, the one farthest from the
+  // domain repeated `ext - mult * (ghosts - 1)` times (`mult` times when `ext` is a multiple of
+  // `mult`, as for `mult == 1` and for `continuity == -1`, which has no knot past an end). For
+  // `mult == 1` or `continuity <= 0` that is the extension of the previous release, operation for
+  // operation; for `1 <= continuity <= degree - 2` it replaces distinct knots, which no periodic
+  // continuation of a repeated knot has.
+  const long long ghosts = (ext + mult - 1) / mult;
+  const long long outer = ext - mult * (ghosts - 1);  // multiplicity of the farthest ghost
+  const T reach = length * static_cast<T>(ghosts);
   const T before = start - reach;
   const T after = end + reach;
-  const std::vector<T> left = detail::linspace<T>(before, start, static_cast<std::size_t>(ext) + 1);
-  const std::vector<T> right = detail::linspace<T>(end, after, static_cast<std::size_t>(ext) + 1);
+  const std::vector<T> left =
+      detail::linspace<T>(before, start, static_cast<std::size_t>(ghosts) + 1);
+  const std::vector<T> right =
+      detail::linspace<T>(end, after, static_cast<std::size_t>(ghosts) + 1);
   std::vector<T> knots;
   knots.reserve(size);
-  knots.insert(knots.end(), left.begin(), left.end() - 1);
+  const auto n_ghosts = static_cast<std::size_t>(ghosts);
+  for (std::size_t i = 0; i < n_ghosts; ++i) {
+    const long long times = i == 0 ? outer : mult;
+    knots.insert(knots.end(), static_cast<std::size_t>(times), left[i]);
+  }
   for (const T u : unique) {
     knots.insert(knots.end(), static_cast<std::size_t>(mult), u);
   }
-  knots.insert(knots.end(), right.begin() + 1, right.end());
+  for (std::size_t i = 1; i <= n_ghosts; ++i) {
+    const long long times = i == n_ghosts ? outer : mult;
+    knots.insert(knots.end(), static_cast<std::size_t>(times), right[i]);
+  }
   return knots;
 }
 

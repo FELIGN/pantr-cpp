@@ -11,6 +11,9 @@ import numpy.typing as npt
 import pytest
 
 from pantr.bspline import (
+    Bspline,
+    BsplineSpace,
+    BsplineSpace1D,
     create_cardinal_knots,
     create_uniform_open_knots,
     create_uniform_periodic_knots,
@@ -381,6 +384,80 @@ class TestCreateUniformPeriodicKnotVector:
         """Reject continuity outside valid range."""
         with pytest.raises(ValueError, match="Continuity must be between"):
             create_uniform_periodic_knots(2, 2, continuity=2)
+
+
+class TestUniformPeriodicKnotsArePeriodic:
+    """The knot vector is the periodic continuation of its interior knots, for every continuity.
+
+    Regression for a factory that extended a vector with repeated interior knots (continuity
+    ``1 <= c <= p - 2``) by distinct linspace knots, so that ``K[i + n m] = K[i] + L`` failed and a
+    periodic spline on it jumped at the seam.
+    """
+
+    @pytest.mark.parametrize("dtype", [np.float32, np.float64])
+    def test_extension_is_periodic_for_every_continuity(
+        self, dtype: type[np.floating[Any]]
+    ) -> None:
+        """``K[i + n m] = K[i] + L`` within four roundings, for ``n`` 1-8, ``p`` 0-6, ``c`` < ``p``.
+
+        The images of one ``linspace`` knot differ by the rounding of one subtraction and of the
+        interval multiple: ``4 eps max|K|``.
+        """
+        eps = float(np.finfo(dtype).eps)
+        for n in range(1, 9):
+            for p in range(7):
+                for c in range(-1, p):
+                    knots = create_uniform_periodic_knots(n, p, c, dtype=dtype)
+                    shift = n * (p - c)
+                    bound = 4.0 * eps * float(np.max(np.abs(knots)))
+                    err = np.abs(knots[shift:].astype(np.float64) - knots[:-shift] - 1.0)
+                    assert err.size == knots.size - shift
+                    assert np.all(err <= bound), (n, p, c, float(err.max()), bound)
+
+    def test_hand_worked_extension(self) -> None:
+        """Each knot past an end repeats like the interior ones (``p = 3, c = 1, n = 4``)."""
+        knots = create_uniform_periodic_knots(4, 3, 1)
+        expected = [-0.25] * 2 + [0.0] * 2 + [0.25] * 2 + [0.5] * 2 + [0.75] * 2 + [1.0] * 2
+        expected += [1.25] * 2
+        nptest.assert_array_equal(knots, np.array(expected))
+
+    def test_partial_outer_multiplicity(self) -> None:
+        """When ``c + 1`` is not a multiple of ``p - c`` the farthest knot repeats fewer times.
+
+        ``p = 5, c = 3, n = 2``: multiplicity 2, four knots past each end, so two distinct knots
+        twice each; ``p = 6, c = 2, n = 2``: multiplicity 4, three past each end, one knot thrice.
+        """
+        k = create_uniform_periodic_knots(2, 5, 3)
+        nptest.assert_array_equal(k[:4], [-1.0, -1.0, -0.5, -0.5])
+        nptest.assert_array_equal(k[-4:], [1.5, 1.5, 2.0, 2.0])
+        k = create_uniform_periodic_knots(2, 6, 2)
+        nptest.assert_array_equal(k[:3], [-0.5] * 3)
+        nptest.assert_array_equal(k[-3:], [1.5] * 3)
+
+    @pytest.mark.parametrize(
+        ("degree", "continuity"), [(p, c) for p in (3, 4, 5) for c in range(p)]
+    )
+    def test_periodic_spline_has_no_seam_jump(self, degree: int, continuity: int) -> None:
+        """``|f^(k)(0) - f^(k)(1)| <= 8 (p + 1) (2 p n)^k eps`` for ``k <= c``, random coefficients.
+
+        Every row of the ticket's table with ``c >= 0`` (``c = -1`` has no seam to be smooth at);
+        the rows with ``c = 0`` and ``c = p - 1`` were correct before and are the controls.
+
+        The factor ``(2 p n)^k`` is the scale of the ``k``-th derivative of a degree-``p`` spline on
+        ``n`` equal intervals and ``8 (p + 1) eps`` the rounding of one evaluation (an admitted
+        heuristic bound, not a derived one).
+        """
+        n = 6
+        eps = float(np.finfo(np.float64).eps)
+        knots = create_uniform_periodic_knots(n, degree, continuity)
+        space = BsplineSpace1D(knots, degree, periodic=True)
+        rng = np.random.default_rng(0)
+        spline = Bspline(BsplineSpace([space]), rng.uniform(-1.0, 1.0, (space.num_basis, 1)))
+        ends = np.array([[0.0], [1.0]])
+        for k in range(continuity + 1):
+            values = np.asarray(spline.evaluate_derivatives(ends, [k])).ravel()
+            bound = 8.0 * (degree + 1) * (2.0 * degree * n) ** k * eps
+            assert abs(values[0] - values[1]) <= bound, (k, float(values[0] - values[1]), bound)
 
 
 class TestCreateCardinalBsplineKnotVector:

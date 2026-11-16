@@ -462,9 +462,47 @@ TEST_CASE("factories: uniform periodic knots, worked out by hand") {
   CHECK(bs::uniform_periodic_knots<double>(2, 1, -1, 0.0, 1.0) == V{0, 0, 0.5, 0.5, 1, 1});
   CHECK(bs::uniform_periodic_knots<double>(3, 3, 2, 0.0, 3.0) ==
         V{-3, -2, -1, 0, 1, 2, 3, 4, 5, 6});
+  // C^1 at degree 3: each interior knot is double, so each knot past an end is double too (the
+  // periodic continuation of 0, 0, 0.5, 0.5, 1, 1), not distinct linspace knots.
   CHECK(bs::uniform_periodic_knots<double>(2, 3, 1, 0.0, 1.0) ==
-        V{-1, -0.5, 0, 0, 0.5, 0.5, 1, 1, 1.5, 2});
+        V{-0.5, -0.5, 0, 0, 0.5, 0.5, 1, 1, 1.5, 1.5});
+  // C^3 at degree 5 (multiplicity 2): four knots past each end, two distinct ones twice each.
+  CHECK(bs::uniform_periodic_knots<double>(2, 5, 3, 0.0, 1.0) ==
+        V{-1, -1, -0.5, -0.5, 0, 0, 0.5, 0.5, 1, 1, 1.5, 1.5, 2, 2});
+  // C^2 at degree 6 (multiplicity 4): three knots past each end, one distinct knot thrice, so the
+  // multiplicity of the farthest knot is short of the interior one.
+  CHECK(bs::uniform_periodic_knots<double>(2, 6, 2, 0.0, 1.0) ==
+        V{-0.5, -0.5, -0.5, 0, 0, 0, 0, 0.5, 0.5, 0.5, 0.5, 1, 1, 1, 1, 1.5, 1.5, 1.5});
   CHECK(bs::uniform_periodic_knots<float>(1, 1, 0, 0.0F, 1.0F) == std::vector<float>{-1, 0, 1, 2});
+}
+
+TEST_CASE_TEMPLATE("factories: a periodic vector is its own periodic continuation", T, float,
+                   double) {
+  // K[i + n m] = K[i] + L with m = p - c, for every continuity: each knot past an end is a periodic
+  // image of an interior knot. The images of one linspace knot differ by the rounding of one
+  // subtraction and of the interval multiple, so 4 eps max|K| bounds the difference.
+  const double eps = std::numeric_limits<T>::epsilon();
+  for (long long n = 1; n <= 8; ++n) {
+    for (long long p = 0; p <= 6; ++p) {
+      for (long long c = -1; c < p; ++c) {
+        const auto k = bs::uniform_periodic_knots<T>(n, p, c, T(0), T(1));
+        const auto shift = static_cast<std::size_t>(n * (p - c));
+        const double bound =
+            4.0 * eps * static_cast<double>(*std::max_element(k.begin(), k.end(), [](T a, T b) {
+              return std::abs(a) < std::abs(b);
+            }));
+        REQUIRE(k.size() > shift);
+        for (std::size_t i = 0; i + shift < k.size(); ++i) {
+          CAPTURE(n);
+          CAPTURE(p);
+          CAPTURE(c);
+          CAPTURE(i);
+          CHECK(std::abs(static_cast<double>(k[i + shift]) - static_cast<double>(k[i]) - 1.0) <=
+                bound);
+        }
+      }
+    }
+  }
 }
 
 TEST_CASE_TEMPLATE("factories: the cardinal vector is the integers from -degree to n + degree", T,

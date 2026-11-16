@@ -180,18 +180,43 @@ def _open_by_definition(n: int, p: int, c: int, a: Any, b: Any, dtype: type) -> 
     return np.concatenate(parts)
 
 
-def _periodic_by_definition(n: int, p: int, c: int, a: Any, b: Any, dtype: type) -> _Array:  # noqa: PLR0913
-    """Return the previous release's periodic vector.
+def _periodic_extension_counts(p: int, c: int) -> tuple[int, int, int]:
+    """Return ``(mult, ghosts, outer)`` of a periodic vector's extension past each end.
 
-    Every ``np.linspace(start, end, n + 1)`` knot ``p - c`` times, extended by ``c + 1`` knots at
-    the interval length at each end.
+    ``c + 1`` knots lie past each end, as periodic images of interior knots that are each repeated
+    ``mult = p - c`` times: ``ghosts = ceil((c + 1) / mult)`` distinct values, the one farthest from
+    the domain repeated ``outer`` times and the others ``mult`` times.
     """
     mult = p - c
+    ghosts = -(-(c + 1) // mult)
+    return mult, ghosts, c + 1 - mult * (ghosts - 1)
+
+
+def _periodic_by_definition(n: int, p: int, c: int, a: Any, b: Any, dtype: type) -> _Array:  # noqa: PLR0913
+    """Return the periodic vector as the periodic continuation of the interior knots.
+
+    Every ``np.linspace(start, end, n + 1)`` knot ``p - c`` times, and past each end the periodic
+    images ``u[k mod n] + (k div n) (end - start)`` of the grid knots, each repeated like the
+    interior ones, the farthest fewer times when ``c + 1`` is not a multiple of ``p - c``, so that
+    ``K[i + n (p - c)] = K[i] + (end - start)`` (the previous release extended by distinct knots
+    where ``1 <= c <= p - 2``, which is not periodic).
+    """
+    mult, ghosts, outer = _periodic_extension_counts(p, c)
     unique: _Array = np.linspace(a, b, n + 1, dtype=dtype)
-    reach = ((b - a) / n) * (p - mult + 1)
-    left: _Array = np.linspace(a - reach, a, p + 2 - mult, dtype=dtype)[:-1]
-    right: _Array = np.linspace(b, b + reach, p + 2 - mult, dtype=dtype)[1:]
-    return np.concatenate([left, np.repeat(unique, mult), right])
+    span = dtype(b - a)
+
+    def image(k: int) -> Any:
+        return unique[k % n] + dtype(k // n) * span
+
+    left: list[_Array] = [
+        np.full(outer if j == ghosts else mult, image(-j), dtype=dtype)
+        for j in range(ghosts, 0, -1)
+    ]
+    right: list[_Array] = [
+        np.full(outer if j == ghosts else mult, image(n + j), dtype=dtype)
+        for j in range(1, ghosts + 1)
+    ]
+    return np.concatenate([*left, np.repeat(unique, mult), *right])
 
 
 def _knot_tolerance(a: float, b: float, n: int, p: int, dtype: type) -> float:
@@ -248,8 +273,10 @@ def test_uniform_periodic_knots_match_the_numpy_definition(
 ) -> None:
     """Periodic vectors agree with the definition, have the closed-form size and uniform spacing.
 
-    The size is ``2 (c + 1) + (n + 1) (p - c)``, and the distinct knots are the grid extended by
-    ``c + 1`` intervals past each end, so their spacing is one interval length throughout.
+    The size is ``2 (c + 1) + (n + 1) (p - c)``, and the distinct knots are the grid extended past
+    each end by the periodic images of its knots, so their spacing is one interval length
+    throughout; each extension knot is repeated like the grid knots (the farthest one fewer times
+    when ``c + 1`` is not a multiple of ``p - c``).
     """
     a, b = dtype(domain[0]), dtype(domain[1])
     for n, p, c in _GRID:
@@ -267,8 +294,11 @@ def test_uniform_periodic_knots_match_the_numpy_definition(
         values, counts = np.unique(got, return_counts=True)
         inside = (values >= a) & (values <= b)
         assert np.all(counts[inside] == p - c), ctx  # the grid knots, each p - c times
-        assert np.all(counts[~inside] == 1), ctx  # the extension knots, once
-        assert (~inside).sum() == 2 * (c + 1), ctx
+        mult, ghosts, outer = _periodic_extension_counts(p, c)
+        assert (~inside).sum() == 2 * ghosts, ctx
+        near, far = [mult] * max(ghosts - 1, 0), [outer] * (ghosts > 0)
+        assert counts[values < a].tolist() == far + near, ctx  # farthest first
+        assert counts[values > b].tolist() == near + far, ctx  # farthest last
         length = (float(b) - float(a)) / n
         assert np.all(np.abs(np.diff(values.astype(np.float64)) - length) <= 8 * tol), ctx
 

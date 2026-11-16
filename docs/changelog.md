@@ -1427,6 +1427,16 @@
   unchanged except as under Fixed.
 
 ### Fixed
+- **`create_uniform_periodic_knots` (and the periodic `create_uniform_space`) returns a periodic
+  knot vector for every continuity.** For `1 <= continuity <= degree - 2` it extended the repeated
+  interior knots past both ends by distinct, evenly spaced knots, so `K[i + n m] = K[i] + L` (`n`
+  intervals, `m = degree - continuity`, `L` the period) failed and a periodic spline on it was
+  discontinuous at the seam in the value and the derivatives up to order `continuity`, by amounts of
+  order 0.1 to 100 for `degree >= 4`. Each knot past an end is now repeated like the interior ones
+  (the farthest one fewer times when `continuity + 1` is not a multiple of `m`), so the vector for
+  `(n, degree, continuity) = (2, 3, 1)` over `[0, 1]` is `[-0.5, -0.5, 0, 0, 0.5, 0.5, 1, 1, 1.5,
+  1.5]`, where it was `[-1, -0.5, 0, 0, 0.5, 0.5, 1, 1, 1.5, 2]`. The vectors for maximal continuity,
+  `continuity = 0` and `continuity = -1` are unchanged. Inherited from the previous release.
 - **The Linux `pantr-mpi` wheels no longer bundle MPICH's `libmpicxx`.** The module uses only the
   MPI C API and now links `MPI::MPI_C`; CI checks that the wheel vendors no library and carries its
   licence files.
