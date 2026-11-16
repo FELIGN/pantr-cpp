@@ -586,17 +586,26 @@
   direction with more than one node, raises `ValueError` ("SVD did not converge"), as before, but
   no longer `numpy.linalg.LinAlgError` (a `ValueError` subclass), since the decomposition is no
   longer NumPy's.
-- **A NaN or infinite `tol`** in `fit_bezier`, `interpolate_bezier`, `fit_bspline`,
+- **A NaN, infinite or negative `tol`** in `fit_bezier`, `interpolate_bezier`, `fit_bspline`,
   `interpolate_bspline`, `l2_project_bspline`, `pantr.multipatch.detect_interfaces` and
-  `pantr.multipatch.MultiPatch` raises `ValueError` ("tol must be finite, got nan"), as do the
-  distributed fits in `pantr.mpi`. The
+  `pantr.multipatch.MultiPatch` raises `ValueError` ("tol must be finite and non-negative, got
+  nan"), as do the distributed fits in `pantr.mpi`. The
   Bézier fits, and the B-spline fits whenever their system is rectangular or singular, used to
   truncate every singular value and return all-zero control points; `interpolate_bspline`,
   `l2_project_bspline` and `fit_bspline` on a regular square system never read `tol`, so a NaN or
   infinite one was ignored and now raises. `detect_interfaces` returned no interface for a NaN
   `tol` and every pair of faces for an infinite one; so did `MultiPatch` when it detected the
   interfaces, and with an infinite `tol` it accepted a supplied interface between patches that do
-  not touch. A zero or negative `tol` is accepted as before.
+  not touch. A negative `tol` kept every singular value, an exactly zero one included, and the
+  solve divided by it: the B-spline fits (a rectangular system with zero columns, for example
+  nodes that leave a basis function without support) and the Bézier fits returned all-NaN
+  control points, with no warning, and `detect_interfaces` returned no interface for a negative
+  relative tolerance (the previous release warned in the fits). Zero stays accepted and means
+  "drop only the exactly zero singular values": `fit_bezier` and `interpolate_bezier` at `tol=0`
+  used to return NaN on a rank-deficient system (six samples at one node) and are now finite, as
+  the B-spline fits already were at `tol=0`. The same checks are in the C++ API (`value_error`),
+  where `bspline::interpolate`, `bspline::l2_project` and `mpi::interpolate_distributed` also
+  refuse `tol` before they call the function (they sampled it first).
   `interpolate_bezier`, `interpolate_bspline`, `l2_project_bspline`,
   `interpolate_bspline_distributed` and `l2_project_bspline_distributed` check `tol` before they
   call the function to project, so a non-finite `tol` is reported even where the

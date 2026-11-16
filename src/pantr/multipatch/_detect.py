@@ -48,14 +48,15 @@ def detect_interfaces(
             knot vector far from the origin relative to its span is compared at the
             resolution its knots carry: a normalized knot moved by less than the sum
             of the two (each ``8 eps`` times its patch's knot magnitude over its
-            span) is not seen.
+            span) is not seen. Must be finite and non-negative; zero asks for a
+            match up to that knot resolution and the arithmetic of the comparison.
 
     Returns:
         tuple[Interface, ...]: The interfaces found, sorted by
         ``(patch_a, face_a, patch_b, face_b)``.
 
     Raises:
-        ValueError: If ``tol`` is NaN or infinite.
+        ValueError: If ``tol`` is NaN, infinite or negative.
         ValueError: If the patches do not all share the same parametric dimension, or a
             patch has fewer control-point coordinates per point than the rank of an
             earlier one (patches of different ranks are otherwise tolerated, and never
@@ -70,8 +71,8 @@ def detect_interfaces(
         >>> detect_interfaces([left, right])
         (Interface(patch_a=0, face_a=1, patch_b=1, face_b=0, axis_map=(1,), flips=(False,)),)
     """
-    if tol is not None and not math.isfinite(tol):  # NaN included
-        msg = f"tol must be finite, got {tol}"
+    if tol is not None and not (math.isfinite(tol) and tol >= 0.0):  # NaN included
+        msg = f"tol must be finite and non-negative, got {tol}"
         raise ValueError(msg)
     if not patches:
         return ()

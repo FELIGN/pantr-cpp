@@ -141,7 +141,8 @@ struct ValueField {
 ///     NdArray<Cm>: The coefficients `(n_0, ..., n_{d-1}, rank)`, identical on every rank.
 ///
 /// Raises:
-///     value_error: See `assemble_blocks`, `detail::check_gather_count` and
+///     value_error: `tol` is NaN, infinite or negative (refused by the solve, after the gather);
+///         see `assemble_blocks`, `detail::check_gather_count` and
 ///         `bspline::TensorCollocation::solve`.
 template <StorageFloat T, StorageFloat Cm, Communicator C, StorageFloat P>
 [[nodiscard]] NdArray<Cm> collocate_values_distributed(const C& comm,
@@ -204,8 +205,9 @@ template <Communicator C, StorageFloat T>
 ///     bspline::Bspline<T>: The global interpolant, identical on every rank.
 ///
 /// Raises:
-///     value_error: `f` returned another number of values than its block (raised on that rank,
-///         before the collective); see `collocate_distributed`.
+///     value_error: `tol` is NaN, infinite or negative (checked before `f` is called); `f`
+///         returned another number of values than its block (raised on that rank, before the
+///         collective); see `collocate_distributed`.
 template <Communicator C, StorageFloat T, class F>
   requires std::invocable<F&, mdview<const double, 2>>
 [[nodiscard]] bspline::Bspline<T> interpolate_distributed(
@@ -213,6 +215,10 @@ template <Communicator C, StorageFloat T, class F>
     std::vector<std::vector<T>> nodes = {},
     const std::vector<std::optional<bspline::BoundaryDerivatives>>& derivatives = {},
     std::optional<double> tol = std::nullopt) {
+  // Before the function is sampled: it may be costly or have side effects, and a refused call
+  // should not run it. Resolving an explicit value again, in `collocate_distributed`, is the
+  // identity.
+  const double resolved = bspline::default_fit_tol<T>(tol);
   const bspline::BsplineSpace<T>& space = ds.global_space();
   if (nodes.empty()) {
     for (const bspline::BsplineSpace1D<T>& s : space.spaces()) {
@@ -237,7 +243,7 @@ template <Communicator C, StorageFloat T, class F>
   const Block<double> local{values.flat(),
                             std::vector<std::size_t>(values.shape().begin(), values.shape().end())};
   const std::vector<std::span<const T>> spans(nodes.begin(), nodes.end());
-  return collocate_distributed(comm, space, spans, local, derivatives, tol);
+  return collocate_distributed(comm, space, spans, local, derivatives, resolved);
 }
 
 }  // namespace pantr::mpi

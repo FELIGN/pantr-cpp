@@ -56,7 +56,8 @@ namespace pantr::bezier {
 /// default this release does not make. The comparison at a tie also stays as each previous-release
 /// fit wrote it: a Bézier fit keeps `s >= tol * s_max` (`truncated_pinv`), a
 /// B-spline fit `s > tol * s_max` (`bspline::detail::truncated_svd_solve`); they differ only for a
-/// singular value exactly on the cutoff.
+/// singular value exactly on a positive cutoff. Neither inverts an exactly zero singular value
+/// (the Bézier fit's extra guard `s > 0` is what makes `tol = 0` agree with the B-spline fit).
 inline constexpr double svd_tol_factor = 100.0;
 
 namespace detail {
@@ -69,8 +70,9 @@ using UInt = std::conditional_t<sizeof(T) == 8, std::uint64_t, std::uint32_t>;
 ///
 /// Args:
 ///     v (const linalg::RowMatrix<T>&): The matrix, `(m, n)`.
-///     tol (double): Relative truncation tolerance; a singular value `s` is kept when
-///         `s >= tol * s_max` (compared in `T`).
+///     tol (double): Relative truncation tolerance, finite and non-negative; a singular value `s`
+///         is kept when `s >= tol * s_max` (compared in `T`) and `s > 0`: an exactly zero one is
+///         never inverted, at `tol = 0` included.
 ///
 /// Returns:
 ///     NdArray<T>: `(n, m)`.
@@ -100,7 +102,10 @@ template <StorageFloat T>
   Eigen::Matrix<T, Eigen::Dynamic, 1> inv(k);
   const T cut = k > 0 ? static_cast<T>(tol) * sigma(0) : T(0);
   for (Eigen::Index i = 0; i < k; ++i) {
-    inv(i) = sigma(i) >= cut ? T(1) / sigma(i) : T(0);
+    // `s > 0` beside the cutoff: at `tol = 0` the cutoff is 0 and `s >= 0` holds for an exactly
+    // zero singular value of a rank-deficient matrix, whose reciprocal is infinite (NaN
+    // coefficients).
+    inv(i) = sigma(i) > T(0) && sigma(i) >= cut ? T(1) / sigma(i) : T(0);
   }
   const Mat pinv = vv * inv.asDiagonal() * u.transpose();
   NdArray<T> out({static_cast<std::size_t>(pinv.rows()), static_cast<std::size_t>(pinv.cols())},
@@ -151,23 +156,26 @@ template <StorageFloat T>
   Eigen::VectorXd inv(ns);
   const T cut = ns > 0 ? static_cast<T>(tol) * sigma(0) : T(0);
   for (Eigen::Index i = 0; i < ns; ++i) {
-    inv(i) = sigma(i) >= cut ? 1.0 / static_cast<double>(sigma(i)) : 0.0;
+    inv(i) = sigma(i) > T(0) && sigma(i) >= cut ? 1.0 / static_cast<double>(sigma(i)) : 0.0;
   }
   const MatD x = svd.matrixV() * (inv.asDiagonal() * (svd.matrixU().transpose() * qtb.topRows(n)));
   return x.template cast<T>();
 }
 
-/// Refuse a NaN or infinite truncation tolerance: NaN keeps no singular value and infinity none
-/// either, so the fit would report all-zero coefficients as its answer.
+/// Refuse a truncation tolerance that is NaN, infinite or negative: NaN keeps no singular value and
+/// infinity none either, so the fit would report all-zero coefficients as its answer, and a
+/// negative one keeps every singular value, an exactly zero one included (its reciprocal is
+/// infinite, so the coefficients come back NaN). Zero is accepted: it drops only the singular
+/// values that are exactly zero.
 ///
 /// Args:
 ///     tol (double): The tolerance.
 ///
 /// Raises:
-///     value_error: `tol` is NaN or infinite.
-inline void check_finite_tol(double tol) {
-  if (!std::isfinite(tol)) {
-    throw value_error("tol must be finite, got " + py_repr(tol));
+///     value_error: `tol` is NaN, infinite or negative ("tol must be finite and non-negative").
+inline void check_svd_tol(double tol) {
+  if (!std::isfinite(tol) || tol < 0.0) {
+    throw value_error("tol must be finite and non-negative, got " + py_repr(tol));
   }
 }
 
@@ -181,10 +189,10 @@ inline void check_finite_tol(double tol) {
 ///     double: The tolerance.
 ///
 /// Raises:
-///     value_error: `tol` is NaN or infinite.
+///     value_error: `tol` is NaN, infinite or negative.
 [[nodiscard]] inline double resolve_svd_tol(std::optional<double> tol, double eps) {
   if (tol) {
-    check_finite_tol(*tol);
+    check_svd_tol(*tol);
     return *tol;
   }
   return svd_tol_factor * eps;
@@ -204,7 +212,7 @@ inline void check_finite_tol(double tol) {
 ///     NdArray<T>: `(degree + 1, len(nodes))`.
 ///
 /// Raises:
-///     value_error: `tol` is NaN or infinite, no node, or `degree` out of range.
+///     value_error: `tol` is NaN, infinite or negative, no node, or `degree` out of range.
 template <StorageFloat T>
 [[nodiscard]] NdArray<T> bernstein_pinv(std::span<const T> nodes, long long degree,
                                         std::optional<double> tol) {
@@ -239,14 +247,15 @@ template <StorageFloat T>
 ///     Bezier<T>: A non-rational Bézier of orders `degree + 1`.
 ///
 /// Raises:
-///     value_error: `tol` is NaN or infinite, or inconsistent extents, node counts or degrees.
+///     value_error: `tol` is NaN, infinite or negative, or inconsistent extents, node counts or
+///         degrees.
 template <StorageFloat T>
 [[nodiscard]] Bezier<T> fit_tensor(std::span<const T> values, std::span<const std::size_t> shape,
                                    const std::vector<std::span<const T>>& nodes,
                                    const std::optional<std::vector<long long>>& degrees,
                                    std::optional<double> tol) {
   if (tol) {
-    detail::check_finite_tol(*tol);
+    detail::check_svd_tol(*tol);
   }
   if (shape.size() < 2 || nodes.size() != shape.size() - 1 ||
       (degrees && degrees->size() != nodes.size())) {
@@ -323,8 +332,8 @@ template <StorageFloat T>
 ///     Bezier<T>: A non-rational Bézier.
 ///
 /// Raises:
-///     value_error: `tol` is NaN or infinite, inconsistent extents, a negative degree, or fewer
-///         points than coefficients.
+///     value_error: `tol` is NaN, infinite or negative, inconsistent extents, a negative degree, or
+///         fewer points than coefficients.
 template <StorageFloat T>
 [[nodiscard]] Bezier<T> fit_scattered(mdview<const T, 2> values, mdview<const T, 2> pts,
                                       std::span<const long long> degrees,

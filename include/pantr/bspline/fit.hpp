@@ -463,19 +463,19 @@ template <StorageFloat C>
 ///     a (const linalg::RowMatrix<C>&): Extents `(m, n)`, finite.
 ///     b (const linalg::RowMatrix<C>&): Extents `(m, k)`.
 ///     tol (double): Relative truncation tolerance of the SVD path, compared as `s > tol * s_max`,
-///         as before; finite (NaN or infinity would drop every singular value). A negative value
-///         keeps every one, an exactly zero one included (its reciprocal is then infinite).
+///         as before; finite (NaN or infinity would drop every singular value) and non-negative.
+///         Zero drops only the singular values that are exactly zero.
 ///
 /// Returns:
 ///     NdArray<C>: Extents `(n, k)`.
 ///
 /// Raises:
-///     value_error: `tol` is NaN or infinite (on every path, the square one included), the rows of
-///         `a` and `b` differ, or the SVD fails.
+///     value_error: `tol` is NaN, infinite or negative (on every path, the square one included),
+///         the rows of `a` and `b` differ, or the SVD fails.
 template <StorageFloat C>
 [[nodiscard]] NdArray<C> solve_collocation(const linalg::RowMatrix<C>& a,
                                            const linalg::RowMatrix<C>& b, double tol) {
-  bezier::detail::check_finite_tol(tol);
+  bezier::detail::check_svd_tol(tol);
   const Eigen::Index m = a.rows();
   const Eigen::Index n = a.cols();
   if (b.rows() != m) {
@@ -510,9 +510,9 @@ template <StorageFloat C>
       }
     }
   } else if (m > n && n > 0) {
-    // A rectangular system keeps every singular value above `tol * s_max` (a negative `tol` keeps
-    // all), so the QR's certificate must clear that cutoff.
-    if (std::optional<NdArray<C>> x = detail::try_banded<C>(a, b, (std::max)(tol, 0.0))) {
+    // A rectangular system keeps every singular value above `tol * s_max`, so the QR's certificate
+    // must clear that cutoff.
+    if (std::optional<NdArray<C>> x = detail::try_banded<C>(a, b, tol)) {
       return std::move(*x);
     }
   }
@@ -532,7 +532,8 @@ template <StorageFloat C>
 ///     NdArray<C>: Extents `(n_0, ..., n_{d-1})`.
 ///
 /// Raises:
-///     value_error: Inconsistent extents, an empty right-hand side, or an SVD failure.
+///     value_error: `tol` is NaN, infinite or negative, inconsistent extents, an empty right-hand
+///         side, or an SVD failure.
 template <StorageFloat P, StorageFloat C>
 [[nodiscard]] NdArray<C> solve_kronecker(const std::vector<NdArray<P>>& matrices,
                                          std::span<const C> rhs, std::span<const std::size_t> shape,
@@ -711,7 +712,8 @@ class TensorCollocation {
   ///     NdArray<C>: Extents `(n_0, ..., n_{d-1}, rank)`.
   ///
   /// Raises:
-  ///     value_error: `values` does not hold `rank` values per node, or an SVD fails.
+  ///     value_error: `tol` is NaN, infinite or negative, `values` does not hold `rank` values per
+  ///         node, or an SVD fails.
   template <StorageFloat C>
   [[nodiscard]] NdArray<C> solve(std::span<const C> values, std::size_t rank, double tol) const {
     const std::vector<std::size_t> grid = grid_shape();
@@ -824,9 +826,9 @@ template <StorageFloat T, StorageFloat P>
 ///     NdArray<C>: Extents `(n_0, ..., n_{d-1}, rank)`.
 ///
 /// Raises:
-///     value_error: Another number of columns, fewer points than basis functions (checked in
-///         that order, before the domain), a point outside the domain, values with another number
-///         of rows, or an SVD failure.
+///     value_error: `tol` is NaN, infinite or negative, another number of columns, fewer points
+///         than basis functions (checked in that order, before the domain), a point outside the
+///         domain, values with another number of rows, or an SVD failure.
 template <StorageFloat T, StorageFloat P, StorageFloat C>
 [[nodiscard]] NdArray<C> fit_scattered_coefficients(const BsplineSpace<T>& space,
                                                     mdview<const P, 2> pts,
@@ -887,7 +889,7 @@ template <StorageFloat P>
 ///     Bspline<T>: A non-rational B-spline on `space`.
 ///
 /// Raises:
-///     value_error: See `TensorCollocation` and its `solve`.
+///     value_error: `tol` is NaN, infinite or negative; see `TensorCollocation` and its `solve`.
 template <StorageFloat T>
 [[nodiscard]] Bspline<T> fit_tensor(
     const BsplineSpace<T>& space, const std::vector<std::span<const T>>& nodes,
@@ -908,6 +910,9 @@ template <StorageFloat T>
 ///
 /// Returns:
 ///     Bspline<T>: A non-rational B-spline on `space`.
+///
+/// Raises:
+///     value_error: `tol` is NaN, infinite or negative; see `fit_scattered_coefficients`.
 template <StorageFloat T>
 [[nodiscard]] Bspline<T> fit_scattered(const BsplineSpace<T>& space, mdview<const T, 2> pts,
                                        mdview<const T, 2> values,
@@ -936,13 +941,17 @@ template <StorageFloat T>
 ///     Bspline<T>: A non-rational B-spline on `space`.
 ///
 /// Raises:
-///     value_error: See `TensorCollocation`; `f` returned another number of values.
+///     value_error: `tol` is NaN, infinite or negative (checked before `f` is called); see
+///         `TensorCollocation`; `f` returned another number of values.
 template <StorageFloat T, class F>
   requires std::invocable<F&, const quad::PointsLattice<T>&>
 [[nodiscard]] Bspline<T> interpolate(
     const BsplineSpace<T>& space, F&& f, std::vector<std::vector<T>> nodes = {},
     const std::vector<std::optional<BoundaryDerivatives>>& derivatives = {},
     std::optional<double> tol = std::nullopt) {
+  // Before the callable is sampled: it may be costly or have side effects, and a refused call
+  // should not run it.
+  const double resolved = default_fit_tol<T>(tol);
   std::vector<std::vector<T>> per_dir = std::move(nodes);
   if (per_dir.empty()) {
     for (const BsplineSpace1D<T>& s : space.spaces()) {
@@ -960,8 +969,7 @@ template <StorageFloat T, class F>
                       std::to_string(points) + " nodes.");
   }
   const std::size_t rank = values.rank() == 1 ? 1 : values.shape()[1];
-  return Bspline<T>(space, system.template solve<T>(values.flat(), rank, default_fit_tol<T>(tol)),
-                    false);
+  return Bspline<T>(space, system.template solve<T>(values.flat(), rank, resolved), false);
 }
 
 }  // namespace pantr::bspline

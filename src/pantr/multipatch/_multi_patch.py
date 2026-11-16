@@ -46,11 +46,13 @@ class MultiPatch:
                 verified against the geometry. Detected automatically when ``None``.
             tol (float | None): Relative tolerance override for detection and
                 verification. Defaults to the larger of each pair's own tolerances.
+                Must be finite and non-negative.
 
         Raises:
-            ValueError: If no patches are given, the patches disagree on dimension,
-                rank, dtype or rationality, an interface refers to a patch that does
-                not exist, or a supplied interface does not hold for the geometry.
+            ValueError: If ``tol`` is NaN, infinite or negative, no patches are given,
+                the patches disagree on dimension, rank, dtype or rationality, an
+                interface refers to a patch that does not exist, or a supplied interface
+                does not hold for the geometry.
         """
         if not patches:
             raise ValueError("A MultiPatch needs at least one patch")

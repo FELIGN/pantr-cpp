@@ -510,7 +510,8 @@ class L2Projection {
 ///     Bspline<T>: A non-rational B-spline on `space`.
 ///
 /// Raises:
-///     value_error: See `L2Projection`; `f` returned another number of values.
+///     value_error: `tol` is NaN, infinite or negative (checked before `f` is called); see
+///         `L2Projection`; `f` returned another number of values.
 template <StorageFloat T, class F>
   requires std::invocable<F&, const quad::PointsLattice<T>&>
 [[nodiscard]] Bspline<T> l2_project(const BsplineSpace<T>& space, F&& f,
@@ -518,6 +519,9 @@ template <StorageFloat T, class F>
                                     L2Quadrature rule = L2Quadrature::gauss_legendre,
                                     std::vector<std::pair<bool, bool>> boundary_interpolation = {},
                                     std::optional<double> tol = std::nullopt) {
+  // Before the callable is sampled: it may be costly or have side effects, and a refused call
+  // should not run it.
+  const double resolved = default_fit_tol<T>(tol);
   const std::size_t dim = space.dim();
   if (!n_quad) {
     n_quad.emplace();
@@ -555,7 +559,6 @@ template <StorageFloat T, class F>
       throw value_error("l2_project: a boundary trace returned another number of components.");
     }
   }
-  const double resolved = default_fit_tol<T>(tol);
   std::vector<std::size_t> shape;
   for (const BsplineSpace1D<T>& s : space.spaces()) {
     shape.push_back(static_cast<std::size_t>(s.num_basis()));

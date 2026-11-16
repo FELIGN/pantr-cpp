@@ -263,14 +263,15 @@ def interpolate_bezier(
             - A 1D ``ndarray``: custom nodes broadcast to all directions.
             - A sequence of 1D ``ndarray`` values: per-direction custom nodes.
         tol (float | None): SVD truncation tolerance. If *None*, uses a
-            default based on machine epsilon.
+            default based on machine epsilon. Must be finite and non-negative;
+            zero drops only the exactly zero singular values.
 
     Returns:
         ~pantr.bezier.Bezier: A non-rational Bézier whose evaluation
         approximates ``func``.
 
     Raises:
-        ValueError: If ``tol`` is NaN or infinite.
+        ValueError: If ``tol`` is NaN, infinite or negative.
         ValueError: If ``n_pts`` values are < 1, *degree* >= *n_pts*, *nodes*
             is inconsistent with *n_pts*, or the callable returns an
             unexpected shape; or ("SVD did not converge") if a custom node is
@@ -444,13 +445,14 @@ def fit_bezier(  # noqa: PLR0912
             ``prod(degree + 1) <= n_pts`` for scattered nodes and
             ``degree < n_pts`` per direction for tensor-product.
         tol (float | None): SVD truncation tolerance. If *None*, uses a
-            default based on machine epsilon.
+            default based on machine epsilon. Must be finite and non-negative;
+            zero drops only the exactly zero singular values.
 
     Returns:
         ~pantr.bezier.Bezier: A non-rational Bézier.
 
     Raises:
-        ValueError: If ``tol`` is NaN or infinite.
+        ValueError: If ``tol`` is NaN, infinite or negative.
         ValueError: If *nodes* are inconsistent with *values*, *degree* is
             invalid, or *degree* is missing for scattered nodes; or ("SVD did not
             converge") if a node in a direction with more than one node, or a

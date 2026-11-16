@@ -391,16 +391,17 @@ def interpolate_bspline(
         tol (float | None): SVD truncation tolerance for the
             collocation solve. Singular values below
             ``tol * sigma_max`` are treated as zero. If *None*,
-            defaults to ``100 * machine_epsilon``. Only affects
-            overdetermined or near-singular systems; square
-            well-conditioned systems use a direct solve.
+            defaults to ``100 * machine_epsilon``. Must be finite and
+            non-negative; zero drops only the exactly zero singular
+            values. Only affects overdetermined or near-singular
+            systems; square well-conditioned systems use a direct solve.
 
     Returns:
         Bspline: A non-rational B-spline whose evaluation approximates
         ``func``.
 
     Raises:
-        ValueError: If ``tol`` is NaN or infinite.
+        ValueError: If ``tol`` is NaN, infinite or negative.
         TypeError: If ``space`` is not a :class:`BsplineSpace`.
         ValueError: If ``nodes`` is inconsistent with ``space``, or the
             callable returns an unexpected shape.
@@ -480,15 +481,16 @@ def fit_bspline(
               points.
         space (~pantr.bspline.BsplineSpace): The target B-spline space.
         tol (float | None): SVD truncation tolerance. If *None*,
-            defaults to ``100 * machine_epsilon``. Only affects
-            overdetermined or near-singular systems; square
-            well-conditioned systems use a direct solve.
+            defaults to ``100 * machine_epsilon``. Must be finite and
+            non-negative; zero drops only the exactly zero singular
+            values. Only affects overdetermined or near-singular
+            systems; square well-conditioned systems use a direct solve.
 
     Returns:
         Bspline: A non-rational B-spline.
 
     Raises:
-        ValueError: If ``tol`` is NaN or infinite.
+        ValueError: If ``tol`` is NaN, infinite or negative.
         TypeError: If ``space`` is not a :class:`BsplineSpace`.
         ValueError: If *nodes* are inconsistent with *space*, or the
             system is underdetermined for scattered nodes.
@@ -681,14 +683,15 @@ def l2_project_bspline(  # noqa: PLR0913
             - A sequence of ``(left, right)`` bool pairs: per-direction
               boundary flags.
         tol (float | None): SVD truncation tolerance. If *None*,
-            defaults to ``100 * machine_epsilon``.
+            defaults to ``100 * machine_epsilon``. Must be finite and
+            non-negative; zero drops only the exactly zero singular values.
 
     Returns:
         Bspline: A non-rational B-spline whose evaluation is the L2
         best approximation of ``func`` in the given space.
 
     Raises:
-        ValueError: If ``tol`` is NaN or infinite.
+        ValueError: If ``tol`` is NaN, infinite or negative.
         TypeError: If ``space`` is not a :class:`BsplineSpace`.
         ValueError: If ``space`` has no direction, or ``n_quad`` or
             ``boundary_interpolation`` is inconsistent with ``space``.

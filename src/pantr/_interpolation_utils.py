@@ -17,20 +17,21 @@ SVD_TOL_FACTOR: float = 100.0
 
 
 def check_svd_tolerance(tol: float | None) -> None:
-    """Refuse a non-finite SVD truncation tolerance.
+    """Refuse a truncation tolerance that is not finite and non-negative.
 
     A NaN or infinite tolerance truncates every singular value, so the fit would return zero
-    coefficients as if it had succeeded. Zero and negative values stay accepted, as before: they
-    truncate no nonzero singular value (an exactly zero one is then inverted, as before).
+    coefficients as if it had succeeded. A negative one keeps every singular value, an exactly zero
+    one included, and the solve divides by it (NaN coefficients). Zero is accepted: it truncates
+    only the singular values that are exactly zero.
 
     Args:
         tol (float | None): User-provided tolerance, or ``None`` for the default.
 
     Raises:
-        ValueError: If ``tol`` is NaN or infinite.
+        ValueError: If ``tol`` is NaN, infinite or negative.
     """
-    if tol is not None and not math.isfinite(tol):
-        msg = f"tol must be finite, got {tol}"
+    if tol is not None and not (math.isfinite(tol) and tol >= 0.0):
+        msg = f"tol must be finite and non-negative, got {tol}"
         raise ValueError(msg)
 
 
@@ -51,7 +52,7 @@ def resolve_svd_tolerance(dtype: npt.DTypeLike, tol: float | None) -> float:
     Raises:
         TypeError: If ``dtype`` is not a floating-point dtype and ``tol`` is
             ``None``.
-        ValueError: If ``tol`` is NaN or infinite.
+        ValueError: If ``tol`` is NaN, infinite or negative.
     """
     check_svd_tolerance(tol)
     if tol is not None:

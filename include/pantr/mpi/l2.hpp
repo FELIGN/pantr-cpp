@@ -102,7 +102,8 @@ template <StorageFloat T>
 ///
 /// Raises:
 ///     value_error: Another number of values or traces (before the collective); the reduced load
-///         has another shape than this rank's (after it), see `bspline::L2Projection`.
+///         has another shape than this rank's, or `tol` is NaN, infinite or negative (after it),
+///         see `bspline::L2Projection`.
 template <Communicator C, StorageFloat T, StorageFloat Cm>
 [[nodiscard]] NdArray<Cm> l2_project_values_distributed(
     const C& comm, const bspline::L2Projection<T>& proj, std::span<const std::int32_t> cell_owner,
