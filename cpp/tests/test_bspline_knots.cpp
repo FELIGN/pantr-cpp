@@ -481,16 +481,16 @@ TEST_CASE_TEMPLATE("factories: a periodic vector is its own periodic continuatio
   // K[i + n m] = K[i] + L with m = p - c, for every continuity: each knot past an end is a periodic
   // image of an interior knot. The images of one linspace knot differ by the rounding of one
   // subtraction and of the interval multiple, so 4 eps max|K| bounds the difference.
-  const double eps = std::numeric_limits<T>::epsilon();
+  const auto eps = static_cast<double>(std::numeric_limits<T>::epsilon());
   for (long long n = 1; n <= 8; ++n) {
     for (long long p = 0; p <= 6; ++p) {
       for (long long c = -1; c < p; ++c) {
         const auto k = bs::uniform_periodic_knots<T>(n, p, c, T(0), T(1));
         const auto shift = static_cast<std::size_t>(n * (p - c));
         const double bound =
-            4.0 * eps * static_cast<double>(*std::max_element(k.begin(), k.end(), [](T a, T b) {
-              return std::abs(a) < std::abs(b);
-            }));
+            4.0 * eps *
+            static_cast<double>(std::abs(*std::max_element(
+                k.begin(), k.end(), [](T a, T b) { return std::abs(a) < std::abs(b); })));
         REQUIRE(k.size() > shift);
         for (std::size_t i = 0; i + shift < k.size(); ++i) {
           CAPTURE(n);
