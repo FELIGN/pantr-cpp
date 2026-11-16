@@ -189,33 +189,53 @@ class PyCommunicator {
 
 static_assert(mpi::Communicator<PyCommunicator>);
 
-/// A communicator from another module's table (real MPI), called with the GIL released, as mpi4py
-/// releases it in a blocking collective: other Python threads run while this rank waits for the
-/// others. The table's functions touch no Python object (comm_capsule.h).
+/// A communicator from another module's table (real MPI). At `MPI_THREAD_MULTIPLE` (the table's
+/// `thread_multiple`) a collective is called with the GIL released, as mpi4py releases it in a
+/// blocking collective: other Python threads run while this rank waits for the others, and two
+/// threads' calls may overlap inside MPI. Below it the GIL is kept for the duration of the MPI
+/// call, as the previous release did: `MPI_THREAD_SERIALIZED` forbids two threads inside MPI at
+/// once, and two overlapping calls crash or hang there, so no second Python thread runs, and none
+/// can enter MPI, until the call returns. The table's functions touch no Python object
+/// (comm_capsule.h).
 class GilFreeComm {
  public:
-  explicit GilFreeComm(AnyCommunicator inner) : inner_(std::move(inner)) {}
+  GilFreeComm(AnyCommunicator inner, bool release_gil)
+      : inner_(std::move(inner)), release_gil_(release_gil) {}
   [[nodiscard]] int rank() const { return inner_.rank(); }
   [[nodiscard]] int size() const { return inner_.size(); }
   template <class T>
   [[nodiscard]] Gathered<T> allgatherv(const Block<T>& b) const {
-    const nb::gil_scoped_release unlocked;
+    const MaybeUnlocked unlocked(release_gil_);
     return inner_.allgatherv(b);
   }
   [[nodiscard]] std::pair<Gathered<std::int64_t>, Gathered<double>> allgather_owned(
       const Block<std::int64_t>& index, const Block<double>& value) const {
-    const nb::gil_scoped_release unlocked;
+    const MaybeUnlocked unlocked(release_gil_);
     return inner_.allgather_owned(index, value);
   }
   template <class T>
   [[nodiscard]] NdArray<T> allreduce_sum(std::span<const T> data,
                                          std::span<const std::size_t> shape) const {
-    const nb::gil_scoped_release unlocked;
+    const MaybeUnlocked unlocked(release_gil_);
     return inner_.allreduce_sum(data, shape);
   }
 
  private:
+  /// Releases the GIL for its lifetime when asked to, and does nothing otherwise.
+  class MaybeUnlocked {
+   public:
+    explicit MaybeUnlocked(bool release) {
+      if (release) {
+        unlocked_.emplace();
+      }
+    }
+
+   private:
+    std::optional<nb::gil_scoped_release> unlocked_;
+  };
+
   AnyCommunicator inner_;
+  bool release_gil_;
 };
 
 static_assert(mpi::Communicator<GilFreeComm>);
@@ -233,7 +253,10 @@ AnyCommunicator to_communicator(nb::handle comm, std::vector<nb::object> arrays 
     auto* keep = new nb::object(nb::borrow(comm));
     std::shared_ptr<const pantr_mpi_comm> table(static_cast<const pantr_mpi_comm*>(p),
                                                 [keep](const pantr_mpi_comm*) { delete keep; });
-    return AnyCommunicator(GilFreeComm(AnyCommunicator::from_table(std::move(table))));
+    // `from_table` checks the table's version and size, so `thread_multiple` is read only once it
+    // is known to be there.
+    AnyCommunicator inner = AnyCommunicator::from_table(table);
+    return AnyCommunicator(GilFreeComm(std::move(inner), table->thread_multiple != 0));
   }
   return AnyCommunicator(PyCommunicator(nb::borrow(comm), std::move(arrays)));
 }

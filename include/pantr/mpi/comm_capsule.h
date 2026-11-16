@@ -15,9 +15,12 @@
  *
  * Calling rules: a collective is called by every rank of the communicator, in the same order, from
  * the thread that initialized MPI (pantr requires `MPI_THREAD_FUNNELED`, design §2.8). A Python
- * extension calls the collectives with the GIL released, as mpi4py does in a blocking collective,
- * so other Python threads run while a rank waits; an implementation must therefore touch no Python
- * object in any function but `release`, which is called with the GIL held.
+ * extension calls the collectives with the GIL released when `thread_multiple` is nonzero, as
+ * mpi4py does in a blocking collective, so other Python threads run while a rank waits; an
+ * implementation must therefore touch no Python object in any function but `release`, which is
+ * called with the GIL held. When `thread_multiple` is zero the extension keeps the GIL during the
+ * call, so that no two threads of a process are inside the library at once, which every thread
+ * level below `MPI_THREAD_MULTIPLE` forbids.
  *
  * Shapes cross as three `int64_t` per block, `(ndim, extent0, extent1)`, with `ndim` 1 or 2 and the
  * unused extent 0. Data are C-contiguous, row-major.
@@ -84,6 +87,10 @@ typedef struct pantr_mpi_comm {
                        size_t msg_len);
   /* Free `ctx`. Called once, when the last holder drops the table. */
   void (*release)(void* ctx);
+  /* Nonzero when the library was initialized at `MPI_THREAD_MULTIPLE`, so that calls of two threads
+   * may overlap; zero for every lower level, and for a table of a communicator that is not MPI's.
+   * Appended to the version 1 layout: a table that ends before it is refused by `struct_size`. */
+  int32_t thread_multiple;
 } pantr_mpi_comm;
 
 #ifdef __cplusplus

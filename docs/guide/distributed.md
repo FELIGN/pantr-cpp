@@ -248,12 +248,21 @@ ds = DistributedSpace(space, partition, mesh.comm)
 
 ### Distributed calls from several Python threads
 
-pantr's collectives release the GIL while a rank waits for the others, as mpi4py's do, so other
-Python threads keep running. Two threads that each make distributed calls can then be inside MPI at
-the same time, which `MPI_THREAD_SERIALIZED` forbids: keep MPI at `MPI_THREAD_MULTIPLE` for that.
-mpi4py asks for it by default; setting `mpi4py.rc.thread_level` to `"serialized"` or lower before
-importing `mpi4py.MPI` gives it up. One thread making distributed calls needs only
-`MPI_THREAD_FUNNELED`, from the thread that initialized MPI.
+What two Python threads of one rank may do depends on the thread level MPI provides, which
+`mpi4py` fixes when `mpi4py.MPI` is first imported (`mpi4py.rc.thread_level`, `"multiple"` by
+default):
+
+- **`MPI_THREAD_MULTIPLE`**: pantr's collectives release the GIL while a rank waits for the others,
+  as mpi4py's do, so other Python threads keep running, and two threads that each make a
+  distributed call (on different communicators) may be inside MPI at the same time.
+- **`MPI_THREAD_SERIALIZED`** (and `MPI_THREAD_FUNNELED`): pantr's collectives keep the GIL for the
+  whole MPI call, so two threads' calls never overlap inside MPI, which these levels forbid. A
+  second thread's distributed call waits until the first has returned, and no other Python thread
+  runs while a rank waits for the others in a collective. Calls to `mpi4py` made from several
+  threads are not covered: those overlap as mpi4py allows them to.
+
+One thread making distributed calls needs only `MPI_THREAD_FUNNELED`, from the thread that
+initialized MPI.
 
 ## Testing distributed code
 

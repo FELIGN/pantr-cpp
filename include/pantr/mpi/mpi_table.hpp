@@ -9,9 +9,10 @@
 /// `parallel_for`, so it needs `MPI_THREAD_FUNNELED` and no more (design §2.8). `make_mpi_table`
 /// refuses an MPI initialized below that level, and each collective refuses a call from another
 /// thread than the one that initialized MPI unless MPI was initialized at `MPI_THREAD_SERIALIZED`
-/// or above. The Python bindings call a collective with the GIL released, so two Python threads can
-/// be inside MPI at once: concurrent distributed calls from several threads need
-/// `MPI_THREAD_MULTIPLE`, since `MPI_THREAD_SERIALIZED` only promises calls that do not overlap.
+/// or above. The table records whether MPI provides `MPI_THREAD_MULTIPLE` (`thread_multiple`): only
+/// then do the Python bindings call a collective with the GIL released, so that two Python threads
+/// can be inside MPI at once. Below it they keep the GIL during the call, since
+/// `MPI_THREAD_SERIALIZED` only promises calls that do not overlap.
 ///
 /// An MPI error code becomes `PANTR_MPI_ERR_RUNTIME` with `MPI_Error_string`'s text (under the
 /// default error handler, `MPI_ERRORS_ARE_FATAL`, MPI aborts first). An `allreduce_sum` over
@@ -295,6 +296,7 @@ inline void table_release(void* ctx) noexcept {
     auto ctx = std::make_unique<detail::MpiTableCtx>(
         detail::MpiTableCtx{comm, rank, size, provided < MPI_THREAD_SERIALIZED, keep, drop});
     auto table = std::make_unique<pantr_mpi_comm>();
+    table->thread_multiple = provided >= MPI_THREAD_MULTIPLE ? 1 : 0;
     table->abi_version = PANTR_MPI_COMM_ABI_VERSION;
     table->struct_size = static_cast<std::uint32_t>(sizeof(pantr_mpi_comm));
     table->rank = &detail::table_rank;
