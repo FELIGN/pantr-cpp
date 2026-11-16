@@ -1,4 +1,4 @@
-"""A refused ``tol`` is refused before the user's callable is sampled."""
+"""A refused ``tol`` (non-finite or negative) is refused before the user's callable is sampled."""
 
 from __future__ import annotations
 
@@ -18,6 +18,8 @@ from pantr.mpi import (
 )
 from pantr.quad import PointsLattice
 
+_REFUSED_TOLS = [float("nan"), float("inf"), float("-inf"), -1.0, -1e-9]
+
 
 class _Recorder:
     """A projected function that records whether it was called."""
@@ -30,7 +32,7 @@ class _Recorder:
         return np.asarray(lattice.pts_per_dir[0] ** 2, dtype=np.float64)
 
 
-@pytest.mark.parametrize("tol", [float("nan"), float("inf"), float("-inf")])
+@pytest.mark.parametrize("tol", _REFUSED_TOLS)
 def test_l2_project_bspline_refuses_tol_before_sampling(tol: float) -> None:
     """Bug caught: the callable, costly or with side effects, ran before ``tol`` was checked."""
     func = _Recorder()
@@ -48,7 +50,7 @@ def test_l2_project_bspline_samples_for_a_finite_tol() -> None:
     assert func.calls >= 1
 
 
-@pytest.mark.parametrize("tol", [float("nan"), float("inf"), float("-inf")])
+@pytest.mark.parametrize("tol", _REFUSED_TOLS)
 def test_interpolate_bspline_refuses_tol_before_sampling(tol: float) -> None:
     """Bug caught: the callable ran on the node lattice before ``tol`` was checked."""
     func = _Recorder()
@@ -76,7 +78,7 @@ class _PointsRecorder:
         return np.asarray(pts[:, 0] ** 2, dtype=np.float64)
 
 
-@pytest.mark.parametrize("tol", [float("nan"), float("inf"), float("-inf")])
+@pytest.mark.parametrize("tol", _REFUSED_TOLS)
 def test_interpolate_bezier_refuses_tol_before_sampling(tol: float) -> None:
     """Bug caught: the callable ran on the node lattice before ``tol`` was checked."""
     func = _Recorder()
@@ -121,7 +123,7 @@ class _SingleRankComm:
         return [data]
 
 
-@pytest.mark.parametrize("tol", [float("nan"), float("inf"), float("-inf")])
+@pytest.mark.parametrize("tol", _REFUSED_TOLS)
 def test_l2_project_bspline_distributed_refuses_tol_before_sampling(tol: float) -> None:
     """Bug caught: the callable ran on the lattice and its traces before ``tol`` was checked."""
     func = _Recorder()
@@ -143,7 +145,7 @@ def test_l2_project_bspline_distributed_samples_for_a_finite_tol() -> None:
     assert func.calls >= 1
 
 
-@pytest.mark.parametrize("tol", [float("nan"), float("inf"), float("-inf")])
+@pytest.mark.parametrize("tol", _REFUSED_TOLS)
 def test_interpolate_bspline_distributed_refuses_tol_before_sampling(tol: float) -> None:
     """Bug caught: the callable ran on this rank's block of nodes before ``tol`` was checked."""
     func = _PointsRecorder()

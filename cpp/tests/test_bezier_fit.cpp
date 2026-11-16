@@ -842,9 +842,10 @@ TEST_CASE("fit_scattered: a negative degree and mismatched arguments are refused
       pantr::value_error);
 }
 
-TEST_CASE("bezier fits: a NaN or infinite tol is refused before any fit") {
+TEST_CASE("bezier fits: a NaN, infinite or negative tol is refused before any fit") {
   // A NaN cutoff keeps no singular value and an infinite one none either: all-zero coefficients
-  // returned as success. Bug caught: the refusal living only in a Python wrapper.
+  // returned as success; a negative one keeps an exactly zero singular value and divides by it.
+  // Bug caught: the refusal living only in a Python wrapper, a negative tol accepted.
   const double nan = std::numeric_limits<double>::quiet_NaN();
   const double inf = std::numeric_limits<double>::infinity();
   const std::vector<double> nodes = {0.0, 0.5, 1.0};
@@ -853,8 +854,8 @@ TEST_CASE("bezier fits: a NaN or infinite tol is refused before any fit") {
   const std::vector<std::span<const double>> grid = {std::span<const double>(nodes)};
   const auto pts = pantr::mdview<const double, 2>(nodes.data(), 3, 1);
   const auto vals = pantr::mdview<const double, 2>(values.data(), 3, 1);
-  for (const double bad : {nan, inf, -inf}) {
-    const std::string message = "tol must be finite, got " + pantr::py_repr(bad);
+  for (const double bad : {nan, inf, -inf, -1.0, -1e-9}) {
+    const std::string message = "tol must be finite and non-negative, got " + pantr::py_repr(bad);
     CHECK_THROWS_WITH_AS(static_cast<void>(pb::bernstein_pinv<double>(nodes, 2, bad)),
                          message.c_str(), pantr::value_error);
     CHECK_THROWS_WITH_AS(static_cast<void>(pb::fit_tensor<double>(std::span<const double>(values),
@@ -864,8 +865,38 @@ TEST_CASE("bezier fits: a NaN or infinite tol is refused before any fit") {
         static_cast<void>(pb::fit_scattered<double>(vals, pts, std::vector<long long>{2}, bad)),
         message.c_str(), pantr::value_error);
   }
-  // Control: a finite tol fits.
+  // Control: a finite tol fits, and so does zero.
   CHECK_NOTHROW(static_cast<void>(pb::bernstein_pinv<double>(nodes, 2, 1e-12)));
+  CHECK_NOTHROW(static_cast<void>(pb::bernstein_pinv<double>(nodes, 2, 0.0)));
+}
+
+TEST_CASE("bezier fits: tol = 0 never inverts an exactly zero singular value") {
+  // Six samples of the constant 1 at the node 0, degree 3: the Bernstein matrix has six equal
+  // rows (1, 0, 0, 0), rank 1, so its three trailing singular values are exactly zero. At tol = 0
+  // the cutoff is 0 and `s >= 0` kept them: their reciprocals are infinite, and the fit was all
+  // NaN. The minimum-norm least-squares solution is the coefficients (1, 0, 0, 0) exactly.
+  // Bug caught: the truncation comparison `s >= tol * s_max` at tol = 0.
+  const std::vector<double> nodes(6, 0.0);
+  const std::vector<double> values(6, 1.0);
+  const std::vector<std::size_t> shape = {6, 1};
+  const std::vector<std::span<const double>> grid = {std::span<const double>(nodes)};
+  const auto pts = pantr::mdview<const double, 2>(nodes.data(), 6, 1);
+  const auto vals = pantr::mdview<const double, 2>(values.data(), 6, 1);
+  const std::vector<double> want = {1.0, 0.0, 0.0, 0.0};
+  const auto expect = [&](const pb::Bezier<double>& fit) {
+    REQUIRE(fit.control_points().size() == want.size());
+    for (std::size_t i = 0; i < want.size(); ++i) {
+      CHECK(std::isfinite(fit.control_points()[i]));
+      CHECK(std::fabs(fit.control_points()[i] - want[i]) <= 1e-12);
+    }
+  };
+  expect(pb::fit_scattered<double>(vals, pts, std::vector<long long>{3}, 0.0));
+  expect(pb::fit_tensor<double>(std::span<const double>(values), shape, grid,
+                                std::vector<long long>{3}, 0.0));
+  const pantr::NdArray<double> pinv = pb::bernstein_pinv<double>(nodes, 3, 0.0);
+  for (std::size_t i = 0; i < pinv.size(); ++i) {
+    CHECK(std::isfinite(pinv.data()[i]));
+  }
 }
 
 TEST_CASE("bernstein_pinv: a non-finite node is refused, as LAPACK's SVD refused it") {

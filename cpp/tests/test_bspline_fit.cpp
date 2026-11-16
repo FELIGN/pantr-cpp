@@ -1207,19 +1207,22 @@ TEST_CASE_TEMPLATE(
 }
 
 TEST_CASE_TEMPLATE(
-    "solve_collocation: the truncation tolerance is relative, a NaN or infinite one is refused, a "
-    "negative one drops nothing",
+    "solve_collocation: the truncation tolerance is relative, zero drops nothing, a NaN, infinite "
+    "or negative one is refused",
     C, float, double) {
   // The 4 x 2 matrix [[1, 0], [1, 0], [0, s], [0, s]] has the singular values sqrt 2 and sqrt 2 s
   // (orthogonal columns), the data [1, 1, s, s] has the solution (1, 1). s = 1e-6, so the ratio of
   // the singular values is 1e-6:
-  //   tol 1e-9, 0 and -1  keep both       -> (1, 1)
-  //   tol 1e-3            drops the second -> (1, 0)
-  //   tol 2               drops both       -> (0, 0) exactly (for tol >= 1 no value exceeds it)
-  //   NaN, +inf, -inf     refused           (they would drop both, all-zero coefficients reported
-  //                                           as a solution)
-  // Bug caught: a tolerance that is absolute, `abs(tol)` for a negative one, a non-finite one
-  // accepted, a banded path that answers with its own default cutoff whatever the tolerance
+  //   tol 1e-9 and 0     keep both       -> (1, 1)
+  //   tol 1e-3           drops the second -> (1, 0)
+  //   tol 2              drops both       -> (0, 0) exactly (for tol >= 1 no value exceeds it)
+  //   NaN, +inf, -inf    refused          (they would drop both, all-zero coefficients reported
+  //                                          as a solution)
+  //   -1, -1e-9          refused          (a negative cutoff keeps an exactly zero singular value,
+  //                                          whose reciprocal is infinite: all-NaN coefficients)
+  // Bug caught: a tolerance that is absolute, `abs(tol)` for a negative one, a non-finite or a
+  // negative one accepted, a banded path that answers with its own default cutoff whatever the
+  // tolerance
   // (the tol 1e-3 case: the banded certificate must refuse, which `try_lstsq_banded` is asserted
   // to do for an `rcond` above the ratio and to accept below it).
   const double s = 1e-6;
@@ -1235,15 +1238,18 @@ TEST_CASE_TEMPLATE(
   const Matrix keep_none = {{Rational(0)}, {Rational(0)}};
   expect_solution<C>(solve_with(1e-9), keep_both, bound, "tol 1e-9");
   expect_solution<C>(solve_with(0.0), keep_both, bound, "tol 0");
-  expect_solution<C>(solve_with(-1.0), keep_both, bound, "tol -1");
   expect_solution<C>(solve_with(1e-3), keep_first, bound, "tol 1e-3");
   expect_solution<C>(solve_with(2.0), keep_none, 0.0, "tol 2");
+  const la::RowMatrix<C> square = dense<C>(2, 2, {1, 0, 0, 1});
+  const la::RowMatrix<C> square_b = dense<C>(2, 1, {1, 1});
   for (const double bad :
        {std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::infinity(),
-        -std::numeric_limits<double>::infinity()}) {
-    CHECK_THROWS_WITH_AS(static_cast<void>(solve_with(bad)),
-                         ("tol must be finite, got " + pantr::py_repr(bad)).c_str(),
-                         pantr::value_error);
+        -std::numeric_limits<double>::infinity(), -1.0, -1e-9}) {
+    const std::string message = "tol must be finite and non-negative, got " + pantr::py_repr(bad);
+    CHECK_THROWS_WITH_AS(static_cast<void>(solve_with(bad)), message.c_str(), pantr::value_error);
+    // The square system, which the LU solves without the tolerance, refuses it all the same.
+    CHECK_THROWS_WITH_AS(static_cast<void>(bs::solve_collocation<C>(square, square_b, bad)),
+                         message.c_str(), pantr::value_error);
   }
   // The banded certificate honours the cutoff it is given.
   CHECK(la::try_lstsq_banded<C>(a, b, 0, 1e-9).has_value());
@@ -2916,6 +2922,80 @@ TEST_CASE("interpolate: a callable returning the wrong number of values is refus
                            one_direction)),
                        "Expected 2 node arrays, got 1.", pantr::value_error);
   CHECK(calls == 0);
+}
+
+TEST_CASE("fit_tensor and fit_scattered: a negative tol is refused, zero and the default fit") {
+  // 12 nodes in [0, 0.4] leave the cubic space's functions 5 and 6 (supported from 0.5 and 0.75)
+  // with exactly zero columns in the collocation matrix, so its SVD has exactly zero singular
+  // values. A negative tol kept them and divided by them: all-NaN control points returned as the
+  // fit. Zero and the default drop them.
+  // Bug caught: a negative tol accepted, returning NaN without a status.
+  const bs::BsplineSpace<double> space = space_of<double>({cubic_dir()});
+  std::vector<double> nodes(12);
+  std::vector<double> values(12);
+  for (std::size_t i = 0; i < nodes.size(); ++i) {
+    nodes[i] = 0.4 * static_cast<double>(i) / 11.0;
+    values[i] = std::sin(nodes[i]);
+  }
+  const auto pts = pantr::mdview<const double, 2>(nodes.data(), 12, 1);
+  const auto vals = pantr::mdview<const double, 2>(values.data(), 12, 1);
+  const std::vector<std::span<const double>> grid = {std::span<const double>(nodes)};
+  const auto all_finite = [](const bs::Bspline<double>& fit) {
+    return std::ranges::all_of(fit.control_points(), [](double v) { return std::isfinite(v); });
+  };
+  for (const std::optional<double> tol : {std::optional<double>{}, std::optional<double>{0.0}}) {
+    CHECK(all_finite(bs::fit_scattered<double>(space, pts, vals, tol)));
+    CHECK(all_finite(
+        bs::fit_tensor<double>(space, grid, std::span<const double>(values), 1, {}, tol)));
+  }
+  for (const double bad : {-1.0, -1e-9}) {
+    const std::string message = "tol must be finite and non-negative, got " + pantr::py_repr(bad);
+    CHECK_THROWS_WITH_AS(static_cast<void>(bs::fit_scattered<double>(space, pts, vals, bad)),
+                         message.c_str(), pantr::value_error);
+    CHECK_THROWS_WITH_AS(static_cast<void>(bs::fit_tensor<double>(
+                             space, grid, std::span<const double>(values), 1, {}, bad)),
+                         message.c_str(), pantr::value_error);
+  }
+}
+
+TEST_CASE("interpolate and l2_project: a refused tol is refused before the callable is sampled") {
+  // The program of the ticket: the callable was sampled once before the tolerance was checked, so
+  // a costly or side-effecting callable ran for a call that was then refused. NaN, infinities and
+  // negative values are all refused; zero is accepted and samples.
+  // Bug caught: the tolerance resolved after the sampling.
+  const bs::BsplineSpace<double> space = space_of<double>({cubic_dir()});
+  int calls = 0;
+  const auto f = [&calls](const pantr::quad::PointsLattice<double>& lattice) {
+    ++calls;
+    NdArray<double> v({lattice.num_points()});
+    for (std::size_t i = 0; i < lattice.num_points(); ++i) {
+      v.data()[i] = 1.0;
+    }
+    return v;
+  };
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  const double inf = std::numeric_limits<double>::infinity();
+  for (const double bad : {nan, inf, -inf, -1.0, -1e-9}) {
+    const std::string message = "tol must be finite and non-negative, got " + pantr::py_repr(bad);
+    calls = 0;
+    CHECK_THROWS_WITH_AS(static_cast<void>(bs::interpolate<double>(space, f, {}, {}, bad)),
+                         message.c_str(), pantr::value_error);
+    CHECK(calls == 0);
+    CHECK_THROWS_WITH_AS(static_cast<void>(bs::l2_project<double>(
+                             space, f, std::nullopt, bs::L2Quadrature::gauss_legendre, {}, bad)),
+                         message.c_str(), pantr::value_error);
+    CHECK(calls == 0);
+  }
+  // Controls: an accepted tol, zero included, does sample.
+  for (const double good : {1e-12, 0.0}) {
+    calls = 0;
+    static_cast<void>(bs::interpolate<double>(space, f, {}, {}, good));
+    CHECK(calls >= 1);
+    calls = 0;
+    static_cast<void>(
+        bs::l2_project<double>(space, f, std::nullopt, bs::L2Quadrature::gauss_legendre, {}, good));
+    CHECK(calls >= 1);
+  }
 }
 
 TEST_CASE_TEMPLATE("default_fit_tol: 100 eps of the matrix type, an explicit value untouched", T,

@@ -797,7 +797,7 @@ TEST_CASE("detect: the tolerance tier is the storage type's, and an override rep
   // A NaN override is refused: it would match nothing.
   CHECK_THROWS_WITH_AS(
       static_cast<void>(mp::detect_interfaces(view(f64), std::numeric_limits<double>::quiet_NaN())),
-      "tol must be finite, got nan", pantr::value_error);
+      "tol must be finite and non-negative, got nan", pantr::value_error);
 }
 
 TEST_CASE("detect: a tolerance within a rounding of the displacement is rounded to the type") {
@@ -941,16 +941,18 @@ TEST_CASE("verify_interface: refusals and their messages") {
         }) == "Interface implies dim=3 but the patches are 2D");
 }
 
-TEST_CASE("verify_interface and MultiPatch: a NaN or infinite tol is refused") {
+TEST_CASE("verify_interface and MultiPatch: a NaN, infinite or negative tol is refused") {
   // `far` is a macro under <windows.h>, hence `apart`.
-  // Infinity verified any interface and detected every face pair; NaN verified and detected none.
-  // Bug caught: the refusal living only in the Python wrapper of `detect_interfaces`.
+  // Infinity verified any interface and detected every face pair; NaN and a negative tolerance
+  // verified and detected none.
+  // Bug caught: the refusal living only in the Python wrapper of `detect_interfaces`, a negative
+  // tol accepted.
   const std::vector<bs::Bspline<double>> apart = {lattice<double>(dirs_2d(), {0.0, 0.0}),
                                                   lattice<double>(dirs_2d(), {5.0, 0.0})};
   const mp::Interface bogus = iface(0, 1, 1, 0, {1}, {false});
   const double inf = std::numeric_limits<double>::infinity();
-  for (const double bad : {std::numeric_limits<double>::quiet_NaN(), inf, -inf}) {
-    const std::string want = "tol must be finite, got " + pantr::py_repr(bad);
+  for (const double bad : {std::numeric_limits<double>::quiet_NaN(), inf, -inf, -1.0, -1e-9}) {
+    const std::string want = "tol must be finite and non-negative, got " + pantr::py_repr(bad);
     CHECK(message_of([&] { (void)mp::verify_interface(view(apart), bogus, bad); }) == want);
     CHECK(message_of([&] { (void)mp::MultiPatch<double>(apart, std::nullopt, bad); }) == want);
     CHECK(message_of([&] {
@@ -960,6 +962,17 @@ TEST_CASE("verify_interface and MultiPatch: a NaN or infinite tol is refused") {
   }
   // Control: the default tol does not verify the interface between patches 5 units apart.
   CHECK_FALSE(mp::verify_interface(view(apart), bogus));
+}
+
+TEST_CASE("detect_interfaces and verify_interface: tol = 0 is accepted and means an exact match") {
+  // Two patches sharing a face exactly match at a zero relative tolerance (the comparisons are
+  // `<=`); patches apart do not. Bug caught: the negative-tol refusal also refusing zero.
+  const std::vector<bs::Bspline<double>> touching = {lattice<double>(dirs_2d(), {0.0, 0.0}),
+                                                     lattice<double>(dirs_2d(), {1.0, 0.0})};
+  const mp::Interface found = iface(0, 1, 1, 0, {1}, {false});
+  CHECK(mp::detect_interfaces(view(touching), 0.0) == std::vector<mp::Interface>{found});
+  CHECK(mp::verify_interface(view(touching), found, 0.0));
+  CHECK_NOTHROW(static_cast<void>(mp::MultiPatch<double>(touching, std::nullopt, 0.0)));
 }
 
 // ------------------------------------------------------------------------------------ MultiPatch

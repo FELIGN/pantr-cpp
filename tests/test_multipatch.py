@@ -235,9 +235,9 @@ def test_detect_refuses_a_non_finite_tol(tol: float) -> None:
     """A NaN tol matched nothing and an infinite one matched every face: both refused."""
     space = BsplineSpace([_open_space_1d(2, 1)])
     patches = [_lattice_patch(space), _lattice_patch(space, offset=[1.0])]
-    with pytest.raises(ValueError, match=r"^tol must be finite, got "):
+    with pytest.raises(ValueError, match=r"^tol must be finite and non-negative, got "):
         detect_interfaces(patches, tol=tol)
-    with pytest.raises(ValueError, match=r"^tol must be finite, got "):
+    with pytest.raises(ValueError, match=r"^tol must be finite and non-negative, got "):
         detect_interfaces([], tol=tol)  # checked before the empty-input shortcut
 
 
@@ -252,9 +252,9 @@ def test_multipatch_refuses_a_non_finite_tol(tol: float) -> None:
     near = [_lattice_patch(space), _lattice_patch(space, offset=[1.0])]
     far = [_lattice_patch(space), _lattice_patch(space, offset=[5.0])]
     bogus = (Interface(patch_a=0, face_a=1, patch_b=1, face_b=0, axis_map=(), flips=()),)
-    with pytest.raises(ValueError, match=r"^tol must be finite, got "):
+    with pytest.raises(ValueError, match=r"^tol must be finite and non-negative, got "):
         MultiPatch(near, tol=tol)
-    with pytest.raises(ValueError, match=r"^tol must be finite, got "):
+    with pytest.raises(ValueError, match=r"^tol must be finite and non-negative, got "):
         MultiPatch(far, bogus, tol=tol)
     # Controls: the default tol finds the touching pair and refuses the bogus interface.
     assert MultiPatch(near).interfaces == bogus

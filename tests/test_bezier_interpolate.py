@@ -756,14 +756,14 @@ def test_fit_bezier_refuses_a_non_finite_tol(tol: float, layout: str) -> None:
     """A NaN or infinite tol truncates every singular value: refused, not a zero fit."""
     x = np.linspace(0.0, 1.0, 8)
     nodes: Any = [x] if layout == "tensor" else x[:, np.newaxis]
-    with pytest.raises(ValueError, match=r"^tol must be finite, got "):
+    with pytest.raises(ValueError, match=r"^tol must be finite and non-negative, got "):
         fit_bezier(x**2, nodes, degree=3, tol=tol)
 
 
 @pytest.mark.parametrize("tol", _NON_FINITE)
 def test_interpolate_bezier_refuses_a_non_finite_tol(tol: float) -> None:
     """The callable path shares the fit's tolerance check."""
-    with pytest.raises(ValueError, match=r"^tol must be finite, got "):
+    with pytest.raises(ValueError, match=r"^tol must be finite and non-negative, got "):
         interpolate_bezier(lambda lat: lat.pts_per_dir[0] ** 2, 8, degree=3, tol=tol)
 
 
@@ -771,9 +771,9 @@ def test_interpolate_bezier_refuses_a_non_finite_tol(tol: float) -> None:
 def test_compiled_fits_refuse_a_non_finite_tol(tol: float) -> None:
     """The compiled fits refuse it themselves: they used to return all-zero coefficients."""
     x = np.linspace(0.0, 1.0, 4)
-    with pytest.raises(ValueError, match=r"^tol must be finite, got "):
+    with pytest.raises(ValueError, match=r"^tol must be finite and non-negative, got "):
         ext.bezier.fit_tensor(x[:, np.newaxis] ** 2, [x], (3,), tol)
-    with pytest.raises(ValueError, match=r"^tol must be finite, got "):
+    with pytest.raises(ValueError, match=r"^tol must be finite and non-negative, got "):
         ext.bezier.fit_scattered(x[:, np.newaxis] ** 2, x[:, np.newaxis], [3], tol)
 
 
