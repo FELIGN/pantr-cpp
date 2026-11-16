@@ -33,6 +33,7 @@
 #include <pantr/bspline/space.hpp>
 #include <pantr/bspline/space_1d.hpp>
 #include <pantr/core/errors.hpp>
+#include <pantr/core/format.hpp>
 #include <pantr/core/mdspan.hpp>
 #include <pantr/core/ndarray.hpp>
 #include <pantr/grid/hierarchical_grid.hpp>
@@ -2211,6 +2212,31 @@ TEST_CASE("mpi interpolate_distributed refuses a function that returns another n
       "points of this rank's block.";
   THB_THROWS_WITH_AS(mp::interpolate_distributed(ds, comm, too_many), msg.c_str(), value_error);
   THB_THROWS_WITH_AS(mp::interpolate_distributed(ds, comm, cube), msg.c_str(), value_error);
+}
+
+TEST_CASE("mpi interpolate_distributed refuses a NaN, infinite or negative tol before sampling") {
+  // The function may be costly or have side effects: a refused call must not run it, on any rank.
+  // Bug caught: the tolerance resolved after `f` was called on the rank's block.
+  const bs::BsplineSpace<double> space = make_space<double>(tensor_cases()[0]);
+  const mp::SelfCommunicator comm;
+  const auto ds = mp::distribute(space, rcb_of(space, 1), comm);
+  int calls = 0;
+  const auto f = [&calls](pantr::mdview<const double, 2> pts) {
+    ++calls;
+    return NdArray<double>(std::vector<std::size_t>{pts.extent(0)});
+  };
+  const double inf = std::numeric_limits<double>::infinity();
+  for (const double bad : {std::numeric_limits<double>::quiet_NaN(), inf, -inf, -1.0, -1e-9}) {
+    const std::string msg = "tol must be finite and non-negative, got " + pantr::py_repr(bad);
+    calls = 0;
+    THB_THROWS_WITH_AS(mp::interpolate_distributed(ds, comm, f, {}, {}, bad), msg.c_str(),
+                       value_error);
+    CHECK(calls == 0);
+  }
+  // Control: zero is accepted and the function is sampled.
+  calls = 0;
+  static_cast<void>(mp::interpolate_distributed(ds, comm, f, {}, {}, 0.0));
+  CHECK(calls == 1);
 }
 
 TEST_CASE(
