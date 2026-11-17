@@ -1110,6 +1110,26 @@ TEST_CASE("inherited: blossom value below a clamped start") {
   CHECK(std::abs(got[0] - want[0]) <= 4.0 * std::abs(u) + 8.0 * 4.0 * unit_roundoff<double>());
 }
 
+TEST_CASE("blossom: a parameter at an end beside an empty span takes the last non-empty span") {
+  // Regression. Knots [0, 0, 0, 1, 2, 2, 2, 3, 3] at degree 2: the domain ends at 2, and the last
+  // span the search reached there, n = 5, is the empty [2, 2). The blossom now starts from the
+  // last non-empty span [1, 2), index 3. Oracle (de Boor on that span by hand, control points
+  // P_i = i + 1): f[1.5, 2] takes alpha 0.5 and 0.75 at level 1 (u = 1.5) and 1 at level 2
+  // (u = 2), so it is (P2 + P3) / 2 = 3.5; f[2, 2] = P3 = 4, the end value. Rounding: two levels
+  // of convex combinations of values at most 6, taken as 8 * 6 units of roundoff.
+  const std::vector<double> kn{0.0, 0.0, 0.0, 1.0, 2.0, 2.0, 2.0, 3.0, 3.0};
+  CHECK(bs::detail::blossom_span<double>(sp(kn), 2.0, 5) == 3);
+  CHECK(bs::detail::blossom_span<double>(sp(kn), 1.5, 5) == 3);
+  const std::vector<double> cp{1.0, 2.0, 3.0, 4.0, 5.0, 6.0};
+  const mdview<const double, 2> ctrl(cp.data(), 6, 1);
+  const double tol = 8.0 * std::numeric_limits<double>::epsilon();
+  const double r = 8.0 * 6.0 * unit_roundoff<double>();
+  const std::vector<double> mixed = {1.5, 2.0};
+  const std::vector<double> end = {2.0, 2.0};
+  CHECK(std::abs(bs::blossom<double>(sp(kn), 2, ctrl, sp(mixed), tol)[0] - 3.5) <= r);
+  CHECK(std::abs(bs::blossom<double>(sp(kn), 2, ctrl, sp(end), tol)[0] - 4.0) <= r);
+}
+
 // ---- inherited defects, pinned (parity pins)
 // -----------------------------------------------------
 //
