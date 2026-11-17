@@ -11,6 +11,13 @@ below:
   planning and approved with the plan (R11); **QB1-QB11** (QB3 unused) are defaults the plan proceeds on unless
   overruled; **P0a, P0b, P1, ...** are the build items; **S0-S9** the stages.
 
+**Amended 2026-11-17: no root finding.** By the maintainer's decision the built-in root finder
+(the `Builtin` provider, `pantr.bezier.find_roots`, `find_monotone_root`, the provider switch and
+`pantr.bspline.find_roots` with its Morken-Reimers finder) was removed. Every passage below that
+describes them as present, planned, tested or benchmarked is a record of the port, not of the
+tree: root finding returns only with the BeRF-FR provider (issue #22), whose design is
+`design/root_seam.md`.
+
 ## Rulings
 
 - **R0** The port's fixed decisions: one backend (C++ replaces Python/Numba module by module, no
@@ -135,7 +142,8 @@ S0 foundation → S1 quad/tolerance/basis/change_basis → S2 bezier + geometry/
 - P2a · C2.1 AABB/AffineTransform, C2.2 Bezier value type and operations with handle swap.
 - P2b · C2.3 degree reduction (exact rational, Boost.Multiprecision) and interpolate/fit,
   C2.4 root seam + Builtin provider + `set_root_provider` (QB7 below), C2.5 tests (M3, M6, U3 check).
-  Design note §13 (3).
+  Design note §13 (3). *Amended 2026-11-17 by the maintainer: the Builtin provider and
+  `set_root_provider` were removed; root finding returns with the BeRF-FR provider (issue #22).*
 - P4a · C4.1 spaces/knots/basis core/factories/Greville + their tests.
 - P4b · C4.2 Bspline value type and operations (M1, M5) + their tests, plus C5.2's
   SpanwiseElementExtraction and the one contraction primitive (to_beziers needs it, DR-2).
@@ -181,7 +189,8 @@ QB4 nanobind 3.1.x pinned (fallback 2.14.x if S0 fails). · QB5 Eigen 5.0.1 if S
 QB6 names pantr-mpi/pantr_mpi, pantr-berf/pantr_berf. · QB7 Bezier clipping depth cap warns
 (RuntimeWarning) instead of truncating silently. · QB8 pantr[metis] keeps pymetis. · QB9
 Boost.Multiprecision for exact rationals. · QB10 new public API set_root_provider/get_root_provider
-+ PANTR_ROOT_PROVIDER, default berf when installed. · QB11 1 pool thread per MPI rank by default.
++ PANTR_ROOT_PROVIDER, default berf when installed (removed 2026-11-17 with the Builtin provider, by
+the maintainer's decision; issue #22). · QB11 1 pool thread per MPI rank by default.
 
 ## Inferred directives for a green light
 - Di1 Every existing `match=` regex keeps matching (DR-13).

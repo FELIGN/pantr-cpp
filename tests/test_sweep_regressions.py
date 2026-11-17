@@ -7,7 +7,7 @@ XPASS failure, and the marker comes off, promoting the test to a permanent guard
 same data. That is the convention ``tests/test_review_regressions.py`` follows for the
 June 2026 review, whose markers have all since been removed.
 
-Twelve markers have already come off here: the domain-membership test, closed by the
+Eleven markers have already come off here: the domain-membership test, closed by the
 ``np.isclose`` tolerance-leak fix in #289; the tanh-sinh endpoint test, closed by
 truncating the rule where the endpoint gap stops being resolvable; the Lagrange
 reproducibility test, closed by seeding the barycentric node permutation; the float32
@@ -15,9 +15,7 @@ degree-elevation test, closed by allocating the kernels' knot output in the inpu
 the periodic degree-reduction hang, closed by enforcing the periodic conversion's own
 boundary-multiplicity precondition; the degree-elevation counter mismatch, closed by
 emitting the unshared Bézier coefficient at a C^-1 knot and by letting the segment sweep
-reach the final span of a degree-0 knot vector; and the root finder that certified a value
-that is not a root, closed by evaluating the residual on every exit of the tracking and by
-holding the repeated-iterate stop to Corollary 14's actual hypothesis; and four closed
+reach the final span of a degree-0 knot vector; and four closed
 together by the tolerance-semantics pass -- the two knot-snapping tests and the unique-knot
 accessor directly, and the restriction that returned a shorter domain than asked for as a
 consequence, since its ``b_new + tol`` step ceased to be a no-op once ``tol`` carried the
@@ -57,7 +55,6 @@ from pantr.bspline import (
     create_cardinal_knots,
     create_uniform_open_knots,
     create_uniform_periodic_knots,
-    find_roots,
 )
 from pantr.change_basis import compute_cardinal_to_bernstein_1d
 from pantr.quad import get_tanh_sinh_1d
@@ -728,105 +725,6 @@ def test_reduce_degree_terminates_on_a_periodic_linear_spline() -> None:
     reduced = spline.to_open_bspline().reduce_degree(1)
     assert reduced.degree[0] == 0
     assert not reduced.space.spaces[0].periodic
-
-
-# ---------------------------------------------------------------------------
-# The root finder certifies a value that is not a root
-# ---------------------------------------------------------------------------
-
-
-def test_find_roots_returns_only_genuine_roots() -> None:
-    # FIXED, and kept as a regression guard with its original triggering data per this
-    # repository's convention that the fix PR un-xfails the tests it closes. It took two
-    # changes, and the second is what keeps the first from being a cure worse than the
-    # disease.
-    #
-    # What it was, the most serious finding of the August 2026 triage: `find_roots`
-    # returned a parameter at which the spline is not zero, silently, through the public
-    # API, on a perfectly ordinary clamped cubic on the unit domain. Nothing warned.
-    #
-    # The data below is a degree-3 clamped uniform spline on [0, 1] with four intervals
-    # and control points alternating +1/-1. It has exactly six sign changes. `find_roots`
-    # returned six values; four of them were roots to 1e-16, and two -- 0.375 and 0.625 --
-    # were not roots at all. The true zeros nearest them are at 0.369 and 0.630995, so the
-    # returned values were off by about 0.006 in the parameter and left a residual of
-    # 0.0208 on a curve whose values are bounded by 1.
-    #
-    # The mechanism, traced through a line-for-line pure-Python mirror of
-    # the Numba `_bspline_roots_core.py` (now `include/pantr/bspline/roots.hpp`) that
-    # reproduced the same wrong roots bit for bit:
-    # `_track_zero` treated a repeated iterate (`x == previous_x`) as a certificate of
-    # convergence, per Morken-Reimers Lemma 13/Corollary 14, and `_morken_reimers_roots`
-    # then gated acceptance on
-    #
-    #     accepted = residual <= zero_tol if status == _STATUS_CANDIDATE else True
-    #
-    # so for `_STATUS_CONVERGED` the residual was hard-coded to 0.0 and never compared
-    # against the actual function value. Here the first secant estimate lands on 0.375, a
-    # single Boehm insertion there produces a control coefficient that is exactly 0.0 for
-    # an algebraic reason (the symmetric alternating coefficients on exact rational
-    # Greville abscissae), the next iterate is therefore 0.375 again, and the fixed-point
-    # test fired after one step -- far from convergence. That is a theorem valid in exact
-    # arithmetic applied to a floating-point iteration where a coefficient can reach zero
-    # for reasons unrelated to being near a root.
-    #
-    # The fix makes every exit of `_track_zero` hand back `|f(x)|` and gates acceptance on
-    # that residual uniformly, so a status records how the iteration stopped and never
-    # whether the value may be reported. On its own that only makes the answer sound: it
-    # drops 0.375 and 0.625 and reports four roots where there are six. The second change
-    # restores the two: the repeated-iterate stop now tests Corollary 14's actual
-    # hypothesis, `degree - 1` active knots collapsed onto the iterate, rather than the
-    # bare repetition that a nearly horizontal control-polygon secant also produces.
-    #
-    # Distinct from the fabricated root closed in #291, which guarded the
-    # `x >= knots[index + degree]` branch at a C^-1 knot of multiplicity degree + 1. This
-    # knot vector has only simple interior knots and never reaches that branch.
-    #
-    # It was not a tolerance artifact and did not scale away: the same construction on
-    # [0, 5] returned 3.125 with the same residual 0.0208 against a true zero at
-    # 3.154997195131751.
-    degree = 3
-    knots = np.array([0.0, 0.0, 0.0, 0.0, 0.25, 0.5, 0.75, 1.0, 1.0, 1.0, 1.0])
-    spline = _scalar_spline(knots, degree, [1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0])
-
-    roots = np.asarray(find_roots(spline), dtype=np.float64).ravel()
-    assert roots.size, "precondition: the sign-alternating spline has roots to find"
-
-    # The bound is the two terms a returned root may legitimately carry, and nothing
-    # else. Evaluation: de Boor over `degree + 1` stages on coefficients of magnitude 1,
-    # so `4 * eps`. Location: `find_roots` documents `tol` as a *parametric* tolerance
-    # defaulting to `get_strict(float64) = 1e-15`, and a root located to `dt` leaves
-    # `|f'| * dt`; the hodograph bounds `|f'|` by `degree * max|delta c| / h_min`
-    # = 3 * 2 / 0.25 = 24, and the documented stopping scale here is the domain length 1.
-    # A safety factor of 8 covers the unmodelled constants of both, as elsewhere in this
-    # suite. The result is 1.99e-13, against an observed residual of 2.1e-2 -- a factor of
-    # 1.05e11, so no reasonable sharpening of this bound changes the verdict.
-    eps = get_machine_epsilon(np.float64)
-    slope_bound = degree * 2.0 / 0.25
-    bound = 8.0 * ((degree + 1) * eps + slope_bound * 1e-15)
-    residuals = np.abs(np.asarray(spline.evaluate(roots), dtype=np.float64).ravel())
-    worst = float(np.max(residuals))
-    assert worst <= bound, (
-        f"find_roots returned {roots.tolist()}; |f| there is {residuals.tolist()}, "
-        f"and the largest exceeds the derived bound {bound:.3e}"
-    )
-
-    # Guard the other side too, which the original xfail did not: an xfail is satisfied by
-    # *any* failure, so returning four roots instead of six would have satisfied it while
-    # losing two genuine zeros. The six below were obtained independently of this method,
-    # by a two-million-point sign scan of the spline followed by bisection to convergence;
-    # `1e-15` is the parametric tolerance `find_roots` documents, and the domain length is
-    # 1, so a root is placed to that much and the comparison needs no safety factor beyond
-    # the eight this suite uses elsewhere.
-    expected = [
-        0.06279438346444505,
-        0.200641357614461,
-        0.36900056097364975,
-        0.6309994390263503,
-        0.799358642385539,
-        0.9372056165355549,
-    ]
-    np.testing.assert_allclose(roots, expected, rtol=0.0, atol=8.0 * 1e-15)
 
 
 # ---------------------------------------------------------------------------

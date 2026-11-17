@@ -383,12 +383,10 @@ def _s2_bezier_cases() -> list[Case]:
     return cases
 
 
-def _s2_approx_roots_cases() -> list[Case]:
-    """The degree-reduction, fitting and root-finding cases of the S2 stage (C2.3, C2.4)."""
+def _s2_approx_cases() -> list[Case]:
+    """The degree-reduction and fitting cases of the S2 stage (C2.3)."""
     from pantr.bezier import (  # noqa: PLC0415
         Bezier,
-        find_monotone_root,
-        find_roots,
         fit_bezier,
         interpolate_bezier,
     )
@@ -475,49 +473,6 @@ def _s2_approx_roots_cases() -> list[Case]:
         lambda: setup_fit_scattered(1000),
     )
 
-    roots3 = Bezier(np.array([1.0, -2.0, 1.5, -0.5]))
-    roots12 = Bezier(np.cos(np.linspace(0.0, 7.0, 13)))
-    add("find_roots", "tiny", "find_roots, degree 3 (Yuksel)", lambda: (lambda: find_roots(roots3)))
-    add(
-        "find_roots_degree12",
-        "tiny",
-        "find_roots, degree 12 (clipping)",
-        lambda: (lambda: find_roots(roots12)),
-    )
-
-    def setup_batch(n: int) -> Callable[[], Any]:
-        coeffs = np.random.default_rng(8).standard_normal((n, 6))
-        batch = [Bezier(c) for c in coeffs]
-        return lambda: find_roots(batch)
-
-    add(
-        "find_roots_batch", "medium", "find_roots, batch of 1e3 degree-5", lambda: setup_batch(1000)
-    )
-    add(
-        "find_roots_batch",
-        "large",
-        "find_roots, batch of 1e4 degree-5",
-        lambda: setup_batch(10_000),
-    )
-    mono = Bezier(np.array([-1.0, -0.4, 0.3, 0.8, 1.2]))
-    add(
-        "find_monotone_root",
-        "tiny",
-        "find_monotone_root, degree 4",
-        lambda: (lambda: find_monotone_root(mono)),
-    )
-
-    def setup_mono_batch(n: int) -> Callable[[], Any]:
-        coeffs = np.sort(np.random.default_rng(9).standard_normal((n, 5)), axis=1)
-        batch = [Bezier(c) for c in coeffs]
-        return lambda: find_monotone_root(batch)
-
-    add(
-        "find_monotone_root_batch",
-        "large",
-        "find_monotone_root, batch of 1e4 degree-4",
-        lambda: setup_mono_batch(10_000),
-    )
     return cases
 
 
@@ -657,7 +612,6 @@ def _s4_bspline_cases() -> list[Case]:  # noqa: PLR0915
         BsplineSpace1D,
         create_uniform_open_knots,
         create_uniform_periodic_knots,
-        find_roots,
     )
     from pantr.quad import PointsLattice  # noqa: PLC0415
 
@@ -777,24 +731,6 @@ def _s4_bspline_cases() -> list[Case]:  # noqa: PLR0915
             size,
             f"to_periodic, open cubic of {min(max(n, degree + 1), 1_000)} intervals",
             setup_to_periodic,
-        )
-
-    # Root finding on main grows faster than linearly in the number of intervals (each reported
-    # root shifts the rest of the working window down): `large` is 4e3 intervals.
-    for size, n in {"tiny": 1, "medium": 1_000, "large": 4_000}.items():
-
-        def setup_find_roots(n: int = n) -> Callable[[], Any]:
-            knots = create_uniform_open_knots(n, degree)
-            space = BsplineSpace([BsplineSpace1D(knots, degree)])
-            coeffs = np.random.default_rng(1234).uniform(-1.0, 1.0, (n + degree, 1))
-            scalar = Bspline(space, coeffs)
-            return lambda: find_roots(scalar)
-
-        add(
-            "bspline_find_roots",
-            size,
-            f"find_roots, random cubic of {n} intervals",
-            setup_find_roots,
         )
 
     # The product re-expresses its Bezier form on the minimal knot vector by a least-squares solve,
@@ -1624,7 +1560,7 @@ def all_cases() -> list[Case]:
         _s1_cases()
         + _s2_geometry_cases()
         + _s2_bezier_cases()
-        + _s2_approx_roots_cases()
+        + _s2_approx_cases()
         + _s4_space_cases()
         + _s4_bspline_cases()
         + _s4_extraction_cases()

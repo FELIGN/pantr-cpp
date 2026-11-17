@@ -47,12 +47,6 @@ void register_bezier_approx(nanobind::module_& m);
 /// Register the reduction operators and the fitting internals in the `_testing` submodule.
 void register_bezier_approx_testing(nanobind::module_& m);
 
-/// Register the `roots` submodule (the Builtin root provider).
-void register_roots(nanobind::module_& m);
-
-/// Register the root provider's internals in the `_testing` submodule.
-void register_roots_testing(nanobind::module_& m);
-
 /// Register the `bspline` submodule (BsplineSpace1D, BsplineSpace, the knot factories).
 void register_bspline(nanobind::module_& m);
 /// Register the knot scale, tolerance and snapping check in the `_testing` submodule.
@@ -86,9 +80,8 @@ void register_bspline_spanwise(nanobind::module_& m);
 /// Lagrange identity mask in the `_testing` submodule.
 void register_bspline_spanwise_testing(nanobind::module_& m);
 
-/// Register the product, the rational derivative and the roots of a B-spline (methods of the
-/// `BsplineF64` / `BsplineF32` classes, which must exist) and the root status codes in the
-/// `bspline` submodule.
+/// Register the product and the rational derivative of a B-spline (methods of the `BsplineF64` /
+/// `BsplineF32` classes, which must exist) in the `bspline` submodule.
 void register_bspline_product(nanobind::module_& m);
 
 /// Register the staged B-spline fits (tensor-product collocation, scattered fit, L2 projection,
@@ -100,8 +93,8 @@ void register_bspline_locate(nanobind::module_& m);
 
 void register_bspline_locate_testing(nanobind::module_& m);
 
-/// Register the Morken-Reimers kernel, its merge and its insertion budget, and the knot classes
-/// of a raw knot vector at an explicit tolerance, in the `_testing` submodule.
+/// Register the knot classes of a raw knot vector at an explicit tolerance in the `_testing`
+/// submodule.
 void register_bspline_product_testing(nanobind::module_& m);
 
 /// Register the knot-removal tolerances, the binomial kernel and the 1D degree kernels in the

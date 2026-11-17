@@ -100,7 +100,7 @@ finite-element code assembles against {cite:p}`borden2011bezier,scott2011tspline
 array of {class}`~pantr.bezier.Bezier` objects); {meth}`~pantr.bspline.Bspline.to_bezier`
 returns a single one when the geometry is already a single element. Conversely a
 {class}`~pantr.bezier.Bezier` round-trips back with {func}`~pantr.bspline.create_from_bezier`.
-The Bézier patches themselves are the subject of {doc}`/tutorials/07_bezier_and_roots`.
+{doc}`/tutorials/03_knot_operations` extracts and draws them.
 
 ---
 

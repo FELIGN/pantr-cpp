@@ -53,7 +53,7 @@ group                   cases  covered
                                extraction for three targets, the knot-vector factories,
                                interpolation, and THB spaces truncated and not.
 ``bezier``                  -  see ``_probes_bezier``; curve, surface and volume Bezier
-                               operations, root finding, and the two named private kernels.
+                               operations, and the one named private kernel.
 ======================  =====  =========================================================
 
 Axes crossed: interior knot multiplicity 1 to ``degree + 1``; degree 0, 1, 2, 3, 15, 62;

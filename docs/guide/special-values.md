@@ -6,11 +6,9 @@ PaNTr has one policy for non-finite numbers (NaN and ±infinity): **propagate, n
   not read the non-finite entry stays finite: a B-spline value reads only the control points of
   its knot span, and a Bézier evaluated at `t = 1` is its last control point.
 - No function returns a finite value computed from a non-finite entry it reads, or reports success
-  (a root count, a convergence, a rank, a residual, a passed validation) on non-finite data.
+  (a convergence, a rank, a residual, a passed validation) on non-finite data.
 - A non-finite value that is born from finite input, by an internal overflow, is an error: it
-  raises, and does not reach you as a NaN. The one NaN a function returns from finite input is
-  {func}`~pantr.bezier.find_monotone_root`'s "no root" sentinel, which is documented and not a
-  failure (see "Root finding refuses" below).
+  raises, and does not reach you as a NaN.
 - The fast paths add no validation for this. A function that evaluates at many points does not
   scan its inputs first; it lets the arithmetic carry the NaN to the values that read it.
 
@@ -111,65 +109,6 @@ except OverflowError as e:
 ```text
 [ 1. nan nan nan  9.]
 OverflowError The product of these finite control points overflows the range of its dtype, or an intermediate of the Bernstein product formula overflows float64
-```
-
-## Root finding refuses
-
-A root set for a polynomial with a NaN coefficient has no meaning: "no roots" would be a
-statement about a polynomial that does not exist, and a root would be a guess.
-{func}`~pantr.bezier.find_roots` and {func}`~pantr.bezier.find_monotone_root` therefore raise
-`ValueError` for a NaN or infinite coefficient (single or batch; a batch names the first bad row),
-and for a `tol` that is not positive and finite:
-
-```python
-from pantr.bezier import find_monotone_root, find_roots
-
-for cp in ([0.0, np.nan, 1.0], [-1.0, np.inf, 1.0]):
-    try:
-        find_roots(Bezier(np.array(cp)))
-    except ValueError as e:
-        print(type(e).__name__, e)
-
-b = Bezier(np.array([-1.0, 0.0, 1.0]))
-for tol in (np.nan, np.inf):
-    try:
-        find_roots(b, tol=tol)
-    except ValueError as e:
-        print(type(e).__name__, e)
-    try:
-        find_monotone_root(b, tol=tol)
-    except ValueError as e:
-        print(type(e).__name__, e)
-print(find_roots(b))
-```
-
-```text
-ValueError coefficients must be finite, got a NaN or an infinite entry
-ValueError coefficients must be finite, got a NaN or an infinite entry
-ValueError tol must be positive and finite, got nan
-ValueError tol must be positive and finite, got nan
-ValueError tol must be positive and finite, got inf
-ValueError tol must be positive and finite, got inf
-[0.5]
-```
-
-{func}`pantr.bspline.find_roots` refuses a NaN or infinite `tol` in the same way (it raised
-`ValueError` ("tol must be positive and finite, got nan") for both in a run of its own).
-
-One NaN that {func}`~pantr.bezier.find_monotone_root` returns is not a failure. For *finite*
-coefficients with no sign change across `[0, 1]`, there is no root to return, and NaN is its
-documented "no root" sentinel (in batch mode, one entry per polynomial, NaN where none exists).
-It is a statement about a polynomial that exists and has no root there, which is the reverse of
-the NaN-coefficient case above, so it raises nothing and a caller tests for it with `np.isnan`:
-
-```python
-print(find_monotone_root(Bezier(np.array([1.0, 2.0, 3.0]))))
-print(find_monotone_root([Bezier(np.array([-1.0, 0.0, 1.0])), Bezier(np.array([1.0, 2.0, 3.0]))]))
-```
-
-```text
-nan
-[0.5 nan]
 ```
 
 ## Fits and interface detection refuse a non-finite `tol`

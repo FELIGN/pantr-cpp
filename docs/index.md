@@ -53,8 +53,8 @@ Every module, class, and function, with full signatures.
 - **B-spline & NURBS spaces** — univariate and tensor-product
   {class}`~pantr.bspline.BsplineSpace`, exact rational geometry, evaluation and
   derivatives, knot insertion/removal, degree elevation, splitting.
-- **Bézier toolkit** — Bernstein/Bézier curves and patches, composition, products,
-  degree reduction, and Bernstein-polynomial root finding ({mod}`pantr.bezier`).
+- **Bézier toolkit** — Bernstein/Bézier curves and patches, composition, products and
+  degree reduction ({mod}`pantr.bezier`).
 - **Truncated hierarchical B-splines** — {class}`~pantr.bspline.THBSplineSpace` for
   adaptive local refinement, mirroring the tensor-product API.
 - **Constructive geometry** — lines, arcs, disks, cylinders, extrusion, revolution,

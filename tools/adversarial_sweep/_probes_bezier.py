@@ -1,4 +1,4 @@
-"""Probes for :mod:`pantr.bezier`: the Bezier surface, root finder and interpolation.
+"""Probes for :mod:`pantr.bezier`: the Bezier surface and interpolation.
 
 Bezier is fixed on the parametric domain ``[0, 1]^rank``, so unlike the B-spline
 probes the *domain* axis from ``_axes`` does not apply here -- there is no knot
@@ -8,18 +8,14 @@ control-point clouds (``1e6 + O(1)``), which is the one that catches a tolerance
 derived from a coordinate's own magnitude rather than from the control polygon's
 diagonal -- such a tolerance is not translation invariant.
 
-Two internals are probed directly rather than only through the public
-``Bezier`` surface, because they are the sharpest bounds targets in the package:
-
-- ``pantr._testing.de_casteljau_eval_scalar`` -- the root provider's C++ de
-  Casteljau kernel, with *no* input validation whatsoever.
-- ``pantr._testing.bernstein_interpolate`` -- the truncated-SVD fit on the
-  modified-Chebyshev grid (a route through ``fit_bezier``).
+One internal is probed directly rather than only through the public ``Bezier``
+surface, because it is a sharp bounds target: ``pantr._testing.bernstein_interpolate``,
+the truncated-SVD fit on the modified-Chebyshev grid (a route through ``fit_bezier``).
 
 Every invariant here is a genuinely claimed property quoted from the docstrings
 (degree elevation is exact, degree reduction reproduces the endpoints bit for
-bit, split/compose/multiply/derivative agree with their defining identities,
-root finding returns bounded genuine roots), never a mirror of the algorithm
+bit, split/compose/multiply/derivative agree with their defining identities),
+never a mirror of the algorithm
 under test. Tolerances are derived in-line from machine epsilon, degree, and
 coefficient magnitude -- see each helper's docstring for the derivation.
 """
@@ -27,19 +23,15 @@ coefficient magnitude -- see each helper's docstring for the derivation.
 from __future__ import annotations
 
 import math
-from fractions import Fraction
 from typing import TYPE_CHECKING, Any, Final
 
 import numpy as np
 import numpy.typing as npt
 
 from pantr._testing import bernstein_interpolate as _bernstein_interpolate
-from pantr._testing import de_casteljau_eval_scalar as _de_casteljau_eval_scalar
 from pantr.bezier import (
     Bezier,
     create_from_bspline,
-    find_monotone_root,
-    find_roots,
     fit_bezier,
     interpolate_bezier,
 )
@@ -60,7 +52,7 @@ from ._axes import (
 from ._core import Case, custom, expected_shape
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Iterator
 
     from ._core import Invariant
 
@@ -312,26 +304,6 @@ def _delta_failure(
     if worst > tol:
         return f"{name}: max|delta| = {worst:.3e} > {tol:.3e}"
     return None
-
-
-def _bernstein_eval_noise(
-    degree: int, dtype: npt.DTypeLike, cp: npt.NDArray[np.floating[Any]]
-) -> float:
-    """Bound the rounding noise of evaluating a degree-``n`` Bernstein polynomial.
-
-    The de Casteljau recurrence runs ``degree`` sequential lerp stages, each
-    contributing ``O(eps)`` relative to the running coefficient magnitude; an
-    explicit factor of 8 covers the unmodelled constant.
-
-    Args:
-        degree (int): Polynomial degree.
-        dtype (npt.DTypeLike): Working precision.
-        cp (npt.NDArray[np.floating[Any]]): Coefficients, for the magnitude scale.
-
-    Returns:
-        float: Absolute tolerance on ``|f(t)|`` for an alleged root ``t``.
-    """
-    return 8.0 * (degree + 1) * _eps(dtype) * _magnitude(cp)
 
 
 def _double_op_identity_invariant(original_cp: npt.NDArray[np.floating[Any]]) -> Invariant:
@@ -1700,383 +1672,6 @@ def _derivative_cases(profile: Profile) -> Iterator[Case]:
 
 
 # ---------------------------------------------------------------------------
-# Root finding
-# ---------------------------------------------------------------------------
-
-
-def _exact_bernstein_from_roots(
-    roots: Sequence[Fraction], dtype: np.dtype[np.float32 | np.float64]
-) -> npt.NDArray[np.float32 | np.float64]:
-    """Build exact Bernstein coefficients for a polynomial with known roots.
-
-    Expands ``prod_i (t - r_i)`` into power-basis coefficients using exact
-    rational arithmetic, converts to the Bernstein basis of the same degree via
-    the standard power-to-Bernstein change of basis (``b_j = sum_{i<=j}
-    C(j,i)/C(n,i) * a_i``, Farouki & Rajan 2012), and rounds to ``dtype`` once.
-    The algorithm under test never sees this derivation, so the resulting
-    coefficients are an independent root-finding oracle.
-
-    Args:
-        roots (Sequence[Fraction]): Distinct exact roots in ``(0, 1)``.
-        dtype (np.dtype[np.float32 | np.float64]): Target floating dtype.
-
-    Returns:
-        npt.NDArray[np.float32 | np.float64]: Bernstein coefficients, shape
-        ``(len(roots) + 1,)``.
-    """
-    n = len(roots)
-    poly: list[Fraction] = [Fraction(1)]
-    for r in roots:
-        new_poly = [Fraction(0)] * (len(poly) + 1)
-        for i, c in enumerate(poly):
-            new_poly[i] += c * (-r)
-            new_poly[i + 1] += c
-        poly = new_poly
-
-    bernstein: list[Fraction] = []
-    for j in range(n + 1):
-        acc = Fraction(0)
-        for i in range(j + 1):
-            acc += Fraction(math.comb(j, i), math.comb(n, i)) * poly[i]
-        bernstein.append(acc)
-
-    return np.array([float(v) for v in bernstein], dtype=dtype)
-
-
-def _well_separated_roots(n: int) -> list[Fraction]:
-    """Build ``n`` roots evenly spaced in ``(0, 1)``, well separated.
-
-    Args:
-        n (int): Number of roots.
-
-    Returns:
-        list[Fraction]: Exact roots ``k / (n + 1)`` for ``k = 1, ..., n``.
-    """
-    return [Fraction(k, n + 1) for k in range(1, n + 1)]
-
-
-def _clustered_roots(n: int) -> list[Fraction]:
-    """Build ``n`` roots with one nearly-duplicate pair (a known dedup edge case).
-
-    Args:
-        n (int): Number of roots, ``>= 2``.
-
-    Returns:
-        list[Fraction]: Exact roots, mostly well separated but with two
-        roots ``1e-6`` apart.
-    """
-    roots = _well_separated_roots(n)
-    roots[-1] = roots[-2] + Fraction(1, 1_000_000)
-    return roots
-
-
-def _monotone_control_points(
-    degree: int, dtype: np.dtype[np.float32 | np.float64], *, sign_change: bool
-) -> npt.NDArray[np.float32 | np.float64]:
-    """Build control points for a Bezier certified monotone by construction.
-
-    Strictly increasing control points guarantee a monotone Bezier: the
-    hodograph's control points are positive multiples of the (all-positive)
-    forward differences, so the derivative never changes sign. This is an
-    independent sufficient condition, not the algorithm's own logic.
-
-    Args:
-        degree (int): Polynomial degree.
-        dtype (np.dtype[np.float32 | np.float64]): Target floating dtype.
-        sign_change (bool): If ``True``, the ramp crosses zero (root exists);
-            if ``False``, it stays strictly positive (no root).
-
-    Returns:
-        npt.NDArray[np.float32 | np.float64]: Control points, shape ``(degree + 1, 1)``.
-    """
-    lo, hi = (-1.0, 1.0) if sign_change else (0.2, 1.0)
-    return np.linspace(lo, hi, degree + 1, dtype=dtype).reshape(-1, 1)
-
-
-def _roots_bounded_invariant(bezier: Bezier) -> Invariant:
-    """Build the invariant that ``find_roots`` returns bounded, genuine roots.
-
-    Args:
-        bezier (Bezier): The curve whose roots are being found.
-
-    Returns:
-        Invariant: Check enforcing the count bound, containment, and residual.
-    """
-    degree = bezier.degree[0]
-    cp = bezier.control_points[:, 0]
-    bound = _bernstein_eval_noise(degree, bezier.dtype, cp)
-
-    def predicate(result: object) -> str | None:
-        roots = np.asarray(result)
-        if roots.ndim != 1:
-            return f"expected a 1D roots array, got shape {roots.shape}"
-        if roots.size > max(degree, 1):
-            return f"found {roots.size} roots but degree is {degree}"
-        if roots.size and (np.any(roots < 0.0) or np.any(roots > 1.0)):
-            return f"root outside [0, 1]: {roots}"
-        if roots.size:
-            vals = np.atleast_1d(bezier.evaluate(roots.astype(bezier.dtype)))
-            worst = float(np.max(np.abs(vals)))
-            if worst > bound:
-                return f"max|f(root)| = {worst:.3e} > {bound:.3e}"
-        return None
-
-    return custom("roots-bounded-and-genuine", predicate)
-
-
-def _root_finding_cases(profile: Profile) -> Iterator[Case]:
-    """Yield :func:`~pantr.bezier.find_roots` and :func:`~pantr.bezier.find_monotone_root` cases.
-
-    Invariant 7: at most ``degree`` roots, each in ``[0, 1]``, each a genuine
-    root to the derived noise floor. Invariant 8: on a monotone sign-changing
-    curve, a bounded root; on a non-crossing one, the documented ``NaN`` sentinel.
-
-    Args:
-        profile (Profile): Sweep width.
-
-    Yields:
-        Case: One hostile root-finding call.
-    """
-    root_degrees = (3, 5, 8, 15, 61) if profile is Profile.FULL else (3,)
-    for dtype in dtypes(profile):
-        for n in root_degrees:
-            coeff = _exact_bernstein_from_roots(_well_separated_roots(n), dtype)
-            bezier = Bezier(coeff.reshape(-1, 1))
-            yield Case(
-                GROUP,
-                f"find_roots_well_separated_n{n}_{dtype}",
-                find_roots,
-                lambda bezier=bezier: find_roots(bezier),
-                {"n_roots": n, "dtype": str(dtype), "kind": "well-separated"},
-                invariants=(_roots_bounded_invariant(bezier),),
-                arrays={"coefficients": coeff},
-                # `find_roots` refuses exactly four things: a non-Bezier, `dim != 1`,
-                # `rank != 1`, and a non-positive `tol` (plus uneven degrees in batch
-                # mode). Every crossing in this function is a scalar 1-D curve at the
-                # default `tol`, so none applies and any exception is a finding.
-                must_succeed=True,
-            )
-
-        if profile is Profile.FULL:
-            for n in (5, 8):
-                coeff = _exact_bernstein_from_roots(_clustered_roots(n), dtype)
-                bezier = Bezier(coeff.reshape(-1, 1))
-                yield Case(
-                    GROUP,
-                    f"find_roots_clustered_n{n}_{dtype}",
-                    find_roots,
-                    lambda bezier=bezier: find_roots(bezier),
-                    {"n_roots": n, "dtype": str(dtype), "kind": "clustered-known-dedup-edge-case"},
-                    invariants=(_roots_bounded_invariant(bezier),),
-                    arrays={"coefficients": coeff},
-                    must_succeed=True,
-                )
-
-        # Degenerate: identically zero (every point is a root).
-        zero_cp = np.zeros((5, 1), dtype=dtype)
-        zero_bezier = Bezier(zero_cp)
-        yield Case(
-            GROUP,
-            f"find_roots_identically_zero_{dtype}",
-            find_roots,
-            lambda zero_bezier=zero_bezier: find_roots(zero_bezier),
-            {"dtype": str(dtype), "kind": "identically-zero"},
-            # An identically-zero polynomial is a legal scalar 1-D curve, so the call
-            # must return. *What* it should return is genuinely unspecified -- every
-            # point is a root, and the docstring says only "Empty if no roots exist" --
-            # so no invariant is asserted, deliberately.
-            must_succeed=True,
-        )
-
-        for degree in (3, 15) if profile is Profile.FULL else (3,):
-            mono_cp = _monotone_control_points(degree, dtype, sign_change=True)
-            mono_bezier = Bezier(mono_cp)
-            bound = _bernstein_eval_noise(degree, dtype, mono_cp[:, 0])
-            yield Case(
-                GROUP,
-                f"find_monotone_root_crossing_p{degree}_{dtype}",
-                find_monotone_root,
-                lambda mono_bezier=mono_bezier: find_monotone_root(mono_bezier),
-                {"degree": degree, "dtype": str(dtype), "kind": "sign-change"},
-                invariants=(
-                    custom(
-                        "monotone-root-bounded",
-                        lambda r, mono_bezier=mono_bezier, bound=bound: _monotone_root_failure(
-                            r, mono_bezier, bound, expect_root=True
-                        ),
-                    ),
-                ),
-                arrays={"control_points": mono_cp},
-                must_succeed=True,
-            )
-
-            no_cross_cp = _monotone_control_points(degree, dtype, sign_change=False)
-            no_cross_bezier = Bezier(no_cross_cp)
-            yield Case(
-                GROUP,
-                f"find_monotone_root_no_crossing_p{degree}_{dtype}",
-                find_monotone_root,
-                lambda no_cross_bezier=no_cross_bezier: find_monotone_root(no_cross_bezier),
-                {"degree": degree, "dtype": str(dtype), "kind": "no-sign-change"},
-                invariants=(
-                    custom(
-                        "monotone-root-nan-sentinel",
-                        lambda r, no_cross_bezier=no_cross_bezier: _monotone_root_failure(
-                            r, no_cross_bezier, 0.0, expect_root=False
-                        ),
-                    ),
-                ),
-                finite_inputs=False,
-                # `NaN` is the documented *return* for "no sign change across the
-                # interval", not a refusal, so this must succeed too.
-                arrays={"control_points": no_cross_cp},
-                must_succeed=True,
-            )
-
-        if profile is Profile.FULL:
-            # Batch mode: same-degree sequence.
-            batch = [
-                Bezier(_exact_bernstein_from_roots(_well_separated_roots(4), dtype).reshape(-1, 1))
-                for _ in range(3)
-            ]
-            yield Case(
-                GROUP,
-                f"find_roots_batch_{dtype}",
-                find_roots,
-                lambda batch=batch: find_roots(batch),
-                {"n_polys": len(batch), "dtype": str(dtype), "kind": "batch"},
-                invariants=(
-                    custom(
-                        "batch-roots-bounded",
-                        lambda r, batch=batch: _batch_roots_failure(r, batch),
-                    ),
-                ),
-                must_succeed=True,  # a uniform-degree batch, which batch mode requires
-            )
-            mono_batch = [
-                Bezier(_monotone_control_points(4, dtype, sign_change=True)) for _ in range(3)
-            ]
-            yield Case(
-                GROUP,
-                f"find_monotone_root_batch_{dtype}",
-                find_monotone_root,
-                lambda mono_batch=mono_batch: find_monotone_root(mono_batch),
-                {"n_polys": len(mono_batch), "dtype": str(dtype), "kind": "batch"},
-                invariants=(expected_shape((len(mono_batch),)),),
-                must_succeed=True,
-            )
-
-    # Documented rejections: "TypeError: If bezier is not a Bezier instance (or sequence
-    # thereof)" and "ValueError: If any Bezier has dim != 1 or rank != 1, or tol is not
-    # positive. In batch mode, also raised if degrees are not uniform."
-    yield Case(
-        GROUP,
-        "find_roots_wrong_type",
-        find_roots,
-        lambda: find_roots(42),
-        {"kind": "not-a-bezier"},
-        must_reject=True,
-    )
-    surface = Bezier(_random_control_points(1, 2, 2, np.dtype(np.float64), offset=13900))
-    yield Case(
-        GROUP,
-        "find_roots_wrong_dim",
-        find_roots,
-        lambda: find_roots(surface),
-        {"kind": "dim-not-1"},
-        must_reject=True,
-    )
-    vector_curve = Bezier(_random_control_points(2, 1, 2, np.dtype(np.float64), offset=13901))
-    yield Case(
-        GROUP,
-        "find_roots_wrong_rank",
-        find_roots,
-        lambda: find_roots(vector_curve),
-        {"kind": "rank-not-1"},
-        must_reject=True,
-    )
-    scalar_curve = Bezier(_random_control_points(1, 1, 2, np.dtype(np.float64), offset=13902))
-    yield Case(
-        GROUP,
-        "find_roots_nonpositive_tol",
-        find_roots,
-        lambda: find_roots(scalar_curve, tol=0.0),
-        {"kind": "nonpositive-tol"},
-        must_reject=True,
-    )
-    uneven_batch = [
-        Bezier(_random_control_points(1, 1, 2, np.dtype(np.float64), offset=13903)),
-        Bezier(_random_control_points(1, 1, 3, np.dtype(np.float64), offset=13904)),
-    ]
-    yield Case(
-        GROUP,
-        "find_roots_batch_uneven_degree",
-        find_roots,
-        lambda: find_roots(uneven_batch),
-        {"kind": "uneven-batch-degree"},
-        must_reject=True,
-    )
-
-
-def _monotone_root_failure(
-    result: object, bezier: Bezier, bound: float, *, expect_root: bool
-) -> str | None:
-    """Check a monotone-root result against its expected sentinel/bounded-root behavior.
-
-    Args:
-        result (object): The value returned by ``find_monotone_root``.
-        bezier (Bezier): The curve the root was sought on.
-        bound (float): Residual bound (ignored when ``expect_root`` is ``False``).
-        expect_root (bool): Whether a genuine root is expected.
-
-    Returns:
-        str | None: ``None`` when the result matches expectations, else a message.
-    """
-    if not expect_root:
-        if isinstance(result, float) and math.isnan(result):
-            return None
-        return f"expected NaN, got {result!r}"
-    if not isinstance(result, float) or not (0.0 <= result <= 1.0):
-        return f"root {result!r} not a float in [0, 1]"
-    val = float(np.atleast_1d(bezier.evaluate(np.array([result], dtype=bezier.dtype)))[0])
-    if abs(val) > bound:
-        return f"|f(root)| = {abs(val):.3e} > {bound:.3e}"
-    return None
-
-
-def _batch_roots_failure(
-    result: tuple[npt.NDArray[np.float64], npt.NDArray[np.intp]], batch: Sequence[Bezier]
-) -> str | None:
-    """Check the batch ``find_roots`` result against the count/containment/residual invariant.
-
-    Args:
-        result (tuple[npt.NDArray[np.float64], npt.NDArray[np.intp]]): The
-            ``(roots, counts)`` pair returned in batch mode.
-        batch (Sequence[Bezier]): The curves that were searched.
-
-    Returns:
-        str | None: ``None`` when every curve's roots are bounded and genuine,
-        else the first failure message.
-    """
-    roots, counts = result
-    for i, bezier in enumerate(batch):
-        degree = bezier.degree[0]
-        count = int(counts[i])
-        if count > degree:
-            return f"poly {i}: found {count} roots but degree is {degree}"
-        row = roots[i, :count]
-        if count and (np.any(row < 0.0) or np.any(row > 1.0)):
-            return f"poly {i}: root outside [0, 1]: {row}"
-        if count:
-            bound = _bernstein_eval_noise(degree, bezier.dtype, bezier.control_points[:, 0])
-            vals = np.atleast_1d(bezier.evaluate(row.astype(bezier.dtype)))
-            worst = float(np.max(np.abs(vals)))
-            if worst > bound:
-                return f"poly {i}: max|f(root)| = {worst:.3e} > {bound:.3e}"
-    return None
-
-
-# ---------------------------------------------------------------------------
 # Reverse, permute, transform
 # ---------------------------------------------------------------------------
 
@@ -2655,51 +2250,6 @@ def _monomial_reproduction_failure(result: object, k: int) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def _de_casteljau_kernel_cases(profile: Profile) -> Iterator[Case]:
-    """Yield direct probes of ``_de_casteljau_eval_scalar``.
-
-    The root provider's de Casteljau kernel (C++, reached through ``pantr._testing``), which
-    validates nothing itself; its probe binding refuses an empty ``coeff`` before the kernel
-    reads ``coeff[0]``.
-
-    Args:
-        profile (Profile): Sweep width.
-
-    Yields:
-        Case: One hostile kernel call.
-    """
-    for dtype in dtypes(profile):
-        for length, name in ((0, "len0"), (1, "len1"), (63, "len63")):
-            coeff = np.linspace(-1.0, 1.0, length, dtype=dtype)
-            yield Case(
-                GROUP,
-                f"de_casteljau_{name}_{dtype}",
-                _de_casteljau_eval_scalar,
-                lambda coeff=coeff: _de_casteljau_eval_scalar(coeff, 0.5),
-                {"length": length, "dtype": str(dtype), "t": 0.5},
-                arrays={"coeff": coeff},
-                # `length == 0` is outside the kernel's contract: the probe binding refuses it
-                # with a ValueError (a clean refusal). The other lengths are in contract.
-                must_succeed=length > 0,
-            )
-
-        coeff5 = np.linspace(-1.0, 1.0, 5, dtype=dtype)
-        for t, finite in ((-5.0, True), (5.0, True), (float("nan"), False), (float("inf"), False)):
-            yield Case(
-                GROUP,
-                f"de_casteljau_t{t}_{dtype}",
-                _de_casteljau_eval_scalar,
-                lambda coeff5=coeff5, t=t: _de_casteljau_eval_scalar(coeff5, t),
-                {"t": t, "dtype": str(dtype)},
-                finite_inputs=finite,
-                arrays={"coeff": coeff5},
-                # The kernel restricts `t` to nothing at all -- de Casteljau is a
-                # polynomial evaluation valid for any real parameter -- so an
-                # out-of-domain or non-finite `t` must still return.
-                must_succeed=True,
-            )
-
-
 def _bernstein_interpolate_kernel_cases(profile: Profile) -> Iterator[Case]:
     """Yield direct probes of ``_bernstein_interpolate``.
 
@@ -2911,13 +2461,11 @@ def cases(profile: Profile) -> Iterator[Case]:
     yield from _compose_cases(profile)
     yield from _multiply_cases(profile)
     yield from _derivative_cases(profile)
-    yield from _root_finding_cases(profile)
     yield from _reverse_permute_transform_cases(profile)
     yield from _slice_boundary_cases(profile)
     yield from _collapse_along_axis_cases(profile)
     yield from _to_bspline_cases(profile)
     yield from _interpolate_fit_cases(profile)
-    yield from _de_casteljau_kernel_cases(profile)
     yield from _bernstein_interpolate_kernel_cases(profile)
     yield from _coeff_family_cases(profile)
     yield from _rational_weight_cases(profile)

@@ -11,10 +11,9 @@ How the routes were enumerated: every binding that hands an int64 array to Pytho
 ``to_numpy``, ``copy_to_numpy`` or a read-only view (``bindings/src/arrays.hpp``); each call site
 of those with an ``int64`` element type was traced to the public names that expose it (a
 ``std::vector`` of integers crosses as a list and is not an array). Routes whose wrapper rebuilds
-the array in Python (``tabulate_basis`` first indices, ``to_dense``, ``cell_supports``, the
-batched Bezier root counts) are included as controls. Every call's whole result is then walked,
-tuples, lists, dicts and named-tuple fields included, so an int64 array the census missed inside a
-result still fails here.
+the array in Python (``tabulate_basis`` first indices, ``to_dense``, ``cell_supports``) are
+included as controls. Every call's whole result is then walked, tuples, lists, dicts and
+named-tuple fields included, so an int64 array the census missed inside a result still fails here.
 """
 
 from __future__ import annotations
@@ -27,7 +26,6 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
-import pantr.bezier as bz
 import pantr.bspline as bs
 import pantr.grid as gr
 from pantr.geometry import AABB
@@ -122,7 +120,7 @@ def _grid_routes() -> dict[str, Callable[[], object]]:
 
 
 def _bspline_routes() -> dict[str, Callable[[], object]]:
-    """The public B-spline, root and distributed calls, by name."""
+    """The public B-spline and distributed calls, by name."""
     routes: dict[str, Callable[[], object]] = {}
     sp1 = bs.BsplineSpace1D([0, 0, 0, 1, 2, 2, 2], 2)
     routes["BsplineSpace1D.first_basis_per_interval"] = sp1.first_basis_per_interval
@@ -164,9 +162,6 @@ def _bspline_routes() -> dict[str, Callable[[], object]]:
         return (ds.owned_cells, tuple(local))
 
     routes["DistributedSpace"] = distributed
-    routes["bezier.find_roots(batch)"] = lambda: bz.find_roots(
-        [bz.Bezier([1.0, -1.0]), bz.Bezier([-1.0, 2.0])]
-    )
 
     u, v = np.meshgrid([0.0, 0.5, 1.0], [0.0, 0.5, 1.0], indexing="ij")
     surface = bs.Bspline(bs.create_uniform_space(1, [2, 2]), np.stack([u, v], axis=-1))

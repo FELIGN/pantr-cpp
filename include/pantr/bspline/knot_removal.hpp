@@ -272,8 +272,8 @@ template <StorageFloat T>
 /// Raises:
 ///     value_error: Any weight is non-positive. The conversion divides by the weights to recover
 ///         `|P|_max`, and a zero weight has no projected point to convert to; the same
-///         precondition is checked by `locate` and `find_roots`, and stating it here is what keeps
-///         a degenerate weight from silently producing `TOL = 0` and refusing every removal in the
+///         precondition is checked by `locate`, and stating it here is what keeps a degenerate
+///         weight from silently producing `TOL = 0` and refusing every removal in the
 ///         direction.
 template <StorageFloat T>
 [[nodiscard]] double homogeneous_deviation_tolerance(std::span<const T> ctrl, std::size_t cols,

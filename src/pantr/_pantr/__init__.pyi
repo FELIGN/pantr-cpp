@@ -11,7 +11,6 @@ from pantr._pantr import grid as grid
 from pantr._pantr import mpi as mpi
 from pantr._pantr import multipatch as multipatch
 from pantr._pantr import quad as quad
-from pantr._pantr import roots as roots
 from pantr._pantr import tolerance as tolerance
 from pantr._pantr import transform as transform
 

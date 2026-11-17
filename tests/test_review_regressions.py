@@ -21,7 +21,6 @@ import pytest
 
 from pantr._testing import thb_dof_owner as _thb_dof_owner
 from pantr.basis import tabulate_bernstein_1d
-from pantr.bezier import Bezier, find_roots
 from pantr.bspline import (
     Bspline,
     BsplineSpace,
@@ -35,7 +34,6 @@ from pantr.bspline import (
     dof_owner,
     l2_project_bspline,
 )
-from pantr.change_basis import compute_monomial_to_bernstein_1d
 from pantr.grid import HierarchicalGrid, Partition, tensor_product_grid, uniform_grid
 from pantr.quad import PointsLattice, get_chebyshev_gauss_2nd_kind_1d
 from pantr.viz._vtk_ordering import vtk_ordering_hex, vtk_ordering_quad
@@ -89,45 +87,6 @@ def _cell_points(
     lo, hi = space.grid.cell_bounds(cid)
     pts: npt.NDArray[np.float64] = lo + (hi - lo) * rng.uniform(0.05, 0.95, size=(n_pts, space.dim))
     return pts
-
-
-def _bernstein_degree6_from_roots(
-    roots: list[float], extra_monomial: list[float] | None = None
-) -> npt.NDArray[np.float64]:
-    """Bernstein coefficients of the monic polynomial with the given roots."""
-    mono = np.polynomial.polynomial.polyfromroots(roots)
-    if extra_monomial is not None:
-        mono = np.polynomial.polynomial.polymul(mono, extra_monomial)
-    matrix = np.asarray(compute_monomial_to_bernstein_1d(len(mono) - 1), dtype=np.float64)
-    coeffs: npt.NDArray[np.float64] = matrix @ np.asarray(mono, dtype=np.float64)
-    return coeffs
-
-
-# ---------------------------------------------------------------------------
-# Known-bug regressions: bezier root finding
-# ---------------------------------------------------------------------------
-
-
-def test_find_roots_double_root_at_zero_keeps_other_roots() -> None:
-    # f(t) = t^2 (t - 0.5) (t + 1) (t^2 + 1): roots in [0, 1] are 0 (double) and 0.5.
-    coeffs = _bernstein_degree6_from_roots([0.0, 0.0, 0.5, -1.0], [1.0, 0.0, 1.0])
-    roots = np.asarray(find_roots(Bezier(coeffs)), dtype=np.float64)
-    assert np.any(np.abs(roots - 0.5) < 1e-6), f"root at 0.5 missing: {roots!r}"
-    assert np.any(np.abs(roots) < 1e-6), f"root at 0 missing: {roots!r}"
-
-
-def test_find_roots_batch_multiple_double_roots_within_degree() -> None:
-    # f(t) = t^2 (t - 0.3)^2 (t - 0.7)^2, degree 6, three double roots.
-    coeffs = _bernstein_degree6_from_roots([0.0, 0.0, 0.3, 0.3, 0.7, 0.7])
-    result = find_roots([Bezier(coeffs), Bezier(coeffs)])
-    assert isinstance(result, tuple)
-    roots, counts = result
-    degree = coeffs.shape[0] - 1
-    for row in range(2):
-        count = int(counts[row])
-        assert count <= degree
-        row_roots = np.sort(np.asarray(roots[row][:count], dtype=np.float64))
-        np.testing.assert_allclose(row_roots, [0.0, 0.3, 0.7], atol=1e-6)
 
 
 # ---------------------------------------------------------------------------

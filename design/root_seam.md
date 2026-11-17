@@ -1,5 +1,12 @@
 # The root-finding seam
 
+**Status (2026-11-17).** By the maintainer's decision the tree has no root provider and no built-in
+finder: `include/pantr/roots/`, the `Builtin` provider, `pantr.bezier.find_roots`,
+`find_monotone_root`, `set_root_provider`, `get_root_provider` and `pantr.bspline.find_roots` were
+removed. This record stays as the design the BeRF-FR provider (issue #22) builds; where it
+describes the `Builtin` provider or the code under `include/pantr/roots/`, it describes what was
+removed.
+
 Decision record for how pantr finds the roots of a Bernstein polynomial and how another root
 finder (BeRF-FR, through the `pantr-berf` package) plugs in. Expensive to reverse because the
 claim and completeness codes are a wire format between extension modules, and every caller of

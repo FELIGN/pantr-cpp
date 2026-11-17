@@ -11,7 +11,7 @@ for worked examples; this page is the exhaustive contract.
 | {mod}`pantr.bspline` | B-spline / NURBS / THB spaces and geometry; knots, refinement, extraction | {doc}`/guide/spaces-knots` |
 | {mod}`pantr.basis` | tabulate 1-D polynomial bases (Bernstein, Lagrange, Legendre, cardinal) | {doc}`/tutorials/06_polynomial_bases` |
 | {mod}`pantr.change_basis` | exact change-of-basis matrices between those bases | {doc}`/tutorials/06_polynomial_bases` |
-| {mod}`pantr.bezier` | single-patch Bézier geometry and Bernstein root finding | {doc}`/tutorials/07_bezier_and_roots` |
+| {mod}`pantr.bezier` | single-patch Bézier geometry | {doc}`/tutorials/03_knot_operations` |
 | {mod}`pantr.cad` | constructive geometry: primitives + operations | {doc}`/guide/cad` |
 | {mod}`pantr.transform` | affine transforms acting exactly on control points | {doc}`/tutorials/10_transforms` |
 | {mod}`pantr.geometry` | the {class}`~pantr.geometry.AABB` box primitive | {doc}`/guide/concepts` |
