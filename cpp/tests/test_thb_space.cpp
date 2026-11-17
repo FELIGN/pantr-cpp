@@ -674,12 +674,16 @@ TEST_CASE("THBSplineSpace: regularity -1 derivatives at a cell's upper edge are 
   for (I64 cid = 0; cid < space.grid().num_cells(); ++cid) {
     CAPTURE(cid);
     const auto [lo, hi] = space.grid().cell_bounds(cid);
-    const pantr::thb::TabulatedBasis at = tabulate(space, cid, {hi[0]}, {1});
-    const pantr::thb::TabulatedBasis in = tabulate(space, cid, {hi[0] - 1e-10}, {1});
-    REQUIRE(at.dofs.size() == in.dofs.size());
-    for (std::size_t j = 0; j < at.dofs.size(); ++j) {
-      CAPTURE(j);
-      CHECK(std::abs(at.values.data()[j] - in.values.data()[j]) <= 1e-6);
+    // Order 0 as well, per function: |f'| <= 3 * 2 / w = 48, so h |f'| <= 4.8e-9.
+    for (const I64 order : {I64{0}, I64{1}}) {
+      CAPTURE(order);
+      const pantr::thb::TabulatedBasis at = tabulate(space, cid, {hi[0]}, {order});
+      const pantr::thb::TabulatedBasis in = tabulate(space, cid, {hi[0] - 1e-10}, {order});
+      REQUIRE(at.dofs.size() == in.dofs.size());
+      for (std::size_t j = 0; j < at.dofs.size(); ++j) {
+        CAPTURE(j);
+        CHECK(std::abs(at.values.data()[j] - in.values.data()[j]) <= 1e-6);
+      }
     }
   }
 }

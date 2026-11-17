@@ -162,3 +162,14 @@ def test_a_zero_divisor_in_the_band_beside_a_sub_tolerance_span_raises() -> None
     curve = Bspline(BsplineSpace([space]), np.arange(4.0))
     with pytest.raises(ZeroDivisionError):
         curve.evaluate_derivatives(np.array([-1e-15]), [1])
+
+
+def test_a_nan_parameter_beside_a_heavy_end_gives_a_nan_blossom() -> None:
+    """A NaN parameter lands past the last span and takes the same walk to a non-empty span.
+
+    On the empty last span the recurrence's zero denominators set the weight to 0 and returned a
+    control point, a plausible value for an invalid input; on ``[1, 2)`` the NaN propagates.
+    """
+    cp = np.arange(1.0, 7.0).reshape(-1, 1)
+    got = evaluate_blossom_1d(_RIGHT_HEAVY, _P, cp, np.array([1.5, np.nan]), 8.0 * _EPS)
+    assert np.isnan(got).all()
