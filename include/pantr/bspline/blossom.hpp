@@ -33,14 +33,15 @@ namespace detail {
 /// knots[idx + 1]` returns, repeated knots included, because that first match is the last
 /// occurrence of the span's left knot. A `u_last` past span `n` (at or beyond the domain end, or
 /// past the domain of a non-clamped knot vector) returns the last non-empty span at most `n` and
-/// at least `degree`: `n` itself unless the end knot is repeated `degree + 1` times before a
-/// trailing knot, where `n` is empty (the linear scan this replaced returned `n` there, and the
-/// recurrence then met zero denominators and returned a control point). A NaN is ordered after
-/// every knot, as NumPy orders it, so it lands past the last span. A `u_last` below the first knot
-/// (the public entry point accepts parameters up to its tolerance outside the domain) returns the
-/// span of the first knot itself, the one `knots[0]` gets: `degree` for a clamped vector, the first
-/// non-empty span when the first knot is repeated more often. The linear scan fell through to `n`
-/// there, giving the blossom of the end of the curve.
+/// at least `degree`: `n` itself unless `knots[n] == knots[n + 1]`, where `n` is empty (as an end
+/// knot repeated `degree + 1` times before a trailing knot gives; the linear scan this replaced
+/// returned `n` there, and the recurrence then met zero denominators and returned a control point).
+/// A NaN is ordered after every knot, as NumPy orders it, so it lands past the last span and takes
+/// the same walk. A `u_last` below the first knot (the public entry point accepts parameters up to
+/// its tolerance outside the domain) returns the span of the first knot itself, the one `knots[0]`
+/// gets: `degree` for a clamped vector, the first non-empty span when the first knot is repeated
+/// more often. The linear scan fell through to `n` there, giving the blossom of the end of the
+/// curve.
 ///
 /// Args:
 ///     knots (std::span<const T>): Non-decreasing knot vector.
@@ -54,9 +55,7 @@ namespace detail {
 ///     Inputs are assumed to be correct (no validation performed).
 template <StorageFloat T>
 [[nodiscard]] std::ptrdiff_t blossom_span(std::span<const T> knots, T u_last, std::ptrdiff_t n) {
-  if (std::isnan(u_last)) {
-    return n;
-  }
+  // `upper_bound` puts a NaN past every knot (each comparison with it is false).
   const auto above = std::upper_bound(knots.begin(), knots.end(), u_last);
   const std::ptrdiff_t span = (above - knots.begin()) - 1;
   if (span < 0) {
