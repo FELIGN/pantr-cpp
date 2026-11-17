@@ -45,8 +45,6 @@
 #include "pantr/basis/legendre.hpp"
 #include "pantr/basis/tabulate.hpp"
 
-#include "pantr/roots/roots.hpp"
-
 #include "pantr/bezier/bezier.hpp"
 #include "pantr/bezier/compose.hpp"
 #include "pantr/bezier/derivative.hpp"
@@ -80,7 +78,6 @@
 #include "pantr/bspline/quasi_interpolate.hpp"
 #include "pantr/bspline/reparametrize.hpp"
 #include "pantr/bspline/restrict.hpp"
-#include "pantr/bspline/roots.hpp"
 #include "pantr/bspline/slice.hpp"
 #include "pantr/bspline/space.hpp"
 #include "pantr/bspline/space_1d.hpp"

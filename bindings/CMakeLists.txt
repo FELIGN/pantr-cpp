@@ -75,7 +75,7 @@ endif()
 
 set(_pantr_ext_sources src/module.cpp src/parallel.cpp src/testing.cpp src/quad.cpp src/basis.cpp
                        src/change_basis.cpp src/geometry.cpp
-                       src/bezier.cpp src/bezier_approx.cpp src/roots.cpp src/bspline.cpp
+                       src/bezier.cpp src/bezier_approx.cpp src/bspline.cpp
                        src/bspline_ops.cpp src/bspline_refine.cpp src/bspline_modify.cpp
                        src/bspline_extract.cpp src/bspline_spanwise.cpp src/bspline_product.cpp
                        src/bspline_fit.cpp src/bspline_locate.cpp src/grid.cpp

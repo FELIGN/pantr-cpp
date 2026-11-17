@@ -26,7 +26,6 @@ set(_pantr_test_sources
     test_bezier_subdivide.cpp
     test_bezier_reduce.cpp
     test_bezier_fit.cpp
-    test_roots.cpp
     test_geometry.cpp
     test_transform.cpp
     test_grid_index_bvh.cpp
@@ -50,7 +49,6 @@ set(_pantr_test_sources
     test_bspline_mode_product.cpp
     test_bspline_extraction.cpp
     test_bspline_to_beziers.cpp
-    test_bspline_roots.cpp
     test_bspline_product.cpp
     test_bspline_fit.cpp
     test_bspline_locate.cpp
