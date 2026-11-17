@@ -52,7 +52,6 @@ from pantr.bspline import (
     create_uniform_open_knots,
     create_uniform_periodic_knots,
     create_uniform_space,
-    find_roots,
     get_greville_abscissae,
     interpolate_bspline,
     quasi_interpolate_bspline,
@@ -544,75 +543,6 @@ def _monotone_index_ladder(space: BsplineSpace1D) -> Predicate:
             return f"{diffs.size} successive differences for {interior.size} interior knots"
         if not np.array_equal(diffs, interior):
             return f"differences {diffs.tolist()} != interior multiplicities {interior.tolist()}"
-        return None
-
-    return predicate
-
-
-def _root_quality(spline: Bspline, degree: int, dtype: npt.DTypeLike) -> Predicate:
-    """Build a predicate for the three things a root list must satisfy.
-
-    A degree-``n`` polynomial has at most ``n`` roots per interval, and a spline with
-    ``k`` intervals therefore at most ``degree * k``; more than that is a defect no
-    conditioning argument excuses. Each root must lie in the domain, and each must be an
-    actual root.
-
-    "An actual root" needs two terms, not one. The first is the evaluation noise: de Boor
-    evaluation of a degree-``n`` spline with coefficients of magnitude ``cs`` carries about
-    ``n * eps * cs``. The second is the root finder's own stopping criterion, which the
-    original bound omitted. ``find_roots`` documents ``tol`` as a *parametric* tolerance --
-    the iteration stops when the spread of the last ``degree`` iterates falls to
-    ``tol * max(|t_a|, |t_{a+degree}|, domain_length)`` -- so a root located to ``dt`` in
-    the parameter leaves a residual of about ``|f'| * dt``, about which the evaluation
-    noise says nothing. Bounding the derivative by ``degree * max|delta c| / h_min``, the
-    standard Lipschitz bound read off the hodograph's control points, closes the gap.
-
-    Both terms are needed and neither is slack. With only the first, a genuine root located
-    to a few ulps of parametric precision was reported as a defect at degree 62 -- residual
-    1.7e-13 against a bound of 1.1e-13, where the corrected bound is 6.1e-13. With the
-    second added the check still refutes what it should: a returned value with no zero
-    anywhere near it, off by 0.03 in the parameter, exceeds the corrected bound by a factor
-    of 6.7e11.
-
-    Args:
-        spline (Bspline): The spline whose roots were requested.
-        degree (int): Polynomial degree.
-        dtype (npt.DTypeLike): Working precision.
-
-    Returns:
-        Predicate: Check for :func:`adversarial_sweep._core.custom`.
-    """
-    space = spline.space.spaces[0]
-    knots = np.asarray(space.knots, dtype=np.float64)
-    lo = float(knots[degree])
-    hi = float(knots[knots.size - degree - 1])
-    limit = degree * space.num_intervals
-    control = np.asarray(spline.control_points, dtype=np.float64)
-    scale = float(np.max(np.abs(control)))
-    eps = get_machine_epsilon(dtype)
-    evaluation_noise = _ERROR_SAFETY_FACTOR * (degree + 1) * eps * max(scale, 1.0)
-    # `find_roots` defaults `tol` to `get_strict(dtype)`, which is `eps` to within the
-    # safety factor this bound already carries, times the scale its docstring names.
-    parametric_tol = eps * max(abs(lo), abs(hi), hi - lo)
-    slope_bound = (
-        degree * float(np.max(np.abs(np.diff(control, axis=0)))) / _min_nonzero_span(space)
-        if degree > 0 and control.shape[0] > 1
-        else 0.0
-    )
-    residual_tol = evaluation_noise + _ERROR_SAFETY_FACTOR * slope_bound * parametric_tol
-
-    def predicate(result: object) -> str | None:
-        roots = np.asarray(result, dtype=np.float64).ravel()
-        if roots.size > limit:
-            return f"{roots.size} roots for degree {degree} on {space.num_intervals} intervals"
-        if roots.size == 0:
-            return None
-        if float(np.min(roots)) < lo or float(np.max(roots)) > hi:
-            return f"roots outside the domain [{lo:g}, {hi:g}]: {roots.tolist()}"
-        values = np.asarray(spline.evaluate(roots.astype(spline.dtype)), dtype=np.float64)
-        worst = float(np.max(np.abs(values)))
-        if worst > residual_tol:
-            return f"max|f(root)| = {worst:.3e} > {residual_tol:.3e}"
         return None
 
     return predicate
@@ -1187,25 +1117,6 @@ def _try_elevate(curve: Bspline) -> Bspline | None:
         return None
 
 
-def _sign_alternating_curve(fixture: _Fixture) -> Bspline:
-    """Build a scalar spline whose control points alternate in sign.
-
-    Alternating signs guarantee sign changes for the root finder to find, and spread the
-    roots roughly one per interval rather than clustering them -- a *clustered* root set
-    is already known to defeat the deduplication radius, so a count violation there would
-    only rediscover that.
-
-    Args:
-        fixture (_Fixture): The space to build on.
-
-    Returns:
-        Bspline: The scalar spline.
-    """
-    n = fixture.space.num_basis
-    values = np.where(np.arange(n) % 2 == 0, 1.0, -1.0).astype(fixture.dtype).reshape(n, 1)
-    return Bspline(BsplineSpace([fixture.space]), values)
-
-
 def _locate_round_trip(fixture: _Fixture) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.float64]]:
     """Invert a monotone scalar spline at its own sampled values.
 
@@ -1736,17 +1647,6 @@ def _one_curve_cases(fixture: _Fixture, kind: str, profile: Profile) -> Iterator
     )
 
     if degree >= 1:
-        signed = _sign_alternating_curve(fixture)
-        yield Case(
-            GROUP,
-            f"find_roots_{tag}",
-            find_roots,
-            lambda signed=signed: find_roots(signed),
-            {**fixture.params, "cp": "sign-alternating"},
-            invariants=(custom("root-quality", _root_quality(signed, degree, dtype)),),
-            must_succeed=legal,
-            arrays={"control_points": np.asarray(signed.control_points)},
-        )
         yield Case(
             GROUP,
             f"locate_{tag}",

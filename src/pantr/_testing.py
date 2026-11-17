@@ -18,13 +18,8 @@ module.
   wrappers over them the extraction code uses (``_cached_*``).
 - The change-of-basis degree domains (``_*_MAX_DEGREE``, ``_DegreeLimit``) and the Lagrange nodes
   (``_get_lagrange_points``), which the domain derivation rebuilds in exact arithmetic.
-- The Builtin root provider's internals (de Casteljau, sign predicates, hull clip, Newton polish,
-  Yuksel's finder, Bezier clipping and the candidate merge), with the call conventions of the
-  previous release's kernels they replaced (a root array and a count).
 - The degree-reduction operators and their process table, the exact elevation matrix, and the
   pieces of the rational round-trip measure (Gram norm, Gauss grid, projected sampling).
-- The root provider's raw state (``root_provider_state``, ``set_root_provider_state``), so a test
-  can return it to "resolve on first use".
 - :func:`bernstein_interpolate`: values on the modified-Chebyshev grid to Bernstein coefficients.
 - The Bernstein product of two raw coefficient arrays (:func:`bernstein_product_coefficients`
   and its tensor form), the formula behind ``Bezier.multiply``.
@@ -46,10 +41,6 @@ module.
   operators of ``SpanwiseElementExtraction`` are a special case of, its per-cell scratch size
   (``required_scratch_size``) and the structural identity masks of the Bezier and Lagrange
   extraction operators of a 1D space (``bezier_identity_mask``, ``lagrange_identity_mask``).
-- The Mørken-Reimers root finder of a scalar B-spline: its kernel on an open knot vector
-  (``bspline_morken_reimers_roots``, a root array and the counts), the merge of repeated reports
-  (``bspline_merge_roots``), the insertion budget per zero (``bspline_max_insertions``), and
-  :func:`bspline_find_roots_with_budget`, the public route with a budget small enough to exhaust.
 - The knot classes of a raw knot vector at an explicit tolerance
   (:func:`unique_knots_and_multiplicity`), which a space only reaches with its own tolerance.
 - The tolerances of the THB space (``cell_membership_tolerance``,
@@ -81,8 +72,6 @@ from .basis._basis_1D import _Family
 from .basis._basis_lagrange import _get_lagrange_points
 from .basis._basis_tabulate import _variant_code
 from .basis._basis_utils import _allocate_or_validate_out, _validate_out_array
-from .bezier._find_roots import _get_state as root_provider_state
-from .bezier._find_roots import _set_state as set_root_provider_state
 from .bspline._bspline import Bspline
 from .bspline._bspline_space_1d import BsplineSpace1D
 from .bspline._bspline_space_nd import BsplineSpace
@@ -134,30 +123,6 @@ CHANGE_BASIS_CACHE_MAX_DEGREE: Final[int] = _t.change_basis_cache_max_degree
 change_basis_cache_size = _t.change_basis_cache_size
 change_basis_cache_clear = _t.change_basis_cache_clear
 
-# -- root finding (the Builtin provider) --
-have_same_sign = _t.have_same_sign
-have_opposite_signs = _t.have_opposite_signs
-spans_zero = _t.spans_zero
-count_sign_changes = _t.count_sign_changes
-clip_hull_to_zero = _t.clip_hull_to_zero
-de_casteljau_eval_scalar = _t.de_casteljau_eval_scalar
-de_casteljau_eval_and_deriv_scalar = _t.de_casteljau_eval_and_deriv_scalar
-subdivide_scalar = _t.subdivide_scalar
-newton_polish_scalar = _t.newton_polish_scalar
-solve_monotone_root_kernel = _t.solve_monotone_root_kernel
-yuksel_roots = _t.yuksel_roots
-clip_roots_core = _t.clip_roots_core
-dedup_roots = _t.dedup_roots
-find_roots_detailed = ext.roots.find_roots_detailed
-find_roots_detailed_f32 = ext.roots.find_roots_detailed_f32
-root_provider_capabilities = ext.roots.capabilities
-
-ROOTS_MAX_NEWTON_ITER: Final[int] = _t.ROOTS_MAX_NEWTON_ITER
-"""Iteration cap of the previous release's Newton/bisection hybrid (the Yuksel walk's solve)."""
-
-ROOTS_CLIP_MAX_DEPTH: Final[int] = _t.ROOTS_CLIP_MAX_DEPTH
-"""Depth at which Bezier clipping gives an interval up (and reports a gap)."""
-
 # -- degree reduction --
 interpolating_reduction_operator = _t.interpolating_reduction_operator
 l2_reduction_operator = _t.l2_reduction_operator
@@ -172,9 +137,6 @@ oslo_matrix = _t.oslo_matrix
 oslo_matrix_f32 = _t.oslo_matrix_f32
 knot_scale = _t.knot_scale
 knot_tolerance = _t.knot_tolerance
-bspline_max_insertions = _t.bspline_max_insertions
-bspline_morken_reimers_roots = _t.bspline_morken_reimers_roots
-bspline_merge_roots = _t.bspline_merge_roots
 check_snapping_kept_an_interval = _t.check_snapping_kept_an_interval
 cell_membership_tolerance = _t.cell_membership_tolerance
 prolongation_residual_tolerance = _t.prolongation_residual_tolerance
@@ -183,29 +145,6 @@ reduction_cache_clear = _t.reduction_cache_clear
 projected_quadrature_size = _t.projected_quadrature_size
 tensor_gauss_weights = _t.tensor_gauss_weights
 projected_relative_deviation = _t.projected_relative_deviation
-
-
-def bspline_find_roots_with_budget(
-    bspline: Any,  # noqa: ANN401
-    max_insertions: int,
-    tol: float | None = None,
-) -> npt.NDArray[np.float64]:
-    """Find the roots of a scalar B-spline as :func:`pantr.bspline.find_roots` does, on a budget.
-
-    The insertion budget per zero is otherwise fixed by the degree; a small one is how a test
-    reaches the two exhaustion warnings.
-
-    Args:
-        bspline (Any): A :class:`~pantr.bspline.Bspline`.
-        max_insertions (int): Insertion budget per zero.
-        tol (float | None): Relative parametric tolerance, or ``None`` for the dtype default.
-
-    Returns:
-        npt.NDArray[np.float64]: Sorted, read-only array of roots.
-    """
-    from pantr.bspline._bspline_roots import _find_roots_impl  # noqa: PLC0415
-
-    return _find_roots_impl(bspline, tol=tol, max_insertions=max_insertions)
 
 
 def func_support_1d(
@@ -1317,8 +1256,6 @@ __all__ = [
     "DENSE_FIEDLER_MAX",
     "LEGENDRE",
     "REDUCTION_CACHE_MAX_DEGREE",
-    "ROOTS_CLIP_MAX_DEPTH",
-    "ROOTS_MAX_NEWTON_ITER",
     "_BERNSTEIN_TO_CARDINAL_MAX_DEGREE",
     "_BERNSTEIN_TO_LAGRANGE_MAX_DEGREE",
     "_CARDINAL_TO_BERNSTEIN_MAX_DEGREE",
@@ -1358,10 +1295,6 @@ __all__ = [
     "block_bounds",
     "blossom_span",
     "blossom_span_f32",
-    "bspline_find_roots_with_budget",
-    "bspline_max_insertions",
-    "bspline_merge_roots",
-    "bspline_morken_reimers_roots",
     "cardinal_extraction_1d",
     "cardinal_intervals_1d",
     "cell_membership_tolerance",
@@ -1369,14 +1302,8 @@ __all__ = [
     "change_basis_cache_size",
     "check_bincoeff_envelope",
     "check_snapping_kept_an_interval",
-    "clip_hull_to_zero",
-    "clip_roots_core",
     "control_point_scale",
     "coons_edge_pairs",
-    "count_sign_changes",
-    "de_casteljau_eval_and_deriv_scalar",
-    "de_casteljau_eval_scalar",
-    "dedup_roots",
     "degree_elevate_1d",
     "degree_reduce_1d",
     "elevation_matrix",
@@ -1384,13 +1311,9 @@ __all__ = [
     "evaluate_blossom_1d",
     "evaluate_blossom_1d_f32",
     "find_knot_index_and_multiplicity",
-    "find_roots_detailed",
-    "find_roots_detailed_f32",
     "func_support_1d",
     "gram_projection",
     "gram_projection_f32",
-    "have_opposite_signs",
-    "have_same_sign",
     "homogeneous_deviation_tolerance",
     "interpolating_reduction_operator",
     "knot_scale",
@@ -1407,7 +1330,6 @@ __all__ = [
     "locate_newton_refine",
     "locate_parametric_reach",
     "locate_parametric_scale",
-    "newton_polish_scalar",
     "num_stacked_control_points",
     "oslo_matrix",
     "oslo_matrix_f32",
@@ -1419,21 +1341,14 @@ __all__ = [
     "reduction_cache_clear",
     "reduction_cache_size",
     "required_scratch_size",
-    "root_provider_capabilities",
-    "root_provider_state",
     "roundoff_deviation_floor",
     "sample_projected",
-    "set_root_provider_state",
-    "solve_monotone_root_kernel",
-    "spans_zero",
     "spectral_partition",
     "squared_l2_norm",
-    "subdivide_scalar",
     "tabulate_bernstein_derivatives_1d",
     "tabulate_bernstein_derivatives_1d_f32",
     "tensor_gauss_weights",
     "thb_dof_owner",
     "thb_halo",
     "unique_knots_and_multiplicity",
-    "yuksel_roots",
 ]

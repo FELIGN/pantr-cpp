@@ -13,12 +13,11 @@ property:
 
 * **Invariants** that must hold regardless of the exact numbers -- partition of unity,
   an interpolant passing through its data, the L2 projection being the L2-optimal fit,
-  quadrature matching a known analytic value, found roots evaluating to zero,
-  geometry-preserving knot/degree operations, a derivative matching finite differences,
-  exact transform composition. These survive cosmetic tutorial edits and pin the
-  mathematics.
-* **Golden snapshots** of a few headline values (the change-of-basis matrix, the located
-  roots, the L2-convergence errors, the THB active-function count). These catch silent
+  quadrature matching a known analytic value, geometry-preserving knot/degree
+  operations, a derivative matching finite differences, exact transform composition.
+  These survive cosmetic tutorial edits and pin the mathematics.
+* **Golden snapshots** of a few headline values (the change-of-basis matrix, the
+  L2-convergence errors, the THB active-function count). These catch silent
   numerical drift; update the constant deliberately when a result is meant to change.
 
 Interactive rendering is reduced to a no-op at the two entry points the tutorials use to
@@ -301,26 +300,6 @@ def _validate_cad_modeling(ns: Namespace) -> None:
     assert frustum_r.max() <= 0.7 + 1e-6, "frustum radius must not exceed the bottom radius 0.7"
 
 
-def _validate_bezier_and_roots(ns: Namespace) -> None:
-    """Bézier roots: roots are real zeros (snapshot); 3 curve-line intersections on y=y0."""
-    poly, roots = ns["poly"], np.asarray(ns["roots"])
-    assert roots.size == 2, "find_roots should locate 2 roots in [0, 1]"
-    np.testing.assert_allclose(
-        np.asarray(poly.evaluate(roots)).reshape(-1),
-        0.0,
-        atol=1e-9,
-        err_msg="located roots must evaluate to zero",
-    )
-    assert np.all(np.diff(roots) > 0), "roots must be returned sorted"
-    assert np.all((roots >= 0.0) & (roots <= 1.0)), "roots must lie in [0, 1]"
-    np.testing.assert_allclose(roots, [0.085746323411, 0.728480100989], rtol=1e-6)
-    hits = np.asarray(ns["hits"])
-    assert hits.shape[0] == 3, "the line y=y0 should cross the curve three times"
-    np.testing.assert_allclose(
-        hits[:, 1], ns["y0"], atol=1e-9, err_msg="curve-line intersections must lie on y = y0"
-    )
-
-
 def _validate_thb(ns: Namespace) -> None:
     """THB: level/active-function counts (snapshot + structural); peak sits in the corner."""
     space = ns["space"]
@@ -394,7 +373,6 @@ _VALIDATORS: dict[str, Callable[[Namespace], None]] = {
     "04_cad_modeling": _validate_cad_modeling,
     "05_approximation": _validate_approximation,
     "06_polynomial_bases": _validate_polynomial_bases,
-    "07_bezier_and_roots": _validate_bezier_and_roots,
     "08_thb_adaptive_refinement": _validate_thb,
     "09_grids_and_quadrature": _validate_grids_and_quadrature,
     "10_transforms": _validate_transforms,

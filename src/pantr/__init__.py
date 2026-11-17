@@ -13,7 +13,7 @@ The main modules are:
 - :mod:`pantr.tolerance`: Uniform floating-point tolerance utilities.
 - :mod:`pantr.transform`: Affine transformations for geometric objects.
 - :mod:`pantr.cad`: Constructive geometry for B-spline curves, surfaces, and volumes.
-- :mod:`pantr.bezier`: Bézier curves/surfaces and root finding for Bernstein polynomials.
+- :mod:`pantr.bezier`: Bézier curves and surfaces.
 - :mod:`pantr.mpi`: Optional MPI-distributed B-spline / THB-spline spaces (``mpi`` extra).
 - :mod:`pantr.viz`: Optional PyVista/VTK visualization of geometries (``viz`` extra).
 - :func:`pantr.cmake_dir`: The installed CMake package, for building against pantr's C++ headers.

@@ -37,8 +37,6 @@ The path, in order:
    convergence (:mod:`pantr.bspline`).
 #. **Polynomial bases & change of basis** -- Bernstein / Lagrange / Legendre and the
    matrices between them (:mod:`pantr.basis`, :mod:`pantr.change_basis`).
-#. **Bézier patches & Bernstein root finding** -- a Bézier surface, root finding, a
-   curve-line intersection (:mod:`pantr.bezier`).
 #. **THB-splines** -- adaptive local refinement on a hierarchical mesh
    (:mod:`pantr.bspline`, :mod:`pantr.grid`).
 #. **Grids & quadrature** -- ``cell_quadrature`` integration, a BVH query, grid
