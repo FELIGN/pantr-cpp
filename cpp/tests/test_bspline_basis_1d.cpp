@@ -478,29 +478,16 @@ TEST_CASE("space1d: a tie between a point and a knot is decided in the wider typ
 // ---- the status of a zero divisor -------------------------------------------------------------
 
 TEST_CASE("space1d: a zero divisor in the derivative recurrence is reported, not returned") {
-  // [0, 0, 0, 0, 1, 1, 1] at degree 2 has a left end of multiplicity 4 = p + 2, so the span just
-  // left of 0 is empty and the recurrence divides by a zero knot difference. The point -1e-17 is
-  // within the knot tolerance of the domain, so it passes validation: the status is reachable
-  // without validate == false. (Its values are all zero there, a separate matter.)
+  // [0, 0, 0, 0, 1, 1, 1] at degree 2, and the point -1e20 far outside the domain (validate ==
+  // false): on the first non-empty span [0, 1) the knot differences (1 - x) + (x - 0) round to
+  // 1e20 - 1e20 = 0, and the derivative rows divide by them.
   const std::vector<double> knots = {0, 0, 0, 0, 1, 1, 1};
   const bs::BsplineSpace1D<double> s(sp(knots), 2);
-  const std::vector<double> bad = {-1e-17};
-  REQUIRE(s.contains<double>(-1e-17));
+  const std::vector<double> bad = {-1e20};
   CHECK_FALSE(s.tabulate_basis_derivatives<double>(bad, 1, false).complete);
-  CHECK_FALSE(s.tabulate_basis_derivatives<double>(bad, 1, true).complete);
   CHECK_FALSE(s.tabulate_basis_derivatives<double>(bad, 3, false).complete);
   // No division happens for order 0, so nothing to report.
   CHECK(s.tabulate_basis_derivatives<double>(bad, 0, false).complete);
-  // The value recurrence drops its zero denominators (the empty span) instead of dividing: its
-  // result there is finite and within [0, 1], whatever else it is (it is all zeros today, which
-  // is not pinned: the partition of unity does not hold at such a point).
-  const auto [v, f] = s.tabulate_basis<double>(bad, false);
-  for (std::size_t j = 0; j < 3; ++j) {
-    CAPTURE(j);
-    CHECK(std::isfinite(v.data()[j]));
-    CHECK(v.data()[j] >= 0.0);
-    CHECK(v.data()[j] <= 1.0);
-  }
   // The out overload returns the same status.
   NdArray<double> out({1, 2, 3});
   NdArray<std::int64_t> first({1});
@@ -508,6 +495,52 @@ TEST_CASE("space1d: a zero divisor in the derivative recurrence is reported, not
   // In-domain points are complete, up to and including the left end where the span starts.
   const std::vector<double> good = {0.0, 0.25, 1.0};
   CHECK(s.tabulate_basis_derivatives<double>(good, 3, true).complete);
+}
+
+TEST_CASE("space1d: a point in the band beside an empty end span takes the nearest non-empty one") {
+  // Regression: the span search clamped such a point onto the empty span at the end, where the
+  // values were all zero and the derivative rows divided by zero. Left: the start 0 repeated
+  // p + 2 = 4 times, and -1e-17 inside the knot tolerance below it. Right: the end 2 repeated
+  // p + 1 = 3 times before a trailing knot, and the end itself. Oracle: the values and first
+  // derivative at the start (the band point differs from it by 1e-17 times a derivative of order
+  // 4), and at the right end the left limit of the last non-empty span [1, 2): values [0, 0, 1]
+  // and first derivatives [0, -2, 2] (the quadratic Bernstein derivatives on a unit span).
+  // Tolerances: values 8 (p + 1) eps absolute (the restriction test's), first derivatives
+  // 16 (p + 1) eps (2 p / h) with h = 1 (check_derivatives').
+  const double tol0 = 8.0 * 3.0 * eps_of<double>();
+  const double tol1 = 16.0 * 3.0 * eps_of<double>() * 4.0;
+  {
+    const std::vector<double> knots = {0, 0, 0, 0, 1, 1, 1};
+    const bs::BsplineSpace1D<double> s(sp(knots), 2);
+    REQUIRE(s.contains<double>(-1e-17));
+    const std::vector<double> band = {-1e-17};
+    const std::vector<double> start = {0.0};
+    const auto d = s.tabulate_basis_derivatives<double>(band, 1, true);
+    const auto d0 = s.tabulate_basis_derivatives<double>(start, 1, true);
+    REQUIRE(d.complete);
+    CHECK(d.first.data()[0] == 1);
+    CHECK(d0.first.data()[0] == 1);
+    for (std::size_t j = 0; j < 3; ++j) {
+      CAPTURE(j);
+      CHECK(std::fabs(d.values.data()[j] - d0.values.data()[j]) <= tol0);
+      CHECK(std::fabs(d.values.data()[3 + j] - d0.values.data()[3 + j]) <= tol1);
+    }
+  }
+  {
+    const std::vector<double> knots = {0, 0, 0, 1, 2, 2, 2, 3, 3};
+    const bs::BsplineSpace1D<double> s(sp(knots), 2);
+    const std::vector<double> end = {2.0};
+    const auto d = s.tabulate_basis_derivatives<double>(end, 1, true);
+    REQUIRE(d.complete);
+    CHECK(d.first.data()[0] == 1);
+    const std::array<double, 3> want0 = {0.0, 0.0, 1.0};
+    const std::array<double, 3> want1 = {0.0, -2.0, 2.0};
+    for (std::size_t j = 0; j < 3; ++j) {
+      CAPTURE(j);
+      CHECK(std::fabs(d.values.data()[j] - want0[j]) <= tol0);
+      CHECK(std::fabs(d.values.data()[3 + j] - want1[j]) <= tol1);
+    }
+  }
 }
 
 TEST_CASE("space1d: the incomplete status survives a batch run on the pool") {
@@ -526,7 +559,7 @@ TEST_CASE("space1d: the incomplete status survives a batch run on the pool") {
   CHECK(s.tabulate_basis_derivatives<double>(pts, 1, true).complete);
   for (const std::size_t at : {std::size_t{0}, n / 2, n - 1}) {
     std::vector<double> with_bad = pts;
-    with_bad[at] = -1e-17;
+    with_bad[at] = -1e20;  // far outside: the knot differences cancel (see above)
     CAPTURE(at);
     CHECK_FALSE(s.tabulate_basis_derivatives<double>(with_bad, 1, false).complete);
   }

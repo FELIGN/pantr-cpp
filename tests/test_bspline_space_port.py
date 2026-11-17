@@ -58,18 +58,23 @@ def _eps(dtype: type) -> float:
 _LEFT_HEAVY = [0, 0, 0, 0, 1, 1, 1]
 """Degree 2 with the left end repeated four times (p + 2): the span just left of 0 is empty."""
 
-_BAD_POINT = -1e-17
+_BAND_POINT = -1e-17
 """Left of 0 by far less than the knot tolerance (8 eps), so inside the band validation admits."""
+
+_FAR_POINT = -1e20
+"""Far left of the domain (reachable with ``validate=False`` only). On the first non-empty span
+``[0, 1)`` the recurrence's knot differences ``(1 - x) + (x - 0)`` round to ``1e20 - 1e20 = 0`` in
+either float type, so the first derivative row divides by zero."""
 
 _BATCH_SIZES = [1, 5, 4095, 4096, 5000, 30000]
 """Around the old serial/parallel threshold of 4096 points, and well past the C++ pool's."""
 
 
-def _batch(n: int, dtype: type, bad_at: int | None) -> _Array:
-    """Return ``n`` points of [0, 1], with ``_BAD_POINT`` at index ``bad_at`` when given."""
+def _batch(n: int, dtype: type, bad_at: int | None, bad: float = _BAND_POINT) -> _Array:
+    """Return ``n`` points of [0, 1], with ``bad`` at index ``bad_at`` when given."""
     pts: _Array = np.linspace(0.0, 1.0, n).astype(dtype)
     if bad_at is not None:
-        pts[bad_at] = dtype(_BAD_POINT)
+        pts[bad_at] = dtype(bad)
     return pts
 
 
@@ -84,45 +89,50 @@ def test_a_zero_divisor_raises_at_every_batch_size(n: int, position: str, dtype:
     """
     space = BsplineSpace1D(np.array(_LEFT_HEAVY, dtype=dtype), 2)
     at = {"first": 0, "middle": n // 2, "last": n - 1}[position]
-    pts = _batch(n, dtype, at)
+    pts = _batch(n, dtype, at, _FAR_POINT)
 
     with pytest.raises(ZeroDivisionError):
         space.tabulate_basis_derivatives(pts, 1, validate=False)
 
 
 @pytest.mark.parametrize("n", [1, 5000])
-def test_the_point_is_inside_the_tolerance_band_so_validation_does_not_stop_it(n: int) -> None:
-    """With the default ``validate=True`` the same point passes validation and then raises.
+def test_a_point_in_the_tolerance_band_takes_the_first_non_empty_span(n: int) -> None:
+    """A point validation admits below a start repeated ``p + 2`` times has the start's derivative.
 
-    Pins the previous release's behaviour (it raised there too): the empty span is reachable by
-    an input the space itself calls in-domain. Whether it should instead be evaluated on the
-    first non-empty span is the owner's call; this test only records that the two agree.
+    It used to land on the empty span ``[0, 0)`` and raise ``ZeroDivisionError``. Oracle: the
+    derivatives at ``0.0``; the point differs by ``1e-17`` times a second derivative of 4, far
+    below the bound the Bernstein control below asserts for the first row, ``16 (p + 1) eps (2p)``.
     """
     space = BsplineSpace1D(_LEFT_HEAVY, 2)
-    assert float(space.tolerance) > abs(_BAD_POINT)
+    assert float(space.tolerance) > abs(_BAND_POINT)
+    at = n // 2
 
-    with pytest.raises(ZeroDivisionError):
-        space.tabulate_basis_derivatives(_batch(n, np.float64, n // 2), 1)
+    d, first = space.tabulate_basis_derivatives(_batch(n, np.float64, at), 1)
+    d0, first0 = space.tabulate_basis_derivatives(np.array([0.0]), 1)
+
+    assert np.isfinite(d).all()
+    assert int(first[at]) == int(first0[0]) == 1
+    eps = _eps(np.float64)
+    np.testing.assert_allclose(d[at, 0], d0[0, 0], rtol=0, atol=16 * eps)
+    np.testing.assert_allclose(d[at, 1], d0[0, 1], rtol=0, atol=192 * eps)
 
 
 @pytest.mark.parametrize("n", [1, 5000])
-def test_order_zero_divides_by_nothing_and_stays_finite(n: int) -> None:
-    """``n_deriv=0`` has no derivative row to divide, so the offending point raises nothing.
+def test_order_zero_at_the_band_point_is_the_basis_at_the_start(n: int) -> None:
+    """``n_deriv=0`` at the band point gives the values at ``0.0``, within ``16 eps`` (8 p eps).
 
-    Its values are only required to be finite and in [0, 1] (the guard of the value recurrence
-    keeps them bounded); they are not pinned beyond that.
+    The point is ``1e-17`` outside the first span, so the middle function is ``-2e-17`` there:
+    a polynomial piece slightly outside its interval, not a defect.
     """
     space = BsplineSpace1D(_LEFT_HEAVY, 2)
+    at = n // 2
 
-    values, first = space.tabulate_basis_derivatives(
-        _batch(n, np.float64, n // 2), 0, validate=False
-    )
+    values, first = space.tabulate_basis_derivatives(_batch(n, np.float64, at), 0, validate=False)
 
     assert values.shape == (n, 1, 3)
     assert first.shape == (n,)
     assert np.isfinite(values).all()
-    assert values.min() >= 0.0
-    assert values.max() <= 1.0 + 8 * _eps(np.float64)
+    np.testing.assert_allclose(values[at, 0], [1.0, 0.0, 0.0], rtol=0, atol=16 * _eps(np.float64))
 
 
 @pytest.mark.parametrize("dtype", _DTYPES, ids=_DTYPE_IDS)

@@ -85,6 +85,7 @@
 #include <pantr/tolerance.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -626,46 +627,40 @@ TEST_CASE(
                        pantr::value_error);
 }
 
-TEST_CASE(
-    "collocation_matrix: a derivative row at a degenerate end raises std::domain_error, not "
-    "value_error") {
-  // The derivative recurrence divides by the span's knot differences. At the right end of an
-  // unclamped knot vector whose domain-end knot is repeated, the clamped span is empty
-  // (knots {0, 0, 0, 1, 2, 2, 3, 4}, degree 2: the domain is [0, 2] and the span used at 2 is
-  // [2, 2]), so the order-2 row has a zero divisor; order 1 does not (the divisor of the order-k
-  // row is a difference of triangle entries that is only zero from order 2 here), and neither does
-  // the start, whose span is never empty. The binding turns the exception into ZeroDivisionError.
-  // Bug caught: the incomplete flag ignored (a row of garbage returned silently), or the exception
-  // type changed (a pantr::error would be mapped to ValueError by the binding).
+TEST_CASE("collocation_matrix: derivative rows at an end beside an empty span are the left limit") {
+  // Regression. Knots {0, 0, 0, 1, 2, 2, 3, 4}, degree 2: the domain is [0, 2], and the clamped
+  // span at its end 2 used to be the empty [2, 2], where the order-2 row divided by zero (raised as
+  // std::domain_error, ZeroDivisionError in Python). The end now takes the last non-empty span
+  // [1, 2), so the rows are that piece's derivatives at 2. Oracle (analytic, on [1, 2) the active
+  // functions N1 = (2 - x)^2 / 2, N3 = (x - 1)^2 and N2 = 1 - N1 - N3): order 1 at 2 is
+  // [0, 0, -2, 2, 0] and order 2 is [0, 1, -3, 2, 0]. With five nodes, `right = 2` writes them
+  // into rows 2 and 3. Tolerance 16 (p + 1) eps (2 p / h)^k with h = 1 (check_derivatives' bound in
+  // test_bspline_basis_1d.cpp).
   const std::vector<double> knots = {0.0, 0.0, 0.0, 1.0, 2.0, 2.0, 3.0, 4.0};
   const bs::BsplineSpace1D<double> s(std::span<const double>(knots), 2);
   REQUIRE(s.domain().second == 2.0);
   const std::vector<double> nodes = {0.0, 0.5, 1.0, 1.5, 2.0};
   const std::span<const double> sp5(nodes);
-  CHECK_THROWS_WITH_AS(static_cast<void>(bs::collocation_matrix<double, double>(
-                           s, sp5, bs::BoundaryDerivatives{0, 2})),
-                       "division by zero", std::domain_error);
-  CHECK_THROWS_WITH_AS(static_cast<void>(bs::collocation_matrix<double, double>(
-                           s, sp5, bs::BoundaryDerivatives{0, 3})),
-                       "division by zero", std::domain_error);
+  const NdArray<double> mat =
+      bs::collocation_matrix<double, double>(s, sp5, bs::BoundaryDerivatives{0, 2});
+  const std::array<std::array<double, 5>, 2> want = {
+      {{0.0, 0.0, -2.0, 2.0, 0.0}, {0.0, 1.0, -3.0, 2.0, 0.0}}};
+  const double eps = std::numeric_limits<double>::epsilon();
+  for (std::size_t k = 0; k < 2; ++k) {
+    const double tol = 16.0 * 3.0 * eps * std::pow(4.0, static_cast<double>(k + 1));
+    for (std::size_t j = 0; j < 5; ++j) {
+      CAPTURE(k);
+      CAPTURE(j);
+      CHECK(std::abs(mat.data()[(2 + k) * 5 + j] - want[k][j]) <= tol);
+    }
+  }
   CHECK_NOTHROW(static_cast<void>(
-      bs::collocation_matrix<double, double>(s, sp5, bs::BoundaryDerivatives{0, 1})));
-  CHECK_NOTHROW(static_cast<void>(
-      bs::collocation_matrix<double, double>(s, sp5, bs::BoundaryDerivatives{2, 0})));
-  // It propagates out of the tensor system as well.
+      bs::collocation_matrix<double, double>(s, sp5, bs::BoundaryDerivatives{0, 3})));
+  // The tensor system builds as well.
   const bs::BsplineSpace<double> space(std::vector<bs::BsplineSpace1D<double>>{s});
   const std::vector<std::span<const double>> grid = {sp5};
-  CHECK_THROWS_AS(static_cast<void>(
-                      bs::TensorCollocation<double>(space, grid, {bs::BoundaryDerivatives{0, 2}})),
-                  std::domain_error);
-  bool is_pantr_error = false;
-  try {
-    static_cast<void>(bs::TensorCollocation<double>(space, grid, {bs::BoundaryDerivatives{0, 2}}));
-  } catch (const pantr::error&) {
-    is_pantr_error = true;
-  } catch (...) {
-  }
-  CHECK_FALSE(is_pantr_error);
+  CHECK_NOTHROW(static_cast<void>(
+      bs::TensorCollocation<double>(space, grid, {bs::BoundaryDerivatives{0, 2}})));
 }
 
 TEST_CASE(
