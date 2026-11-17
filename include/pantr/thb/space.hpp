@@ -8,6 +8,7 @@
 /// (HB).
 #pragma once
 
+#include "pantr/bspline/detail/basis_kernels.hpp"
 #include "pantr/bspline/detail/support_1d.hpp"
 #include "pantr/bspline/space.hpp"
 #include "pantr/config.hpp"
@@ -31,6 +32,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <memory>
 #include <optional>
 #include <span>
@@ -361,7 +363,12 @@ class THBSplineSpace {
                         "; got " + py_repr(std::span<const std::size_t>(got)) + ".");
     }
     std::copy(cell.dofs.begin(), cell.dofs.end(), out_dofs.begin());
-    evaluate(cell, pts, orders, out_basis);
+    const auto [lo, hi] = rep_->hier.cell_bounds(cid);
+    std::vector<double> mid(lo.size());
+    for (std::size_t k = 0; k < mid.size(); ++k) {
+      mid[k] = 0.5 * (lo[k] + hi[k]);
+    }
+    evaluate(cell, pts, orders, mid, out_basis);
   }
 
   /// Evaluate the active functions on cell `cid` at `pts` (all orders zero; see the `out_basis`
@@ -711,15 +718,27 @@ class THBSplineSpace {
   }
 
   // Tabulate the 1D basis (order 0) or its `order`-th derivative of one level and direction at
-  // the points' coordinates along that direction.
+  // the points' coordinates along that direction, on the cell whose interval along `k` has the
+  // midpoint `mid`.
   //
   // The points were checked against the cell, which lies inside the domain up to the membership
   // slack, so the 1D kernel is run without its own domain check; a point within the slack of an
   // end is evaluated on the nearest in-domain span. An order above the degree is zero: the kernel
   // is asked for `degree + 1`, whose slice is exactly zero, rather than for an order that sizes
   // an array by the caller's number.
+  //
+  // The 1D search is right-continuous at a knot, so at the cell's upper bound it takes the span to
+  // the right (and a point within the slack outside either bound a neighbouring span). Where that
+  // span shares no function with the cell's, its first index more than `degree` away, the bound is
+  // a knot of multiplicity `degree + 1` and every function of the cell would come out zero there
+  // although its limit from inside the cell is not: such a point is evaluated again on the cell's
+  // span. Where the two spans share functions, a cell function the neighbour lacks vanishes at the
+  // shared knot from inside as well, so the values are the cell's limits and the point is left as
+  // the search placed it; its derivatives there are the neighbouring piece's, as before. The
+  // midpoint is interior to one non-empty span of every level at or below the cell's own, the
+  // grids being nested, so `span_and_first` gives the cell's span there.
   void tabulate_1d(std::int64_t level, std::size_t k, std::int64_t order,
-                   mdview<const double, 2> pts, detail::Basis1D& out) const {
+                   mdview<const double, 2> pts, double mid, detail::Basis1D& out) const {
     const auto& sp1d = rep_->level_spaces[static_cast<std::size_t>(level)].spaces()[k];
     const std::size_t n = pts.extent(0);
     const auto width = static_cast<std::size_t>(sp1d.degree()) + 1;
@@ -730,12 +749,26 @@ class THBSplineSpace {
     out.first.assign(n, 0);
     out.degree = sp1d.degree();
     const std::span<const double> coords(coord);
+    const std::span<const T> knots = sp1d.knots();
+    const int degree = sp1d.degree();
+    const bspline::detail::SpanAndFirst cell =
+        bspline::detail::span_and_first<T, double>(knots, degree, mid);
     if (order == 0) {
       out.data.assign(n * width, 0.0);
       out.stride = width;
       out.offset = 0;
       sp1d.template tabulate_basis<double>(coords, mdview<double, 2>(out.data.data(), n, width),
                                            std::span<std::int64_t>(out.first), false);
+      std::vector<T> left(width);
+      std::vector<T> right(width);
+      for (std::size_t i = 0; i < n; ++i) {
+        if (std::abs(out.first[i] - cell.first) > degree) {
+          out.first[i] = cell.first;
+          bspline::detail::basis_funcs_point<T, double>(knots.data(), degree, cell.knot_id,
+                                                        coord[i], out.data.data() + i * width,
+                                                        left.data(), right.data());
+        }
+      }
       return;
     }
     const int n_deriv = static_cast<int>((std::min)(order, static_cast<std::int64_t>(width)));
@@ -743,20 +776,30 @@ class THBSplineSpace {
     out.data.assign(n * rows * width, 0.0);
     out.stride = rows * width;
     out.offset = static_cast<std::size_t>(n_deriv) * width;
-    const bool complete = sp1d.template tabulate_basis_derivatives<double>(
+    bool complete = sp1d.template tabulate_basis_derivatives<double>(
         coords, n_deriv, mdview<double, 3>(out.data.data(), n, rows, width),
         std::span<std::int64_t>(out.first), false);
+    bspline::detail::DerivScratch<T> scratch(degree, n_deriv);
+    for (std::size_t i = 0; i < n && complete; ++i) {
+      if (std::abs(out.first[i] - cell.first) > degree) {
+        out.first[i] = cell.first;
+        complete = bspline::detail::basis_derivs_point<T, double>(
+            knots.data(), degree, n_deriv, cell.knot_id, coord[i],
+            out.data.data() + i * rows * width, scratch);
+      }
+    }
     if (!complete) {
       throw state_error("the 1D derivative recurrence met a zero divisor at level " +
-                        std::to_string(level) + ", axis " + std::to_string(k) +
-                        ": a basis function of empty support.");
+                        std::to_string(level) + ", axis " + std::to_string(k) + ".");
     }
   }
 
   // Evaluate every function of `cell` at every point. The 1D tabulations are made once per
-  // (level, direction) the functions use, as the orders are fixed for the call.
+  // (level, direction) the functions use, as the orders are fixed for the call, each on the span
+  // of the cell, whose interval has the midpoint `mid[k]` along direction `k`.
   void evaluate(const CellContributions& cell, mdview<const double, 2> pts,
-                std::span<const std::int64_t> orders, mdview<double, 2> out) const {
+                std::span<const std::int64_t> orders, std::span<const double> mid,
+                mdview<double, 2> out) const {
     const std::size_t d = dim();
     const std::size_t levels = rep_->level_spaces.size();
     std::vector<unsigned char> needed(levels, 0);
@@ -779,7 +822,7 @@ class THBSplineSpace {
     for (std::size_t l = 0; l < levels; ++l) {
       if (needed[l] != 0) {
         for (std::size_t k = 0; k < d; ++k) {
-          tabulate_1d(static_cast<std::int64_t>(l), k, orders[k], pts, tables[l * d + k]);
+          tabulate_1d(static_cast<std::int64_t>(l), k, orders[k], pts, mid[k], tables[l * d + k]);
         }
       }
     }
