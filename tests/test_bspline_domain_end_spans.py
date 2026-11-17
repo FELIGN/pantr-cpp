@@ -57,7 +57,9 @@ def test_a_point_within_tolerance_below_a_heavy_start_takes_the_first_non_empty_
     vals, first = space.tabulate_basis([x])
     assert int(first[0]) == int(first_start[0]) == 1
     np.testing.assert_allclose(vals[0], at_start[0], rtol=0.0, atol=_BASIS_TOL)
-    assert abs(float(curve.evaluate(np.array([x]))[0]) - 2.0) <= _eval_tol(coefs)
+    assert abs(float(np.asarray(curve.evaluate(np.array([x]))).reshape(-1)[0]) - 2.0) <= _eval_tol(
+        coefs
+    )
 
 
 @pytest.mark.parametrize("x", [2.0, 2.0 + 1e-15])
@@ -72,7 +74,9 @@ def test_a_point_at_or_within_tolerance_above_a_heavy_end_takes_the_last_non_emp
     vals, first = space.tabulate_basis([x])
     assert int(first[0]) == 1
     np.testing.assert_allclose(vals[0], [0.0, 0.0, 1.0], rtol=0.0, atol=_BASIS_TOL)
-    assert abs(float(curve.evaluate(np.array([x]))[0]) - 4.0) <= _eval_tol(coefs)
+    assert abs(float(np.asarray(curve.evaluate(np.array([x]))).reshape(-1)[0]) - 4.0) <= _eval_tol(
+        coefs
+    )
 
 
 def test_the_derivatives_at_a_heavy_end_are_those_of_the_left_limit() -> None:
