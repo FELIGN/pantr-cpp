@@ -279,9 +279,10 @@ class BsplineSpace1D {
   /// the first of them into `first`.
   ///
   /// A Bézier-like space is evaluated by the Bernstein recurrence on `(pt - a) / (b - a)`, any
-  /// other by Cox-de Boor (Piegl and Tiller A2.2) on the clamped span. Points outside the domain
-  /// with `validate == false` are evaluated on the nearest in-domain span (no extrapolation
-  /// guarantee is made).
+  /// other by Cox-de Boor (Piegl and Tiller A2.2) on the point's span. A point at or beyond an end
+  /// of the domain (within its tolerance, or anywhere with `validate == false`) is evaluated on the
+  /// nearest non-empty in-domain span, so at the end it takes the limit from inside the domain (no
+  /// extrapolation guarantee is made outside it).
   ///
   /// Args:
   ///     pts (std::span<const P>): The points.
@@ -332,10 +333,13 @@ class BsplineSpace1D {
   ///
   /// Returns:
   ///     bool: True when every point was evaluated; false when the derivative recurrence met a zero
-  ///     divisor, which happens only on an empty span the span search assigns a point to at an end
-  ///     of the domain (`knots[degree] == knots[degree + 1]` at the start, `knots[size - degree -
-  ///     2] == knots[size - degree - 1]` at the end). `out` is then incomplete. A2.3 divides there
-  ///     unguarded; the previous implementation raised `ZeroDivisionError`.
+  ///     divisor, and `out` is then incomplete. That never happens at a point of the closed span
+  ///     it is evaluated on (see `detail::basis_derivs_point`), so not inside the domain. It
+  ///     happens where the knot differences cancel: with `validate == false` at a point far
+  ///     outside the domain (-1e20 on `[0, 0, 0, 0, 1, 1, 1]`), and at a point of the tolerance
+  ///     band beside a span shorter than the rounding of its offset (-1e-15 on the unsnapped
+  ///     `[0, 0, 0, 1e-32, 1, 1, 1]`). A2.3 divides there unguarded; the previous
+  ///     implementation raised `ZeroDivisionError`.
   ///
   /// Raises:
   ///     value_error: `n_deriv < 0` (first), `validate` and a point outside the domain, `out` or

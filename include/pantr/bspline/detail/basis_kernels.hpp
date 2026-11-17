@@ -22,11 +22,13 @@
 
 namespace pantr::bspline::detail {
 
-/// The clamped knot span of a point and the index of the first basis function non-zero there.
+/// The knot span of a point and the index of the first basis function non-zero there.
 ///
 /// Attributes:
-///     knot_id (std::size_t): Span index `k` with `knots[k] <= pt < knots[k + 1]`, clamped to the
-///         in-domain spans `[degree, size - degree - 2]`.
+///     knot_id (std::size_t): Span index `k` with `knots[k] <= pt < knots[k + 1]` when that is an
+///         in-domain span (`[degree, size - degree - 2]`); otherwise the nearest non-empty
+///         in-domain span: the last for a point at or past the domain end (or a NaN), the first
+///         for a point below the start.
 ///     first (std::int64_t): First supported basis function, `knot_id - degree`. For a
 ///         non-periodic space it is at most `num_basis - degree - 1` (`num_basis` is
 ///         `size - degree - 1` and `knot_id <= size - degree - 2`), so the last point addresses the
@@ -38,7 +40,14 @@ struct SpanAndFirst {
 };
 
 /// Locate `pt`'s span (`searchsorted(knots, pt, side="right") - 1`, a NaN point past the end) and
-/// clamp it as `SpanAndFirst` states.
+/// bring it into the in-domain spans as `SpanAndFirst` states.
+///
+/// A point inside the in-domain spans already lies in a non-empty one (`knots[raw] <= pt <
+/// knots[raw + 1]`), so its span, right-continuous at an interior knot, is kept. Outside them the
+/// nearest in-domain span is taken, skipping empty ones: the span next to an end is empty when the
+/// start knot is repeated more than `degree + 1` times, or the end knot `degree + 1` times before a
+/// trailing knot, and the recurrences return zeros there. The walk stays in `[degree, max_id]`,
+/// which holds a non-empty span since a space has at least one interval.
 ///
 /// Note:
 ///     Inputs are assumed to be correct (no validation performed).
@@ -49,9 +58,23 @@ template <StorageFloat K, StorageFloat P>
   const auto it = std::upper_bound(knots.begin(), knots.end(), p,
                                    [](W v, K k) { return v < static_cast<W>(k); });
   const auto raw = static_cast<std::ptrdiff_t>(it - knots.begin()) - 1;
+  const auto min_id = static_cast<std::ptrdiff_t>(degree);
   const auto max_id = static_cast<std::ptrdiff_t>(knots.size()) - degree - 2;
-  std::ptrdiff_t id = (std::min)(raw, max_id);
-  id = (std::max)(id, static_cast<std::ptrdiff_t>(degree));
+  const auto empty = [&](std::ptrdiff_t k) {
+    return !(knots[static_cast<std::size_t>(k)] < knots[static_cast<std::size_t>(k + 1)]);
+  };
+  std::ptrdiff_t id = raw;
+  if (raw > max_id) {
+    id = max_id;
+    while (id > min_id && empty(id)) {
+      --id;
+    }
+  } else if (raw < min_id) {
+    id = min_id;
+    while (id < max_id && empty(id)) {
+      ++id;
+    }
+  }
   return {static_cast<std::size_t>(id), static_cast<std::int64_t>(id - degree)};
 }
 
@@ -123,9 +146,13 @@ struct DerivScratch {
 /// The knot differences, values and coefficients are held in `K`; each row is scaled by
 /// `degree! / (degree - k)!`, accumulated and applied in double, and stored in `P`. The `ndu`
 /// denominators of the value triangle are guarded as in `basis_funcs_point`; the three divisions of
-/// the derivative rows are not (as in A2.3), and one whose divisor is zero, which a basis function
-/// of empty support produces (a knot repeated more than `degree + 1` times within the point's
-/// support), is reported rather than performed.
+/// the derivative rows are not (as in A2.3), and one whose divisor is zero is reported rather than
+/// performed. Each divisor is a knot difference across the span, formed as `right + left`: for a
+/// point in the closed span `[knots[knot_id], knots[knot_id + 1]]` both terms are non-negative
+/// and one is positive, so no divisor is zero there. Outside it the two terms can cancel: far
+/// away, as at -1e20 on the span [0, 1), and within the tolerance band beside a span shorter than
+/// the rounding of the point's offset, as at -1e-15 on the first span [0, 1e-32) of the unsnapped
+/// knots [0, 0, 0, 1e-32, 1, 1, 1].
 ///
 /// Returns:
 ///     bool: False when a derivative row met a zero divisor; `out` is then incomplete.

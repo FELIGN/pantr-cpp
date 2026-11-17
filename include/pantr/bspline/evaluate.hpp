@@ -998,9 +998,8 @@ template <StorageFloat T>
 ///
 /// Attributes:
 ///     values (NdArray<T>): `(n, rank)` (points) or `(n_0, ..., n_{dim-1}, rank)` (lattice).
-///     complete (bool): False when the basis derivative recurrence met a zero divisor, which a
-///         basis function of empty support produces (see `BsplineSpace1D::tabulate_basis_
-///         derivatives`); `values` is then unwritten.
+///     complete (bool): False when the basis derivative recurrence met a zero divisor (see
+///         `BsplineSpace1D::tabulate_basis_derivatives`); `values` is then unwritten.
 template <StorageFloat T>
 struct [[nodiscard]] DerivativeValues {
   NdArray<T> values;
@@ -1147,9 +1146,9 @@ template <StorageFloat T, StorageFloat P>
 ///
 /// Returns:
 ///     bool: True when every point was evaluated; false when the basis derivative recurrence met a
-///     zero divisor, which happens only on an empty span the span search assigns a point to at an
-///     end of the domain (`knots[degree] == knots[degree + 1]` at the start, `knots[size - degree
-///     - 2] == knots[size - degree - 1]` at the end), and `out` is then unwritten.
+///     zero divisor (see `BsplineSpace1D::tabulate_basis_derivatives`), and `out` is then
+///     unwritten. The points are validated, and no divisor is zero inside the domain; a point of
+///     the tolerance band outside it can meet one (see `detail::basis_derivs_point`).
 ///
 /// Raises:
 ///     value_error: `orders` has the wrong length or a negative entry (checked first); `pts` has

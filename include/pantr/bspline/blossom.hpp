@@ -31,17 +31,14 @@ namespace detail {
 /// The position of the last knot not exceeding `u_last`, found by binary search. For a value inside
 /// a non-empty span this is exactly what a scan for the first `idx` with `knots[idx] <= u_last <
 /// knots[idx + 1]` returns, repeated knots included, because that first match is the last
-/// occurrence of the span's left knot. Both out-of-span cases return the rightmost span `n`, which
-/// is what the linear scan this replaced also returned for `u_last` at or beyond the last knot and
-/// for `u_last` below the first knot: the public entry point accepts parameters up to its
-/// tolerance outside the domain, so the second case is reachable. The clamp also keeps the index in
-/// range for a parameter past the domain of a non-clamped knot vector. A NaN is ordered after every
-/// knot, as NumPy orders it, so it lands past the last span.
-///
-/// Known defect, inherited: for a clamped knot vector, a `u_last` just below the domain start
-/// (within the tolerance the public entry point accepts) belongs to the first span, and this
-/// returns the last one. The port keeps the behavior of the code it replaced; the test "inherited:
-/// blossom span below a clamped start" pins the correct value as an expected failure.
+/// occurrence of the span's left knot. A `u_last` at or beyond the last knot returns the rightmost
+/// span `n`, as the linear scan this replaced did; the clamp also keeps the index in range for a
+/// parameter past the domain of a non-clamped knot vector. A NaN is ordered after every knot, as
+/// NumPy orders it, so it lands past the last span. A `u_last` below the first knot (the public
+/// entry point accepts parameters up to its tolerance outside the domain) returns the span of the
+/// first knot itself, the one `knots[0]` gets: `degree` for a clamped vector, the first non-empty
+/// span when the first knot is repeated more often. The linear scan fell through to `n` there,
+/// giving the blossom of the end of the curve.
 ///
 /// Args:
 ///     knots (std::span<const T>): Non-decreasing knot vector.
@@ -60,10 +57,13 @@ template <StorageFloat T>
   }
   const auto above = std::upper_bound(knots.begin(), knots.end(), u_last);
   const std::ptrdiff_t span = (above - knots.begin()) - 1;
-  if (span < 0 || span > n) {
-    return n;
+  if (span < 0) {
+    // The last occurrence of the first knot, at most `n` for a vector whose first knot fills more
+    // than `n + 1` entries (the public entry point does not refuse one).
+    const auto first_end = std::upper_bound(knots.begin(), knots.end(), knots.front());
+    return (std::min)((first_end - knots.begin()) - 1, n);
   }
-  return span;
+  return (std::min)(span, n);
 }
 
 /// Evaluate the blossom of a 1D B-spline at `degree` parameter values already sorted ascending.

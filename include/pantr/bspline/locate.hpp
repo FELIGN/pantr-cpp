@@ -283,12 +283,11 @@ class MapEvaluator {
 
   /// Evaluate the Jacobian `dF / dxi` into `jac` (`rank x dim`, row-major).
   ///
-  /// The first-derivative rows of the basis recurrence divide by knot differences, and one is
-  /// zero at the domain's upper end when the span search clamps to an empty last span: knots
-  /// `[0, 0, 0, 1, 2, 2, 2, 3]` at degree 2 put a knot of full multiplicity at the end `2` of the
-  /// domain, before a trailing knot. The iteration reaches that end by the clip, so the case is
-  /// reachable from `locate`; there the derivative is undefined (the previous implementation's
-  /// was NaN).
+  /// The first-derivative rows of the basis recurrence divide by knot differences. `xi` is clipped
+  /// into the closed domain, where no such difference is zero (see `detail::basis_derivs_point`):
+  /// at an end beside an empty span, such as the end `2` of knots `[0, 0, 0, 1, 2, 2, 2, 3]` at
+  /// degree 2, the span search takes the last non-empty span. The status is still checked, as the
+  /// recurrence reports it.
   ///
   /// Returns:
   ///     bool: False when a direction's recurrence met a zero divisor; `jac` is then incomplete

@@ -495,6 +495,13 @@ TEST_CASE("space1d: a zero divisor in the derivative recurrence is reported, not
   // In-domain points are complete, up to and including the left end where the span starts.
   const std::vector<double> good = {0.0, 0.25, 1.0};
   CHECK(s.tabulate_basis_derivatives<double>(good, 3, true).complete);
+  // Reachable with validation on: the unsnapped first span [0, 1e-32) is shorter than the rounding
+  // of the band point -1e-15, so (1e-32 + 1e-15) + (-1e-15 - 0) rounds to zero.
+  const std::vector<double> unsnapped = {0, 0, 0, 1e-32, 1, 1, 1};
+  const bs::BsplineSpace1D<double> u(sp(unsnapped), 2, false, false);
+  const std::vector<double> band = {-1e-15};
+  REQUIRE(u.contains<double>(-1e-15));
+  CHECK_FALSE(u.tabulate_basis_derivatives<double>(band, 1, true).complete);
 }
 
 TEST_CASE("space1d: a point in the band beside an empty end span takes the nearest non-empty one") {
