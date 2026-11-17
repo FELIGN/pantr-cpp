@@ -3,14 +3,6 @@
 ## Unreleased
 
 ### Added
-- **`pantr.bezier.set_root_provider` and `get_root_provider`** select which root finder
-  `find_roots` and `find_monotone_root` use: `"builtin"` (pantr's own) or `"berf"` (BeRF-FR,
-  from the `pantr-berf` package). The initial choice comes from the `PANTR_ROOT_PROVIDER`
-  environment variable, read on first use (an unknown name raises `ValueError` then, not at
-  import); without it, `"berf"` when `pantr-berf` is installed, else `"builtin"`. Asking for
-  `"berf"` without the package raises `ImportError`. `pantr-berf` is not published yet, so
-  `"builtin"` is the only provider available for now; the switch is where the certified finder
-  will plug in once it is.
 - **A METIS graph partitioner for C++ users** (`pantr::metis::Partitioner`, target `pantr::metis`,
   CMake option `PANTR_WITH_METIS`, off by default), against a METIS the user installs. It does what
   `partition_graph(backend="metis")` does through pymetis. The Python package does not use it:
@@ -49,31 +41,14 @@
 - **`create_uniform_open_knots` and `create_uniform_periodic_knots` with a NaN or infinite
   domain end** raise `ValueError` ("domain must be finite, ..."); the previous release returned
   NaN or infinite knots.
-- **`pantr.bezier.find_roots` and `find_monotone_root` with `tol=inf` or `tol=nan`** raise
-  `ValueError` ("tol must be positive and finite"). With `tol=inf`, `find_roots`
-  returned no roots and `find_monotone_root` a value, without a warning; with NaN, `find_roots`
-  could report one root several times.
 - **`THBSplineSpace.refine` and `refine_region` on a `float32` knot vector whose knots within one
   refinement window lie more than the `float32` range apart** (for example degree 2 on
   `[-2e38, 0, 2e38]`) raise `OverflowError`, as does a space built on such a refined grid: the
   two-scale matrix between the levels overflows. The previous release built the refined space, and its
   `prolongation_to` returned NaN entries without a warning.
-- **`pantr.bezier.find_roots` and `find_monotone_root`, single and batch, with a NaN or infinite
-  coefficient** raise `ValueError` ("coefficients must be finite", naming the first such row in
-  batch mode). The previous release answered: `find_monotone_root` of three NaN coefficients
-  returned about `1`, and `find_roots` returned no roots for it, or roots for a polynomial with one
-  NaN or infinite coefficient among finite ones.
 - **`Bezier.minimize_degree` with `tol=inf` or `tol=nan`** raises `ValueError` ("tol must be
   finite"); the previous release reduced any Bézier to degree 0 with either, without a warning. A
   finite zero or negative `tol` still keeps the input; `tol=-inf`, which kept it, now raises too.
-- **`pantr.bspline.find_roots` with `tol=nan` or `tol=inf`** raises `ValueError` ("tol must be
-  positive and finite"); the previous release returned no roots for NaN, and for `inf` raised that
-  the spline vanishes identically.
-- **`pantr.bspline.find_roots` of a spline with a NaN or infinite control point, or an infinite
-  weight,** raises `ValueError` ("coefficients must be finite", as for the Bézier roots; a NaN
-  weight is refused first as a weight that is not strictly positive, as before). The previous
-  release returned no roots for a NaN, even for the spans the NaN does not touch, and for an
-  infinite control point raised that the spline vanishes identically.
 - **A raw `BVH` whose internal node has a `node_cell` below `-1`** raises `ValueError`; the
   documented encoding is `-1`, and the previous release accepted any negative value.
 - **`THBSplineSpace` whose grid's root bounds miss a small axis of the root space's domain**
@@ -507,20 +482,12 @@
   `_bezier_degree._degree_elevate_bezier_1d_core` and `_tabulate_Bernstein_basis_1D_serial_core`,
   and the attribute `Bezier._control_points`, whose work is now done in C++.
 
-- **Degree reduction (`Bezier.reduce_degree`, `degree_reduction_error`, `minimize_degree`),
-  fitting (`interpolate_bezier`, `fit_bezier`) and root finding (`find_roots`,
-  `find_monotone_root`) run in pantr's C++ library**; `pantr.bezier` is now a thin wrapper
-  over it, with the names, signatures and defaults it had. The reduction operators are
-  assembled in exact rationals as before (now Boost.Multiprecision) and are the same bits.
-  `reduce_degree` reproduces the previous release's values bit for bit on `float32` and
-  `float64`, and so does `find_roots` when the largest coefficient magnitude is 1 (otherwise its roots can
-  move within the change of the zero floor, under "Changed"), except where
-  Bezier clipping used to drop roots or report a multiple root more than once (under "Fixed") and
-  in the depth-cap case below (measured over random, constructed and special-value inputs).
-  `find_monotone_root`'s solve now has a bisection safeguard (under "Fixed"): at a simple root
-  it moves within `tol` of the previous release's root wherever that release's solve converged;
-  at a root of odd multiplicity three or more the two agree only within the root's rounding band,
-  which is far wider than `tol`.
+- **Degree reduction (`Bezier.reduce_degree`, `degree_reduction_error`, `minimize_degree`) and
+  fitting (`interpolate_bezier`, `fit_bezier`) run in pantr's C++ library**; `pantr.bezier` is
+  now a thin wrapper over it, with the names, signatures and defaults it had. The reduction
+  operators are assembled in exact rationals as before (now Boost.Multiprecision) and are the same
+  bits. `reduce_degree` reproduces the previous release's values bit for bit on `float32` and
+  `float64` (measured over random, constructed and special-value inputs).
   `degree_reduction_error` sums its Gram contraction in another order and
   moves within that contraction's rounding, which grows with the degree: from the last bits at
   low degree, to about `1e-6` relative at degree 20 for random coefficients (`1e-1` for smooth
@@ -534,38 +501,7 @@
   of non-finite control points (under "Fixed"). The fits' singular value
   decomposition is Eigen's instead of LAPACK's, so a fit moves within the bound the Vandermonde
   matrix's conditioning gives (a few units in the last place on a small well-conditioned grid,
-  growing with the node count and the conditioning). Batch root finding runs on pantr's thread
-  pool with the GIL released. Like the other C++ results, the arrays `find_roots` and
-  `find_monotone_root` return do not own their data (`ndarray.resize` refuses them), except the
-  empty results of `find_roots([])` and `find_monotone_root([])`.
-- **`find_roots` warns when Bézier clipping gives up on part of `[0, 1]`** (`RuntimeWarning`,
-  "... exhausted the root finder's subdivision budget ..."). Clipping abandons an interval that
-  is still wider than `tol` after 64 levels of subdivision; it used to do so silently. Before
-  `tol` stopped setting the floor of the zero tests (under "Changed"), some straight lines written
-  at a higher degree reached it with a `tol` below the spacing of doubles at the root; now
-  clipping stops first on an interval whose polynomial is flat within the floor, and no input is
-  known to reach the cap through `find_roots`. The warning stays for that case, for the iteration
-  cap of Yuksel's path (under "Fixed"), and for a provider that reports a gap.
-  A root found there can differ from the previous release's by a unit in the last place.
-- **`pantr.bspline.find_roots` names the tolerance when a knot interval vanishes within it but
-  not exactly**: "The spline vanishes identically, to within the zero tolerance ... Lower tol if
-  it is what makes the coefficients there read as zero, ...". A `tol` near 1 or above makes every
-  coefficient read as zero, and the previous message blamed the spline. The message for
-  coefficients that are exactly zero is unchanged.
-- **`pantr.bezier.find_roots`'s `tol` bounds the error in a root's parameter only.** An explicit
-  `tol` also served as an absolute floor on the coefficient values, so a polynomial whose
-  coefficients all lay below `tol` had no roots; it now has its roots, within `tol` in the
-  parameter. The zero tests use a floor of `get_strict(dtype)` times the polynomial's largest
-  coefficient, whatever `tol` is, and a root found within `tol` in the parameter is accepted when
-  its residual is within that floor plus a bound on the slope over the bracket times the bracket's
-  width. A root provider (`set_root_provider`) receives the relative `get_strict(dtype)` as
-  `value_tol`. At a coarse explicit `tol` this acceptance is a backward-error bound: the accepted
-  point is a root of coefficients that differ from the input's by the residual, not necessarily
-  within `tol` of a root of the input. Two roots closer than about `tol` that fall in one bracket
-  can be reported as one point, and a point where the polynomial nearly touches
-  zero can be reported as a root. With `tol=1e-2`, where the previous release's absolute floor
-  often reported a pair of roots a few thousandths apart as a point more than `tol` from either,
-  such a pair is now found within `tol`.
+  growing with the node count and the conditioning).
 - **`fit_bezier` and `interpolate_bezier` with `float16`, `longdouble` or byte-swapped values
   compute in `float64`** (nodes included) and return a `float64` Bézier (also for byte-swapped
   `float32`, which `Bezier` itself would store as native `float32`). `fit_bezier` failed in the previous release's Numba basis kernel
@@ -573,12 +509,11 @@
   arrays) whenever a direction had more than one node, and returned the values' dtype with one
   node per direction. `interpolate_bezier` returned `longdouble` for `longdouble` values, and the
   values' dtype with one node per direction; it now returns `float64` in both cases.
-- **`reduce_degree`, `degree_reduction_error`, `minimize_degree`, `find_roots` and
-  `find_monotone_root` accept a Bézier built from `float16`, `longdouble`, boolean or
-  byte-swapped control points**, which `Bezier` now stores as `float64` (or native `float32`).
-  For `float16`, `longdouble` and byte-swapped arrays the previous release failed in its kernels
-  (`NotImplementedError`, a Numba `TypingError`), and root finding raised `TypeError` ("... must
-  be a float32 or float64 ndarray ..."). For boolean control points its `reduce_degree` returned a
+- **`reduce_degree`, `degree_reduction_error` and `minimize_degree` accept a Bézier built from
+  `float16`, `longdouble`, boolean or byte-swapped control points**, which `Bezier` now stores as
+  `float64` (or native `float32`). For `float16`, `longdouble` and byte-swapped arrays the
+  previous release failed in its kernels (`NotImplementedError`, a Numba `TypingError`). For
+  boolean control points its `reduce_degree` returned a
   boolean Bézier whose every point was `True` (silently wrong), `degree_reduction_error` raised
   NumPy's boolean-subtract `TypeError` and `minimize_degree` a `ValueError` ("... not inexact");
   all now compute on the `float64` values.
@@ -616,21 +551,17 @@
   ("fit_tensor: values need ... one node array ... per direction") for scalar or 1-D values; the
   previous release returned a Bézier. An empty node array is a `ValueError` ("bernstein_pinv needs 0 <=
   degree < len(nodes) ..."); it was an `IndexError`.
-- **Inputs outside the annotated types** of `fit_bezier`, `interpolate_bezier`, `minimize_degree`,
-  `find_roots` and `find_monotone_root`, as for `Bezier` above, can be accepted where they were
-  refused or refused with another exception and message, since the binding converts `tol` to a
-  `double`: a NumPy `float16`, `longdouble` or `bool` scalar, a 0-d array, a `Fraction` or a
-  `Decimal` `tol` is accepted (the previous release failed in Numba for several of them in the
-  root finders). A one-element array `tol`, accepted before by `fit_bezier`, `interpolate_bezier`,
-  `minimize_degree` and (for one polynomial) the root finders, is now a `TypeError`; a list or a
-  string was and is a `TypeError`, with a new message in the first three.
-- The private modules `pantr.bezier._bezier_degree`, `_bezier_utils`, `_root_finding_core`,
-  `_yuksel_core`, `_clipping_core` and `_batch_core`, and the helpers
+- **Inputs outside the annotated types** of `fit_bezier`, `interpolate_bezier` and
+  `minimize_degree`, as for `Bezier` above, can be accepted where they were refused or refused
+  with another exception and message, since the binding converts `tol` to a `double`: a NumPy
+  `float16`, `longdouble` or `bool` scalar, a 0-d array, a `Fraction` or a `Decimal` `tol` is
+  accepted. A one-element array `tol`, accepted before by all three, is now a `TypeError`; a list
+  or a string was and is a `TypeError`, with a new message.
+- The private modules `pantr.bezier._bezier_degree` and `_bezier_utils`, and the helpers
   `_bezier_interpolate._bernstein_interpolate`, `_bernstein_vandermonde_svd`,
-  `_build_bernstein_pinv`, `_build_nd_bernstein_vandermonde`, `_fit_from_scattered`,
-  `_fit_from_values`, `_find_roots._validate_coeff_array`, `_dispatch_single`,
-  `_CLIP_MIN_DEGREE`, `_CLIP_COEFF_RANGE_LIMIT` and `_SUPPORTED_DTYPES`, are gone with the Numba
-  kernels and NumPy code they held, whose work is now done in C++.
+  `_build_bernstein_pinv`, `_build_nd_bernstein_vandermonde`, `_fit_from_scattered` and
+  `_fit_from_values`, are gone with the Numba kernels and NumPy code they held, whose work is now
+  done in C++.
 - **`BsplineSpace1D`, `BsplineSpace`, the knot factories (`create_uniform_open_knots`,
   `create_uniform_periodic_knots`, `create_cardinal_knots`, `create_uniform_space`) and
   `get_greville_abscissae` run in pantr's C++ library**; names, signatures, defaults and messages
@@ -743,8 +674,8 @@
   `elevate_degree`, `reduce_degree`, the non-rational `derivative`, `slice`, `boundary`,
   `reverse`, `permute_directions`, `transform`, `to_bezier` and `to_beziers`, together with
   `BsplineSpace1D.insert_knots`, `subdivide` and its three `tabulate_*_extraction_operators`.
-  (`multiply`, `find_roots`, `locate` and the rational `derivative`, which uses `multiply`, run in
-  C++ as well, see below.)
+  (`multiply`, `locate` and the rational `derivative`, which uses `multiply`, run in C++ as well,
+  see below.)
 - **`Bspline.control_points` is a cached property**, as `Bezier.control_points` is (it was a
   plain property); assigning or deleting it is refused as before.
 - **`pantr.bspline.multilevel_extraction` no longer exposes `SpanwiseElementExtraction`**, which it
@@ -858,18 +789,14 @@
     `new_knots` is one-dimensional before inserting any.
   - A singular least-squares system in `to_periodic` would raise `ValueError` "Singular matrix"
     (`numpy.linalg.LinAlgError`, a `ValueError` subclass, before); no input reaching it was found.
-- **Inputs outside the annotated types, and calls with two invalid arguments, in `Bspline`,
-  `SpanwiseElementExtraction` and `find_roots`** can raise another exception or message than
+- **Inputs outside the annotated types, and calls with two invalid arguments, in `Bspline` and
+  `SpanwiseElementExtraction`** can raise another exception or message than
   before: a conversion error (of an index, a real value, a Lagrange variant or the orders) is
   reported before a range or shape error (for example `slice(10, "x")` is now a `TypeError` for
   the value, where it was a `ValueError` for the axis, and `SpanwiseElementExtraction` of a
   periodic space with an invalid variant raises `ValueError` for the variant, where it raised
   `NotImplementedError`), and an object that is not a space, or `orders=1.0`, fails with another
-  message. `find_roots` checks `tol` straight after the type of its first argument, so a `tol`
-  that is not positive, cannot be compared with `0.0` or cannot be converted to a float (a
-  one-dimensional one-element array on NumPy 2.4, an integer past the range of a float) is
-  reported before a B-spline that is not univariate, not scalar valued, of degree 0 or rational
-  with a non-positive weight (the previous release reported those first). A `Bezier` with the
+  message. A `Bezier` with the
   B-spline's number of directions, dtype and rank given as `other` to `multiply` raises
   `TypeError` from the binding, where it raised `AttributeError` ("... has no attribute
   'space'").
@@ -888,8 +815,7 @@
   a call has two faults, a read-only or wrongly typed `scratch` is reported before a too-small
   one. `ExtractionStructView` keeps its fields, now holding those views; the Numba kernels it was
   meant to feed are gone.
-- **`Bspline.multiply`, the rational `Bspline.derivative` and `pantr.bspline.find_roots` run in
-  pantr's C++ library**; names, signatures, defaults and messages are unchanged except as listed
+- **`Bspline.multiply` and the rational `Bspline.derivative` run in pantr's C++ library**; names, signatures, defaults and messages are unchanged except as listed
   here and in the entries on inputs outside the annotated types above. The rational `derivative`
   is the quotient rule over `multiply`, so it moves with it.
   - **Product values move in the last bits; knot vectors do not.** The knot vectors, degrees,
@@ -955,31 +881,6 @@
     to `degree + 3`) and ended the process in some runs of the others, with either
     `keep_degree` (which cases crash varies from run to run). A
     multiplicity of `degree` is accepted by both.
-  - **`find_roots` returns the previous release's roots to the bit for an open B-spline**, and
-    raises its exceptions with its messages: 885 sampled successful calls and 95 failing ones
-    (degrees 1 to 8, 1 to 10 intervals, interior knots of multiplicity up to the degree, polynomial
-    and rational, `float32` and `float64`, domains of length 1e-6 to 1e6, `tol` of `None`, `1e-6`,
-    `1e-10` and `1e-14`; 160 of the 980 calls have a polynomial's known roots at degrees 2 to 7 and
-    120 have a NaN or infinite coefficient). The two `RuntimeWarning`s for an exhausted insertion
-    budget keep their text, category and stack level (reached by lowering the budget, at 24
-    combinations of budget, `tol` and dtype). A periodic or unclamped B-spline is converted to open
-    form first, by the C++ conversion of `to_open_bspline` (above), so its roots move in the last
-    bits: 7 of 171 sampled `float64` calls differed, by at most 2.4e-16 times the largest root, and
-    79 of 170 `float32` calls, by at most 4.1e-8 times the largest root; the number of roots was
-    the same in every call.
-  - **`find_roots` reads `tol` as a Python float** for the C++ call. A `Decimal`, a `Fraction`, a
-    NumPy `float16` or `longdouble` scalar and an object that has `__float__` and orders against
-    `0.0` are accepted; the previous release raised `TypeError` for a `Decimal` and for such an
-    object, Numba's `TypingError` for a `Fraction` and a `longdouble`, and `NotImplementedError`
-    ("float16") for a `float16`. A one-dimensional one-element array is a `TypeError` ("only
-    0-dimensional arrays can be converted to Python scalars") on NumPy 2.4.6, where it was
-    accepted; a 1x1 array raised another error before and raises this one now. Another 31 values
-    (a `bool`, an `int`, NumPy `float32`, `float64`, integer and `bool` scalars, a 0-d and a
-    two-element array, `None`, NaN, infinities, zero, negative and subnormal values, a string, a
-    list, a complex number, an object with only `__float__`, an integer too large for a float) give
-    the previous release's roots or exception and message, on `float64` and `float32` B-splines.
-  - **The array `find_roots` returns does not own its data** (`ndarray.resize` raises); the
-    previous release's did own it in 13 of 1 226 sampled successful calls.
 - The private modules `pantr.bspline._bspline_basis_core`, `_bspline_knot_insertion_core`,
   `_bspline_restrict`, `_bspline_split`, `_bspline_blossom`, `_bspline_blossom_core`,
   `_bspline_degree`, `_bspline_degree_core`, `_bspline_knot_removal`,
@@ -994,16 +895,12 @@
   `spanwise_element_extraction._bezier_structural_identity_mask` and
   `_lagrange_structural_identity_mask`, are gone with the Numba kernels and NumPy code they held.
   What tests reach of them is in `pantr._testing`.
-- The private modules `pantr.bspline._bspline_roots_core`, `_bspline_product` and
-  `_bspline_product_nd`, the helpers `_bspline_knots._get_unique_knots_and_multiplicity_impl`,
-  `_get_Bspline_num_basis_1D_impl` and `_get_multiplicity_of_first_knot_in_domain_impl`, the
-  functions `_bspline_roots._check_connected`, `_max_insertions`, `_merge_certified`,
-  `_merge_radii`, `_scalar_numerator`, `_slope_bound` and `_validate_bspline_for_roots` with the
-  constants `_CURVATURE_DEGREE`, `_INSERTIONS_BASE`, `_INSERTIONS_PER_DEGREE`, `_STOP_SLACK` and
-  `_ZERO_TOL_SAFETY`, and `_bspline_derivative._derivative_rational`,
+- The private modules `pantr.bspline._bspline_product` and `_bspline_product_nd`, the helpers
+  `_bspline_knots._get_unique_knots_and_multiplicity_impl`, `_get_Bspline_num_basis_1D_impl` and
+  `_get_multiplicity_of_first_knot_in_domain_impl`, and `_bspline_derivative._derivative_rational`,
   `_derivative_rational_open`, `_refine_to_common_space_1d` and `_tile_scalar_bspline`, are gone
   with the Numba kernels and NumPy code they held, whose work is now done in C++.
-  What tests reach of the root finder and of the knot classes is in `pantr._testing`.
+  What tests reach of the knot classes is in `pantr._testing`.
 - **B-spline fitting (`interpolate_bspline`, `fit_bspline`, `l2_project_bspline`,
   `quasi_interpolate_bspline`) runs in pantr's C++ library**, with the names, signatures, defaults
   and dtype rules it had: which dtype a solve runs in, which values are refused and with which
@@ -1426,6 +1323,17 @@
   previous release's was not for a space of two or more dimensions; dtype, shape and values are
   unchanged except as under Fixed.
 
+### Removed
+- **pantr no longer finds roots.** `pantr.bezier.find_roots`, `pantr.bezier.find_monotone_root`,
+  `pantr.bezier.set_root_provider`, `pantr.bezier.get_root_provider` and
+  `pantr.bspline.find_roots` are gone, with the C++ root finder behind them
+  (`include/pantr/roots/` and `include/pantr/bspline/roots.hpp`) and the private modules
+  `pantr.bezier._find_roots`, `pantr.bezier._root_finding`, `pantr.bspline._bspline_roots` and
+  `pantr.bspline._bspline_roots_core`, `pantr.bezier._root_finding_core`, `_yuksel_core`,
+  `_clipping_core` and `_batch_core` of the previous release. Code that calls them gets an
+  `AttributeError` (an `ImportError` for `from pantr.bezier import find_roots`). Root finding will
+  come back with the BeRF-FR provider, in a separate package; until then pantr has none of its own.
+
 ### Fixed
 - **`create_uniform_periodic_knots` (and the periodic `create_uniform_space`) returns a periodic
   knot vector for every continuity.** For `1 <= continuity <= degree - 2` it extended the repeated
@@ -1453,30 +1361,6 @@
   A trial reduction was rejected when its error reached `tol`, and a NaN error never does, so
   such a Bézier was reduced as far as it went (to degree 0 for a curve). Inherited from the
   previous release.
-- **`pantr.bezier.find_monotone_root` raises `RuntimeError` instead of returning a point far
-  from the root**, and `find_roots` warns where its own solve reaches that cap. Their
-  Newton/bisection solve stops after a fixed number of iterations, and when a Newton sequence
-  approaches the root from one side the far end of its bracket never moves: the midpoint it
-  returned could be far from the root, silently (about `2/3` for `(t - 1/3)^3`; for `float32`
-  coefficients, where rounding stalls the Newton step, also for simple roots such as that of
-  `(t - 5/8)(t + 1)^3`). `find_monotone_root` now raises where it reaches its cap, naming the
-  bracket (and in batch mode the row); `find_roots` reports the bracket as a part of
-  `[0, 1]` it did not resolve, with the `RuntimeWarning` it gives for Bézier clipping's depth cap.
-  A `tol` below the spacing of doubles at the root reaches the cap too, and raises there, where
-  the previous release's value was as close as doubles allow. Inherited from the previous release.
-- **`pantr.bezier.find_monotone_root` converges on `float32` simple roots** such as that of
-  `(t - 5/8)(t + 1)^3`, which reached the iteration cap above (and in the previous release gave a
-  value far from the root). Its solve now bisects whenever a step fails to halve the bracket,
-  takes the Newton step from the bracket's end with the smaller value, keeps each Newton point at
-  least `tol / 2` inside the bracket, and returns a point where the polynomial evaluates to an
-  exact zero; at a simple root it moves within `tol` of the previous release's root wherever that
-  release converged. Since the bracket at least halves every two iterations, its cap is 102
-  iterations, `2 (ceil(log2(1 / tol)) + 1)` at the strict `float64` tolerance, for both dtypes
-  (the previous release stopped after 64), which reaches any `tol` from that one up, on multiple
-  roots too: `(t - 1/3)^3` and `(t - 5/8)^3` converge in `float64`, and a `float32` polynomial at a
-  `tol` finer than its own strict tolerance converges. A `tol` below the spacing of doubles at the
-  root still reaches the cap and raises.
-  `find_roots` keeps the previous solve, so a `float32` stall there warns as described above.
 - **A knot vector whose first domain knot repeats past `knots[degree]`** (a non-clamped vector
   with `knots[degree] == knots[degree + 1]`, or a first knot repeated more than `degree + 1`
   times) gets correct Bézier, Lagrange and cardinal extraction operators, `to_beziers` pieces,
@@ -1486,17 +1370,6 @@
   constant piece where the spline varies), the cardinal flags of the interior intervals were
   shifted, and `slice` at the domain start returned a control point the spline does not take
   there. Inherited from the previous release.
-- **`pantr.bezier.find_roots` gives the same roots when the coefficients are scaled.** Its zero
-  tests, its flatness test, two tests on the derivative and the radius within which it merges
-  duplicate roots were absolute, in the units of the coefficients: a polynomial with six simple
-  roots lost some of them once its coefficients were small enough, and merged distinct roots into
-  one once they were large enough. Each bound is now relative to the polynomial's largest
-  coefficient (each row's, for a sequence of Béziers), and scaling the coefficients by a power of
-  two leaves the roots unchanged to the bit wherever nothing underflows or overflows. A multiple
-  root that clipping reached from two sides is now reported once in more cases (a triple root
-  beside a small cofactor was reported twice). With an explicit `tol`, each simple root is
-  reported within `tol` of it (the previous release could miss by more than `tol`, as it did
-  for the root `0.1` of that polynomial at `tol=1e-5`). Inherited from the previous release.
 - **`quasi_interpolate_bspline_distributed` leaves a coefficient that no rank owns at `0`.** Such
   a DOF exists when `cell_active` excludes every cell of its support; the previous release
   assembled the global field with `numpy.empty` and left that coefficient uninitialized.
@@ -1555,11 +1428,6 @@
   number of threads. Such a batch now overwrites its operand only when `out` is the operand
   itself; any other overlap is refused with the existing "out must not alias the operand"
   message.
-- **`find_roots` no longer loses roots that Bezier clipping found.** Clipping collected its
-  candidates in a fixed buffer of `3 * degree + 4` entries and silently dropped any past it, which
-  polynomials with many exact, evenly spaced roots fill: at degree 7 with roots `1/8, ..., 7/8`,
-  the previous release returned six of the seven (the same at degrees 11, 15, 23, 31 and for
-  other dyadic families). The candidate list now grows.
 - `AABB` can be pickled and copied (`pickle`, `copy.copy`, `copy.deepcopy`); each raised
   `AttributeError` from the immutability guard, which refused the state the default protocol
   restores.
@@ -1587,10 +1455,6 @@
 - An `out` array in Fortran order (or any layout whose reshape is a copy) is now written.
   The basis and basis-derivative functions used to fill a copy and leave the caller's
   array as allocated.
-- Bezier root finding no longer loses roots to underflow. Sign tests compare signs instead
-  of multiplying the two values, which flushed to zero for tiny coefficients, and the
-  test for a vanishing coefficient no longer carries an absolute floor, so rescaling a
-  polynomial no longer changes its roots.
 - **A `BVH` built with a negative `n_cells` and no nodes** returns an empty array from
   `query_aabb`. The previous release read past its empty node arrays and returned a cell id taken
   from that memory.

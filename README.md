@@ -15,7 +15,7 @@ Polynomial and NURBS Toolkit (**PaNTr**) is a library for geometric modeling and
   exact rational (NURBS) geometry, evaluation and derivatives, knot
   insertion/removal, degree elevation, and splitting.
 - **Bézier toolkit** — Bernstein/Bézier curves and patches, composition,
-  products, degree reduction, and Bernstein-polynomial root finding.
+  products, and degree reduction.
 - **Truncated hierarchical B-splines** — `THBSplineSpace` with local
   refinement, mirroring the tensor-product API.
 - **Constructive geometry (`pantr.cad`)** — lines, circles and arcs, disks,

@@ -40,6 +40,8 @@ no code copied). Where this design deviates from the letter of a ruling, it says
    from the Python solver, a BeRF-FR adapter in `providers/berf/` built as `pantr::berf` and the `pantr-berf` wheel.
    Each result carries a pantr-owned level (`computed`, `certified`, plus completeness); the built-in provider emits
    `computed` only. The Python switch is at the public function, so no C++ object crosses extension modules.
+   *Amended 2026-11-17 by the maintainer: the built-in provider was removed, and the tree has no root finding until
+   the BeRF-FR provider lands (issue #22; `design/root_seam.md`).*
 7. **MPI through a communicator concept.** Distributed algorithms are templates over a `Communicator` concept and do
    not include `mpi.h`; `pantr::mpi` adds `MpiCommunicator` (the only header that includes `mpi.h`). In Python, the
    algorithms are compiled once into `_pantr` behind a type-erased communicator; `_pantr_mpi` is a tiny extension that
@@ -472,6 +474,10 @@ reshapes a symbol.
 ## 4. Seams
 
 ### 4.1 Root finding
+
+*Amended 2026-11-17 by the maintainer: the `Builtin` provider, its `find_roots` default and the Python switch below
+were removed, and the tree has no root finding until the BeRF-FR provider lands (issue #22). The contract stands as the
+design that provider builds; `design/root_seam.md` carries it.*
 
 ```cpp
 namespace pantr::roots {
