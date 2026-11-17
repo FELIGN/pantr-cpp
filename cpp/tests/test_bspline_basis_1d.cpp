@@ -659,13 +659,35 @@ TEST_CASE(
   check_top_derivative_of_cardinal(20);
 }
 
-// Bug (present in the previous release as well): the row of order k is scaled by the 64-bit
-// integer p! / (p - k)!, which wraps past 2^63 (from p = 21 on, for the top rows), so the rows of
-// the orders that overflow are wrong by a large factor without any error. Marked as an expected
-// failure so the suite stays green; when the scaling is fixed this case fails and must be unmarked.
-TEST_CASE("space1d: the p-th derivative of a cardinal B-spline at p = 22" *
-          doctest::should_fail()) {
+// Regression: the row of order k was scaled by the 64-bit integer p! / (p - k)!, which wraps past
+// 2^63 from p = 21 on (21! / 2! > 2^63), so the top rows came out wrong by an arbitrary factor.
+TEST_CASE("space1d: the p-th derivative of a cardinal B-spline at p = 22") {
   check_top_derivative_of_cardinal(22);
+}
+
+TEST_CASE("space1d: the p-th derivative of a cardinal B-spline at p = 21 and p = 25") {
+  check_top_derivative_of_cardinal(21);
+  check_top_derivative_of_cardinal(25);
+}
+
+TEST_CASE("space1d: rows past the degree stay exactly zero at a degree whose factor overflowed") {
+  // At p = 21 the rows of orders 19..21 used to take a wrapped factor; orders 22 and 23 have no
+  // term in the recurrence and must stay exactly zero.
+  const int p = 21;
+  const auto knots = bs::cardinal_knots<double>(2 * p, p);
+  const bs::BsplineSpace1D<double> s(sp(knots), p, true);
+  const std::vector<double> pts = {static_cast<double>(p) + 0.5};
+  const int n_deriv = p + 2;
+  const auto d = s.tabulate_basis_derivatives<double>(pts, n_deriv, false);
+  REQUIRE(d.complete);
+  const auto ord = static_cast<std::size_t>(p) + 1;
+  for (int k = p + 1; k <= n_deriv; ++k) {
+    for (std::size_t j = 0; j < ord; ++j) {
+      CAPTURE(k);
+      CAPTURE(j);
+      CHECK(d.values.data()[static_cast<std::size_t>(k) * ord + j] == 0.0);
+    }
+  }
 }
 
 TEST_CASE("space1d: restriction keeps the functions, for every interval range of the table") {
