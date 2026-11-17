@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
+from fractions import Fraction
+from typing import Any
+
 import numpy as np
 import numpy.typing as npt
 import pytest
 
+from pantr import _testing
+from pantr._testing import oslo_matrix, oslo_rows
 from pantr.bspline import Bspline, BsplineSpace, BsplineSpace1D, create_uniform_periodic_knots
-from pantr.bspline._bspline_knot_insertion_core import (
-    _compute_oslo_matrix_1d_core,
-    _compute_oslo_rows_1d_core,
-    _insert_knots_1d_core,
-)
+from tests.oracles import bspline_exact, knot_insertion_exact
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -816,8 +817,31 @@ def _oslo_case(
 _OSLO_KINDS = ["uniform", "non_uniform", "multiple", "single_knot", "re_insert", "many"]
 
 
+def _inserted_knots(
+    old: npt.NDArray[np.float64], new: npt.NDArray[np.float64]
+) -> npt.NDArray[np.float64]:
+    """Get the knots ``new`` holds beyond ``old``, with multiplicity.
+
+    Args:
+        old (npt.NDArray[np.float64]): Original knot vector.
+        new (npt.NDArray[np.float64]): Refined knot vector, a superset of ``old``.
+
+    Returns:
+        npt.NDArray[np.float64]: The multiset difference, ascending.
+    """
+    remaining = new.tolist()
+    for k in old.tolist():
+        remaining.remove(k)
+    return np.asarray(remaining, dtype=np.float64)
+
+
 class TestOsloBandedRows:
-    """The banded row recurrence against the dense sweep it replaced."""
+    """The banded row recurrence against the dense sweep it replaced.
+
+    Consistency checks (mirror M5): the dense sweep is a Python transcription of the recurrence
+    the banded kernel runs, so agreement shows the banding drops nothing, not that the recurrence
+    is right. The independent oracle is :class:`TestAgainstBoehmInsertion` below.
+    """
 
     @pytest.mark.parametrize("degree", range(9))
     @pytest.mark.parametrize("kind", _OSLO_KINDS)
@@ -826,7 +850,7 @@ class TestOsloBandedRows:
         old, new = _oslo_case(degree, kind, seed=degree * 10 + len(kind))
         reference = _dense_oslo_reference(degree, old, new)
 
-        alphas, first_col = _compute_oslo_rows_1d_core(degree, old, new)
+        alphas, first_col = oslo_rows(degree, old, new)
         scattered = _scatter_oslo_rows(alphas, first_col, reference.shape[1])
 
         assert alphas.shape == (reference.shape[0], degree + 1)
@@ -840,7 +864,7 @@ class TestOsloBandedRows:
         old, new = _oslo_case(degree, kind, seed=degree + 3)
 
         np.testing.assert_allclose(
-            _compute_oslo_matrix_1d_core(degree, old, new),
+            oslo_matrix(degree, old, new),
             _dense_oslo_reference(degree, old, new),
             rtol=0.0,
             atol=_OSLO_ATOL_FACTOR * _EPS,
@@ -858,7 +882,7 @@ class TestOsloBandedRows:
         """
         old, new = _oslo_case(degree, kind, seed=degree * 7 + 1)
         reference = _dense_oslo_reference(degree, old, new)
-        _, first_col = _compute_oslo_rows_1d_core(degree, old, new)
+        _, first_col = oslo_rows(degree, old, new)
 
         for i in range(reference.shape[0]):
             nonzero = np.flatnonzero(reference[i] != 0.0)
@@ -871,7 +895,7 @@ class TestOsloBandedRows:
     def test_rows_sum_to_one(self, degree: int, kind: str) -> None:
         """Discrete B-splines form a partition of unity on every row."""
         old, new = _oslo_case(degree, kind, seed=degree * 5 + 2)
-        alphas, first_col = _compute_oslo_rows_1d_core(degree, old, new)
+        alphas, first_col = oslo_rows(degree, old, new)
         n_cols = old.shape[0] - degree - 1
 
         sums = _scatter_oslo_rows(alphas, first_col, n_cols).sum(axis=1)
@@ -891,7 +915,7 @@ class TestOsloBandedRows:
         )
         refined = np.sort(np.concatenate([periodic, np.array([0.05, 0.55])]))
 
-        alphas, first_col = _compute_oslo_rows_1d_core(degree, periodic, refined)
+        alphas, first_col = oslo_rows(degree, periodic, refined)
         n_cols = periodic.shape[0] - degree - 1
 
         assert (first_col < 0).any()
@@ -916,7 +940,9 @@ class TestOsloBandedRows:
         old, new = _oslo_case(degree, kind, seed=degree + 17)
         ctrl = rng.standard_normal((old.shape[0] - degree - 1, 3))
 
-        banded = _insert_knots_1d_core(degree, old, ctrl, new)
+        space = BsplineSpace([BsplineSpace1D(old, degree)])
+        inserted = _inserted_knots(old, new)
+        banded = Bspline(space, ctrl).insert_knots(inserted).control_points
         dense = _dense_oslo_reference(degree, old, new) @ ctrl
 
         atol = (degree + 1) * _EPS * float(np.max(np.abs(ctrl)))
@@ -937,3 +963,145 @@ class TestOsloBandedRows:
         pts = np.sort(rng.random(1000))
         atol = 64.0 * _EPS * float(np.max(np.abs(bsp.evaluate(pts))))
         np.testing.assert_allclose(refined.evaluate(pts), bsp.evaluate(pts), rtol=0.0, atol=atol)
+
+
+# ---------------------------------------------------------------------------
+# Independent oracle: Boehm's insertion, exact-rational
+# ---------------------------------------------------------------------------
+
+
+def _dyadic_case(degree: int, kind: str) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+    """Build an (old, inserted) pair whose knots are multiples of 1/64 (exact in float32).
+
+    Args:
+        degree (int): Polynomial degree.
+        kind (str): One of the ``_OSLO_KINDS``.
+
+    Returns:
+        tuple: ``(old_knots, inserted_knots)``.
+    """
+    rng = np.random.default_rng(1000 + degree * 13 + len(kind))
+    if kind == "non_uniform":
+        interior = np.sort(rng.integers(1, 63, 5)) / 64.0
+    elif kind == "multiple":
+        interior = np.repeat(np.array([0.25, 0.5, 0.75]), max(1, degree))
+    else:
+        interior = np.array([0.125, 0.25, 0.5, 0.625])
+    old = np.concatenate([np.zeros(degree + 1), interior, np.ones(degree + 1)])
+    if kind == "single_knot":
+        inserted = np.array([23 / 64])
+    elif kind == "re_insert":
+        existing = np.unique(old[degree + 1 : old.shape[0] - degree - 1])
+        inserted = np.repeat(existing, max(1, degree - 1))
+    elif kind == "many":
+        inserted = np.sort(rng.choice(np.arange(1, 64), size=37, replace=False)) / 64.0
+    else:
+        inserted = np.sort(rng.choice(np.arange(1, 64), size=4, replace=False)) / 64.0
+    return old, inserted
+
+
+def _exact_error(got: npt.NDArray[np.floating[Any]], want: list[list[Fraction]]) -> float:
+    """Get the largest ``|got - want|`` against exact fractions, compared exactly.
+
+    Args:
+        got (npt.NDArray[np.floating]): The computed array, ``(rows, cols)``.
+        want (list[list[Fraction]]): The exact fractions, the same shape.
+
+    Returns:
+        float: The largest absolute difference.
+    """
+    worst = 0.0
+    for row_got, row_want in zip(np.atleast_2d(got).tolist(), want, strict=True):
+        for g, w in zip(row_got, row_want, strict=True):
+            worst = max(worst, float(abs(bspline_exact.exact(g) - w)))
+    return worst
+
+
+class TestAgainstBoehmInsertion:
+    """The Oslo matrix, the refined control points and the refined curve against exact Boehm."""
+
+    @pytest.mark.parametrize("dtype", [np.float64, np.float32])
+    @pytest.mark.parametrize("degree", range(1, 7))
+    @pytest.mark.parametrize("kind", _OSLO_KINDS)
+    def test_oslo_matrix_equals_repeated_boehm_insertion(
+        self, degree: int, kind: str, dtype: type
+    ) -> None:
+        """The refinement matrix is the exact insertion applied to the identity.
+
+        Oracle: :mod:`tests.oracles.knot_insertion_exact`, Boehm's one-knot insertion in
+        fractions, one knot at a time (the definition of insertion, not the discrete B-spline
+        recurrence). Tolerance: each entry is a convex combination built by ``degree`` levels of
+        three roundings and one addition of nonnegative terms, so within ``4 degree u`` of the
+        exact entry (``u = eps / 2``); ``6 degree u`` keeps a margin of half for contraction and
+        vector width.
+        """
+        old, inserted = _dyadic_case(degree, kind)
+        new = np.sort(np.concatenate([old, inserted]))
+        fn = _testing.oslo_matrix_f32 if dtype == np.float32 else oslo_matrix
+        got = fn(degree, old.astype(dtype), new.astype(dtype))
+        want = knot_insertion_exact.oslo_matrix(old, degree, inserted)
+        assert got.shape == (len(want), len(want[0]))
+        u = float(np.finfo(dtype).eps) / 2
+        assert _exact_error(got, want) <= 6.0 * degree * u
+
+    @pytest.mark.parametrize("dtype", [np.float64, np.float32])
+    @pytest.mark.parametrize("degree", range(1, 7))
+    @pytest.mark.parametrize("kind", _OSLO_KINDS)
+    def test_refined_control_points_equal_repeated_boehm_insertion(
+        self, degree: int, kind: str, dtype: type
+    ) -> None:
+        """``insert_knots`` returns the control points exact Boehm insertion gives.
+
+        Oracle: :mod:`tests.oracles.knot_insertion_exact`. Tolerance: the matrix entries are
+        within ``6 degree u`` (above) and the dot product of ``degree + 1`` terms adds
+        ``(degree + 1) u`` of the sum of magnitudes, so ``8 (degree + 1) u max|P|`` covers both
+        with the same margin.
+        """
+        old, inserted = _dyadic_case(degree, kind)
+        rng = np.random.default_rng(degree * 5 + len(kind))
+        n = old.shape[0] - degree - 1
+        ctrl: npt.NDArray[Any] = (rng.integers(-64, 65, (n, 3)) / 64.0).astype(dtype)
+        space = BsplineSpace([BsplineSpace1D(old.astype(dtype), degree)])
+        refined = Bspline(space, ctrl).insert_knots(inserted)
+        _, want = knot_insertion_exact.insert_knots(old, degree, ctrl.astype(np.float64), inserted)
+        u = float(np.finfo(dtype).eps) / 2
+        got = refined.control_points.reshape(-1, 3)
+        assert _exact_error(got, want) <= 8.0 * (degree + 1) * u * float(np.max(np.abs(ctrl)))
+
+    @pytest.mark.parametrize("dtype", [np.float64, np.float32])
+    @pytest.mark.parametrize("degree", range(1, 6))
+    @pytest.mark.parametrize("rational", [False, True])
+    def test_insertion_preserves_the_curve_at_random_parameters(
+        self, degree: int, rational: bool, dtype: type
+    ) -> None:
+        """The refined curve equals the original at random parameters, exactly evaluated.
+
+        Oracle: :mod:`tests.oracles.bspline_exact` (Cox-de Boor in fractions) on the original and
+        on the refined knot vector and control points; the two exact sums differ by the rounding
+        of the refined control points only, ``8 (degree + 1) u max|P|``; for a rational spline
+        the sums are the homogeneous coordinates (the projected curves are their quotients).
+        """
+        rng = np.random.default_rng(degree * 17 + int(rational))
+        old = np.concatenate(
+            [
+                np.zeros(degree + 1),
+                np.array([0.25, 0.5, 0.5, 0.75][: 4 if degree > 1 else 3]),
+                np.ones(degree + 1),
+            ]
+        )
+        n = old.shape[0] - degree - 1
+        ctrl: npt.NDArray[Any] = (rng.integers(-64, 65, (n, 3)) / 64.0).astype(dtype)
+        if rational:
+            ctrl[:, -1] = 1.0 + np.abs(ctrl[:, -1])
+        space = BsplineSpace([BsplineSpace1D(old.astype(dtype), degree)])
+        before = Bspline(space, ctrl, is_rational=rational)
+        after = before.insert_knots(np.array([0.125, 0.375, 0.5, 0.625, 0.875][: degree + 1]))
+        u = float(np.finfo(dtype).eps) / 2
+        tol = 8.0 * (degree + 1) * u * float(np.max(np.abs(ctrl)))
+        k_after = after.space.spaces[0].knots
+        for x in rng.integers(0, 64, 12) / 64.0:
+            a = bspline_exact.homogeneous([old], [degree], ctrl.astype(np.float64), [x], [0])
+            b = bspline_exact.homogeneous(
+                [k_after], [degree], after.control_points.astype(np.float64), [x], [0]
+            )
+            assert all(abs(p - q) <= tol for p, q in zip(a, b, strict=True))

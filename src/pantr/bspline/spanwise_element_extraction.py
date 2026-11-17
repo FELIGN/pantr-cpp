@@ -1,10 +1,10 @@
 """Tensor-product change-of-basis extraction across B-spline elements.
 
-This module exposes :class:`SpanwiseElementExtraction`, a lazy tensor-product
-change-of-basis object. It eagerly caches the per-direction 1D extraction
-operators once at construction time and, on demand, dispatches to the Layer-3
-Kronecker kernels in ``pantr.bspline._extraction_kernels`` to apply the
-d-dimensional operator for a single element.
+This module exposes :class:`SpanwiseElementExtraction`, a tensor-product
+change-of-basis object. The value lives in the C++ library
+(``pantr::bspline::SpanwiseElementExtraction``): it builds the per-direction 1D extraction
+operators once at construction time and applies the d-dimensional operator of an element, or of a
+batch of elements, as one mode-wise contraction per direction.
 
 Three targets are supported (the source basis is always the B-spline basis):
 
@@ -21,9 +21,10 @@ structural (multiplicity-based) identity predicates:
   patch. Knot multiplicities are computed using ``space.tolerance``.
 - ``"lagrange"``: for ``degree == 0`` every element is trivially identity.
   For ``degree > 0`` an element is identity iff its Bézier extraction is
-  identity and the Lagrange-to-Bernstein matrix equals ``I`` (which holds when
-  the Lagrange nodes coincide with the Bernstein abscissae, e.g. ``degree == 1``
-  with equispaced, GLL, or Chebyshev-2nd nodes).
+  identity and the Lagrange-to-Bernstein matrix equals ``I``. That holds when
+  ``B_i(x_k) = delta_ik`` at the Lagrange nodes ``x_k``, which an interior
+  Bernstein function (``0 < i < degree``) never satisfies, so it holds for
+  ``degree == 1`` only, with equispaced, GLL, or Chebyshev-2nd nodes.
 - ``"cardinal"``: structural mask from
   :meth:`BsplineSpace1D.get_cardinal_intervals` labels uniform-span intervals,
   on which the cardinal extraction operator is exactly the identity.
@@ -31,27 +32,78 @@ structural (multiplicity-based) identity predicates:
 
 from __future__ import annotations
 
+import copy as _copy
 import functools
+import math
 from collections.abc import Iterator
-from typing import TYPE_CHECKING, Literal, NamedTuple, get_args
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, cast, get_args
 
 import numpy as np
 import numpy.typing as npt
 
+from .._ext import ext
 from ..basis import LagrangeVariant
+from ..basis._basis_tabulate import _variant_code
 from ..basis._basis_utils import _allocate_or_validate_out
-from ..change_basis import _cached_lagrange_to_bernstein_matrix
-from ._bspline_extraction import _bezier_structural_identity_mask_core
-from ._extraction_helpers import (
-    OpKind,
-    _operation_shapes,
-    _prepare_apply_call,
-    _prepare_apply_many_call,
-)
 
 if TYPE_CHECKING:
-    from ._bspline_space_1d import BsplineSpace1D
     from ._bspline_space_nd import BsplineSpace
+
+_cpp: Any = ext.bspline
+"""The compiled spanwise extractions (private; untyped: one class per dtype)."""
+
+_F32: np.dtype[np.float32] = np.dtype(np.float32)
+
+_ALIAS_MESSAGE = "out must not alias the operand; the kernel reads and writes overlapping memory"
+"""The refusal of an ``out`` that shares memory with the operand (the library's wording)."""
+
+OpKind = Literal["apply", "apply_T", "MT_K_M", "M_K_MT"]
+"""Tag distinguishing the four apply variants.
+
+- ``"apply"``:    ``out = M @ v``           (input shape prod -> output shape prod)
+- ``"apply_T"``:  ``out = M^T @ v``         (output shape prod -> input shape prod)
+- ``"MT_K_M"``:   ``out = M^T @ K @ M``     (output x output -> input x input)
+- ``"M_K_MT"``:   ``out = M @ K @ M^T``     (input x input -> output x output)
+
+with ``M = kron(M_0, M_1, ..., M_{d-1})``.
+"""
+
+_OP_CODES: dict[str, int] = {"apply": 0, "apply_T": 1, "MT_K_M": 2, "M_K_MT": 3}
+"""The compiled library's wire value of each :data:`OpKind`."""
+
+_TARGET_CODES: dict[str, int] = {"bezier": 0, "lagrange": 1, "cardinal": 2}
+"""The compiled library's wire value of each target."""
+
+_ONE_CELL_METHODS: dict[str, str] = {
+    "apply": "apply",
+    "apply_T": "apply_transpose",
+    "MT_K_M": "apply_mt_k_m",
+    "M_K_MT": "apply_m_k_mt",
+}
+_BATCH_METHODS: dict[str, str] = {
+    "apply": "apply_many",
+    "apply_T": "apply_transpose_many",
+    "MT_K_M": "apply_mt_k_m_many",
+    "M_K_MT": "apply_m_k_mt_many",
+}
+
+_VALUE_ATTRS: frozenset[str] = frozenset(
+    {
+        "_space",
+        "_target",
+        "_lagrange_variant",
+        "_h",
+        "_dtype",
+        "_compact_ops_1d",
+        "_idx_maps_1d",
+        "_is_identity_mask_1d",
+        "_input_shape_per_dir",
+        "_output_shape_per_dir",
+        "ops_1d",
+        "num_identity_elements",
+    }
+)
+"""The attributes of an extraction that hold its value or are cached from it."""
 
 
 Target = Literal["bezier", "lagrange", "cardinal"]
@@ -82,19 +134,20 @@ class SpanwiseElementExtraction:
     are retained, reducing memory for identity-heavy spaces (e.g. cardinal
     spaces on uniform meshes). Per-element d-dimensional operators are never
     materialized unless explicitly requested via :meth:`operator` or
-    :meth:`tabulate`: instead the apply-style methods dispatch to the
-    matrix-free Kronecker kernels in ``pantr.bspline._extraction_kernels``.
+    :meth:`tabulate`: instead the apply-style methods contract the operator
+    one direction at a time, in the compiled library.
 
     With the current 1D builders all per-direction operators are square of
     size ``(degree_k + 1, degree_k + 1)``. The class also supports non-square
     per-direction operators, so new 1D builders can plug in without changes,
     provided such an operator is not flagged as the identity.
 
+    The value is immutable: the operators are built at construction and are
+    read-only, and the arrays this class returns are read-only views of them.
     The per-direction data is exposed as two complementary representations:
 
     - *Compact* (:attr:`compact_ops_1d`, :attr:`idx_maps_1d`,
-      :attr:`is_identity_mask_1d`): primary storage, suitable for downstream
-      ``@njit`` code that calls the Layer-3 batch kernels directly.
+      :attr:`is_identity_mask_1d`): primary storage.
     - *Dense* (:attr:`ops_1d`): the full ``(n_elements_k, n_out_k, n_in_k)``
       layout, reconstructed lazily from compact storage on first access.
 
@@ -103,29 +156,47 @@ class SpanwiseElementExtraction:
     a consumer serializing the 1D factors should use; ``__getitem__`` is the
     convenience form that materializes an explicit identity matrix instead.
 
+    Any number of directions is supported, as long as the operand of a
+    two-sided operation (``prod(degree_k + 1)**2`` entries) can be counted.
+
+    Special values: the apply methods check no value. A NaN or an infinity in an
+    operand propagates as the multiply-adds of the contractions give it, so it
+    reaches every entry of the result that the stages combine it with, including
+    those a zero entry of an operator would weigh by 0 (``0 * NaN`` is NaN); an
+    identity direction copies and mixes nothing.
+
     Attributes:
+        _h (Any): The compiled value (``SpanwiseExtractionF64`` or ``SpanwiseExtractionF32``).
         _space (BsplineSpace): Underlying multi-dimensional B-spline space.
         _target (Target): Target basis tag.
         _lagrange_variant (LagrangeVariant): Point distribution used when
             ``target == "lagrange"``; ignored otherwise.
+        _dtype (np.dtype): ``float32`` or ``float64``.
         _compact_ops_1d (tuple[npt.NDArray[np.float32 | np.float64], ...]):
             Per-direction compact 3D operator arrays of shape
             ``(n_compact_k, n_out_k, n_in_k)``; only non-identity rows are
-            stored. Always has at least one row to ensure safe Numba indexing.
+            stored. Always has at least one row (a zero operator when every
+            element is identity).
         _idx_maps_1d (tuple[npt.NDArray[np.intp], ...]): Per-direction compact
             index maps of shape ``(n_elements_k,)``; ``_idx_maps_1d[k][e]`` is
             the row index into ``_compact_ops_1d[k]`` for element ``e``
             (undefined for identity elements, stored as 0).
         _is_identity_mask_1d (tuple[npt.NDArray[bool], ...]): Per-direction
             identity masks of shape ``(n_elements_k,)``.
+        _input_shape_per_dir (tuple[int, ...]): The columns of each direction's operator.
+        _output_shape_per_dir (tuple[int, ...]): The rows of each direction's operator.
     """
 
+    _h: Any
     _space: BsplineSpace
     _target: Target
     _lagrange_variant: LagrangeVariant
+    _dtype: np.dtype[np.float32] | np.dtype[np.float64]
     _compact_ops_1d: tuple[npt.NDArray[np.float32 | np.float64], ...]
     _idx_maps_1d: tuple[npt.NDArray[np.intp], ...]
     _is_identity_mask_1d: tuple[npt.NDArray[np.bool_], ...]
+    _input_shape_per_dir: tuple[int, ...]
+    _output_shape_per_dir: tuple[int, ...]
 
     def __init__(
         self,
@@ -144,7 +215,13 @@ class SpanwiseElementExtraction:
                 :attr:`pantr.basis.LagrangeVariant.EQUISPACES`.
 
         Raises:
-            ValueError: If ``target`` is not a recognized tag.
+            ValueError: If ``target`` is not a recognized tag, or if ``target`` is
+                ``"lagrange"`` and ``lagrange_variant`` is not a
+                :class:`~pantr.basis.LagrangeVariant` (or its string value), or if the
+                operand of a two-sided operation (``prod(degree_k + 1)**2`` entries) has
+                more entries than can be counted, as a space of many directions can
+                (the compiled library's ``capacity_error``; its message names the number
+                of directions, not the extents).
             NotImplementedError: If any direction of ``space`` is periodic;
                 periodic support is deferred to a later version.
         """
@@ -152,59 +229,99 @@ class SpanwiseElementExtraction:
             valid = ", ".join(repr(v) for v in get_args(Target))
             raise ValueError(f"Unknown target {target!r}; expected one of {valid}")
 
-        if any(s.periodic for s in space.spaces):
-            raise NotImplementedError(
-                "SpanwiseElementExtraction does not yet support periodic directions. "
-                "Convert the B-spline to open form first (see Bspline.to_open_bspline)."
-            )
-
+        dtype = np.dtype(space.dtype)
+        cls = _cpp.SpanwiseExtractionF32 if dtype == _F32 else _cpp.SpanwiseExtractionF64
+        variant_code = _variant_code(lagrange_variant) if target == "lagrange" else 0
+        handle = cls(space._h, _TARGET_CODES[target], variant_code)
         self._space = space
         self._target = target
         self._lagrange_variant = lagrange_variant
+        self._set_handle(handle)
 
-        compact_ops_1d: list[npt.NDArray[np.float32 | np.float64]] = []
-        idx_maps_1d: list[npt.NDArray[np.intp]] = []
-        masks_1d: list[npt.NDArray[np.bool_]] = []
-        for space_1d in space.spaces:
-            if target == "bezier":
-                ops = space_1d.tabulate_Bezier_extraction_operators()
-                mask = _bezier_structural_identity_mask(space_1d)
-            elif target == "lagrange":
-                ops = space_1d.tabulate_Lagrange_extraction_operators(
-                    lagrange_variant=lagrange_variant
-                )
-                mask = _lagrange_structural_identity_mask(space_1d, lagrange_variant)
-            else:  # target == "cardinal"
-                ops = space_1d.tabulate_cardinal_extraction_operators()
-                mask = space_1d.get_cardinal_intervals()
-            non_id_idx = np.where(~mask)[0]
-            n_non_id = int(non_id_idx.shape[0])
-            n_out, n_in = int(ops.shape[1]), int(ops.shape[2])
-            if n_non_id > 0:
-                compact_ops = ops[non_id_idx].copy()
+    def _set_handle(
+        self,
+        h: Any,  # noqa: ANN401
+    ) -> None:
+        """Hold a compiled value and cache what the properties return.
+
+        Args:
+            h (Any): The compiled value.
+        """
+        d = self.__dict__
+        d["_h"] = h
+        d["_dtype"] = np.dtype(self._space.dtype)
+        dim = int(h.dim)
+        d["_compact_ops_1d"] = tuple(h.compact_ops(k) for k in range(dim))
+        d["_idx_maps_1d"] = tuple(h.idx_map(k) for k in range(dim))
+        d["_is_identity_mask_1d"] = tuple(h.identity_mask(k) for k in range(dim))
+        d["_input_shape_per_dir"] = tuple(int(n) for n in h.input_shape_per_dir)
+        d["_output_shape_per_dir"] = tuple(int(n) for n in h.output_shape_per_dir)
+        # Drop what a previous value cached.
+        d.pop("ops_1d", None)
+        d.pop("num_identity_elements", None)
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        """Pickle (and copy) through the constructor, with a subclass's attributes as state.
+
+        Returns:
+            tuple[Any, ...]: The rebuilding function, the class and the constructor arguments, and
+            the other attributes.
+        """
+        return (
+            _rebuild_extraction,
+            (type(self), self._space, self._target, self._lagrange_variant),
+            {k: v for k, v in self.__dict__.items() if k not in _VALUE_ATTRS},
+        )
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Restore a subclass's attributes, or rebuild from a previous release's pickle.
+
+        A previous release pickled the attributes ``_space``, ``_target``, ``_lagrange_variant``
+        and its compact arrays (with whatever cached properties it held); such a state rebuilds
+        the compiled value from the first three and drops the rest.
+
+        Args:
+            state (dict[str, Any]): The pickled state.
+        """
+        state = dict(state)
+        if "_h" not in self.__dict__ and "_space" in state:
+            SpanwiseElementExtraction.__init__(
+                self,
+                state["_space"],
+                state["_target"],
+                lagrange_variant=state["_lagrange_variant"],
+            )
+        for key in _VALUE_ATTRS:
+            state.pop(key, None)
+        self.__dict__.update(state)
+
+    def __copy__(self) -> SpanwiseElementExtraction:
+        """Copy: the new object shares the immutable compiled value and the space.
+
+        Returns:
+            SpanwiseElementExtraction: The copy, of the same class, with the same attributes.
+        """
+        new = object.__new__(type(self))
+        new.__dict__.update(self.__dict__)
+        return new
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> SpanwiseElementExtraction:
+        """Deep copy: shares the immutable compiled value and deep-copies the rest.
+
+        Args:
+            memo (dict[int, Any]): The deep-copy memo.
+
+        Returns:
+            SpanwiseElementExtraction: The copy.
+        """
+        new = object.__new__(type(self))
+        memo[id(self)] = new
+        for key, value in self.__dict__.items():
+            if key in _VALUE_ATTRS and key != "_space":
+                new.__dict__[key] = value
             else:
-                compact_ops = np.zeros((1, n_out, n_in), dtype=ops.dtype)
-            idx_map = np.zeros(int(mask.shape[0]), dtype=np.intp)
-            idx_map[non_id_idx] = np.arange(n_non_id, dtype=np.intp)
-            compact_ops.flags.writeable = False
-            idx_map.flags.writeable = False
-            mask.flags.writeable = False
-            compact_ops_1d.append(compact_ops)
-            idx_maps_1d.append(idx_map)
-            masks_1d.append(mask)
-
-        self._compact_ops_1d = tuple(compact_ops_1d)
-        self._idx_maps_1d = tuple(idx_maps_1d)
-        self._is_identity_mask_1d = tuple(masks_1d)
-
-        if len(self._compact_ops_1d) > 1:
-            dtype_0 = self._compact_ops_1d[0].dtype
-            for k, _ops in enumerate(self._compact_ops_1d[1:], start=1):
-                if _ops.dtype != dtype_0:
-                    raise ValueError(
-                        f"Per-direction operators have inconsistent dtypes: "
-                        f"ops_1d[0].dtype={dtype_0}, ops_1d[{k}].dtype={_ops.dtype}"
-                    )
+                new.__dict__[key] = _copy.deepcopy(value, memo)
+        return new
 
     # ---------------------------------------------------------------- properties
 
@@ -279,16 +396,13 @@ class SpanwiseElementExtraction:
         compact storage on first access and caches the result. Identity elements
         are filled with ``numpy.eye(n_out, n_in)``; non-identity elements are read
         from :attr:`compact_ops_1d`. Every extraction target builds square
-        per-direction operators, and :meth:`apply` and :meth:`apply_many` refuse an
-        identity-flagged operator that is not square.
+        per-direction operators, so an identity element is a square identity.
 
         Returns:
             tuple[npt.NDArray[np.float32 | np.float64], ...]: Length-``d`` tuple
             of read-only 3D arrays; ``ops_1d[k]`` has shape
-            ``(n_elements_k, n_out_k, n_in_k)``. Intended for consumption by
-            downstream ``@njit`` code when the full dense layout is required.
-            For compact-aware downstream code, prefer :attr:`compact_ops_1d` and
-            :attr:`idx_maps_1d`.
+            ``(n_elements_k, n_out_k, n_in_k)``. For code that can use the
+            compact layout, prefer :attr:`compact_ops_1d` and :attr:`idx_maps_1d`.
         """
         dense: list[npt.NDArray[np.float32 | np.float64]] = []
         for compact_ops, idx_map, mask in zip(
@@ -315,9 +429,10 @@ class SpanwiseElementExtraction:
             tuple[npt.NDArray[np.float32 | np.float64], ...]: Length-``d`` tuple
             of read-only 3D arrays; ``compact_ops_1d[k]`` has shape
             ``(n_compact_k, n_out_k, n_in_k)`` where ``n_compact_k`` is the
-            number of non-identity elements in direction ``k`` (at least 1 to
-            ensure safe Numba indexing). Intended for downstream ``@njit`` code
-            alongside :attr:`idx_maps_1d` and :attr:`is_identity_mask_1d`.
+            number of non-identity elements in direction ``k`` (at least 1: a
+            direction of identity elements keeps one zero operator that nothing
+            reads). Meant to be read with :attr:`idx_maps_1d` and
+            :attr:`is_identity_mask_1d`.
         """
         return self._compact_ops_1d
 
@@ -330,8 +445,8 @@ class SpanwiseElementExtraction:
             1D integer arrays; ``idx_maps_1d[k]`` has shape ``(n_elements_k,)``
             and ``idx_maps_1d[k][e]`` is the row index into
             :attr:`compact_ops_1d` ``[k]`` for element ``e``. For identity
-            elements the stored value is 0 (unused; the kernel short-circuits on
-            :attr:`is_identity_mask_1d`). Intended for downstream ``@njit`` code.
+            elements the stored value is 0 (unused; the application short-circuits on
+            :attr:`is_identity_mask_1d`).
         """
         return self._idx_maps_1d
 
@@ -362,8 +477,7 @@ class SpanwiseElementExtraction:
         Returns:
             tuple[int, ...]: ``(n_in_0, …, n_in_{d-1})``.
         """
-        # shape[2] is the per-direction input size, identical between compact and full layouts
-        return tuple(int(ops.shape[2]) for ops in self._compact_ops_1d)
+        return self._input_shape_per_dir
 
     @property
     def output_shape_per_dir(self) -> tuple[int, ...]:
@@ -372,8 +486,7 @@ class SpanwiseElementExtraction:
         Returns:
             tuple[int, ...]: ``(n_out_0, …, n_out_{d-1})``.
         """
-        # shape[1] is the per-direction output size, identical between compact and full layouts
-        return tuple(int(ops.shape[1]) for ops in self._compact_ops_1d)
+        return self._output_shape_per_dir
 
     # ---------------------------------------------------------------- identity queries
 
@@ -397,10 +510,7 @@ class SpanwiseElementExtraction:
         Returns:
             int: The number of fully-identity elements on the tensor-product grid.
         """
-        count = 1
-        for mask in self._is_identity_mask_1d:
-            count *= int(np.count_nonzero(mask))
-        return count
+        return int(self._h.num_identity_elements)
 
     @property
     def is_identity(self) -> bool:
@@ -493,14 +603,16 @@ class SpanwiseElementExtraction:
         Here ``M = kron(M_0, …, M_{d-1})`` with ``M_k`` the 1D operator at
         ``cell_idx`` in direction ``k``; identity directions short-circuit.
 
+        NaN and infinities in ``v`` are not checked: they propagate as the arithmetic
+        of the contractions gives them (see the class docstring).
+
         Args:
             v (npt.NDArray[np.float32 | np.float64]): Input vector of shape
                 ``(prod(input_shape_per_dir),)``.
             cell_idx (CellIndex): Element index (flat or per-direction).
             out (npt.NDArray[np.float32 | np.float64] | None): Optional output
                 array of shape ``(prod(output_shape_per_dir),)``. Must not
-                alias ``v``. Allocated
-                if ``None``.
+                alias ``v``. Allocated if ``None``.
             scratch (npt.NDArray[np.float32 | np.float64] | None): Optional
                 scratch buffer. Allocated if ``None``.
 
@@ -509,8 +621,12 @@ class SpanwiseElementExtraction:
             array as ``out`` when ``out`` was provided).
 
         Raises:
-            NotImplementedError: If the space has more than 3 directions;
-                specialized kernels only exist for ``d in {1, 2, 3}``.
+            ValueError: If ``v`` or ``out`` has another shape or dtype, ``out`` or
+                ``scratch`` is not writeable, ``cell_idx`` has the wrong length, ``scratch``
+                is smaller than needed, ``out`` aliases ``v`` (unless the element is the
+                identity in every direction) or ``scratch`` overlaps either.
+            IndexError: If ``cell_idx`` is out of range.
+            TypeError: If ``cell_idx`` is not an ``int`` or a sequence of ``int``.
         """
         return self._apply(v, cell_idx, "apply", out, scratch)
 
@@ -524,13 +640,16 @@ class SpanwiseElementExtraction:
     ) -> npt.NDArray[np.float32 | np.float64]:
         """Compute ``out = M^T @ v`` for the element at ``cell_idx``.
 
+        NaN and infinities in ``v`` are not checked: they propagate as the arithmetic
+        of the contractions gives them (see the class docstring).
+
         Args:
             v (npt.NDArray[np.float32 | np.float64]): Input vector of shape
                 ``(prod(output_shape_per_dir),)``.
             cell_idx (CellIndex): Element index.
             out (npt.NDArray[np.float32 | np.float64] | None): Optional output
                 array of shape ``(prod(input_shape_per_dir),)``. Must not
-                alias ``w``.
+                alias ``v``.
             scratch (npt.NDArray[np.float32 | np.float64] | None): Optional
                 scratch buffer.
 
@@ -538,8 +657,12 @@ class SpanwiseElementExtraction:
             npt.NDArray[np.float32 | np.float64]: The result array.
 
         Raises:
-            NotImplementedError: If the space has more than 3 directions;
-                specialized kernels only exist for ``d in {1, 2, 3}``.
+            ValueError: If ``v`` or ``out`` has another shape or dtype, ``out`` or
+                ``scratch`` is not writeable, ``cell_idx`` has the wrong length, ``scratch``
+                is smaller than needed, ``out`` aliases ``v`` (unless the element is the
+                identity in every direction) or ``scratch`` overlaps either.
+            IndexError: If ``cell_idx`` is out of range.
+            TypeError: If ``cell_idx`` is not an ``int`` or a sequence of ``int``.
         """
         return self._apply(v, cell_idx, "apply_T", out, scratch)
 
@@ -552,6 +675,9 @@ class SpanwiseElementExtraction:
         scratch: npt.NDArray[np.float32 | np.float64] | None = None,
     ) -> npt.NDArray[np.float32 | np.float64]:
         """Compute ``out = M^T @ K @ M`` for the element at ``cell_idx``.
+
+        NaN and infinities in ``K`` are not checked: they propagate as the arithmetic
+        of the contractions gives them (see the class docstring).
 
         Args:
             K (npt.NDArray[np.float32 | np.float64]): Input matrix of shape
@@ -567,8 +693,12 @@ class SpanwiseElementExtraction:
             npt.NDArray[np.float32 | np.float64]: The result matrix.
 
         Raises:
-            NotImplementedError: If the space has more than 3 directions;
-                specialized kernels only exist for ``d in {1, 2, 3}``.
+            ValueError: If ``K`` or ``out`` has another shape or dtype, ``out`` or
+                ``scratch`` is not writeable, ``cell_idx`` has the wrong length, ``scratch``
+                is smaller than needed, ``out`` aliases ``K`` (unless the element is the
+                identity in every direction) or ``scratch`` overlaps either.
+            IndexError: If ``cell_idx`` is out of range.
+            TypeError: If ``cell_idx`` is not an ``int`` or a sequence of ``int``.
         """
         return self._apply(K, cell_idx, "MT_K_M", out, scratch)
 
@@ -581,6 +711,9 @@ class SpanwiseElementExtraction:
         scratch: npt.NDArray[np.float32 | np.float64] | None = None,
     ) -> npt.NDArray[np.float32 | np.float64]:
         """Compute ``out = M @ K @ M^T`` for the element at ``cell_idx``.
+
+        NaN and infinities in ``K`` are not checked: they propagate as the arithmetic
+        of the contractions gives them (see the class docstring).
 
         Args:
             K (npt.NDArray[np.float32 | np.float64]): Input matrix of shape
@@ -596,8 +729,12 @@ class SpanwiseElementExtraction:
             npt.NDArray[np.float32 | np.float64]: The result matrix.
 
         Raises:
-            NotImplementedError: If the space has more than 3 directions;
-                specialized kernels only exist for ``d in {1, 2, 3}``.
+            ValueError: If ``K`` or ``out`` has another shape or dtype, ``out`` or
+                ``scratch`` is not writeable, ``cell_idx`` has the wrong length, ``scratch``
+                is smaller than needed, ``out`` aliases ``K`` (unless the element is the
+                identity in every direction) or ``scratch`` overlaps either.
+            IndexError: If ``cell_idx`` is out of range.
+            TypeError: If ``cell_idx`` is not an ``int`` or a sequence of ``int``.
         """
         return self._apply(K, cell_idx, "M_K_MT", out, scratch)
 
@@ -609,9 +746,9 @@ class SpanwiseElementExtraction:
     ) -> npt.NDArray[np.float32 | np.float64]:
         """Materialize the full ``(N_out, N_in)`` operator for one element.
 
-        Assembles the full Kronecker product in memory using :func:`numpy.kron`.
-        Prefer the matrix-free apply methods in production code when the full
-        matrix is not needed explicitly.
+        Assembles the full Kronecker product in memory (entries as :func:`numpy.kron`
+        forms them). Prefer the matrix-free apply methods in production code when
+        the full matrix is not needed explicitly.
 
         Args:
             cell_idx (CellIndex): Element index.
@@ -621,15 +758,16 @@ class SpanwiseElementExtraction:
         Returns:
             npt.NDArray[np.float32 | np.float64]: The full Kronecker operator.
         """
-        ops = self._ops_for_cell(cell_idx)
-        n_out = int(np.prod(self.output_shape_per_dir))
-        n_in = int(np.prod(self.input_shape_per_dir))
-        out = _allocate_or_validate_out(out, (n_out, n_in), self.dtype)
-        result = ops[0]
-        for M in ops[1:]:
-            result = np.kron(result, M)
-        out[...] = result
-        return out
+        multi = self._normalize_cell_idx(cell_idx)
+        n_out = math.prod(self._output_shape_per_dir)
+        n_in = math.prod(self._input_shape_per_dir)
+        result = _allocate_or_validate_out(out, (n_out, n_in), self.dtype)
+        # The compiled library writes a C-contiguous array; any other `out` is filled from one.
+        target = result if result.flags.c_contiguous else np.empty((n_out, n_in), self._dtype)
+        self._h.kron_operator(multi, target)
+        if target is not result:
+            result[...] = target
+        return result
 
     def tabulate(
         self,
@@ -648,8 +786,8 @@ class SpanwiseElementExtraction:
         Returns:
             npt.NDArray[np.float32 | np.float64]: Stacked per-element operators.
         """
-        n_out = int(np.prod(self.output_shape_per_dir))
-        n_in = int(np.prod(self.input_shape_per_dir))
+        n_out = math.prod(self.output_shape_per_dir)
+        n_in = math.prod(self.input_shape_per_dir)
         expected = (self.num_total_intervals, n_out, n_in)
         out = _allocate_or_validate_out(out, expected, self.dtype)
         for flat in range(self.num_total_intervals):
@@ -766,21 +904,6 @@ class SpanwiseElementExtraction:
                 ops.append(compact[int(idx_map[i])])
         return tuple(ops), tuple(flags)
 
-    def _ops_for_cell(
-        self, cell_idx: CellIndex
-    ) -> tuple[npt.NDArray[np.float32 | np.float64], ...]:
-        """Return the per-direction operators at one element.
-
-        Args:
-            cell_idx (CellIndex): Element index.
-
-        Returns:
-            tuple[npt.NDArray[np.float32 | np.float64], ...]: Per-direction
-            2D operators, each of shape ``(n_out_k, n_in_k)``.
-        """
-        ops, _ = self._ops_and_flags_for_cell(self._normalize_cell_idx(cell_idx))
-        return ops
-
     def _apply(
         self,
         operand: npt.NDArray[np.float32 | np.float64],
@@ -802,10 +925,41 @@ class SpanwiseElementExtraction:
         Returns:
             npt.NDArray[np.float32 | np.float64]: The result array.
         """
-        ops, flags = self._ops_and_flags_for_cell(self._normalize_cell_idx(cell_idx))
-        kernel, args, result = _prepare_apply_call(ops, flags, operand, out, scratch, op_kind)
-        kernel(*args)
+        multi = self._normalize_cell_idx(cell_idx)
+        in_shape, out_shape = _operation_shapes(
+            self._input_shape_per_dir, self._output_shape_per_dir, op_kind
+        )
+        _validate_operand(operand, in_shape, self._dtype)
+        result = _allocate_or_validate_out(out, out_shape, self._dtype)
+        # Checked here, before any temporary hides the overlap from the library: the contractions
+        # read and write overlapping memory, except in a cell that is a plain copy.
+        if not all(
+            bool(mask[i]) for mask, i in zip(self._is_identity_mask_1d, multi, strict=True)
+        ) and np.shares_memory(operand, result):
+            raise ValueError(_ALIAS_MESSAGE)
+        # The compiled library reads and writes C-contiguous arrays; any other operand is
+        # copied, and any other `out` is filled from a temporary.
+        target = result if result.flags.c_contiguous else np.empty(out_shape, self._dtype)
+        operand_c = operand if operand.flags.c_contiguous else np.ascontiguousarray(operand)
+        scratch_c = _scratch_argument(scratch, 1, self._dtype)
+        getattr(self._h, _ONE_CELL_METHODS[op_kind])(operand_c, multi, target, scratch_c)
+        if target is not result:
+            result[...] = target
         return result
+
+    def _all_cells_identity(self, cell_indices: npt.NDArray[np.intp]) -> bool:
+        """Check whether every cell of a batch is the identity in every direction.
+
+        Args:
+            cell_indices (npt.NDArray[np.intp]): Validated ``(n_cells, d)`` per-direction indices.
+
+        Returns:
+            bool: ``True`` iff the operator of every listed cell is the identity (also for no
+            cells).
+        """
+        return all(
+            bool(mask[cell_indices[:, k]].all()) for k, mask in enumerate(self._is_identity_mask_1d)
+        )
 
     def _apply_many(
         self,
@@ -815,12 +969,12 @@ class SpanwiseElementExtraction:
         out: npt.NDArray[np.float32 | np.float64] | None,
         scratch: npt.NDArray[np.float32 | np.float64] | None,
     ) -> npt.NDArray[np.float32 | np.float64]:
-        """Dispatch a batch apply variant through the Layer-2 helper.
+        """Run a batch apply variant in the compiled library.
 
         Args:
             operand (npt.NDArray[np.float32 | np.float64]): Batch input array.
             cell_indices (CellIndicesBatch): Flat or per-direction cell indices.
-            op_kind (OpKind): Which apply variant to dispatch.
+            op_kind (OpKind): Which apply variant to run.
             out (npt.NDArray[np.float32 | np.float64] | None): Optional output.
             scratch (npt.NDArray[np.float32 | np.float64] | None): Optional scratch.
 
@@ -834,20 +988,30 @@ class SpanwiseElementExtraction:
             IndexError: If any cell index is out of range.
             ValueError: If operand shape/dtype or ``out``/``scratch`` are invalid.
             TypeError: If ``cell_indices`` contains non-integer values.
-            NotImplementedError: If the space has more than 3 directions.
         """
         idx2d = normalize_cell_indices(cell_indices, self.num_intervals)
-        kernel, args, result = _prepare_apply_many_call(
-            self._compact_ops_1d,
-            self._idx_maps_1d,
-            self._is_identity_mask_1d,
-            idx2d,
-            operand,
-            out,
-            scratch,
-            op_kind,
+        n_cells = int(idx2d.shape[0])
+        per_cell_in, per_cell_out = _operation_shapes(
+            self._input_shape_per_dir, self._output_shape_per_dir, op_kind
         )
-        kernel(*args)
+        expected_operand = (n_cells, *per_cell_in)
+        expected_out = (n_cells, *per_cell_out)
+        _validate_operand(operand, expected_operand, self._dtype)
+        result = _allocate_or_validate_out(out, expected_out, self._dtype)
+        # Checked here, before any temporary hides the overlap from the library. The cells run on
+        # several threads, so a batch of copies may share memory with its operand only as the very
+        # same view; any other overlap would make the result depend on the thread count.
+        if np.shares_memory(operand, result) and not (
+            _is_same_view(operand, result) and self._all_cells_identity(idx2d)
+        ):
+            raise ValueError(_ALIAS_MESSAGE)
+        target = result if result.flags.c_contiguous else np.empty(expected_out, self._dtype)
+        operand_c = operand if operand.flags.c_contiguous else np.ascontiguousarray(operand)
+        cells = np.ascontiguousarray(idx2d, dtype=np.int64)
+        scratch_c = _scratch_argument(scratch, 2, self._dtype)
+        getattr(self._h, _BATCH_METHODS[op_kind])(operand_c, cells, target, scratch_c)
+        if target is not result:
+            result[...] = target
         return result
 
     # ---------------------------------------------------------------- batch applies
@@ -865,6 +1029,9 @@ class SpanwiseElementExtraction:
         ``M_c = kron(M_0[c_0], …, M_{d-1}[c_{d-1}])`` with ``M_k[c_k]`` the
         1D operator at element ``c_k`` in direction ``k``; identity directions
         short-circuit per cell.
+
+        NaN and infinities in ``v`` are not checked: they propagate as the arithmetic
+        of the contractions gives them (see the class docstring).
 
         Args:
             v (npt.NDArray[np.float32 | np.float64]): Batch input vectors,
@@ -885,7 +1052,14 @@ class SpanwiseElementExtraction:
             ``(n_cells, N_out)``.
 
         Raises:
-            NotImplementedError: If the space has more than 3 directions.
+            IndexError: If a cell index is out of range.
+            ValueError: If ``v`` or ``out`` has another shape or dtype, ``out`` or
+                ``scratch`` is not writeable, ``scratch`` has the wrong shape or is too
+                narrow, ``cell_indices`` has the wrong shape, ``out`` aliases ``v``
+                (unless every cell is the identity in every direction and ``out`` is
+                ``v`` itself, a shifted overlap being refused) or ``scratch`` overlaps
+                either.
+            TypeError: If ``cell_indices`` contains non-integer values.
         """
         return self._apply_many(v, cell_indices, "apply", out, scratch)
 
@@ -899,13 +1073,16 @@ class SpanwiseElementExtraction:
     ) -> npt.NDArray[np.float32 | np.float64]:
         """Compute ``out[c] = M_c^T @ v[c]`` for all cells in the batch.
 
+        NaN and infinities in ``v`` are not checked: they propagate as the arithmetic
+        of the contractions gives them (see the class docstring).
+
         Args:
             v (npt.NDArray[np.float32 | np.float64]): Batch input vectors,
                 shape ``(n_cells, N_out)`` with
                 ``N_out = prod(output_shape_per_dir)``.
             cell_indices (CellIndicesBatch): Cell indices — flat or per-direction.
             out (npt.NDArray[np.float32 | np.float64] | None): Optional output
-                array of shape ``(n_cells, N_in)``. Must not alias ``w``.
+                array of shape ``(n_cells, N_in)``. Must not alias ``v``.
                 Allocated if ``None``.
             scratch (npt.NDArray[np.float32 | np.float64] | None): Optional
                 per-cell scratch array. Allocated if ``None``.
@@ -915,7 +1092,14 @@ class SpanwiseElementExtraction:
             ``(n_cells, N_in)``.
 
         Raises:
-            NotImplementedError: If the space has more than 3 directions.
+            IndexError: If a cell index is out of range.
+            ValueError: If ``v`` or ``out`` has another shape or dtype, ``out`` or
+                ``scratch`` is not writeable, ``scratch`` has the wrong shape or is too
+                narrow, ``cell_indices`` has the wrong shape, ``out`` aliases ``v``
+                (unless every cell is the identity in every direction and ``out`` is
+                ``v`` itself, a shifted overlap being refused) or ``scratch`` overlaps
+                either.
+            TypeError: If ``cell_indices`` contains non-integer values.
         """
         return self._apply_many(v, cell_indices, "apply_T", out, scratch)
 
@@ -928,6 +1112,9 @@ class SpanwiseElementExtraction:
         scratch: npt.NDArray[np.float32 | np.float64] | None = None,
     ) -> npt.NDArray[np.float32 | np.float64]:
         """Compute ``out[c] = M_c^T @ K[c] @ M_c`` for all cells in the batch.
+
+        NaN and infinities in ``K`` are not checked: they propagate as the arithmetic
+        of the contractions gives them (see the class docstring).
 
         Args:
             K (npt.NDArray[np.float32 | np.float64]): Batch input matrices,
@@ -945,7 +1132,14 @@ class SpanwiseElementExtraction:
             ``(n_cells, N_in, N_in)``.
 
         Raises:
-            NotImplementedError: If the space has more than 3 directions.
+            IndexError: If a cell index is out of range.
+            ValueError: If ``K`` or ``out`` has another shape or dtype, ``out`` or
+                ``scratch`` is not writeable, ``scratch`` has the wrong shape or is too
+                narrow, ``cell_indices`` has the wrong shape, ``out`` aliases ``K``
+                (unless every cell is the identity in every direction and ``out`` is
+                ``K`` itself, a shifted overlap being refused) or ``scratch`` overlaps
+                either.
+            TypeError: If ``cell_indices`` contains non-integer values.
         """
         return self._apply_many(K, cell_indices, "MT_K_M", out, scratch)
 
@@ -958,6 +1152,9 @@ class SpanwiseElementExtraction:
         scratch: npt.NDArray[np.float32 | np.float64] | None = None,
     ) -> npt.NDArray[np.float32 | np.float64]:
         """Compute ``out[c] = M_c @ K[c] @ M_c^T`` for all cells in the batch.
+
+        NaN and infinities in ``K`` are not checked: they propagate as the arithmetic
+        of the contractions gives them (see the class docstring).
 
         Args:
             K (npt.NDArray[np.float32 | np.float64]): Batch input matrices,
@@ -975,7 +1172,14 @@ class SpanwiseElementExtraction:
             ``(n_cells, N_out, N_out)``.
 
         Raises:
-            NotImplementedError: If the space has more than 3 directions.
+            IndexError: If a cell index is out of range.
+            ValueError: If ``K`` or ``out`` has another shape or dtype, ``out`` or
+                ``scratch`` is not writeable, ``scratch`` has the wrong shape or is too
+                narrow, ``cell_indices`` has the wrong shape, ``out`` aliases ``K``
+                (unless every cell is the identity in every direction and ``out`` is
+                ``K`` itself, a shifted overlap being refused) or ``scratch`` overlaps
+                either.
+            TypeError: If ``cell_indices`` contains non-integer values.
         """
         return self._apply_many(K, cell_indices, "M_K_MT", out, scratch)
 
@@ -1040,65 +1244,160 @@ def normalize_cell_indices(
     raise ValueError(f"cell_indices must be 1-D (flat) or 2-D (per-direction); got ndim={arr.ndim}")
 
 
-def _bezier_structural_identity_mask(
-    space_1d: BsplineSpace1D,
-) -> npt.NDArray[np.bool_]:
-    """Compute the per-element Bézier identity mask from knot multiplicities.
-
-    Element ``e`` is identity iff both its boundary unique knots (in-domain)
-    have multiplicity ``>= degree + 1``, meaning the element is already a
-    Bézier patch with no continuity coupling to its neighbours.
-
-    Knot multiplicities are computed via the space's own tolerance
-    (``space_1d.tolerance``), which groups coincident knots before counting.
-
-    Args:
-        space_1d (BsplineSpace1D): A 1D B-spline space.
-
-    Returns:
-        npt.NDArray[np.bool_]: Boolean array of shape ``(n_elements,)``.
-    """
-    _, mults = space_1d.get_unique_knots_and_multiplicity(in_domain=True)
-    n_elements = len(mults) - 1
-    out = np.empty(n_elements, dtype=np.bool_)
-    _bezier_structural_identity_mask_core(mults, space_1d.degree, out)
-    return out
-
-
-def _lagrange_structural_identity_mask(
-    space_1d: BsplineSpace1D,
+def _rebuild_extraction(
+    cls: type[SpanwiseElementExtraction],
+    space: BsplineSpace,
+    target: Target,
     lagrange_variant: LagrangeVariant,
-) -> npt.NDArray[np.bool_]:
-    """Compute the per-element Lagrange identity mask.
+) -> SpanwiseElementExtraction:
+    """Rebuild a pickled extraction of class ``cls``, bypassing ``cls.__init__``.
 
-    For ``degree == 0`` every element is trivially identity (the 1x1
-    extraction matrix is ``[[1.0]]``). For ``degree > 0`` the Lagrange
-    extraction operator at element ``e`` equals ``bezier_op[e] @ lagr_to_bzr``.
-    This is the identity iff ``bezier_op[e] == I`` and ``lagr_to_bzr == I``.
-    ``lagr_to_bzr`` equals ``I`` when the Lagrange nodes coincide with the
-    Bernstein abscissae ``i / degree`` — e.g. for ``degree == 1`` with
-    equispaced, GLL, or Chebyshev-2nd nodes.  For all other cases no element
-    can have an identity Lagrange extraction operator.
+    A subclass's constructor may take other arguments; the previous release's pickles did not
+    call it either.
 
     Args:
-        space_1d (BsplineSpace1D): A 1D B-spline space.
-        lagrange_variant (LagrangeVariant): Lagrange node distribution.
+        cls (type[SpanwiseElementExtraction]): The class of the pickled extraction.
+        space (BsplineSpace): Its space.
+        target (Target): Its target basis.
+        lagrange_variant (LagrangeVariant): Its Lagrange point distribution.
 
     Returns:
-        npt.NDArray[np.bool_]: Boolean array of shape ``(n_elements,)``.
+        SpanwiseElementExtraction: The extraction (its extra attributes are restored by
+        ``__setstate__``).
     """
-    n_elements = space_1d.num_intervals
-    if space_1d.degree == 0:
-        return np.ones(n_elements, dtype=np.bool_)
-    dtype = space_1d.knots.dtype
-    lagr_to_bzr = _cached_lagrange_to_bernstein_matrix(space_1d.degree, lagrange_variant, dtype)
-    if np.array_equal(lagr_to_bzr, np.eye(space_1d.degree + 1, dtype=dtype)):
-        return _bezier_structural_identity_mask(space_1d)
-    return np.zeros(n_elements, dtype=np.bool_)
+    ext_obj = cls.__new__(cls)
+    SpanwiseElementExtraction.__init__(ext_obj, space, target, lagrange_variant=lagrange_variant)
+    return ext_obj
 
 
-# The op_kind shape helper is kept import-local so downstream callers can build
-# operands of the right shape without reaching into Layer 2 directly.
+def _is_same_view(a: npt.NDArray[Any], b: npt.NDArray[Any]) -> bool:
+    """Check whether two arrays are the same view of the same memory.
+
+    Args:
+        a (npt.NDArray[Any]): An array.
+        b (npt.NDArray[Any]): Another array.
+
+    Returns:
+        bool: ``True`` iff both start at the same address with the same shape and strides.
+    """
+    return a.shape == b.shape and a.strides == b.strides and a.ctypes.data == b.ctypes.data
+
+
+def _validate_op_kind(op_kind: str) -> OpKind:
+    """Validate an operation-kind tag.
+
+    Args:
+        op_kind (str): Tag to validate.
+
+    Returns:
+        OpKind: The validated tag (narrowed to :data:`OpKind`).
+
+    Raises:
+        ValueError: If ``op_kind`` is not one of :data:`OpKind`'s literals.
+    """
+    if op_kind not in get_args(OpKind):
+        valid = ", ".join(repr(v) for v in get_args(OpKind))
+        raise ValueError(f"Unknown op_kind {op_kind!r}; expected one of {valid}")
+    return cast(OpKind, op_kind)
+
+
+def _operation_shapes(
+    input_shape_per_dir: tuple[int, ...],
+    output_shape_per_dir: tuple[int, ...],
+    op_kind: OpKind,
+) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    """Return ``(input_shape, output_shape)`` for a given operation kind.
+
+    For vector apply variants the shapes are 1D ``(N,)`` tuples. For bilateral
+    variants they are 2D ``(N, N)`` tuples. ``N`` is the product of the
+    corresponding per-direction sizes.
+
+    Args:
+        input_shape_per_dir (tuple[int, ...]): Per-direction input sizes.
+        output_shape_per_dir (tuple[int, ...]): Per-direction output sizes.
+        op_kind (OpKind): Operation kind.
+
+    Returns:
+        tuple[tuple[int, ...], tuple[int, ...]]: ``(input_shape, output_shape)``
+        of the operand and result arrays.
+    """
+    _validate_op_kind(op_kind)
+    n_in = math.prod(input_shape_per_dir)
+    n_out = math.prod(output_shape_per_dir)
+    if op_kind == "apply":
+        return (n_in,), (n_out,)
+    if op_kind == "apply_T":
+        return (n_out,), (n_in,)
+    if op_kind == "MT_K_M":
+        return (n_out, n_out), (n_in, n_in)
+    # op_kind == "M_K_MT"
+    return (n_in, n_in), (n_out, n_out)
+
+
+def _validate_operand(
+    operand: npt.NDArray[Any],
+    expected_shape: tuple[int, ...],
+    dtype: npt.DTypeLike,
+) -> None:
+    """Validate shape and dtype of an input operand.
+
+    Args:
+        operand (np.ndarray): Input array to check.
+        expected_shape (tuple[int, ...]): Required shape.
+        dtype (npt.DTypeLike): Required dtype.
+
+    Raises:
+        ValueError: If the operand shape or dtype does not match.
+    """
+    if operand.shape != expected_shape:
+        raise ValueError(f"Operand has shape {operand.shape}, but expected shape {expected_shape}")
+    if operand.dtype != np.dtype(dtype):
+        raise ValueError(f"Operand has dtype {operand.dtype}, but expected dtype {np.dtype(dtype)}")
+
+
+def _scratch_argument(
+    scratch: npt.NDArray[np.float32 | np.float64] | None,
+    ndim: int,
+    dtype: np.dtype[Any],
+) -> npt.NDArray[np.float32 | np.float64] | None:
+    """Check the Python-visible properties of a scratch array and make it fit the library.
+
+    The scratch's size is checked by the library, with the same messages. A scratch that is not
+    C-contiguous is replaced by a C-contiguous array of its shape: the contents of a scratch are
+    never read.
+
+    Args:
+        scratch (npt.NDArray[np.float32 | np.float64] | None): The caller's scratch, or ``None``.
+        ndim (int): ``1`` for a one-cell application, ``2`` for a batch (a row per cell).
+        dtype (np.dtype): The dtype of the extraction.
+
+    Returns:
+        npt.NDArray[np.float32 | np.float64] | None: The array to hand to the library, or
+        ``None`` if there is no scratch.
+
+    Raises:
+        ValueError: If ``scratch`` has another number of dimensions or another dtype, or is not
+            writeable.
+    """
+    if scratch is None:
+        return None
+    # `ndim` is 1 or 2 by the callers (a one-cell scratch is a vector, a batch scratch has a row
+    # per cell): 2 is that rank, not a magic value.
+    batch = ndim == 2  # noqa: PLR2004
+    prefix = "Batch scratch" if batch else "Scratch"
+    if scratch.ndim != ndim:
+        raise ValueError(f"{prefix} must be {ndim}D; got ndim={scratch.ndim}")
+    if scratch.dtype != dtype:
+        expected = f"{dtype}" if batch else f"dtype {dtype}"
+        raise ValueError(f"{prefix} has dtype {scratch.dtype}, but expected {expected}")
+    if not scratch.flags.writeable:
+        raise ValueError(f"{prefix} array is not writeable")
+    if scratch.flags.c_contiguous:
+        return scratch
+    return np.empty(scratch.shape, dtype=dtype)
+
+
+# The op_kind shape helper is public so callers can build operands of the right shape.
 def operand_shape(
     extraction: SpanwiseElementExtraction, op_kind: OpKind
 ) -> tuple[tuple[int, ...], tuple[int, ...]]:
@@ -1119,26 +1418,22 @@ def operand_shape(
 
 
 class ExtractionStructView(NamedTuple):
-    """Immutable struct view of a :class:`SpanwiseElementExtraction` for ``@njit`` callers.
+    """Immutable struct view of a :class:`SpanwiseElementExtraction`.
 
     A :class:`typing.NamedTuple` bundling the compact per-direction operator
     storage, index maps, identity masks, and shape metadata into a single
-    object that Numba can unbox. Each array field is homogeneous in dtype and
-    array dimensionality across all directions (per-direction shapes may
-    differ), so Numba represents those tuple fields as ``UniTuple`` inside an
-    ``@njit`` function.
-    This makes ``ExtractionStructView`` a drop-in replacement for the separate
-    ``(ops_1d, idx_maps_1d, is_identity_mask_1d, …)`` bundle when calling the
-    Layer-3 batch kernels in ``pantr.bspline._extraction_kernels`` from
-    downstream Numba code.
+    object: the same bundle the extraction exposes member by member, for a
+    consumer that wants to carry it around as one value. The array fields are
+    read-only views of the extraction's compiled value, and the tuple fields
+    hold one entry per direction (the per-direction shapes may differ).
 
     Construct via :func:`make_struct_view`. Field semantics mirror the
     same-named members of :class:`SpanwiseElementExtraction`:
 
     - ``compact_ops_1d`` — per-direction compact 3D operator arrays of shape
       ``(n_compact_k, n_out_k, n_in_k)``; only non-identity rows are stored.
-      Always has at least one row (sentinel zeros) to ensure safe Numba
-      indexing.
+      Always has at least one row (a zero operator when every element is
+      identity).
     - ``idx_maps_1d`` — per-direction compact index maps of shape
       ``(n_elements_k,)``.
     - ``is_identity_mask_1d`` — per-direction identity masks of shape
@@ -1161,21 +1456,18 @@ class ExtractionStructView(NamedTuple):
 
 
 def make_struct_view(extraction: SpanwiseElementExtraction) -> ExtractionStructView:
-    """Bundle a :class:`SpanwiseElementExtraction` into a Numba-passable struct view.
+    """Bundle a :class:`SpanwiseElementExtraction` into a struct view.
 
     Shares the underlying per-direction arrays (no copies). The arrays are
-    already marked read-only by :class:`SpanwiseElementExtraction`, so the
-    returned view is safe to pass into ``@njit`` code without risk of
-    accidental mutation.
+    read-only views of the extraction's compiled value, so the returned view
+    is safe to pass around without risk of accidental mutation.
 
     Args:
         extraction (SpanwiseElementExtraction): Source extraction object.
 
     Returns:
         ExtractionStructView: Named tuple wrapping the extraction's compact
-        storage and shape metadata. Suitable for direct use as a single
-        argument to ``@njit`` functions that call the Layer-3 batch kernels
-        in ``pantr.bspline._extraction_kernels``.
+        storage and shape metadata.
 
     Example:
         >>> from pantr.bspline import BsplineSpace1D, BsplineSpace

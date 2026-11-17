@@ -1,4 +1,4 @@
-"""Tests for the exact binomial-coefficient kernel (``_bincoeff``)."""
+"""Tests for the exact binomial-coefficient kernel (``pantr._testing.bincoeff``)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import math
 
 import pytest
 
-from pantr.bspline._bspline_degree_core import _bincoeff
+from pantr._testing import bincoeff as _bincoeff
 
 _EXACT_UP_TO: int = 61
 """

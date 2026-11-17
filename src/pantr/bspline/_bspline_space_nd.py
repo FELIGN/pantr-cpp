@@ -3,24 +3,45 @@
 This module defines :class:`BsplineSpace`, which aggregates multiple
 :class:`~pantr.bspline.BsplineSpace1D` objects to represent
 multi-dimensional parameter domains. It handles tensor-product basis evaluation
-by combining the 1D components.
+by combining the 1D components, in the C++ library (``pantr::bspline::BsplineSpace``).
 """
 
 from __future__ import annotations
 
+import copy as _copy
 import functools
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import numpy as np
 from numpy import typing as npt
 
-from ._bspline_basis_multidim import _tabulate_Bspline_basis_impl
+from .._ext import ext
+from ..basis._basis_utils import _allocate_or_validate_out
+from ..quad import PointsLattice
 from ._bspline_cell_supports import _cell_supports_impl
+from ._bspline_space_1d import _FIRST_DTYPE, _extra_state, _first_out, _kernel_buffer
 
 if TYPE_CHECKING:
-    from ..quad import PointsLattice
     from ._bspline_space_1d import BsplineSpace1D
+
+_cpp: Any = ext.bspline
+"""The compiled B-spline spaces (private; untyped: one class per dtype)."""
+
+_VALUE_ATTRS_ND: frozenset[str] = frozenset(
+    {
+        "_spaces",
+        "_h",
+        "degrees",
+        "tolerance",
+        "num_basis",
+        "num_total_basis",
+        "num_intervals",
+        "num_total_intervals",
+        "domain",
+    }
+)
+"""The attributes of a ``BsplineSpace`` that hold its value or are cached from it."""
 
 
 class BsplineSpace:
@@ -33,10 +54,14 @@ class BsplineSpace:
     and access various properties of the B-spline.
 
     Attributes:
-        _spaces (Iterable[BsplineSpace1D]): List of B-spline spaces, one for each dimension.
+        _spaces (tuple[BsplineSpace1D, ...]): The B-spline spaces, one for each dimension,
+            as given (so ``space.spaces[d] is`` the object passed in).
+        _h (Any): The compiled tensor product (``BsplineSpaceF64`` or ``BsplineSpaceF32``)
+            of their compiled values; None for an empty tuple of spaces.
     """
 
     _spaces: tuple[BsplineSpace1D, ...]
+    _h: Any
 
     def __init__(
         self,
@@ -54,6 +79,66 @@ class BsplineSpace:
 
         if not all(space.dtype == self.dtype for space in self._spaces):
             raise ValueError("All B-spline spaces must have the same data type.")
+
+        # An empty tuple is accepted, as it always was, and has no compiled value (the C++ space
+        # needs a direction): its ``dtype`` raises ``IndexError`` and nothing can be tabulated.
+        self._h = None
+        if self._spaces:
+            cls = _cpp.BsplineSpaceF32 if self.dtype == np.float32 else _cpp.BsplineSpaceF64
+            self._h = cls([space._h for space in self._spaces])
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        """Pickle (and copy) through the constructor, with a subclass's own attributes as state.
+
+        Returns:
+            tuple[Any, ...]: The rebuilding function, the class and directions, and the other
+            attributes.
+        """
+        return (_rebuild_space, (type(self), self._spaces), _extra_state(self, _VALUE_ATTRS_ND))
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Restore a subclass's attributes, or rebuild from a previous release's pickle.
+
+        A previous release pickled the attribute ``_spaces`` (with whatever cached properties it
+        held); such a state rebuilds the compiled value from it and drops the cached entries.
+
+        Args:
+            state (dict[str, Any]): The pickled state.
+        """
+        state = dict(state)
+        if "_spaces" in state and "_h" not in self.__dict__:
+            BsplineSpace.__init__(self, state["_spaces"])
+            for key in _VALUE_ATTRS_ND:
+                state.pop(key, None)
+        self.__dict__.update(state)
+
+    def __copy__(self) -> BsplineSpace:
+        """Copy: the new object shares the 1D spaces and the compiled value.
+
+        Returns:
+            BsplineSpace: The copy, of the same class, with the same attributes.
+        """
+        new = object.__new__(type(self))
+        new.__dict__.update(self.__dict__)
+        return new
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> BsplineSpace:
+        """Deep copy: deep-copies the 1D spaces (which share their values) and other attributes.
+
+        Args:
+            memo (dict[int, Any]): The deep-copy memo.
+
+        Returns:
+            BsplineSpace: The copy.
+        """
+        new = object.__new__(type(self))
+        memo[id(self)] = new
+        spaces = _copy.deepcopy(self._spaces, memo)
+        BsplineSpace.__init__(new, spaces)
+        for key, value in self.__dict__.items():
+            if key not in _VALUE_ATTRS_ND:
+                new.__dict__[key] = _copy.deepcopy(value, memo)
+        return new
 
     @property
     def dim(self) -> int:
@@ -219,9 +304,63 @@ class BsplineSpace:
             ValueError: If one or more points are outside the domain of the B-spline space, or if
                 `out_basis` or `out_first_basis` is provided and has incorrect shape or dtype.
         """
-        return _tabulate_Bspline_basis_impl(
-            self, pts, out_basis=out_basis, out_first_basis=out_first_basis
-        )
+        orders = tuple(degree + 1 for degree in self.degrees)
+        num_local = self._h.num_local_functions
+        if isinstance(pts, PointsLattice):
+            lattice_h = pts._h
+            dtype = np.dtype(pts.dtype)
+            # Refuses another dimension (C++, with the message the suite matches).
+            outside = self._h.first_direction_outside(lattice_h)
+            if outside >= 0:
+                raise ValueError(
+                    f"One or more values in pts.pts_per_dir[{outside}] are outside the knot "
+                    f"vector domain {self._spaces[outside].domain}"
+                )
+            pts_shape = tuple(len(p) for p in pts.pts_per_dir)
+            num_pts = int(np.prod(pts_shape))
+
+            def call(values: npt.NDArray[Any], first: npt.NDArray[Any]) -> None:
+                self._h.tabulate_lattice(lattice_h, values, first)
+        else:
+            arr = pts if isinstance(pts, np.ndarray) else np.asarray(pts)
+            if arr.ndim != 2:  # noqa: PLR2004
+                raise ValueError("pts must be a 2D array")
+            if arr.dtype not in (np.float32, np.float64):
+                arr = arr.astype(np.float64)
+            # The binding is overloaded on the dtype; ``coords`` is either, so it is untyped.
+            coords: Any = np.ascontiguousarray(arr)
+            # Refuses another column count (C++, with the message the suite matches).
+            outside = self._h.first_direction_outside(coords)
+            if outside >= 0:
+                raise ValueError(
+                    f"One or more values in pts[:, {outside}] are outside the knot vector"
+                    f" domain {self.domain}"
+                )
+            dtype = np.dtype(self.dtype)
+            pts_shape = (arr.shape[0],)
+            num_pts = arr.shape[0]
+
+            def call(values: npt.NDArray[Any], first: npt.NDArray[Any]) -> None:
+                self._h.tabulate_points(coords, values, first)
+
+        values_shape = (*pts_shape, *orders)
+        first_shape = (*pts_shape, self.dim)
+        if out_basis is None and out_first_basis is None:
+            values = np.empty((num_pts, num_local), dtype=dtype)
+            first = np.empty((num_pts, self.dim), dtype=_FIRST_DTYPE)
+            call(values, first)
+            return (
+                values.reshape(values_shape),
+                first.astype(np.int_, copy=False).reshape(first_shape),
+            )
+        out_basis = _allocate_or_validate_out(out_basis, values_shape, dtype)
+        out_first_basis = _first_out(out_first_basis, first_shape)
+        with (
+            _kernel_buffer(out_basis, (num_pts, num_local)) as values,
+            _kernel_buffer(out_first_basis, (num_pts, self.dim), _FIRST_DTYPE) as first,
+        ):
+            call(values, first)
+        return out_basis, out_first_basis
 
     def cell_supports(self, cell_ids: npt.ArrayLike) -> npt.NDArray[np.int64]:
         """Return the control points supported on each of the given cells.
@@ -388,6 +527,24 @@ class BsplineSpace:
         ).astype(np.int64)
         local_to_global_dof.flags.writeable = False
         return BsplineSpaceRestriction(BsplineSpace(windowed_1d), local_to_global_dof)
+
+
+def _rebuild_space(cls: type[BsplineSpace], spaces: tuple[BsplineSpace1D, ...]) -> BsplineSpace:
+    """Rebuild a pickled space of class ``cls`` from its directions, bypassing ``cls.__init__``.
+
+    A subclass's constructor may take other arguments; the previous release's pickles did not
+    call it either.
+
+    Args:
+        cls (type[BsplineSpace]): The class of the pickled space.
+        spaces (tuple[BsplineSpace1D, ...]): Its directions.
+
+    Returns:
+        BsplineSpace: The space (its extra attributes are restored by ``__setstate__``).
+    """
+    space = cls.__new__(cls)
+    BsplineSpace.__init__(space, spaces)
+    return space
 
 
 class BsplineSpaceRestriction(NamedTuple):

@@ -12,9 +12,23 @@ import numpy.typing as npt
 import pytest
 from numpy.polynomial import chebyshev, legendre
 
-from pantr.basis import LagrangeVariant, tabulate_lagrange_1d
-from pantr.basis._basis_lagrange import _get_lagrange_points
+from pantr._testing import _get_lagrange_points
+from pantr.basis import LagrangeVariant, tabulate_lagrange, tabulate_lagrange_1d
 from pantr.tolerance import get_default
+
+
+def _real_roots(roots: npt.ArrayLike) -> npt.NDArray[np.float64]:
+    """Return polynomial roots as float64, refusing any with a nonzero imaginary part.
+
+    NumPy 2.5 returns Legendre roots as complex128 even though every one is real; casting that
+    array to float would warn. A nonzero imaginary part would mean a wrong oracle, so it raises.
+    """
+    arr = np.asarray(roots)
+    if np.iscomplexobj(arr):
+        if np.any(arr.imag != 0.0):
+            raise AssertionError(f"complex Legendre roots: {arr}")
+        arr = arr.real
+    return np.asarray(arr, dtype=np.float64)
 
 
 def _lagrange_nodes(
@@ -30,11 +44,8 @@ def _lagrange_nodes(
     if variant == LagrangeVariant.GAUSS_LEGENDRE:
         coefs64 = np.zeros(n_pts + 1, dtype=np.float64)
         coefs64[-1] = 1.0
-        legroots_t = cast(
-            "Callable[[npt.NDArray[np.float64]], npt.NDArray[np.float64]]",
-            legendre.legroots,
-        )
-        nodes = legroots_t(coefs64)
+        legroots_t = cast("Callable[[npt.NDArray[np.float64]], npt.ArrayLike]", legendre.legroots)
+        nodes = _real_roots(legroots_t(coefs64))
     elif variant == LagrangeVariant.GAUSS_LOBATTO_LEGENDRE:
         if n_pts == 2:
             nodes = np.array([-1.0, 1.0], dtype=target_dtype)
@@ -42,7 +53,7 @@ def _lagrange_nodes(
             basis_t = cast("Callable[[int], Any]", legendre.Legendre.basis)
             P_basis = basis_t(n_pts - 1)
             P_prime = P_basis.deriv()
-            interior = cast(npt.NDArray[np.float64], P_prime.roots())
+            interior = _real_roots(P_prime.roots())
             nodes = np.concatenate((np.array([-1.0]), interior, np.array([1.0]))).astype(
                 target_dtype, copy=False
             )
@@ -125,7 +136,8 @@ def test_partition_of_unity(variant: LagrangeVariant, dtype: npt.DTypeLike) -> N
 _SNAP_CLEARANCE: float = 1e-5
 """Minimum distance from an evaluation point to the nearest node, for the test below.
 
-``_tabulate_lagrange_basis_1D_core`` replaces any row within ``16 * eps`` of a node by a
+The Lagrange kernel (``include/pantr/basis/lagrange.hpp``)
+replaces any row within ``16 * eps`` of a node by a
 hardcoded identity row, so a test meant to see the interpolator has to stay outside that
 window. ``16 * eps`` is 3.6e-15; this leaves ten orders of magnitude. The tightest
 approach the fixed points make is 1e-4, from ``0.5001`` against the node at ``0.5``
@@ -191,7 +203,8 @@ def test_matches_exact_rational_arithmetic_away_from_the_nodes(
     """Off-node values match the defining product formula computed in exact arithmetic.
 
     The delta and partition-of-unity tests above cannot see the interpolator at all:
-    ``_tabulate_lagrange_basis_1D_core`` overwrites any row within ``16 * eps`` of a node
+    The Lagrange kernel (``include/pantr/basis/lagrange.hpp``)
+    overwrites any row within ``16 * eps`` of a node
     with a hardcoded identity row, so the first is satisfied by that snap, and the second
     is satisfied by any basis that sums to one, which a wrong-degree interpolant still
     does. A mutation that lowered the interpolator's degree left both of them green.
@@ -264,3 +277,14 @@ def test_negative_degree_raises_value_error() -> None:
     """Negative degree should raise ValueError."""
     with pytest.raises(ValueError, match="degree must be non-negative"):
         tabulate_lagrange_1d(-1, LagrangeVariant.EQUISPACES, [0.0, 0.5])
+
+
+def test_masked_points_are_refused() -> None:
+    """Masked points are refused rather than tabulated with their mask dropped."""
+    pts = np.ma.masked_array([0.1, 0.5], mask=[False, True])
+    with pytest.raises(ValueError, match="masked arrays are not supported"):
+        tabulate_lagrange_1d(2, LagrangeVariant.EQUISPACES, pts)
+    with pytest.raises(ValueError, match="masked arrays are not supported"):
+        tabulate_lagrange([1, 1], LagrangeVariant.EQUISPACES, np.ma.masked_array([[0.1, 0.5]]))
+    # Degree 0 never reached the previous release's interpolator, which is what refused a mask.
+    np.testing.assert_array_equal(tabulate_lagrange_1d(0, LagrangeVariant.EQUISPACES, pts), 1.0)

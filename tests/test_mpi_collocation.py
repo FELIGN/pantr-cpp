@@ -19,6 +19,7 @@ import numpy as np
 import pytest
 
 import pantr.mpi as _pantr_mpi
+from pantr._testing import block_bounds
 from pantr.bspline import (
     Bspline,
     BsplineSpace,
@@ -35,7 +36,6 @@ from pantr.mpi import (
     fit_bspline_distributed,
     interpolate_bspline_distributed,
 )
-from pantr.mpi._collocation import _block_bounds
 
 # ---------------------------------------------------------------------------
 # Fake communicator with allgather
@@ -107,7 +107,7 @@ def _simulate_interpolate(
 
     blocks: list[Any] = []
     for rank in range(n_parts):
-        start, stop = _block_bounds(n_total, n_parts, rank)
+        start, stop = block_bounds(n_total, n_parts, rank)
         blocks.append(np.asarray(func(pts[start:stop]), dtype=np.float64))
 
     results: list[DistributedFunction] = []
@@ -132,7 +132,7 @@ def _simulate_fit_distributed_values(
 
     blocks: list[Any] = []
     for rank in range(n_parts):
-        start, stop = _block_bounds(n_total, n_parts, rank)
+        start, stop = block_bounds(n_total, n_parts, rank)
         blocks.append(np.ascontiguousarray(full_vals[start:stop]))
 
     results: list[DistributedFunction] = []
@@ -158,10 +158,10 @@ def test_public_surface() -> None:
 
 
 def test_block_bounds_partition() -> None:
-    """_block_bounds tiles [0, n_total) into contiguous, non-overlapping blocks."""
+    """block_bounds tiles [0, n_total) into contiguous, non-overlapping blocks."""
     for n_total in (0, 1, 7, 16, 17):
         for n_parts in (1, 2, 3, 4):
-            bounds = [_block_bounds(n_total, n_parts, r) for r in range(n_parts)]
+            bounds = [block_bounds(n_total, n_parts, r) for r in range(n_parts)]
             # Contiguous and covering.
             assert bounds[0][0] == 0
             assert bounds[-1][1] == n_total

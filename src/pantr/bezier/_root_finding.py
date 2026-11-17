@@ -6,6 +6,7 @@ validation and delegates to Layer 2 implementations in :mod:`_find_roots`.
 
 - :func:`find_roots` -- find all roots (single or batch, auto-dispatch).
 - :func:`find_monotone_root` -- fast solver for monotone Beziers (single or batch).
+- :func:`set_root_provider`, :func:`get_root_provider` -- which provider solves them.
 """
 
 from __future__ import annotations
@@ -21,7 +22,16 @@ from pantr.bezier._find_roots import (
     _find_roots_impl,
     _solve_monotone_root_batch_impl,
     _solve_monotone_root_impl,
+    get_root_provider,
+    set_root_provider,
 )
+
+__all__ = [
+    "find_monotone_root",
+    "find_roots",
+    "get_root_provider",
+    "set_root_provider",
+]
 
 if TYPE_CHECKING:
     from pantr.bezier._bezier import Bezier
@@ -63,8 +73,20 @@ def find_roots(
             (``rank == 1``) Bezier curve, or a sequence of such curves (all with
             the same degree). For rational Beziers, roots are found on the
             numerator polynomial (first homogeneous component).
-        tol (float | None): Root-finding tolerance (bracket-width
-            termination). Defaults to ``tolerance.get_strict(bezier.dtype)``.
+        tol (float | None): Parametric tolerance: the bracket width on [0, 1]
+            at which a root counts as found. It bounds the error in the root's
+            parameter only; the zero tests on the polynomial's values are
+            relative to each polynomial's largest coefficient, so scaling the
+            coefficients does not change the roots. Defaults to
+            ``tolerance.get_strict(bezier.dtype)``. At a coarse explicit ``tol``
+            the guarantee is a backward error, not a forward one: Bezier
+            clipping accepts a point of a bracket narrowed to ``tol`` when its
+            residual is within the zero test plus a bound on ``|f'|`` over the
+            bracket times its width, so it is a root of coefficients that differ
+            by that much. Two roots closer together than about ``tol`` that fall
+            in one bracket can then be reported as one point, and a point where the
+            polynomial nearly touches zero can be reported. Both shrink with
+            ``tol``.
 
     Returns:
         npt.NDArray[np.float64]: *(single mode)* Sorted array of root
@@ -80,15 +102,22 @@ def find_roots(
     Raises:
         TypeError: If ``bezier`` is not a :class:`Bezier` instance (or sequence
             thereof).
-        ValueError: If any Bezier has ``dim != 1`` or ``rank != 1``, or ``tol``
-            is not positive. In batch mode, also raised if degrees are not
-            uniform.
+        ValueError: If any Bezier has ``dim != 1`` or ``rank != 1``, a NaN or
+            infinite coefficient, or ``tol`` is not positive and finite. In batch
+            mode, also raised if degrees are not uniform.
+
+    Warns:
+        RuntimeWarning: If the root finder gave up on part of [0, 1] before narrowing it
+            to ``tol`` (Bezier clipping's depth cap, or the iteration cap of the
+            Newton/bisection solve on Yuksel's path), so that the result may miss a root
+            there or be less accurate than ``tol`` asks for.
 
     Note:
-        In batch mode, a simpler fixed-threshold dedup (no derivative-aware
-        merge radius) is used compared to single mode. In rare edge cases
-        involving near-duplicate roots, the two modes may report different
-        root counts.
+        The roots come from the active provider (:func:`get_root_provider`). With the
+        built-in one, batch mode merges near-duplicate roots on every path, while single
+        mode merges them only on the clipping path (degree 6 and above with a coefficient
+        range up to ``1e8``); in rare edge cases involving near-duplicate roots, the two
+        modes may report different root counts.
 
     Example:
         >>> import numpy as np
@@ -156,9 +185,14 @@ def find_monotone_root(
     Raises:
         TypeError: If ``bezier`` is not a :class:`Bezier` instance (or sequence
             thereof).
-        ValueError: If any Bezier has ``dim != 1`` or ``rank != 1``, or ``tol``
-            is not positive. In batch mode, also raised if degrees are not
-            uniform.
+        ValueError: If any Bezier has ``dim != 1`` or ``rank != 1``, a NaN or
+            infinite coefficient, or ``tol`` is not positive and finite. In batch
+            mode, also raised if degrees are not uniform.
+        RuntimeError: If the Newton/bisection iteration reaches its cap (102
+            iterations, enough for any ``tol`` from ``2**-50`` up) before the
+            bracket narrows to ``tol``; its midpoint can then be far from the root.
+            A ``tol`` finer than that, or than the spacing of doubles at the root,
+            causes it. In batch mode the first such row is named.
     """
     from pantr.bezier._bezier import Bezier as BezierCls  # noqa: PLC0415
 

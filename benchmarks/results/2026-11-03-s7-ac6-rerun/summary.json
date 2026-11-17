@@ -1,0 +1,139 @@
+{
+ "protocol": {
+  "k": 10,
+  "repeats": 30,
+  "threads": [
+   1,
+   8
+  ],
+  "cpus": "0-7",
+  "reference": "main",
+  "argv": [
+   "benchmarks/compare.py",
+   "--out-dir",
+   "benchmarks/results/2026-11-03-s7-ac6-rerun",
+   "--side",
+   "main=<main src>",
+   "--side",
+   "branch=<branch src>",
+   "--k",
+   "10",
+   "--threads",
+   "1",
+   "8",
+   "--cpus",
+   "0-7",
+   "--filter",
+   "^S7\\.create_coons_surface\\.large"
+  ]
+ },
+ "sides": {
+  "main": {
+   "commit": "11ab436abd94edf8f414d1ec2d9ed0bf77e38e89",
+   "extension": "none"
+  },
+  "branch": {
+   "commit": "19f0f628d45e66dbc0f7d7051cfff4073fd87177-dirty",
+   "extension": "pantr._pantr_v4 (v4, _pantr_v4.abi3.so)"
+  }
+ },
+ "machine": {
+  "cpu": "Intel(R) Xeon(R) Gold 6148 CPU @ 2.40GHz",
+  "platform": "Linux-5.15.0-144-generic-x86_64-with-glibc2.35",
+  "affinity": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7
+  ],
+  "governor": "schedutil"
+ },
+ "cases": {
+  "S7.create_coons_surface.large@t1": {
+   "what": {
+    "main": "Coons patch, curves of 1000 points",
+    "branch": "Coons patch, curves of 1000 points"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 590530228.25,
+     "range_ns": 31204822.0,
+     "process_medians_ns": [
+      588596862.5,
+      610317579.5,
+      611195005.0,
+      612694808.5,
+      598103589.0,
+      592463594.0,
+      582550576.5,
+      581489986.5,
+      583481214.0,
+      586070381.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 647728739.25,
+     "range_ns": 20712085.0,
+     "process_medians_ns": [
+      657960113.0,
+      666785571.0,
+      660328484.0,
+      664341468.5,
+      646662604.0,
+      647837013.5,
+      646073486.0,
+      646493991.5,
+      646778120.0,
+      647620465.0
+     ],
+     "flagged": true
+    }
+   }
+  },
+  "S7.create_coons_surface.large@t8": {
+   "what": {
+    "main": "Coons patch, curves of 1000 points",
+    "branch": "Coons patch, curves of 1000 points"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 594745129.25,
+     "range_ns": 31708773.0,
+     "process_medians_ns": [
+      613576430.5,
+      607601445.5,
+      609231135.5,
+      616151776.0,
+      595775326.0,
+      590976935.0,
+      593714932.5,
+      584443003.0,
+      585856889.0,
+      592049343.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 647990363.75,
+     "range_ns": 19553662.5,
+     "process_medians_ns": [
+      664516277.0,
+      644962614.5,
+      662714084.5,
+      653379942.5,
+      647400015.5,
+      645799503.5,
+      647966855.0,
+      648777056.5,
+      646216305.0,
+      648013872.5
+     ],
+     "flagged": true
+    }
+   }
+  }
+ }
+}

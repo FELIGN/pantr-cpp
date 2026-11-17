@@ -42,8 +42,8 @@ pantr reaches it: the B-spline layer accepts only float32 and float64
 (``BsplineSpace1D`` rejects the rest at construction).
 
 Kernels that compare a *difference of two knots* against zero -- the Cox-de Boor
-recurrence denominator guard in ``pantr.bspline._bspline_basis_core``
-(``_basis_funcs_point``, ``_basis_derivs_point``) -- take no tolerance at all and
+recurrence denominator guard in ``include/pantr/bspline/detail/basis_kernels.hpp``
+(``basis_funcs_point``, ``basis_derivs_point``) -- take no tolerance at all and
 use an exact ``denom == 0.0`` test. What makes that sound is the shape of the
 recurrence, not the knot vector: ``denom`` is the sum of the two non-negative
 terms the step then divides by, so the two weights ``right / denom`` and
@@ -61,6 +61,8 @@ from typing import Any, Final, TypedDict
 
 import numpy as np
 from numpy import typing as npt
+
+from ._ext import ext as _ext
 
 
 @cache
@@ -100,8 +102,8 @@ def _ensure_float_dtype(dtype: npt.DTypeLike) -> np.dtype[np.floating[Any]]:
     return _ensure_float_dtype_by_name(dtype_obj.name)
 
 
-_STRICT_EPS_FACTOR: Final[float] = 4.0
-"""Machine epsilons a :func:`get_strict` comparison allows for.
+_STRICT_EPS_FACTOR: Final[float] = _ext.tolerance.strict_eps_factor
+"""Machine epsilons a :func:`get_strict` comparison allows for (4, owned by the C++ library).
 
 A handful of roundings and nothing more. Four is the count for the shape this tier
 is meant for: a value reached by one convex combination -- a subtract, a multiply
@@ -110,8 +112,8 @@ which is the fourth. (The comparison itself is exact in IEEE-754 and costs
 nothing.) Four is also already a power of two, so nothing is rounded up here.
 """
 
-_DEFAULT_EPS_FACTOR: Final[float] = 64.0
-"""Machine epsilons a :func:`get_default` comparison allows for.
+_DEFAULT_EPS_FACTOR: Final[float] = _ext.tolerance.default_eps_factor
+"""Machine epsilons a :func:`get_default` comparison allows for (64, owned by the C++ library).
 
 A short algorithm -- on the order of 16 operations, whose worst-case accumulation
 is ``16 * eps`` -- plus build slack: an FMA contraction, a different vector width
@@ -120,8 +122,8 @@ Four times the accumulation bound covers that, and 64 is the power of two it
 lands on.
 """
 
-_CONSERVATIVE_EPS_FACTOR: Final[float] = 4096.0
-"""Machine epsilons a :func:`get_conservative` comparison allows for.
+_CONSERVATIVE_EPS_FACTOR: Final[float] = _ext.tolerance.conservative_eps_factor
+"""Machine epsilons a :func:`get_conservative` comparison allows for (4096, owned by C++).
 
 A long accumulation, or a problem whose condition number reaches about 1e3: the
 error is then ``cond * eps`` rather than an operation count times ``eps``, and
@@ -130,12 +132,13 @@ tier allows. Past this the tolerance stops being a safety factor and starts
 hiding the answer, so a site that needs more needs a derivation of its own.
 
 Both readings are in use. The long-accumulation one grades the prolongation
-residual of a THB refinement, an SVD least-squares solve whose backward-stability
-constant has no closed form
-(``pantr.bspline._thb_spline_space._prolongation_residual_tolerance``); the
+residual of a THB refinement, a least-squares solve (Householder QR where a rank
+certificate holds, else a one-sided Jacobi SVD) whose backward-stability constant
+grows with the system's dimensions
+(``pantr::thb::prolongation_residual_tolerance``); the
 robustness one grades a Coons patch's corner match, where the caller's chain to
 the corner is unbounded and a false rejection costs more than a false accept
-(``pantr.cad._coons``).
+(``include/pantr/cad/coons.hpp``).
 
 The ``1e3`` is this tier's boundary and not a statement about the library. pantr
 does contain a step past it -- ``pantr.change_basis`` documents a cardinal-to-
@@ -143,6 +146,40 @@ Legendre condition number of ``3.0e8`` at degree 8 -- and that step accordingly
 reports the accuracy it actually attains per degree rather than borrowing a
 preset.
 """
+
+
+_EPS_BY_DTYPE_LIKE: dict[Any, float] = {}
+"""Machine epsilon per dtype-like argument already seen, so a repeated call skips ``np.finfo``.
+
+Keyed on the caller's own argument, and only for the spellings whose equality is the dtype's: a
+scalar type (``np.float64``), a string (``"float64"``) or a ``np.dtype``. Other dtype-likes are
+resolved every call: a NumPy scalar compares equal to its value in another format
+(``np.float32(1.0) == np.float64(1.0)``, with equal hashes), and an object exposing ``.dtype``
+can change it, so either as a key would serve one dtype's answer for another.
+"""
+
+
+def _machine_epsilon(dtype: npt.DTypeLike) -> float:
+    """Get a supported dtype's machine epsilon, from the table when the argument was seen before.
+
+    Args:
+        dtype (npt.DTypeLike): NumPy floating-point data type.
+
+    Returns:
+        float: ``np.finfo(dtype).eps``.
+
+    Raises:
+        ValueError: If dtype is not a supported floating-point type.
+    """
+    cacheable = isinstance(dtype, type | str | np.dtype)
+    if cacheable:
+        eps = _EPS_BY_DTYPE_LIKE.get(dtype)
+        if eps is not None:
+            return eps
+    eps = float(np.finfo(_ensure_float_dtype(dtype)).eps)
+    if cacheable:
+        _EPS_BY_DTYPE_LIKE[dtype] = eps
+    return eps
 
 
 def _relative_tolerance(dtype: npt.DTypeLike, eps_factor: float) -> float:
@@ -158,7 +195,7 @@ def _relative_tolerance(dtype: npt.DTypeLike, eps_factor: float) -> float:
     Raises:
         ValueError: If dtype is not a supported floating-point type.
     """
-    return eps_factor * float(np.finfo(_ensure_float_dtype(dtype)).eps)
+    return eps_factor * _machine_epsilon(dtype)
 
 
 def get_default(dtype: npt.DTypeLike) -> float:
@@ -255,9 +292,7 @@ def get_machine_epsilon(dtype: npt.DTypeLike) -> float:
     Raises:
         ValueError: If dtype is not a supported floating-point type.
     """
-    _ensure_float_dtype(dtype)
-
-    return float(np.finfo(_ensure_float_dtype(dtype)).eps)
+    return _machine_epsilon(dtype)
 
 
 class ToleranceInfo(TypedDict):
@@ -265,6 +300,11 @@ class ToleranceInfo(TypedDict):
 
     The three tolerance entries are the **dimensionless relative** presets, not
     absolute bounds; see the module docstring.
+
+    ``precision_bits`` holds NumPy's ``finfo.precision``, the approximate number of
+    *decimal* digits (6 for ``float32``, 15 for ``float64``), not the significand's
+    bit count (24 and 53), despite its name; ``precision_decimals`` holds the same
+    number. The key is kept as it is for compatibility.
     """
 
     dtype: npt.DTypeLike
@@ -290,7 +330,9 @@ def get_info(
     Returns:
         ToleranceInfo: Dictionary containing tolerance information including
             machine epsilon, the default/strict/conservative *relative*
-            tolerances, precision bits, and min/max values for the dtype.
+            tolerances, the decimal precision (under both ``precision_bits`` and
+            ``precision_decimals``; see :class:`ToleranceInfo`), and min/max values
+            for the dtype.
 
     Raises:
         ValueError: If dtype is not a supported floating-point type.

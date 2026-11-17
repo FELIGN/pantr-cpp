@@ -1,0 +1,2025 @@
+{
+ "protocol": {
+  "k": 10,
+  "repeats": 30,
+  "threads": [
+   1,
+   8
+  ],
+  "cpus": "0-7",
+  "reference": "main",
+  "argv": [
+   "benchmarks/compare.py",
+   "--out-dir",
+   "benchmarks/results/2026-11-01-s5-ac6",
+   "--side",
+   "main=<main src>",
+   "--side",
+   "branch=<branch src>",
+   "--k",
+   "10",
+   "--threads",
+   "1",
+   "8",
+   "--cpus",
+   "0-7",
+   "--filter",
+   "^(S5\\.|S4\\.spanwise)"
+  ]
+ },
+ "sides": {
+  "main": {
+   "commit": "11ab436abd94edf8f414d1ec2d9ed0bf77e38e89",
+   "extension": "none"
+  },
+  "branch": {
+   "commit": "3401390b9e54e8e84f2bf9dea86c324927f196cf",
+   "extension": "pantr._pantr_v4 (v4, _pantr_v4.abi3.so)"
+  }
+ },
+ "machine": {
+  "cpu": "Intel(R) Xeon(R) Gold 6148 CPU @ 2.40GHz",
+  "platform": "Linux-5.15.0-144-generic-x86_64-with-glibc2.35",
+  "affinity": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7
+  ],
+  "governor": "schedutil"
+ },
+ "cases": {
+  "S4.spanwise_extraction_construct.tiny@t1": {
+   "what": {
+    "main": "SpanwiseElementExtraction(cubic space, 2 intervals per direction, 'bezier')",
+    "branch": "SpanwiseElementExtraction(cubic space, 2 intervals per direction, 'bezier')"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 51105.71721611722,
+     "range_ns": 4510.377351916381,
+     "process_medians_ns": [
+      49559.242424242424,
+      53327.328571428574,
+      52150.65789473684,
+      48837.01351351351,
+      48816.95121951219,
+      51011.94871794872,
+      52918.1282051282,
+      51199.485714285714,
+      51942.0625,
+      49660.820512820515
+     ]
+    },
+    "branch": {
+     "statistic_ns": 12292.224540920954,
+     "range_ns": 5849.213654998424,
+     "process_medians_ns": [
+      12342.46644295302,
+      12203.922360248447,
+      12600.360576923076,
+      11930.476821192053,
+      11972.567307692309,
+      12460.493464052288,
+      12101.105095541401,
+      12241.982638888889,
+      12589.097902097903,
+      17779.690476190477
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.spanwise_extraction_construct.medium@t1": {
+   "what": {
+    "main": "SpanwiseElementExtraction(cubic space, 10 intervals per direction, 'bezier')",
+    "branch": "SpanwiseElementExtraction(cubic space, 10 intervals per direction, 'bezier')"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 61092.48333333334,
+     "range_ns": 5968.533008658007,
+     "process_medians_ns": [
+      60363.83333333333,
+      65575.51785714286,
+      62705.40740740741,
+      60511.75,
+      61473.933333333334,
+      61926.357142857145,
+      60618.13793103448,
+      59606.98484848485,
+      63561.267857142855,
+      60711.03333333333
+     ]
+    },
+    "branch": {
+     "statistic_ns": 13499.07756328179,
+     "range_ns": 1277.200499500499,
+     "process_medians_ns": [
+      14370.557142857142,
+      13376.097222222223,
+      13941.271126760563,
+      13193.772727272728,
+      13618.18309859155,
+      13769.733576642335,
+      13379.972027972028,
+      13295.579861111111,
+      13757.709923664122,
+      13093.356643356643
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.spanwise_extraction_construct.large@t1": {
+   "what": {
+    "main": "SpanwiseElementExtraction(cubic space, 46 intervals per direction, 'bezier')",
+    "branch": "SpanwiseElementExtraction(cubic space, 46 intervals per direction, 'bezier')"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 104503.65065789473,
+     "range_ns": 5831.173529411768,
+     "process_medians_ns": [
+      105500.775,
+      106137.25,
+      105657.29411764706,
+      101265.65,
+      107096.82352941176,
+      103506.52631578947,
+      106673.175,
+      101618.81578947368,
+      103033.45000000001,
+      102295.65
+     ]
+    },
+    "branch": {
+     "statistic_ns": 16634.042735042734,
+     "range_ns": 734.2179347826059,
+     "process_medians_ns": [
+      16554.368644067796,
+      16757.0641025641,
+      16752.752100840335,
+      16546.095833333333,
+      17120.85648148148,
+      17142.730434782607,
+      16591.805084745763,
+      16638.16239316239,
+      16629.923076923078,
+      16408.5125
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.spanwise_extraction_apply.tiny@t1": {
+   "what": {
+    "main": "1 calls of apply on a cubic 3D extraction, 2^3 elements",
+    "branch": "1 calls of apply on a cubic 3D extraction, 2^3 elements"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 14715.898449131513,
+     "range_ns": 1118.2999527819302,
+     "process_medians_ns": [
+      14283.623711340206,
+      14524.045454545456,
+      14996.73076923077,
+      15401.923664122136,
+      14591.053846153845,
+      15142.685039370079,
+      14513.689393939394,
+      14754.766129032258,
+      14888.80827067669,
+      14677.030769230769
+     ]
+    },
+    "branch": {
+     "statistic_ns": 7390.204471355379,
+     "range_ns": 570.8667507763976,
+     "process_medians_ns": [
+      7315.993212669684,
+      7216.774553571428,
+      7392.78947368421,
+      7387.619469026548,
+      7241.326086956522,
+      7787.641304347826,
+      7644.595555555556,
+      7262.568965517241,
+      7664.172093023256,
+      7464.381578947368
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.spanwise_extraction_apply.medium@t1": {
+   "what": {
+    "main": "1000 calls of apply on a cubic 3D extraction, 10^3 elements",
+    "branch": "1000 calls of apply on a cubic 3D extraction, 10^3 elements"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 14489871.25,
+     "range_ns": 954453.0,
+     "process_medians_ns": [
+      14379840.0,
+      14432896.0,
+      15159905.0,
+      14834809.5,
+      14935215.5,
+      14466192.5,
+      14205452.0,
+      14513550.0,
+      14317618.0,
+      14750687.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 7346999.75,
+     "range_ns": 476509.0,
+     "process_medians_ns": [
+      7322757.5,
+      7254430.5,
+      7596596.5,
+      7320274.0,
+      7137422.0,
+      7371242.0,
+      7386594.5,
+      7257828.5,
+      7613931.0,
+      7469192.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.spanwise_extraction_apply.large@t1": {
+   "what": {
+    "main": "10000 calls of apply on a cubic 3D extraction, 46^3 elements",
+    "branch": "10000 calls of apply on a cubic 3D extraction, 46^3 elements"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 142144436.5,
+     "range_ns": 7527624.5,
+     "process_medians_ns": [
+      142320811.0,
+      142659224.5,
+      145810223.5,
+      143114672.5,
+      142182916.0,
+      142012659.0,
+      138282599.0,
+      141709497.0,
+      140662693.5,
+      142105957.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 74308711.5,
+     "range_ns": 4582743.5,
+     "process_medians_ns": [
+      72405367.5,
+      74213475.5,
+      74462490.0,
+      73748119.0,
+      72303212.0,
+      74403947.5,
+      76799789.5,
+      72362763.5,
+      76885955.5,
+      74588426.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.spanwise_extraction_apply_many.tiny@t1": {
+   "what": {
+    "main": "apply_many over all 2^3 elements of a cubic 3D extraction",
+    "branch": "apply_many over all 2^3 elements of a cubic 3D extraction"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 72172.94642857143,
+     "range_ns": 10139.26326259946,
+     "process_medians_ns": [
+      75097.85416666666,
+      73088.83928571429,
+      79963.71153846153,
+      70571.72413793103,
+      73965.32142857142,
+      71257.05357142858,
+      70508.22413793104,
+      70825.53448275862,
+      69824.44827586207,
+      75423.92857142858
+     ]
+    },
+    "branch": {
+     "statistic_ns": 20268.3546875,
+     "range_ns": 1471.9572050290153,
+     "process_medians_ns": [
+      20156.359375,
+      20235.109375,
+      20301.6,
+      19999.9793814433,
+      20514.494897959183,
+      20634.03125,
+      21442.12765957447,
+      19970.170454545456,
+      20660.868421052633,
+      20036.722222222223
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.spanwise_extraction_apply_many.medium@t1": {
+   "what": {
+    "main": "apply_many over all 10^3 elements of a cubic 3D extraction",
+    "branch": "apply_many over all 10^3 elements of a cubic 3D extraction"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 1170597.875,
+     "range_ns": 37862.75,
+     "process_medians_ns": [
+      1197866.75,
+      1185627.5,
+      1173330.5,
+      1167865.25,
+      1160004.0,
+      1188919.5,
+      1180303.25,
+      1165444.25,
+      1162193.75,
+      1165361.75
+     ]
+    },
+    "branch": {
+     "statistic_ns": 658277.0,
+     "range_ns": 74464.29166666674,
+     "process_medians_ns": [
+      674496.0,
+      697818.125,
+      679430.0,
+      639472.5,
+      705734.6666666667,
+      640774.875,
+      697097.5,
+      631270.375,
+      634285.0,
+      642058.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.spanwise_extraction_apply_many.large@t1": {
+   "what": {
+    "main": "apply_many over all 46^3 elements of a cubic 3D extraction",
+    "branch": "apply_many over all 46^3 elements of a cubic 3D extraction"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 146223935.75,
+     "range_ns": 2013158.0,
+     "process_medians_ns": [
+      146279676.5,
+      146776332.5,
+      146000265.0,
+      146168195.0,
+      145973583.5,
+      145572631.0,
+      146500761.5,
+      147565620.5,
+      146341658.0,
+      145552462.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 78072426.75,
+     "range_ns": 7437414.5,
+     "process_medians_ns": [
+      81047886.0,
+      77005019.0,
+      82233142.0,
+      78022800.5,
+      84442433.5,
+      77561287.0,
+      84205443.0,
+      78122053.0,
+      77029726.5,
+      77667124.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S5.interpolate_bspline.tiny@t1": {
+   "what": {
+    "main": "interpolate_bspline on a 1D cubic space of 4 intervals (Greville nodes)",
+    "branch": "interpolate_bspline on a 1D cubic space of 4 intervals (Greville nodes)"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 170872.8125,
+     "range_ns": 12030.708333333343,
+     "process_medians_ns": [
+      171802.75,
+      170066.125,
+      176701.75,
+      170077.625,
+      180645.5,
+      168614.79166666666,
+      172694.20833333334,
+      169738.75,
+      171668.0,
+      169660.75
+     ]
+    },
+    "branch": {
+     "statistic_ns": 57837.41050420168,
+     "range_ns": 6836.393650793645,
+     "process_medians_ns": [
+      55796.27777777778,
+      58521.194444444445,
+      58900.75714285714,
+      56762.72857142857,
+      58534.106060606064,
+      57769.08571428571,
+      62632.671428571426,
+      57209.357142857145,
+      57905.73529411765,
+      57687.032258064515
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S5.l2_project_bspline.tiny@t1": {
+   "what": {
+    "main": "l2_project_bspline on a 1D cubic space of 4 intervals",
+    "branch": "l2_project_bspline on a 1D cubic space of 4 intervals"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 422757.10000000003,
+     "range_ns": 27900.5,
+     "process_medians_ns": [
+      426577.7,
+      422873.30000000005,
+      433612.1,
+      419311.2,
+      421708.69999999995,
+      447211.7,
+      422640.9,
+      422135.2,
+      430000.30000000005,
+      421366.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 56868.33944099379,
+     "range_ns": 5250.967320261436,
+     "process_medians_ns": [
+      54909.944444444445,
+      57195.04411764706,
+      59966.893939393936,
+      55693.40277777778,
+      60160.91176470588,
+      56515.37142857142,
+      59389.27272727272,
+      56901.02173913043,
+      56835.65714285715,
+      56550.54285714286
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S5.interpolate_bspline.medium@t1": {
+   "what": {
+    "main": "interpolate_bspline on a 1D cubic space of 100 intervals (Greville nodes)",
+    "branch": "interpolate_bspline on a 1D cubic space of 100 intervals (Greville nodes)"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 681086.9166666667,
+     "range_ns": 56674.166666666744,
+     "process_medians_ns": [
+      676396.6666666667,
+      672127.8333333334,
+      728674.5,
+      672000.3333333333,
+      695299.375,
+      698860.3333333333,
+      695787.8333333333,
+      674754.3333333333,
+      672456.5,
+      685777.1666666666
+     ]
+    },
+    "branch": {
+     "statistic_ns": 180280.86363636365,
+     "range_ns": 20660.890151515137,
+     "process_medians_ns": [
+      176032.7916666667,
+      179255.7916666667,
+      179905.13636363635,
+      180656.5909090909,
+      185236.625,
+      185936.9166666667,
+      196693.68181818182,
+      176885.625,
+      188514.70833333334,
+      178609.9166666667
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S5.l2_project_bspline.medium@t1": {
+   "what": {
+    "main": "l2_project_bspline on a 1D cubic space of 100 intervals",
+    "branch": "l2_project_bspline on a 1D cubic space of 100 intervals"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 1337129.375,
+     "range_ns": 53752.5,
+     "process_medians_ns": [
+      1315331.75,
+      1345361.25,
+      1344486.5,
+      1329772.25,
+      1355155.0,
+      1327189.75,
+      1358393.75,
+      1345122.5,
+      1317194.5,
+      1304641.25
+     ]
+    },
+    "branch": {
+     "statistic_ns": 249017.37847222222,
+     "range_ns": 30283.125,
+     "process_medians_ns": [
+      245647.5,
+      257266.6666666667,
+      249420.8125,
+      251380.22222222222,
+      245910.125,
+      248613.94444444444,
+      275930.625,
+      257617.77777777778,
+      247147.6666666667,
+      248182.44444444444
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S5.interpolate_bspline.large@t1": {
+   "what": {
+    "main": "interpolate_bspline on a 1D cubic space of 1000 intervals (Greville nodes)",
+    "branch": "interpolate_bspline on a 1D cubic space of 1000 intervals (Greville nodes)"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 26512615.0,
+     "range_ns": 1595678.0,
+     "process_medians_ns": [
+      26283329.0,
+      26800627.0,
+      27432219.5,
+      26718991.0,
+      25836541.5,
+      26440134.5,
+      26192061.5,
+      26384186.0,
+      26796335.0,
+      26585095.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 27088129.0,
+     "range_ns": 2972370.0,
+     "process_medians_ns": [
+      27226212.0,
+      29038008.0,
+      27080551.0,
+      28923693.0,
+      27001778.5,
+      27094886.5,
+      29927508.0,
+      27081371.5,
+      26955138.0,
+      27066471.5
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S5.l2_project_bspline.large@t1": {
+   "what": {
+    "main": "l2_project_bspline on a 1D cubic space of 1000 intervals",
+    "branch": "l2_project_bspline on a 1D cubic space of 1000 intervals"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 159413743.5,
+     "range_ns": 5439776.0,
+     "process_medians_ns": [
+      161677084.5,
+      161810332.5,
+      159626655.5,
+      159586693.0,
+      160141567.5,
+      156523661.0,
+      158915332.0,
+      159240794.0,
+      156370556.5,
+      158088555.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 20080808.5,
+     "range_ns": 2136852.0,
+     "process_medians_ns": [
+      20164789.0,
+      21730342.0,
+      19956081.5,
+      21815910.0,
+      19934983.0,
+      19764710.5,
+      21285085.0,
+      19679058.0,
+      19996828.0,
+      20316183.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S5.fit_bspline_tensor.tiny@t1": {
+   "what": {
+    "main": "fit_bspline on a 2D bicubic space of 2^2 intervals, 10^2 grid nodes",
+    "branch": "fit_bspline on a 2D bicubic space of 2^2 intervals, 10^2 grid nodes"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 199344.07272727272,
+     "range_ns": 12666.353535353526,
+     "process_medians_ns": [
+      200384.63636363635,
+      201731.68181818182,
+      202342.95,
+      207488.9090909091,
+      195972.95454545453,
+      194822.55555555556,
+      199948.59999999998,
+      198739.54545454547,
+      197675.2,
+      195936.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 27514.296009529484,
+     "range_ns": 2713.1038738738716,
+     "process_medians_ns": [
+      27558.287671232876,
+      27376.6338028169,
+      28182.5625,
+      27426.766666666666,
+      25963.68666666667,
+      27825.141791044778,
+      28676.79054054054,
+      27470.304347826088,
+      27919.072463768116,
+      27056.171232876713
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S5.fit_bspline_tensor.medium@t1": {
+   "what": {
+    "main": "fit_bspline on a 2D bicubic space of 16^2 intervals, 38^2 grid nodes",
+    "branch": "fit_bspline on a 2D bicubic space of 16^2 intervals, 38^2 grid nodes"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 402568.0166666667,
+     "range_ns": 27657.63333333336,
+     "process_medians_ns": [
+      408993.1,
+      422820.8,
+      414716.9,
+      406306.2,
+      398042.3,
+      409666.4166666666,
+      398829.8333333334,
+      398520.0833333334,
+      398000.0833333334,
+      395163.1666666666
+     ]
+    },
+    "branch": {
+     "statistic_ns": 63965.94354838709,
+     "range_ns": 6251.246767241391,
+     "process_medians_ns": [
+      62799.15517241379,
+      67330.48333333334,
+      64695.0,
+      64316.140625,
+      61850.71875,
+      63936.74193548387,
+      68101.96551724139,
+      63727.28125,
+      63995.14516129032,
+      63243.046875
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S5.fit_bspline_tensor.large@t1": {
+   "what": {
+    "main": "fit_bspline on a 2D bicubic space of 128^2 intervals, 262^2 grid nodes",
+    "branch": "fit_bspline on a 2D bicubic space of 128^2 intervals, 262^2 grid nodes"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 7632268.5,
+     "range_ns": 394127.5,
+     "process_medians_ns": [
+      7676429.5,
+      7630399.5,
+      7889436.5,
+      7634137.5,
+      7535362.5,
+      7495309.0,
+      7861669.0,
+      7843603.0,
+      7622561.5,
+      7597556.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 1604216.0,
+     "range_ns": 504320.25,
+     "process_medians_ns": [
+      1581028.0,
+      2079919.0,
+      1690674.75,
+      1668150.25,
+      1575598.75,
+      1591343.0,
+      1673235.25,
+      1586801.0,
+      1577579.75,
+      1617089.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S5.fit_bspline_scattered.tiny@t1": {
+   "what": {
+    "main": "fit_bspline on a 2D bicubic space of 1^2 intervals, 64 points",
+    "branch": "fit_bspline on a 2D bicubic space of 1^2 intervals, 64 points"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 208679.425,
+     "range_ns": 8812.600000000006,
+     "process_medians_ns": [
+      206494.84999999998,
+      210170.7,
+      212557.9,
+      205012.75,
+      204876.9,
+      207188.15,
+      211995.05,
+      211929.5,
+      211056.95,
+      203745.3
+     ]
+    },
+    "branch": {
+     "statistic_ns": 57667.11428571429,
+     "range_ns": 22278.838675213665,
+     "process_medians_ns": [
+      56617.21428571429,
+      58557.95833333333,
+      58070.12857142858,
+      78319.26923076922,
+      56040.430555555555,
+      56633.43939393939,
+      61232.56060606061,
+      58364.8,
+      57264.100000000006,
+      56247.77777777778
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S5.fit_bspline_scattered.medium@t1": {
+   "what": {
+    "main": "fit_bspline on a 2D bicubic space of 6^2 intervals, 324 points",
+    "branch": "fit_bspline on a 2D bicubic space of 6^2 intervals, 324 points"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 1961038.0,
+     "range_ns": 118487.0,
+     "process_medians_ns": [
+      1956418.0,
+      1961063.0,
+      2005852.5,
+      1964663.0,
+      2056626.0,
+      1938139.0,
+      1961013.0,
+      1961773.0,
+      1942667.0,
+      1958843.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 1170879.125,
+     "range_ns": 85373.0,
+     "process_medians_ns": [
+      1147321.75,
+      1181631.5,
+      1170005.5,
+      1227677.75,
+      1172465.75,
+      1171752.75,
+      1224304.0,
+      1142304.75,
+      1143613.5,
+      1143623.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S5.fit_bspline_scattered.large@t1": {
+   "what": {
+    "main": "fit_bspline on a 2D bicubic space of 20^2 intervals, 2116 points",
+    "branch": "fit_bspline on a 2D bicubic space of 20^2 intervals, 2116 points"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 161722299.5,
+     "range_ns": 10050555.0,
+     "process_medians_ns": [
+      162221843.5,
+      169573206.0,
+      160914952.5,
+      161410926.5,
+      162033672.5,
+      160391274.5,
+      162988486.5,
+      163253285.5,
+      159522651.0,
+      160218108.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 78326423.0,
+     "range_ns": 7025053.5,
+     "process_medians_ns": [
+      78414284.5,
+      78364062.0,
+      78806069.5,
+      78288784.0,
+      78274935.5,
+      78496259.0,
+      84509295.5,
+      77484242.0,
+      77601029.0,
+      77667370.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S5.quasi_interpolate_bspline.tiny@t1": {
+   "what": {
+    "main": "quasi_interpolate_bspline on a 2D bicubic space of 2^2 intervals",
+    "branch": "quasi_interpolate_bspline on a 2D bicubic space of 2^2 intervals"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 1403854.0,
+     "range_ns": 86777.5,
+     "process_medians_ns": [
+      1406279.0,
+      1455556.25,
+      1464841.25,
+      1401429.0,
+      1397871.0,
+      1422270.5,
+      1455477.0,
+      1384892.75,
+      1378063.75,
+      1396637.75
+     ]
+    },
+    "branch": {
+     "statistic_ns": 40118.52965561225,
+     "range_ns": 3295.4108163265337,
+     "process_medians_ns": [
+      41714.357142857145,
+      39781.077777777784,
+      39788.5,
+      39883.15306122449,
+      39171.63,
+      41163.18888888889,
+      42467.04081632653,
+      41433.19,
+      40353.90625,
+      39626.948979591834
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S5.quasi_interpolate_bspline.medium@t1": {
+   "what": {
+    "main": "quasi_interpolate_bspline on a 2D bicubic space of 30^2 intervals",
+    "branch": "quasi_interpolate_bspline on a 2D bicubic space of 30^2 intervals"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 35610476.25,
+     "range_ns": 2413918.0,
+     "process_medians_ns": [
+      35469535.5,
+      36986443.5,
+      37058997.5,
+      35043881.5,
+      35239699.0,
+      36431892.5,
+      36202728.0,
+      34645079.5,
+      35751417.0,
+      34989026.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 916129.5,
+     "range_ns": 67205.83333333349,
+     "process_medians_ns": [
+      917393.3333333333,
+      900968.8333333333,
+      947327.0,
+      915474.3333333333,
+      908431.8333333333,
+      929262.3333333333,
+      968174.6666666667,
+      916784.6666666666,
+      903484.8333333333,
+      901141.6666666666
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S5.quasi_interpolate_bspline.large@t1": {
+   "what": {
+    "main": "quasi_interpolate_bspline on a 2D bicubic space of 100^2 intervals",
+    "branch": "quasi_interpolate_bspline on a 2D bicubic space of 100^2 intervals"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 324608974.25,
+     "range_ns": 131491777.0,
+     "process_medians_ns": [
+      324524942.5,
+      449112898.5,
+      342653392.0,
+      325030237.5,
+      323280715.5,
+      324693006.0,
+      333659954.5,
+      322109267.5,
+      322267107.0,
+      317621121.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 8448159.75,
+     "range_ns": 498061.0,
+     "process_medians_ns": [
+      8462376.5,
+      8433943.0,
+      8313531.0,
+      8516317.5,
+      8351971.0,
+      8589451.0,
+      8811592.0,
+      8337924.5,
+      8355676.0,
+      8498747.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.spanwise_extraction_construct.tiny@t8": {
+   "what": {
+    "main": "SpanwiseElementExtraction(cubic space, 2 intervals per direction, 'bezier')",
+    "branch": "SpanwiseElementExtraction(cubic space, 2 intervals per direction, 'bezier')"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 50869.41902834008,
+     "range_ns": 26677.66057692308,
+     "process_medians_ns": [
+      48916.0,
+      58027.442307692305,
+      48613.060975609755,
+      48480.5125,
+      50609.68421052631,
+      51252.94594594595,
+      52289.17567567568,
+      49656.325,
+      51129.153846153844,
+      75158.17307692308
+     ]
+    },
+    "branch": {
+     "statistic_ns": 12334.17527839161,
+     "range_ns": 5663.344673896896,
+     "process_medians_ns": [
+      12274.353741496598,
+      17355.632075471698,
+      11890.029032258064,
+      11917.086092715232,
+      12393.996815286624,
+      12878.615942028986,
+      13957.039370078739,
+      12791.125,
+      11692.287401574802,
+      11876.733333333334
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.spanwise_extraction_construct.medium@t8": {
+   "what": {
+    "main": "SpanwiseElementExtraction(cubic space, 10 intervals per direction, 'bezier')",
+    "branch": "SpanwiseElementExtraction(cubic space, 10 intervals per direction, 'bezier')"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 60403.55837912088,
+     "range_ns": 10657.494117647046,
+     "process_medians_ns": [
+      60038.793103448275,
+      70087.79411764705,
+      59936.92592592593,
+      59430.3,
+      59451.76666666666,
+      62145.86666666667,
+      64357.232142857145,
+      60054.63461538461,
+      62669.39655172414,
+      60752.482142857145
+     ]
+    },
+    "branch": {
+     "statistic_ns": 13745.744058253478,
+     "range_ns": 6091.430059523807,
+     "process_medians_ns": [
+      13751.282442748092,
+      19099.940476190473,
+      13283.727272727272,
+      13503.0,
+      13740.205673758865,
+      14467.408,
+      14542.591911764706,
+      14932.38888888889,
+      13008.510416666666,
+      13228.1875
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.spanwise_extraction_construct.large@t8": {
+   "what": {
+    "main": "SpanwiseElementExtraction(cubic space, 46 intervals per direction, 'bezier')",
+    "branch": "SpanwiseElementExtraction(cubic space, 46 intervals per direction, 'bezier')"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 104604.34868421053,
+     "range_ns": 17981.206818181818,
+     "process_medians_ns": [
+      101688.075,
+      119466.68181818182,
+      101868.125,
+      103466.975,
+      101485.475,
+      104583.44736842105,
+      113674.53125,
+      108669.29999999999,
+      104625.25,
+      107735.7
+     ]
+    },
+    "branch": {
+     "statistic_ns": 16891.525209920695,
+     "range_ns": 7112.2249999999985,
+     "process_medians_ns": [
+      17109.605504587154,
+      23525.066666666666,
+      16505.38655462185,
+      16673.444915254237,
+      16482.012605042015,
+      17965.423423423425,
+      18168.25,
+      17658.61574074074,
+      16412.841666666667,
+      16565.771186440677
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.spanwise_extraction_apply.tiny@t8": {
+   "what": {
+    "main": "1 calls of apply on a cubic 3D extraction, 2^3 elements",
+    "branch": "1 calls of apply on a cubic 3D extraction, 2^3 elements"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 14777.513131009615,
+     "range_ns": 2408.0902255639085,
+     "process_medians_ns": [
+      14465.195488721805,
+      16873.285714285714,
+      14810.06923076923,
+      14468.756302521007,
+      14504.534615384615,
+      14962.541666666668,
+      15221.874015748032,
+      15339.06640625,
+      14648.976744186046,
+      14744.95703125
+     ]
+    },
+    "branch": {
+     "statistic_ns": 7458.693002124144,
+     "range_ns": 1146.4530784508452,
+     "process_medians_ns": [
+      7930.1244131455405,
+      8340.01886792453,
+      7374.785714285714,
+      7376.684210526316,
+      7540.701793721973,
+      8309.686046511628,
+      7269.873271889401,
+      8058.48275862069,
+      7227.027659574468,
+      7193.565789473684
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.spanwise_extraction_apply.medium@t8": {
+   "what": {
+    "main": "1000 calls of apply on a cubic 3D extraction, 10^3 elements",
+    "branch": "1000 calls of apply on a cubic 3D extraction, 10^3 elements"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 14689813.5,
+     "range_ns": 625642.0,
+     "process_medians_ns": [
+      14776229.5,
+      14214547.5,
+      14549479.0,
+      14351188.5,
+      14704815.0,
+      14840189.5,
+      14693673.5,
+      14769582.0,
+      14685953.5,
+      14588684.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 7393602.0,
+     "range_ns": 887317.0,
+     "process_medians_ns": [
+      7865382.5,
+      7391775.0,
+      7395429.0,
+      7430488.5,
+      7353874.0,
+      8066786.5,
+      7386885.0,
+      7985862.0,
+      7179469.5,
+      7298679.5
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.spanwise_extraction_apply.large@t8": {
+   "what": {
+    "main": "10000 calls of apply on a cubic 3D extraction, 46^3 elements",
+    "branch": "10000 calls of apply on a cubic 3D extraction, 46^3 elements"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 143371608.0,
+     "range_ns": 24685205.0,
+     "process_medians_ns": [
+      164521390.0,
+      144544279.0,
+      141897579.0,
+      141898834.0,
+      139992202.0,
+      139836185.0,
+      144188196.5,
+      145211838.5,
+      143592989.0,
+      143150227.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 74873165.5,
+     "range_ns": 10710773.5,
+     "process_medians_ns": [
+      83238687.0,
+      75379297.5,
+      74279453.5,
+      74367033.5,
+      73240606.0,
+      79824276.5,
+      77022886.0,
+      80392846.5,
+      72712651.0,
+      72527913.5
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.spanwise_extraction_apply_many.tiny@t8": {
+   "what": {
+    "main": "apply_many over all 2^3 elements of a cubic 3D extraction",
+    "branch": "apply_many over all 2^3 elements of a cubic 3D extraction"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 94263.25,
+     "range_ns": 14248.295454545441,
+     "process_medians_ns": [
+      106183.0,
+      96016.20454545454,
+      94054.33333333333,
+      92359.59523809524,
+      97211.88095238095,
+      94329.97727272726,
+      94196.52272727274,
+      91934.70454545456,
+      93764.22727272726,
+      96154.47619047618
+     ]
+    },
+    "branch": {
+     "statistic_ns": 21099.84325132979,
+     "range_ns": 8804.187462863934,
+     "process_medians_ns": [
+      28461.14705882353,
+      28098.75,
+      20422.177083333336,
+      21292.952127659577,
+      19919.095959595958,
+      21645.98888888889,
+      20460.510000000002,
+      21871.86781609195,
+      20906.734375,
+      19656.959595959597
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.spanwise_extraction_apply_many.medium@t8": {
+   "what": {
+    "main": "apply_many over all 10^3 elements of a cubic 3D extraction",
+    "branch": "apply_many over all 10^3 elements of a cubic 3D extraction"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 325603.8928571429,
+     "range_ns": 127492.75,
+     "process_medians_ns": [
+      450430.0,
+      325880.5714285715,
+      325327.2142857143,
+      322997.71428571426,
+      327610.0,
+      324712.7857142857,
+      327063.2857142857,
+      326871.5714285715,
+      323599.2857142857,
+      322937.25
+     ]
+    },
+    "branch": {
+     "statistic_ns": 194951.34090909094,
+     "range_ns": 752796.9659090909,
+     "process_medians_ns": [
+      922375.75,
+      934766.375,
+      182789.18181818182,
+      192404.90909090912,
+      203686.09999999998,
+      181969.4090909091,
+      197497.77272727274,
+      184923.95454545453,
+      197534.75,
+      190163.36363636365
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.spanwise_extraction_apply_many.large@t8": {
+   "what": {
+    "main": "apply_many over all 46^3 elements of a cubic 3D extraction",
+    "branch": "apply_many over all 46^3 elements of a cubic 3D extraction"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 30001722.5,
+     "range_ns": 33559588.0,
+     "process_medians_ns": [
+      62980066.5,
+      31315227.5,
+      29420478.5,
+      30343273.5,
+      29487303.5,
+      30275753.5,
+      30035285.5,
+      29574891.5,
+      29968159.5,
+      29651179.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 27518290.25,
+     "range_ns": 19770592.5,
+     "process_medians_ns": [
+      46866333.5,
+      42325967.0,
+      27315960.0,
+      27415459.5,
+      27722220.0,
+      27128305.0,
+      27680448.0,
+      27621121.0,
+      27095741.0,
+      27293453.5
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S5.interpolate_bspline.tiny@t8": {
+   "what": {
+    "main": "interpolate_bspline on a 1D cubic space of 4 intervals (Greville nodes)",
+    "branch": "interpolate_bspline on a 1D cubic space of 4 intervals (Greville nodes)"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 173275.875,
+     "range_ns": 84178.47222222222,
+     "process_medians_ns": [
+      252835.72222222222,
+      168657.25,
+      171128.1666666667,
+      175265.58333333334,
+      172430.91666666666,
+      168932.04166666666,
+      180141.81818181818,
+      175026.5909090909,
+      174120.83333333334,
+      170365.5416666667
+     ]
+    },
+    "branch": {
+     "statistic_ns": 59280.95504201681,
+     "range_ns": 23578.825294117647,
+     "process_medians_ns": [
+      79904.34,
+      78483.73999999999,
+      59218.05714285714,
+      56878.2,
+      57745.68571428572,
+      61559.816666666666,
+      59343.85294117647,
+      62839.41176470588,
+      56350.22222222222,
+      56325.51470588235
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S5.l2_project_bspline.tiny@t8": {
+   "what": {
+    "main": "l2_project_bspline on a 1D cubic space of 4 intervals",
+    "branch": "l2_project_bspline on a 1D cubic space of 4 intervals"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 426225.05,
+     "range_ns": 191988.72499999998,
+     "process_medians_ns": [
+      611097.625,
+      428992.69999999995,
+      433380.1,
+      424594.7,
+      425790.1,
+      424815.9,
+      457513.7,
+      421650.19999999995,
+      419108.9,
+      426660.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 57484.125,
+     "range_ns": 23581.790476190465,
+     "process_medians_ns": [
+      78792.2619047619,
+      76871.57692307692,
+      55685.045454545456,
+      58283.680555555555,
+      55560.76470588235,
+      60089.328125,
+      55210.47142857143,
+      59584.4,
+      55323.333333333336,
+      56684.569444444445
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S5.interpolate_bspline.medium@t8": {
+   "what": {
+    "main": "interpolate_bspline on a 1D cubic space of 100 intervals (Greville nodes)",
+    "branch": "interpolate_bspline on a 1D cubic space of 100 intervals (Greville nodes)"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 681803.6666666666,
+     "range_ns": 389285.75,
+     "process_medians_ns": [
+      1051839.75,
+      666355.5,
+      681070.5,
+      682536.8333333333,
+      663998.6666666667,
+      683619.3333333334,
+      743588.3333333333,
+      676179.0,
+      685313.3333333333,
+      662554.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 182722.67424242425,
+     "range_ns": 68545.08333333331,
+     "process_medians_ns": [
+      246266.125,
+      244495.72222222222,
+      177822.8333333333,
+      177863.5833333333,
+      177721.0416666667,
+      188815.36363636365,
+      183640.68181818182,
+      188505.45833333334,
+      178393.9583333333,
+      181804.6666666667
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S5.l2_project_bspline.medium@t8": {
+   "what": {
+    "main": "l2_project_bspline on a 1D cubic space of 100 intervals",
+    "branch": "l2_project_bspline on a 1D cubic space of 100 intervals"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 1318532.625,
+     "range_ns": 616836.75,
+     "process_medians_ns": [
+      1903095.0,
+      1296143.5,
+      1286258.25,
+      1321408.0,
+      1314349.25,
+      1395273.5,
+      1530314.75,
+      1317152.5,
+      1297267.25,
+      1319912.75
+     ]
+    },
+    "branch": {
+     "statistic_ns": 256723.5,
+     "range_ns": 96422.77777777781,
+     "process_medians_ns": [
+      342091.8333333334,
+      339658.75,
+      248785.375,
+      245882.83333333334,
+      248667.625,
+      269556.0625,
+      264264.375,
+      278246.0,
+      249182.625,
+      245669.05555555556
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S5.interpolate_bspline.large@t8": {
+   "what": {
+    "main": "interpolate_bspline on a 1D cubic space of 1000 intervals (Greville nodes)",
+    "branch": "interpolate_bspline on a 1D cubic space of 1000 intervals (Greville nodes)"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 26145335.25,
+     "range_ns": 2433656.0,
+     "process_medians_ns": [
+      26201240.5,
+      25868164.5,
+      25680193.5,
+      26327940.5,
+      26021231.5,
+      26979395.0,
+      28113849.5,
+      26752796.0,
+      26089430.0,
+      25983857.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 27258232.5,
+     "range_ns": 12838547.5,
+     "process_medians_ns": [
+      38763318.0,
+      39612548.0,
+      26774000.5,
+      27147059.0,
+      27369406.0,
+      29323417.5,
+      28920404.0,
+      26891853.0,
+      26808263.5,
+      26791232.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S5.l2_project_bspline.large@t8": {
+   "what": {
+    "main": "l2_project_bspline on a 1D cubic space of 1000 intervals",
+    "branch": "l2_project_bspline on a 1D cubic space of 1000 intervals"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 159699958.75,
+     "range_ns": 16779311.0,
+     "process_medians_ns": [
+      160587358.5,
+      155102325.5,
+      155637055.5,
+      157586277.5,
+      159785395.5,
+      160432431.0,
+      171881636.5,
+      162955072.5,
+      157901296.5,
+      159614522.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 20214113.5,
+     "range_ns": 8120915.5,
+     "process_medians_ns": [
+      27896949.5,
+      27631232.5,
+      19796218.5,
+      20198056.5,
+      19980615.5,
+      22285987.5,
+      21368312.5,
+      19776034.0,
+      20230170.5,
+      20095403.5
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S5.fit_bspline_tensor.tiny@t8": {
+   "what": {
+    "main": "fit_bspline on a 2D bicubic space of 2^2 intervals, 10^2 grid nodes",
+    "branch": "fit_bspline on a 2D bicubic space of 2^2 intervals, 10^2 grid nodes"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 197597.58863636362,
+     "range_ns": 21773.136363636353,
+     "process_medians_ns": [
+      196833.7,
+      192014.36363636365,
+      197246.95,
+      197948.22727272726,
+      198963.2,
+      197034.72727272726,
+      213787.5,
+      204370.0,
+      196155.13636363635,
+      198050.09090909088
+     ]
+    },
+    "branch": {
+     "statistic_ns": 27459.61354684909,
+     "range_ns": 11934.309383753505,
+     "process_medians_ns": [
+      37943.74509803922,
+      37031.839622641506,
+      26528.068493150684,
+      27718.47014925373,
+      26009.43571428571,
+      28791.946969696968,
+      28945.84328358209,
+      27200.756944444445,
+      26428.864864864867,
+      26808.86301369863
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S5.fit_bspline_tensor.medium@t8": {
+   "what": {
+    "main": "fit_bspline on a 2D bicubic space of 16^2 intervals, 38^2 grid nodes",
+    "branch": "fit_bspline on a 2D bicubic space of 16^2 intervals, 38^2 grid nodes"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 400039.6666666666,
+     "range_ns": 27168.75,
+     "process_medians_ns": [
+      400458.0,
+      419947.5833333333,
+      395513.75,
+      398225.75,
+      409362.0,
+      399621.3333333333,
+      422682.5,
+      397892.75,
+      397017.9166666667,
+      411785.6
+     ]
+    },
+    "branch": {
+     "statistic_ns": 63729.3421875,
+     "range_ns": 26173.519021739135,
+     "process_medians_ns": [
+      88076.95652173914,
+      86745.82608695651,
+      62320.625,
+      63106.71875,
+      63561.2,
+      66175.08333333334,
+      67828.3125,
+      63897.484375,
+      61903.4375,
+      62651.921875
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S5.fit_bspline_tensor.large@t8": {
+   "what": {
+    "main": "fit_bspline on a 2D bicubic space of 128^2 intervals, 262^2 grid nodes",
+    "branch": "fit_bspline on a 2D bicubic space of 128^2 intervals, 262^2 grid nodes"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 7635351.0,
+     "range_ns": 921675.0,
+     "process_medians_ns": [
+      7769712.0,
+      7442674.0,
+      7564655.5,
+      7652886.5,
+      7622340.5,
+      7864569.5,
+      8364349.0,
+      7541243.5,
+      7621229.5,
+      7648361.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 1637489.625,
+     "range_ns": 494202.75,
+     "process_medians_ns": [
+      2078258.0,
+      2068897.0,
+      1584055.25,
+      1623206.75,
+      1622532.75,
+      1642189.25,
+      1699456.5,
+      1637433.25,
+      1599183.75,
+      1637546.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S5.fit_bspline_scattered.tiny@t8": {
+   "what": {
+    "main": "fit_bspline on a 2D bicubic space of 1^2 intervals, 64 points",
+    "branch": "fit_bspline on a 2D bicubic space of 1^2 intervals, 64 points"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 207349.40000000002,
+     "range_ns": 10665.549999999988,
+     "process_medians_ns": [
+      212522.05,
+      203902.34999999998,
+      203876.0,
+      204005.40000000002,
+      207377.4,
+      210142.05,
+      214389.55,
+      207321.40000000002,
+      214541.55,
+      205991.40000000002
+     ]
+    },
+    "branch": {
+     "statistic_ns": 59176.4,
+     "range_ns": 23526.461666666662,
+     "process_medians_ns": [
+      65268.2,
+      79514.92,
+      60180.5,
+      58172.3,
+      56238.79166666667,
+      61181.93939393939,
+      61279.583333333336,
+      58015.51428571429,
+      55988.458333333336,
+      56643.90277777778
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S5.fit_bspline_scattered.medium@t8": {
+   "what": {
+    "main": "fit_bspline on a 2D bicubic space of 6^2 intervals, 324 points",
+    "branch": "fit_bspline on a 2D bicubic space of 6^2 intervals, 324 points"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 1964544.0,
+     "range_ns": 157693.5,
+     "process_medians_ns": [
+      1964327.5,
+      1943610.5,
+      1943275.5,
+      1961056.5,
+      1957170.0,
+      1992586.25,
+      2100969.0,
+      1964760.5,
+      2023543.5,
+      2049402.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 1176546.875,
+     "range_ns": 477089.0,
+     "process_medians_ns": [
+      1267764.5,
+      1617283.75,
+      1140194.75,
+      1176638.5,
+      1176455.25,
+      1191914.0,
+      1246936.5,
+      1141036.75,
+      1146550.25,
+      1161587.25
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S5.fit_bspline_scattered.large@t8": {
+   "what": {
+    "main": "fit_bspline on a 2D bicubic space of 20^2 intervals, 2116 points",
+    "branch": "fit_bspline on a 2D bicubic space of 20^2 intervals, 2116 points"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 162371490.25,
+     "range_ns": 14120296.5,
+     "process_medians_ns": [
+      163444532.0,
+      161667288.5,
+      162669266.0,
+      162073714.5,
+      162018331.0,
+      163162355.0,
+      174402892.5,
+      161017146.0,
+      160282596.0,
+      164624293.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 78463554.5,
+     "range_ns": 29939775.0,
+     "process_medians_ns": [
+      79026538.0,
+      107747953.5,
+      78389839.5,
+      77808178.5,
+      82668757.0,
+      82360776.5,
+      78079959.0,
+      78537269.5,
+      78179676.0,
+      78118522.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S5.quasi_interpolate_bspline.tiny@t8": {
+   "what": {
+    "main": "quasi_interpolate_bspline on a 2D bicubic space of 2^2 intervals",
+    "branch": "quasi_interpolate_bspline on a 2D bicubic space of 2^2 intervals"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 1397541.875,
+     "range_ns": 119150.25,
+     "process_medians_ns": [
+      1430040.25,
+      1359827.5,
+      1411683.0,
+      1408722.25,
+      1403886.0,
+      1361732.75,
+      1478977.75,
+      1388001.5,
+      1391197.75,
+      1390805.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 40926.22587159864,
+     "range_ns": 17091.61,
+     "process_medians_ns": [
+      39815.17,
+      56176.1,
+      40666.31632653061,
+      43200.91836734694,
+      42113.63265306123,
+      42476.177777777775,
+      39084.49,
+      41186.13541666667,
+      39935.63265306123,
+      39715.68
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S5.quasi_interpolate_bspline.medium@t8": {
+   "what": {
+    "main": "quasi_interpolate_bspline on a 2D bicubic space of 30^2 intervals",
+    "branch": "quasi_interpolate_bspline on a 2D bicubic space of 30^2 intervals"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 34913180.25,
+     "range_ns": 2078771.0,
+     "process_medians_ns": [
+      36082810.0,
+      34842276.0,
+      34930329.5,
+      34804288.5,
+      34896031.0,
+      34884597.0,
+      36475265.0,
+      35138392.0,
+      36143348.0,
+      34396494.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 909067.3333333333,
+     "range_ns": 293175.5833333334,
+     "process_medians_ns": [
+      906443.8333333334,
+      1192867.25,
+      945850.8333333333,
+      905212.5,
+      1005753.1666666666,
+      948171.8333333333,
+      899691.6666666666,
+      907323.8333333333,
+      910810.8333333333,
+      899719.6666666667
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S5.quasi_interpolate_bspline.large@t8": {
+   "what": {
+    "main": "quasi_interpolate_bspline on a 2D bicubic space of 100^2 intervals",
+    "branch": "quasi_interpolate_bspline on a 2D bicubic space of 100^2 intervals"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 323215321.25,
+     "range_ns": 21661830.5,
+     "process_medians_ns": [
+      322559659.5,
+      320508092.0,
+      319491355.0,
+      323870983.0,
+      328588743.5,
+      326471002.0,
+      336120952.5,
+      320798453.5,
+      334984670.5,
+      314459122.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 8318270.75,
+     "range_ns": 1756967.0,
+     "process_medians_ns": [
+      8244637.0,
+      10001604.0,
+      8344993.5,
+      8332894.0,
+      8422726.5,
+      8658466.5,
+      8303647.5,
+      8274174.0,
+      8290179.5,
+      8256722.5
+     ],
+     "flagged": false
+    }
+   }
+  }
+ }
+}

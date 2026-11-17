@@ -16,7 +16,7 @@ Main exports:
 
 - :class:`Grid`: abstract base class defining the grid contract and supplying
   axis-aligned box defaults for facets, neighbours, reference maps, batch point
-  location, and spatial queries.
+  location, and spatial queries. Only pantr's own grids derive from it.
 - :class:`GridRestriction`: result of :meth:`Grid.restrict` -- a windowed
   sub-grid plus local-to-global cell index maps.
 - :class:`TensorProductGrid`: concrete tensor-product grid of axis-aligned boxes

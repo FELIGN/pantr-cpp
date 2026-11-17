@@ -8,14 +8,13 @@ control-point clouds (``1e6 + O(1)``), which is the one that catches a tolerance
 derived from a coordinate's own magnitude rather than from the control polygon's
 diagonal -- such a tolerance is not translation invariant.
 
-Two Numba/NumPy kernels are probed directly rather than only through the public
-``Bezier`` surface, because they are imported by a private, non-public consumer
-and are the sharpest boundscheck targets in the package:
+Two internals are probed directly rather than only through the public
+``Bezier`` surface, because they are the sharpest bounds targets in the package:
 
-- ``pantr.bezier._root_finding_core._de_casteljau_eval_scalar`` -- a
-  ``nopython=True`` kernel with *no* input validation whatsoever.
-- ``pantr.bezier._bezier_interpolate._bernstein_interpolate`` -- a pure-NumPy
-  Layer 2 helper (truncated-SVD pseudo-inverse), also unvalidated.
+- ``pantr._testing.de_casteljau_eval_scalar`` -- the root provider's C++ de
+  Casteljau kernel, with *no* input validation whatsoever.
+- ``pantr._testing.bernstein_interpolate`` -- the truncated-SVD fit on the
+  modified-Chebyshev grid (a route through ``fit_bezier``).
 
 Every invariant here is a genuinely claimed property quoted from the docstrings
 (degree elevation is exact, degree reduction reproduces the endpoints bit for
@@ -34,6 +33,8 @@ from typing import TYPE_CHECKING, Any, Final
 import numpy as np
 import numpy.typing as npt
 
+from pantr._testing import bernstein_interpolate as _bernstein_interpolate
+from pantr._testing import de_casteljau_eval_scalar as _de_casteljau_eval_scalar
 from pantr.bezier import (
     Bezier,
     create_from_bspline,
@@ -42,8 +43,6 @@ from pantr.bezier import (
     fit_bezier,
     interpolate_bezier,
 )
-from pantr.bezier._bezier_interpolate import _bernstein_interpolate
-from pantr.bezier._root_finding_core import _de_casteljau_eval_scalar
 from pantr.bspline import Bspline, BsplineSpace, BsplineSpace1D
 from pantr.quad import PointsLattice
 from pantr.tolerance import get_default, get_machine_epsilon
@@ -972,10 +971,9 @@ def _reduce_degree_cases(profile: Profile) -> Iterator[Case]:
                         # `dec` never exceeds `degree` and is never zero or negative, so
                         # none of the four documented refusals applies. Degree 62 is
                         # legal here even though it is not for `elevate_degree`:
-                        # `_degree_reduce_bezier` is built from exact `Fraction` and
-                        # `math.comb` arithmetic and never touches `_bincoeff`, so it
-                        # carries no envelope check. Verified: degree 62 reduces, while
-                        # elevating a degree-61 curve raises.
+                        # the reduction operators are assembled in exact rationals
+                        # (``include/pantr/bezier/reduce.hpp``) and never touch the
+                        # binomial kernel, so `reduce_degree` carries no envelope check.
                         must_succeed=True,
                     )
 
@@ -1087,16 +1085,11 @@ def _minimize_degree_cases(profile: Profile) -> Iterator[Case]:
             if degree == 0:
                 continue
             # `minimize_degree` checks every direction against the binomial-coefficient
-            # envelope before doing anything (`_bezier_degree.py:515-517`), so a
-            # degree-62 operand is refused outright -- verified: degree 61 minimizes,
-            # degree 62 raises. That refusal is correct (past 61 `_bincoeff` wraps
-            # int64 and the answer would be silently wrong), which is why it is graded
-            # `must_reject` rather than left unflagged. What is *missing* is the
-            # documentation: `Bezier.minimize_degree` has no `Raises:` section at all,
-            # while the Layer-2 function it calls documents this exact `ValueError`. So
-            # the sweep will report the refusal as an undocumented rejection -- a
-            # suspicion, not a bug -- which is the right strength of claim for a
-            # docstring gap, while a *return* at degree 62 would be graded a bug.
+            # envelope before doing anything (``include/pantr/bezier/reduce.hpp``), so a
+            # degree-62 operand is refused outright: degree 61 minimizes, degree 62
+            # raises. That refusal is correct (past 61 the binomial kernel would wrap),
+            # which is why it is graded `must_reject`; `Bezier.minimize_degree` documents
+            # it in its `Raises:` section, while a *return* at degree 62 would be a bug.
             over_envelope = degree > _BINCOEFF_MAX_DEGREE
             cp = _random_control_points(1, 1, degree, dtype, offset=7000 + degree)
             bezier = Bezier(cp)
@@ -1347,7 +1340,7 @@ def _compose_cases(profile: Profile) -> Iterator[Case]:
     Invariant 4: ``outer.compose(inner).evaluate(t) == outer.evaluate(inner.evaluate(t))``.
     Combined degree is kept below 62 in the main crossing -- 62 is the known
     ``_bincoeff`` int64 overflow cliff reached through this path
-    (``_bezier_compose.py``) -- except for one labelled case documenting the
+    (``include/pantr/bezier/compose.hpp``) -- except for one labelled case documenting the
     boundary at the combined degree 61, one step below the cliff.
 
     Args:
@@ -1384,7 +1377,7 @@ def _compose_cases(profile: Profile) -> Iterator[Case]:
         if profile is Profile.FULL:
             # A different route to high combined degree: multi-D inner uses the
             # NumPy nD product path (`_bernstein_product_coefficients_nd`,
-            # `math.comb`-based), not the Numba 1D bincoeff kernel -- so this is
+            # `math.comb`-based), not the 1D bincoeff kernel -- so this is
             # a genuinely different mechanism, not the known cliff.
             outer_cp_nd = _random_control_points(1, 1, 30, dtype, offset=10100)
             inner_cp_nd = _random_control_points(1, 2, 3, dtype, offset=10101)
@@ -1403,8 +1396,8 @@ def _compose_cases(profile: Profile) -> Iterator[Case]:
                 invariants=(_compose_invariant(ts_nd, expected_nd, tol_nd),),
                 arrays={"outer_control_points": outer_cp_nd, "inner_control_points": inner_cp_nd},
                 # Combined degree 90 and still `must_succeed`: the envelope guard is
-                # conditioned on `inner.dim == 1` (`_bezier_compose.py:86-90`), and this
-                # inner is 2-D, so the composition takes the `math.comb` nD path, which
+                # conditioned on `inner.dim == 1` (`include/pantr/bezier/compose.hpp`), and this
+                # inner is 2-D, so the composition takes the nD product path, which
                 # is exact at any degree and carries no ceiling.
                 must_succeed=True,
             )
@@ -1435,7 +1428,7 @@ def _compose_cases(profile: Profile) -> Iterator[Case]:
                 },
                 # Worth being precise about what this case does and does not prove: the
                 # combined degree is 61, but a degree-1 1-D outer is *exempt* from the
-                # envelope check altogether (`_bezier_compose.py:86-90` requires
+                # envelope check altogether (`include/pantr/bezier/compose.hpp` requires
                 # `outer.dim > 1 or outer.degree[0] > 1`), so this never reaches the
                 # guard. It documents that a degree-1 outer composes with an arbitrarily
                 # high-degree inner, not that the cliff is at 62.
@@ -1514,7 +1507,7 @@ def _multiply_cases(profile: Profile) -> Iterator[Case]:
 
     Invariant 5: ``(f * g).evaluate(t) == f.evaluate(t) * g.evaluate(t)``.
     Multiply uses ``math.comb`` (arbitrary-precision Python ints), not the
-    Numba ``_bincoeff`` kernel, so it is not subject to the known int64 cliff;
+    ``_bincoeff`` kernel, so it is not subject to the known int64 cliff;
     degrees here are kept moderate to avoid unrelated float64 conditioning noise.
 
     Args:
@@ -2665,9 +2658,9 @@ def _monomial_reproduction_failure(result: object, k: int) -> str | None:
 def _de_casteljau_kernel_cases(profile: Profile) -> Iterator[Case]:
     """Yield direct probes of ``_de_casteljau_eval_scalar``.
 
-    This Numba kernel performs no input validation whatsoever, per its own
-    docstring. A length-0 ``coeff`` is the sharpest boundscheck target: the
-    algorithm reads ``coeff[0]`` unconditionally.
+    The root provider's de Casteljau kernel (C++, reached through ``pantr._testing``), which
+    validates nothing itself; its probe binding refuses an empty ``coeff`` before the kernel
+    reads ``coeff[0]``.
 
     Args:
         profile (Profile): Sweep width.
@@ -2685,16 +2678,8 @@ def _de_casteljau_kernel_cases(profile: Profile) -> Iterator[Case]:
                 lambda coeff=coeff: _de_casteljau_eval_scalar(coeff, 0.5),
                 {"length": length, "dtype": str(dtype), "t": 0.5},
                 arrays={"coeff": coeff},
-                # `length == 0` is the one case in this module that is deliberately
-                # *outside* the contract and so carries neither flag. This is a Layer-3
-                # kernel whose docstring says "Inputs are assumed to be correct (no
-                # validation performed)", so it owes a zero-length array nothing: the
-                # bounds-check hit it produces is the sweep proving the harness is live
-                # on a real pantr kernel, and a record for the port that this call site
-                # needs its own guard -- not a defect in the kernel. Flagging it either
-                # way would be a false claim, and neither flag could change the verdict
-                # anyway: `_core.classify` reports a Numba out-of-bounds access before
-                # it consults them. The other lengths are in contract.
+                # `length == 0` is outside the kernel's contract: the probe binding refuses it
+                # with a ValueError (a clean refusal). The other lengths are in contract.
                 must_succeed=length > 0,
             )
 
@@ -2718,7 +2703,7 @@ def _de_casteljau_kernel_cases(profile: Profile) -> Iterator[Case]:
 def _bernstein_interpolate_kernel_cases(profile: Profile) -> Iterator[Case]:
     """Yield direct probes of ``_bernstein_interpolate``.
 
-    This Layer 2 helper performs no input validation either; it is exercised
+    This helper validates only through ``fit_bezier``; it is exercised
     here with the shapes and value families the module docstring flags.
 
     Args:

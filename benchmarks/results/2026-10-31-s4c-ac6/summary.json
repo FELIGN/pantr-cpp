@@ -1,0 +1,549 @@
+{
+ "protocol": {
+  "k": 10,
+  "repeats": 30,
+  "threads": [
+   1,
+   8
+  ],
+  "cpus": "0-7",
+  "reference": "main",
+  "argv": [
+   "benchmarks/compare.py",
+   "--out-dir",
+   "benchmarks/results/2026-10-31-s4c-ac6",
+   "--side",
+   "main=<main src>",
+   "--side",
+   "branch=<branch src>",
+   "--k",
+   "10",
+   "--threads",
+   "1",
+   "8",
+   "--cpus",
+   "0-7",
+   "--filter",
+   "^S4\\.bspline_(find_roots|multiply)"
+  ]
+ },
+ "sides": {
+  "main": {
+   "commit": "11ab436abd94edf8f414d1ec2d9ed0bf77e38e89",
+   "extension": "none"
+  },
+  "branch": {
+   "commit": "f6686b3324ffd9cf8f8eca7ae11e48cccf55d1bf",
+   "extension": "pantr._pantr_v4 (v4, _pantr_v4.abi3.so)"
+  }
+ },
+ "machine": {
+  "cpu": "Intel(R) Xeon(R) Gold 6148 CPU @ 2.40GHz",
+  "platform": "Linux-5.15.0-144-generic-x86_64-with-glibc2.35",
+  "affinity": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7
+  ],
+  "governor": "schedutil"
+ },
+ "cases": {
+  "S4.bspline_find_roots.tiny@t1": {
+   "what": {
+    "main": "find_roots, random cubic of 1 intervals",
+    "branch": "find_roots, random cubic of 1 intervals"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 71577.5648148148,
+     "range_ns": 7331.187739463596,
+     "process_medians_ns": [
+      67601.78571428571,
+      67470.53448275862,
+      70768.8148148148,
+      73809.78846153847,
+      74155.70370370371,
+      74801.72222222222,
+      72386.3148148148,
+      73346.66666666666,
+      67851.11666666667,
+      68651.46551724139
+     ]
+    },
+    "branch": {
+     "statistic_ns": 3017.2532342290833,
+     "range_ns": 415.1336592637749,
+     "process_medians_ns": [
+      2801.7022332506203,
+      2988.6563636363635,
+      2916.6342465753423,
+      3065.881274131274,
+      3045.850104821803,
+      3216.8358925143953,
+      3135.7110894941634,
+      3075.2969924812032,
+      2958.666666666667,
+      2881.8529411764707
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_find_roots.medium@t1": {
+   "what": {
+    "main": "find_roots, random cubic of 1000 intervals",
+    "branch": "find_roots, random cubic of 1000 intervals"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 5653590.75,
+     "range_ns": 519856.0,
+     "process_medians_ns": [
+      5373053.0,
+      5435763.0,
+      5476186.0,
+      5839705.0,
+      5844067.0,
+      5830995.5,
+      5836289.0,
+      5877579.0,
+      5357723.0,
+      5373393.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 830997.25,
+     "range_ns": 88923.16666666674,
+     "process_medians_ns": [
+      787800.0,
+      775261.1666666666,
+      817906.0,
+      844088.5,
+      852561.6666666667,
+      864184.3333333334,
+      846803.0,
+      851806.5,
+      806381.3333333333,
+      775804.5
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_find_roots.large@t1": {
+   "what": {
+    "main": "find_roots, random cubic of 4000 intervals",
+    "branch": "find_roots, random cubic of 4000 intervals"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 74026484.75,
+     "range_ns": 5565933.5,
+     "process_medians_ns": [
+      70826081.0,
+      71178274.5,
+      71692396.0,
+      76315447.0,
+      76392014.5,
+      76317882.5,
+      76237355.5,
+      76367768.5,
+      71472081.5,
+      71815614.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 10089377.75,
+     "range_ns": 1013487.0,
+     "process_medians_ns": [
+      9664990.5,
+      9757674.0,
+      9614024.5,
+      10432547.0,
+      10627511.5,
+      10524608.5,
+      10435836.5,
+      10348818.5,
+      9829937.0,
+      9646452.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_multiply.tiny@t1": {
+   "what": {
+    "main": "multiply two 1-interval cubics",
+    "branch": "multiply two 1-interval cubics"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 185508.75,
+     "range_ns": 19989.20000000001,
+     "process_medians_ns": [
+      177474.0833333333,
+      178914.125,
+      176950.25,
+      196220.9090909091,
+      194066.9166666667,
+      196939.45,
+      189762.45454545453,
+      179093.9090909091,
+      190641.94444444444,
+      181255.04545454547
+     ]
+    },
+    "branch": {
+     "statistic_ns": 11815.709397775221,
+     "range_ns": 1393.5230990274104,
+     "process_medians_ns": [
+      11197.840490797545,
+      11787.975757575758,
+      10725.83908045977,
+      11896.420382165605,
+      11843.443037974685,
+      12119.36217948718,
+      11679.876543209877,
+      11907.946540880504,
+      11665.73926380368,
+      11993.997076023392
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_multiply.medium@t1": {
+   "what": {
+    "main": "multiply two 10-interval cubics",
+    "branch": "multiply two 10-interval cubics"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 975140.7916666666,
+     "range_ns": 164650.83333333337,
+     "process_medians_ns": [
+      933502.6666666666,
+      946875.1666666667,
+      935705.5,
+      1057417.75,
+      1098153.5,
+      1059904.75,
+      1045590.75,
+      948489.5,
+      978815.25,
+      971466.3333333333
+     ]
+    },
+    "branch": {
+     "statistic_ns": 264692.3125,
+     "range_ns": 36135.375,
+     "process_medians_ns": [
+      239651.5,
+      258647.375,
+      246484.75,
+      271333.9375,
+      270945.6875,
+      271851.8125,
+      270737.25,
+      275786.875,
+      255698.125,
+      240678.3333333333
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_multiply.large@t1": {
+   "what": {
+    "main": "multiply two 100-interval cubics",
+    "branch": "multiply two 100-interval cubics"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 33033958.5,
+     "range_ns": 3432299.0,
+     "process_medians_ns": [
+      32920573.5,
+      33075122.5,
+      32025682.0,
+      35457981.0,
+      35295383.5,
+      34365820.0,
+      34544629.0,
+      32239152.5,
+      32992794.5,
+      32575724.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 58171916.0,
+     "range_ns": 6022189.0,
+     "process_medians_ns": [
+      53539896.5,
+      58961593.0,
+      53960867.5,
+      58755795.5,
+      59047309.0,
+      57627042.0,
+      58928055.0,
+      58716790.0,
+      56216295.5,
+      53025120.0
+     ],
+     "flagged": true
+    }
+   }
+  },
+  "S4.bspline_find_roots.tiny@t8": {
+   "what": {
+    "main": "find_roots, random cubic of 1 intervals",
+    "branch": "find_roots, random cubic of 1 intervals"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 72511.19642857143,
+     "range_ns": 36225.47912885662,
+     "process_medians_ns": [
+      67344.3103448276,
+      70006.0172413793,
+      103569.78947368421,
+      73959.52272727274,
+      73222.63461538462,
+      72416.17857142858,
+      72606.21428571429,
+      68190.72413793103,
+      72625.28571428571,
+      71020.58333333334
+     ]
+    },
+    "branch": {
+     "statistic_ns": 3096.47894436302,
+     "range_ns": 1376.5451723003534,
+     "process_medians_ns": [
+      2797.1045576407505,
+      2795.0079365079364,
+      3139.197196261682,
+      3162.261663286004,
+      3053.7606924643583,
+      3300.9501061571127,
+      3292.7139830508477,
+      4171.55310880829,
+      2838.1961805555557,
+      2805.4990925589836
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_find_roots.medium@t8": {
+   "what": {
+    "main": "find_roots, random cubic of 1000 intervals",
+    "branch": "find_roots, random cubic of 1000 intervals"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 6072710.75,
+     "range_ns": 415555.0,
+     "process_medians_ns": [
+      6028427.0,
+      5857940.0,
+      6116994.5,
+      6166313.5,
+      6205130.5,
+      6157171.0,
+      6147359.0,
+      5864858.0,
+      6020412.0,
+      5789575.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 832025.5833333333,
+     "range_ns": 90974.83333333326,
+     "process_medians_ns": [
+      781853.5,
+      775179.5,
+      851063.1666666666,
+      866154.3333333333,
+      844822.3333333334,
+      851829.8333333333,
+      853532.8333333334,
+      819228.8333333333,
+      788203.3333333333,
+      778804.3333333333
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_find_roots.large@t8": {
+   "what": {
+    "main": "find_roots, random cubic of 4000 intervals",
+    "branch": "find_roots, random cubic of 4000 intervals"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 74090280.5,
+     "range_ns": 5129681.5,
+     "process_medians_ns": [
+      71486526.5,
+      71342425.0,
+      76383932.5,
+      76222725.0,
+      76472106.5,
+      76238316.0,
+      76339068.5,
+      71669749.0,
+      71793633.0,
+      71957836.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 10150672.5,
+     "range_ns": 1087928.0,
+     "process_medians_ns": [
+      9807551.0,
+      9640190.0,
+      10657969.0,
+      10461316.5,
+      10394418.0,
+      10395319.0,
+      10654538.0,
+      9570041.0,
+      9574488.5,
+      9906927.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_multiply.tiny@t8": {
+   "what": {
+    "main": "multiply two 1-interval cubics",
+    "branch": "multiply two 1-interval cubics"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 192771.8409090909,
+     "range_ns": 17899.81060606058,
+     "process_medians_ns": [
+      188185.4166666667,
+      179455.9166666667,
+      197355.72727272726,
+      193052.77272727274,
+      195306.2,
+      192977.0,
+      192566.68181818182,
+      193390.625,
+      191646.0909090909,
+      187452.7
+     ]
+    },
+    "branch": {
+     "statistic_ns": 11270.007530120482,
+     "range_ns": 2339.260076111401,
+     "process_medians_ns": [
+      11130.182098765432,
+      10726.768292682926,
+      11394.259036144578,
+      11730.5,
+      11981.490196078432,
+      11648.631097560976,
+      13066.028368794327,
+      10887.338068181818,
+      11011.1387283237,
+      11145.756024096387
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_multiply.medium@t8": {
+   "what": {
+    "main": "multiply two 10-interval cubics",
+    "branch": "multiply two 10-interval cubics"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 1045170.625,
+     "range_ns": 535341.1666666667,
+     "process_medians_ns": [
+      938450.8333333333,
+      956212.3333333334,
+      1074422.0,
+      1057322.75,
+      1047397.75,
+      1208303.75,
+      1042943.5,
+      1473792.0,
+      1004429.3333333334,
+      971569.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 258661.0892857143,
+     "range_ns": 54869.958333333314,
+     "process_medians_ns": [
+      241104.5,
+      242081.61111111112,
+      270949.0625,
+      270762.8125,
+      295804.625,
+      269729.25,
+      288429.4375,
+      242557.5,
+      240934.6666666667,
+      247592.92857142858
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S4.bspline_multiply.large@t8": {
+   "what": {
+    "main": "multiply two 100-interval cubics",
+    "branch": "multiply two 100-interval cubics"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 33421981.75,
+     "range_ns": 3464175.5,
+     "process_medians_ns": [
+      32336559.5,
+      32507093.5,
+      35670784.0,
+      35268273.0,
+      34737882.5,
+      34245978.5,
+      34438841.5,
+      32400906.5,
+      32206608.5,
+      32597985.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 55691810.25,
+     "range_ns": 6400056.0,
+     "process_medians_ns": [
+      53820030.5,
+      53510924.5,
+      58900975.5,
+      58731626.0,
+      59664383.5,
+      57403747.5,
+      57352136.5,
+      53264327.5,
+      53572773.0,
+      54031484.0
+     ],
+     "flagged": true
+    }
+   }
+  }
+ }
+}

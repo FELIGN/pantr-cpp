@@ -158,10 +158,15 @@ class TestBezierConversion:
         assert not np.shares_memory(b.control_points, bs.control_points)
 
     def test_to_bspline_copy_false(self) -> None:
-        """Test that to_bspline with copy=False shares the control point array."""
+        """Test that to_bspline with copy=False builds a B-spline with the same points.
+
+        The B-spline constructor copies its control points in, so the interim sharing of
+        ``copy=False`` ended with the port of ``Bspline`` (changelog).
+        """
         b = _make_bezier_1d([1.0, 2.0, 3.0])
         bs = b.to_bspline(copy=False)
-        assert np.shares_memory(b.control_points, bs.control_points)
+        assert not np.shares_memory(b.control_points, bs.control_points)
+        np.testing.assert_array_equal(bs.control_points, b.control_points)
 
     def test_from_bspline_copy_true(self) -> None:
         """Test that from_bspline with copy=True creates independent arrays."""

@@ -6,8 +6,9 @@ assembly. The design keeps a clear separation:
 
 - a **serial windowing core** (in `pantr.grid` / `pantr.bspline`) that needs no MPI;
 - the **MPI layer** (`pantr.mpi`) that wraps it per rank — it ships with PaNTr and
-  becomes usable once `mpi4py` is installed (the `mpi` extra is just a convenience for
-  that; see the Installation section below).
+  becomes usable with an `mpi4py` communicator once `mpi4py` and `pantr-mpi` are
+  installed (the `mpi` extra installs both; see the Installation section below), and with a
+  duck-typed communicator without either.
 
 Every rank holds a **redundant, self-contained** local space covering the cells it
 owns plus their support halo, so basis evaluation and element assembly are purely
@@ -39,9 +40,23 @@ it identically.
 
 ```bash
 pip install pantr                  # serial-only, no mpi4py dependency
-pip install 'pantr[mpi]'           # + mpi4py, for distributed spaces (needs an MPI library)
+pip install 'pantr[mpi]'           # + mpi4py and pantr-mpi, for distributed spaces (needs an MPI library)
 pip install 'pantr[metis]'         # + pymetis, for partition_graph(backend="metis")
 ```
+
+The `pantr-mpi` wheels are built for one MPI family per platform. To use another MPI, build
+`pantr-mpi` from its source distribution against it, with that MPI's compiler wrappers
+(`mpicxx`) on `PATH`:
+
+```bash
+pip install --no-binary pantr-mpi --force-reinstall --no-deps pantr-mpi
+```
+
+The build needs a C++20 compiler, CMake 3.28 or later and `mpi4py` 4.0 or later, and it uses
+the headers and CMake package of `pantr` at the same version: pip's isolated build environment
+fetches that `pantr` from the index. To build against the `pantr` already installed (offline, or
+a `pantr` wheel built locally), add `--no-build-isolation`, with `scikit-build-core`, `nanobind`
+and `mpi4py` installed beforehand at the versions `pantr-mpi`'s `pyproject.toml` asks for.
 
 `import pantr.mpi` succeeds even without `mpi4py`; only code paths that genuinely
 need MPI (e.g. `pantr.mpi.require_mpi()`) raise when it is absent. The
@@ -61,7 +76,7 @@ from pantr.grid import partition_grid, tensor_product_grid
 comm = MPI.COMM_WORLD
 space = create_uniform_space([2, 2], [64, 64])      # identical on every rank
 grid = tensor_product_grid(space)                   # the knot-span grid
-partition = partition_grid(grid, comm.size)         # deterministic -> same on all ranks
+partition = partition_grid(grid, comm.size)         # integer-only here -> same on all ranks
 ```
 
 | `backend` | dependency | balances | shape | good for |
@@ -70,8 +85,11 @@ partition = partition_grid(grid, comm.size)         # deterministic -> same on a
 | `"rcb"` | none | total weight | boxes | THB / immersed; arbitrary / prime `n_parts` |
 | `"auto"` (default) | none | — | — | `block` when tensor-product, unweighted, all-active and `n_parts` factors onto the axes; otherwise `rcb` |
 
-The partitioner is **deterministic**, so every rank computes the *same* partition
-with no communication.
+Called on every rank, a partitioner gives the same partition everywhere only where it
+works in integers (the `block` backend). One that works in floating point (`rcb`,
+the spectral graph partition) can round differently on two machines, so
+`create_distributed_space` computes the partition on rank 0 only and sends it to the other
+ranks (one `allgather`; nothing is sent with one rank).
 
 ## Coupling-graph partitioning
 
@@ -88,7 +106,7 @@ partition = partition_graph(graph, comm.size)       # backend="spectral" (defaul
 
 | `backend` | dependency | notes |
 |---|---|---|
-| `"spectral"` (default) | scipy only | recursive Fiedler bisection; never leaves a rank empty |
+| `"spectral"` (default) | none (compiled) | recursive Fiedler bisection; never leaves a rank empty |
 | `"metis"` | `pymetis` (`pip install 'pantr[metis]'`) | higher-quality k-way min-cut; raises a clear error if `pymetis` is absent |
 
 ## Consuming an external partition (dolfinx)
@@ -228,10 +246,19 @@ partition = from_dolfinx(mesh, n_cells)  # absent cells -> -1
 ds = DistributedSpace(space, partition, mesh.comm)
 ```
 
+### Distributed calls from several Python threads
+
+pantr's collectives release the GIL while a rank waits for the others, as mpi4py's do, so other
+Python threads keep running. Two threads that each make distributed calls can then be inside MPI at
+the same time, which `MPI_THREAD_SERIALIZED` forbids: keep MPI at `MPI_THREAD_MULTIPLE` for that.
+mpi4py asks for it by default; setting `mpi4py.rc.thread_level` to `"serialized"` or lower before
+importing `mpi4py.MPI` gives it up. One thread making distributed calls needs only
+`MPI_THREAD_FUNNELED`, from the thread that initialized MPI.
+
 ## Testing distributed code
 
 The distributed objects are duck-typed on the communicator (only `rank` / `size` /
-`allgather` are read), so most behavior is unit-testable serially with a fake
+`allgather` / `allreduce` are used), so most behavior is unit-testable serially with a fake
 comm. Genuine multi-rank tests live under `tests/mpi/`, are skipped unless
 `PANTR_RUN_MPI` is set, and run under a launcher:
 

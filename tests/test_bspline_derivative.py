@@ -710,9 +710,10 @@ class TestKeepDegreeRational:
         This is the one place where ``keep_degree=False`` does **not** stay available on
         an unclamped direction, and it is worth pinning because the reason is invisible
         at the call site: the quotient rule differentiates the numerator and the weight
-        with :func:`~pantr.bspline._bspline_derivative._derivative_keep_degree_nonrational`
-        whatever ``keep_degree`` says, so a rational field re-elevates through A5.9 either
-        way and inherits its precondition either way.
+        with ``derivative_keep_degree_nonrational``
+        (``include/pantr/bspline/derivative_rational.hpp``) whatever ``keep_degree`` says, so a
+        rational field re-elevates through A5.9 either way and inherits its precondition either
+        way.
 
         Before the precondition landed this call did not return a wrong answer -- it
         raised a parametric-domain mismatch from further downstream, because the elevation
@@ -914,9 +915,10 @@ class TestRationalPeriodic1D:
     def test_open_rational_control_is_unaffected(self) -> None:
         """Control: an open (non-periodic) rational derivative never took the round trip.
 
-        Pins the ``if not space_1d.periodic: return _derivative_rational_open(...)``
-        early exit -- the code path every pre-existing rational test in this file
-        already covers -- stays untouched by the periodic round trip added for the fix.
+        Pins the ``if (!s.periodic())`` early exit of ``derivative_rational``
+        (``include/pantr/bspline/derivative_rational.hpp``) -- the code path every pre-existing
+        rational test in this file already covers -- stays untouched by the periodic round trip
+        added for the fix.
         """
         num_intervals = 6
         degree = 3
@@ -1034,6 +1036,23 @@ class TestEdgeCases:
         with pytest.raises(ValueError, match="direction"):
             f.derivative(direction=-1)
 
+    @pytest.mark.parametrize("degree", [1, 2, 3])
+    def test_a_c_minus_1_knot_cannot_be_reelevated(self, degree: int) -> None:
+        """``keep_degree=True`` on a discontinuous spline is refused, naming the knot.
+
+        A knot of multiplicity ``degree + 1`` makes the hodograph repeat it more than the
+        hodograph's own degree allows, so the degree elevation (A5.9) cannot walk it; the
+        previous kernel wrote outside its arrays there, and crashed the process at degree 1.
+        The plain derivative of the same spline is fine (the masked control point is zero).
+        """
+        knots = [0.0] * (degree + 1) + [0.5] * (degree + 1) + [1.0] * (degree + 1)
+        n_basis = len(knots) - degree - 1
+        f = make_bspline_1d(knots, degree, [float(i + 1) for i in range(n_basis)])
+
+        assert f.derivative().degree == (degree - 1,)
+        with pytest.raises(ValueError, match="cannot walk a knot vector that repeats the knot 0.5"):
+            f.derivative(keep_degree=True)
+
     def test_float32_dtype(self) -> None:
         """Float32 B-spline produces float32 derivative."""
         knots = [0.0, 0.0, 0.0, 1.0, 1.0, 1.0]
@@ -1064,3 +1083,108 @@ class TestEdgeCases:
         interior_mask = (unique > 0.0 + 1e-10) & (unique < 1.0 - 1e-10)
         assert np.sum(interior_mask) == 1
         assert mults[interior_mask][0] == 2
+
+
+# ---------------------------------------------------------------------------
+# Rational derivative over every boundary type of the differentiated direction
+# ---------------------------------------------------------------------------
+
+_BOUNDARY_KINDS = ("open", "clamp_left", "clamp_right", "unclamped", "periodic")
+
+
+def _boundary_space(kind: str, degree: int, n_int: int, rng: np.random.Generator) -> BsplineSpace1D:
+    """Build a space on ``[0, 1]`` with random interior breakpoints and the given boundary type.
+
+    ``clamp_left`` / ``clamp_right`` repeat the domain end ``degree + 1`` times on that side only;
+    ``unclamped`` puts random ghost knots on both sides; ``periodic`` continues the interior spacing
+    across the seam with period 1 (a ``C^(degree - 1)`` seam).
+    """
+    br = np.concatenate([[0.0], np.sort(rng.uniform(0.05, 0.95, n_int - 1)), [1.0]])
+    if kind == "periodic":
+        d = np.diff(br)
+        left = [-float(d[::-1][: i + 1].sum()) for i in range(degree)][::-1]
+        right = [1.0 + float(d[: i + 1].sum()) for i in range(degree)]
+        return BsplineSpace1D(np.concatenate([left, br, right]), degree, periodic=True)
+    ghost_left = kind in ("clamp_right", "unclamped")
+    ghost_right = kind in ("clamp_left", "unclamped")
+    lg = np.sort(-rng.uniform(0.05, 0.5, degree)) if ghost_left else np.zeros(degree)
+    rg = np.sort(1.0 + rng.uniform(0.05, 0.5, degree)) if ghost_right else np.ones(degree)
+    return BsplineSpace1D(np.concatenate([lg, br, rg]), degree)
+
+
+class TestRationalBoundaryTypes:
+    """The rational derivative on every boundary type of the differentiated direction.
+
+    The quotient rule is formed from ``A'``, ``w'`` (both re-elevated, hence clamped in the
+    direction), ``A``, ``w`` and ``w^2``; the numerator and ``w^2`` must be expressed over one
+    boundary structure before they are joined. A degree-1 unclamped direction is the case where
+    the re-elevation accepts an unclamped original, so ``w^2`` stayed unclamped while the numerator
+    was open, and the joined control points meant nothing.
+
+    Oracle: ``evaluate_derivatives`` of the original (a different route: the rational basis
+    derivative pointwise). Tolerance: the ``1e-8`` the suite already asserts for this quantity
+    (``test_rational_matches_evaluate_derivatives``); the defect was off by O(1).
+
+    Refused, as documented in ``Bspline.derivative``: a non-open, non-periodic direction of degree
+    at least 2 (the re-elevation needs a clamped knot vector), and a periodic direction of degree 1
+    (its seam is ``C^0``).
+    """
+
+    @staticmethod
+    def _refused(kind: str, degree: int) -> bool:
+        if kind == "periodic":
+            return degree == 1
+        return kind != "open" and degree >= 2
+
+    @pytest.mark.parametrize("other", [None, *_BOUNDARY_KINDS])
+    @pytest.mark.parametrize("degree", [1, 2, 3])
+    @pytest.mark.parametrize("kind", _BOUNDARY_KINDS)
+    def test_matches_evaluate_derivatives_or_is_refused(
+        self, kind: str, degree: int, other: str | None
+    ) -> None:
+        """Every case either matches ``evaluate_derivatives`` or is a documented refusal."""
+        other_index = 0 if other is None else 1 + _BOUNDARY_KINDS.index(other)
+        rng = np.random.default_rng((_BOUNDARY_KINDS.index(kind), degree, other_index))
+        for rep in range(4):
+            spaces = [_boundary_space(kind, degree, int(rng.integers(degree + 1, 6)), rng)]
+            if other is not None:
+                spaces.append(_boundary_space(other, 2, int(rng.integers(3, 5)), rng))
+            # With a second direction, every other repetition differentiates direction 1.
+            direction = rep % 2 if other is not None else 0
+            if direction == 1:
+                spaces.reverse()
+            space = BsplineSpace(spaces)
+            nb = tuple(int(n) for n in space.num_basis)
+            ctrl = rng.standard_normal((*nb, 3))
+            ctrl[..., -1] = rng.uniform(0.5, 2.0, nb)
+            f = Bspline(space, ctrl, is_rational=True)
+            pts = rng.uniform(0.0, 1.0, (64, f.dim))
+            orders = [0] * f.dim
+            orders[direction] = 1
+            expected = f.evaluate_derivatives(pts, orders)
+            for keep_degree in (False, True):
+                if self._refused(kind, degree):
+                    with pytest.raises(ValueError):
+                        f.derivative(direction, keep_degree=keep_degree)
+                    continue
+                f_prime = f.derivative(direction, keep_degree=keep_degree)
+                assert f_prime.is_rational
+                result = f_prime.space.spaces[direction]
+                if kind == "periodic":
+                    assert result.periodic
+                else:
+                    assert result.has_open_knots() and not result.periodic
+                np.testing.assert_allclose(f_prime.evaluate(pts), expected, rtol=0, atol=1e-8)
+
+    def test_degree_1_unclamped_by_hand(self) -> None:
+        """A three-point degree-1 rational curve, unclamped, differentiated by hand.
+
+        On ``[0, 0.5]`` the curve is ``A / w`` with ``A = 1 + 2t``, ``w = 1 + 4t``, so
+        ``f'(t) = (2 w - 4 A) / w^2`` and ``f'(0.25) = (4 - 6) / 4 = -0.5``.
+        """
+        f = make_bspline_1d(
+            [-0.25, 0.0, 0.5, 1.0, 1.25], 1, [[1.0, 1.0], [2.0, 3.0], [0.5, 1.0]], is_rational=True
+        )
+        for keep_degree in (False, True):
+            got = f.derivative(keep_degree=keep_degree).evaluate(np.array([[0.25]]))
+            np.testing.assert_allclose(got, [[-0.5]], rtol=0, atol=1e-14)

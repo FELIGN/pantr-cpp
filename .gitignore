@@ -82,3 +82,6 @@ Thumbs.db
 # Manuscript sources and figures (unpublished submission; never committed to a
 # public repository)
 paper/
+
+# The pantr-mpi package `make ext` installs beside pantr (generated from bindings/mpi).
+/src/pantr_mpi/

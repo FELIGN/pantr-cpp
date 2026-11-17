@@ -1,0 +1,1041 @@
+{
+ "protocol": {
+  "k": 10,
+  "repeats": 30,
+  "threads": [
+   1,
+   8
+  ],
+  "cpus": "0-7",
+  "reference": "main",
+  "argv": [
+   "benchmarks/compare.py",
+   "--out-dir",
+   "benchmarks/results/2026-11-03-s7-ac6-tip",
+   "--side",
+   "main=<main src>",
+   "--side",
+   "branch=<branch src>",
+   "--k",
+   "10",
+   "--threads",
+   "1",
+   "8",
+   "--cpus",
+   "0-7",
+   "--filter",
+   "^S7\\."
+  ]
+ },
+ "sides": {
+  "main": {
+   "commit": "11ab436abd94edf8f414d1ec2d9ed0bf77e38e89",
+   "extension": "none"
+  },
+  "branch": {
+   "commit": "42d2cef3f5d1a2bfa5aa17e756fd576b9ef2a9c2",
+   "extension": "pantr._pantr_v4 (v4, _pantr_v4.abi3.so)"
+  }
+ },
+ "machine": {
+  "cpu": "Intel(R) Xeon(R) Gold 6148 CPU @ 2.40GHz",
+  "platform": "Linux-5.15.0-144-generic-x86_64-with-glibc2.35",
+  "affinity": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7
+  ],
+  "governor": "schedutil"
+ },
+ "cases": {
+  "S7.create_coons_surface.tiny@t1": {
+   "what": {
+    "main": "Coons patch, curves of 4 points",
+    "branch": "Coons patch, curves of 4 points"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 2874795.75,
+     "range_ns": 1504010.75,
+     "process_medians_ns": [
+      2996425.0,
+      2673601.0,
+      2760269.0,
+      2860526.0,
+      2889065.5,
+      2828213.0,
+      3025865.0,
+      3096579.0,
+      3227620.5,
+      1723609.75
+     ]
+    },
+    "branch": {
+     "statistic_ns": 88628.96428571429,
+     "range_ns": 81350.57017543858,
+     "process_medians_ns": [
+      133333.3333333333,
+      124065.53125,
+      92444.95238095238,
+      95099.66666666666,
+      79212.15217391305,
+      82785.02173913043,
+      86268.92857142858,
+      83806.125,
+      90989.0,
+      51982.76315789473
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S7.create_coons_surface.medium@t1": {
+   "what": {
+    "main": "Coons patch, curves of 32 points",
+    "branch": "Coons patch, curves of 32 points"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 6684908.5,
+     "range_ns": 2816980.5,
+     "process_medians_ns": [
+      7001299.0,
+      6266693.5,
+      6609656.5,
+      6760160.5,
+      6813765.0,
+      6567080.0,
+      7121919.0,
+      7606126.5,
+      6441355.5,
+      4789146.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 515376.75,
+     "range_ns": 255815.23214285716,
+     "process_medians_ns": [
+      515619.75,
+      511963.625,
+      563838.875,
+      549720.0,
+      481854.19999999995,
+      499007.0,
+      539040.375,
+      522027.125,
+      515133.75,
+      308023.64285714284
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S7.create_coons_surface.large@t1": {
+   "what": {
+    "main": "Coons patch, curves of 1000 points",
+    "branch": "Coons patch, curves of 1000 points"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 1236508259.75,
+     "range_ns": 708800937.0,
+     "process_medians_ns": [
+      1088670656.5,
+      1178652334.5,
+      1233833550.5,
+      1416840730.5,
+      1239182969.0,
+      1187140068.0,
+      1311926186.5,
+      1361784544.0,
+      1258073322.0,
+      708039793.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 937544949.75,
+     "range_ns": 409249722.0,
+     "process_medians_ns": [
+      665916618.0,
+      981943063.5,
+      681747714.0,
+      934588945.0,
+      940500954.5,
+      959025494.5,
+      948815954.0,
+      922904380.5,
+      954075532.5,
+      572693341.5
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S7.create_revolution.tiny@t1": {
+   "what": {
+    "main": "create_revolution, full turn, curve of 4 points",
+    "branch": "create_revolution, full turn, curve of 4 points"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 630863.8125,
+     "range_ns": 483669.75,
+     "process_medians_ns": [
+      647996.25,
+      428640.5,
+      800969.6666666666,
+      885503.6666666666,
+      613731.375,
+      775465.6666666667,
+      445435.1,
+      448151.9,
+      735716.125,
+      401833.9166666666
+     ]
+    },
+    "branch": {
+     "statistic_ns": 31650.21696428572,
+     "range_ns": 39515.728883861244,
+     "process_medians_ns": [
+      28027.05,
+      57578.458333333336,
+      26803.340277777777,
+      26598.6338028169,
+      37343.1320754717,
+      65028.23529411765,
+      25629.526666666665,
+      35273.383928571435,
+      35624.40625,
+      25512.50641025641
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S7.create_revolution.medium@t1": {
+   "what": {
+    "main": "create_revolution, full turn, curve of 1000 points",
+    "branch": "create_revolution, full turn, curve of 1000 points"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 15087701.0,
+     "range_ns": 10566674.5,
+     "process_medians_ns": [
+      15356450.5,
+      8108055.0,
+      17840412.0,
+      14818951.5,
+      16961441.5,
+      16838565.0,
+      8760765.0,
+      8590335.0,
+      16900642.0,
+      7273737.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 366870.73125,
+     "range_ns": 280824.4375,
+     "process_medians_ns": [
+      288080.5625,
+      445660.9,
+      272846.4285714286,
+      272407.1875,
+      475633.4,
+      547128.875,
+      272258.8125,
+      462596.0,
+      490941.0,
+      266304.4375
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S7.create_revolution.large@t1": {
+   "what": {
+    "main": "create_revolution, full turn, surface of 128^2 points",
+    "branch": "create_revolution, full turn, surface of 128^2 points"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 253491138.75,
+     "range_ns": 168788884.5,
+     "process_medians_ns": [
+      296968336.5,
+      140759018.5,
+      274442307.5,
+      138037115.0,
+      281356575.0,
+      267350089.0,
+      263146051.0,
+      242031862.0,
+      243836226.5,
+      128179452.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 23211036.5,
+     "range_ns": 10735456.5,
+     "process_medians_ns": [
+      19044043.5,
+      27981867.0,
+      20944811.0,
+      19926468.0,
+      25477262.0,
+      27964137.0,
+      19188555.5,
+      26666480.0,
+      26021282.5,
+      17246410.5
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S7.join.tiny@t1": {
+   "what": {
+    "main": "join, two biquadratic surfaces of 3^2 points",
+    "branch": "join, two biquadratic surfaces of 3^2 points"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 714093.7916666666,
+     "range_ns": 467288.91666666674,
+     "process_medians_ns": [
+      747036.3333333333,
+      497079.1,
+      847791.0,
+      496326.1,
+      957518.6666666667,
+      758695.8333333333,
+      769797.1666666667,
+      511556.9,
+      681151.25,
+      490229.75
+     ]
+    },
+    "branch": {
+     "statistic_ns": 23835.279767628206,
+     "range_ns": 29395.842468805702,
+     "process_medians_ns": [
+      20666.536458333336,
+      31635.06557377049,
+      18865.15,
+      19016.782828282827,
+      36431.905,
+      32549.70338983051,
+      18602.25980392157,
+      27004.023076923077,
+      47998.10227272727,
+      18716.469696969696
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S7.join.medium@t1": {
+   "what": {
+    "main": "join, two biquadratic surfaces of 32^2 points",
+    "branch": "join, two biquadratic surfaces of 32^2 points"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 1303776.5,
+     "range_ns": 685811.1666666667,
+     "process_medians_ns": [
+      1350376.75,
+      940024.8333333333,
+      1573633.0,
+      980504.0,
+      1625836.0,
+      1339691.0,
+      1357057.5,
+      1033862.8333333334,
+      1267862.0,
+      972320.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 66720.8,
+     "range_ns": 61757.78921568628,
+     "process_medians_ns": [
+      66578.21666666667,
+      104409.54761904762,
+      66863.38333333333,
+      61344.91666666667,
+      64895.44736842105,
+      123102.70588235295,
+      65009.86111111111,
+      96546.52777777778,
+      107624.80952380953,
+      63890.86666666667
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S7.join.large@t1": {
+   "what": {
+    "main": "join, two biquadratic surfaces of 512^2 points",
+    "branch": "join, two biquadratic surfaces of 512^2 points"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 118979464.25,
+     "range_ns": 47838283.0,
+     "process_medians_ns": [
+      120476167.5,
+      87963025.0,
+      131367563.0,
+      89065790.5,
+      135801308.0,
+      125035108.0,
+      120508475.0,
+      92420217.0,
+      117482761.0,
+      88502356.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 95801004.5,
+     "range_ns": 41157647.5,
+     "process_medians_ns": [
+      82125188.0,
+      110374759.0,
+      83555405.5,
+      80758565.0,
+      97303709.5,
+      108774088.0,
+      94298299.5,
+      106415761.5,
+      104774016.0,
+      69217111.5
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S7.detect_interfaces.tiny@t1": {
+   "what": {
+    "main": "detect_interfaces, 1 x 2 patches",
+    "branch": "detect_interfaces, 1 x 2 patches"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 3225436.0,
+     "range_ns": 2259298.5,
+     "process_medians_ns": [
+      3421434.5,
+      2135787.0,
+      3314562.0,
+      2115439.5,
+      4308485.0,
+      3620797.0,
+      3689141.0,
+      2264910.0,
+      3136310.0,
+      2049186.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 20344.63206368181,
+     "range_ns": 18093.142857142855,
+     "process_medians_ns": [
+      24006.065217391304,
+      20744.226744186046,
+      11551.032467532466,
+      11421.039285714285,
+      20982.876470588235,
+      28946.261904761905,
+      23383.5989010989,
+      11402.035460992909,
+      19945.037383177572,
+      10853.119047619048
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S7.detect_interfaces.medium@t1": {
+   "what": {
+    "main": "detect_interfaces, 4 x 4 patches",
+    "branch": "detect_interfaces, 4 x 4 patches"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 172956605.5,
+     "range_ns": 147907908.5,
+     "process_medians_ns": [
+      255766328.0,
+      147975832.0,
+      273289172.5,
+      146677662.5,
+      287476507.0,
+      239404152.0,
+      177524935.0,
+      168388276.0,
+      146457221.5,
+      139568598.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 451481.5625,
+     "range_ns": 327727.68055555556,
+     "process_medians_ns": [
+      507953.875,
+      553018.5,
+      244915.4,
+      245978.1875,
+      444218.5,
+      530234.5,
+      458744.625,
+      387492.5,
+      555324.625,
+      227596.94444444444
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S7.detect_interfaces.large@t1": {
+   "what": {
+    "main": "detect_interfaces, 8 x 8 patches",
+    "branch": "detect_interfaces, 8 x 8 patches"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 3854139049.5,
+     "range_ns": 2128894288.0,
+     "process_medians_ns": [
+      3865799369.0,
+      2368613089.0,
+      2360756938.0,
+      2339721405.0,
+      3894580655.0,
+      3842478730.0,
+      4331536438.0,
+      3909301711.5,
+      4016964962.5,
+      2202642150.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 3989273.75,
+     "range_ns": 2995472.5,
+     "process_medians_ns": [
+      5092433.0,
+      3965912.5,
+      2398912.5,
+      2428164.0,
+      3998783.0,
+      4270308.5,
+      4912089.0,
+      3979764.5,
+      4937436.5,
+      2096960.5
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S7.create_coons_surface.tiny@t8": {
+   "what": {
+    "main": "Coons patch, curves of 4 points",
+    "branch": "Coons patch, curves of 4 points"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 2917334.5,
+     "range_ns": 2183797.75,
+     "process_medians_ns": [
+      2810406.0,
+      2787204.5,
+      2769988.0,
+      2980510.5,
+      3560595.0,
+      2854158.5,
+      3057754.0,
+      3016219.0,
+      3850891.0,
+      1667093.25
+     ]
+    },
+    "branch": {
+     "statistic_ns": 97008.70970695971,
+     "range_ns": 80164.73986486487,
+     "process_medians_ns": [
+      104869.78125,
+      89105.25,
+      98620.38095238095,
+      94501.71428571429,
+      88370.88636363635,
+      101712.45238095238,
+      95397.03846153847,
+      98664.4,
+      130259.875,
+      50095.13513513513
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S7.create_coons_surface.medium@t8": {
+   "what": {
+    "main": "Coons patch, curves of 32 points",
+    "branch": "Coons patch, curves of 32 points"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 7125992.0,
+     "range_ns": 3839563.5,
+     "process_medians_ns": [
+      6642828.0,
+      6590799.0,
+      7587415.5,
+      8211385.5,
+      7992351.0,
+      6769659.0,
+      7099574.0,
+      7152410.0,
+      8220566.5,
+      4381003.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 557144.25,
+     "range_ns": 450381.35714285716,
+     "process_medians_ns": [
+      570385.5,
+      466762.25,
+      616473.125,
+      582122.875,
+      543903.0,
+      515521.375,
+      720831.0,
+      597405.75,
+      302256.2857142857,
+      270449.64285714284
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S7.create_coons_surface.large@t8": {
+   "what": {
+    "main": "Coons patch, curves of 1000 points",
+    "branch": "Coons patch, curves of 1000 points"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 1278488635.75,
+     "range_ns": 746129265.5,
+     "process_medians_ns": [
+      1275936961.5,
+      1328614411.0,
+      1281040310.0,
+      1232248901.0,
+      1290230324.0,
+      1226103106.0,
+      1380475316.0,
+      1319444166.5,
+      1026536636.5,
+      634346050.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 933555975.5,
+     "range_ns": 456290641.0,
+     "process_medians_ns": [
+      939254080.0,
+      1020316835.0,
+      951753877.5,
+      929459031.5,
+      937652919.5,
+      924027488.0,
+      969106958.0,
+      778711267.5,
+      577926740.5,
+      564026194.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S7.create_revolution.tiny@t8": {
+   "what": {
+    "main": "create_revolution, full turn, curve of 4 points",
+    "branch": "create_revolution, full turn, curve of 4 points"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 712129.1666666667,
+     "range_ns": 459228.4166666666,
+     "process_medians_ns": [
+      648211.125,
+      781585.0,
+      811696.8333333334,
+      659259.3333333333,
+      738427.25,
+      692237.8333333334,
+      732020.5,
+      844225.3333333333,
+      640628.875,
+      384996.9166666666
+     ]
+    },
+    "branch": {
+     "statistic_ns": 32191.10145246479,
+     "range_ns": 42212.979847738476,
+     "process_medians_ns": [
+      67462.1551724138,
+      67447.35714285714,
+      55162.476744186046,
+      26090.356164383564,
+      35428.34375,
+      42755.22727272727,
+      28953.859154929578,
+      25881.3125,
+      25249.175324675325,
+      25280.893333333333
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S7.create_revolution.medium@t8": {
+   "what": {
+    "main": "create_revolution, full turn, curve of 1000 points",
+    "branch": "create_revolution, full turn, curve of 1000 points"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 16436675.25,
+     "range_ns": 11272607.5,
+     "process_medians_ns": [
+      15236127.5,
+      17728352.0,
+      18150940.5,
+      16361466.5,
+      16511884.0,
+      15767498.0,
+      17464776.0,
+      18314620.5,
+      14738598.5,
+      7042013.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 382425.90625,
+     "range_ns": 320497.11250000005,
+     "process_medians_ns": [
+      566712.8,
+      558571.625,
+      506146.1,
+      271102.1875,
+      476052.875,
+      481262.5,
+      288798.9375,
+      273361.3125,
+      260345.9375,
+      246215.6875
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S7.create_revolution.large@t8": {
+   "what": {
+    "main": "create_revolution, full turn, surface of 128^2 points",
+    "branch": "create_revolution, full turn, surface of 128^2 points"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 266642768.75,
+     "range_ns": 178693741.5,
+     "process_medians_ns": [
+      263366804.5,
+      293068906.0,
+      141380385.0,
+      271642077.5,
+      279327275.0,
+      257227029.0,
+      299668838.0,
+      269918733.0,
+      149558872.0,
+      120975096.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 23411887.75,
+     "range_ns": 10996377.0,
+     "process_medians_ns": [
+      25865378.0,
+      27836289.0,
+      27169078.5,
+      20958397.5,
+      27468090.0,
+      25969300.5,
+      20153105.5,
+      19412844.5,
+      17350813.5,
+      16839912.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S7.join.tiny@t8": {
+   "what": {
+    "main": "join, two biquadratic surfaces of 3^2 points",
+    "branch": "join, two biquadratic surfaces of 3^2 points"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 714007.75,
+     "range_ns": 539492.8,
+     "process_medians_ns": [
+      764442.5,
+      710447.0,
+      501294.30000000005,
+      716354.6666666666,
+      711660.8333333334,
+      791260.0,
+      965182.0,
+      719110.1666666666,
+      492082.1,
+      425689.2
+     ]
+    },
+    "branch": {
+     "statistic_ns": 26468.312173458726,
+     "range_ns": 31339.37364771151,
+     "process_medians_ns": [
+      34070.35964912281,
+      32845.6551724138,
+      48737.47142857143,
+      18402.631313131315,
+      49100.25714285714,
+      32607.775862068964,
+      20328.848484848488,
+      18623.353535353534,
+      18443.682242990653,
+      17760.88349514563
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S7.join.medium@t8": {
+   "what": {
+    "main": "join, two biquadratic surfaces of 32^2 points",
+    "branch": "join, two biquadratic surfaces of 32^2 points"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 1333727.75,
+     "range_ns": 767494.6666666667,
+     "process_medians_ns": [
+      1342335.25,
+      1624629.5,
+      985634.75,
+      1320959.5,
+      1613228.0,
+      1442864.25,
+      1501353.0,
+      1325120.25,
+      969606.6666666666,
+      857134.8333333333
+     ]
+    },
+    "branch": {
+     "statistic_ns": 85207.0196969697,
+     "range_ns": 66571.34523809525,
+     "process_medians_ns": [
+      113713.84615384616,
+      101652.875,
+      99747.27272727274,
+      64250.26666666666,
+      115708.11764705883,
+      121872.67857142858,
+      70666.76666666666,
+      55301.33333333333,
+      63899.25,
+      61274.305555555555
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S7.join.large@t8": {
+   "what": {
+    "main": "join, two biquadratic surfaces of 512^2 points",
+    "branch": "join, two biquadratic surfaces of 512^2 points"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 120434295.5,
+     "range_ns": 53873730.0,
+     "process_medians_ns": [
+      104591837.5,
+      118829282.5,
+      89857580.0,
+      127651051.0,
+      126800443.0,
+      122039308.5,
+      128193996.0,
+      122823815.5,
+      88954500.0,
+      74320266.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 90871437.25,
+     "range_ns": 60098195.0,
+     "process_medians_ns": [
+      107880007.5,
+      126934285.0,
+      99285523.5,
+      83800976.0,
+      101771434.5,
+      83235394.5,
+      94849534.5,
+      86893340.0,
+      66836090.0,
+      70319022.5
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S7.detect_interfaces.tiny@t8": {
+   "what": {
+    "main": "detect_interfaces, 1 x 2 patches",
+    "branch": "detect_interfaces, 1 x 2 patches"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 3292004.25,
+     "range_ns": 2663209.0,
+     "process_medians_ns": [
+      2432983.0,
+      3459809.5,
+      2230276.0,
+      3319883.0,
+      4552808.5,
+      3912467.5,
+      3264125.5,
+      3581230.5,
+      2151748.0,
+      1889599.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 20349.126799758014,
+     "range_ns": 20669.313776243886,
+     "process_medians_ns": [
+      28986.21212121212,
+      30790.278688524588,
+      20461.511494252874,
+      11115.79411764706,
+      20236.742105263158,
+      12001.358695652174,
+      20977.385057471263,
+      21232.220238095237,
+      10120.964912280702,
+      10350.532432432432
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S7.detect_interfaces.medium@t8": {
+   "what": {
+    "main": "detect_interfaces, 4 x 4 patches",
+    "branch": "detect_interfaces, 4 x 4 patches"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 234880387.25,
+     "range_ns": 127465846.0,
+     "process_medians_ns": [
+      167811012.5,
+      242698178.0,
+      155142268.5,
+      260375073.5,
+      235169345.0,
+      260555704.0,
+      234591429.5,
+      247776292.5,
+      148624672.0,
+      133089858.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 441571.35,
+     "range_ns": 338563.1,
+     "process_medians_ns": [
+      537703.625,
+      446066.80000000005,
+      554927.25,
+      245440.5,
+      438890.69999999995,
+      254111.55555555556,
+      444252.0,
+      446397.4,
+      216364.15,
+      220115.2
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S7.detect_interfaces.large@t8": {
+   "what": {
+    "main": "detect_interfaces, 8 x 8 patches",
+    "branch": "detect_interfaces, 8 x 8 patches"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 3756821589.5,
+     "range_ns": 2140903192.0,
+     "process_medians_ns": [
+      4341195557.5,
+      4056663515.0,
+      2526947748.5,
+      3913149615.0,
+      4225742720.0,
+      2658577213.5,
+      4074383747.5,
+      3600493564.0,
+      2417769863.0,
+      2200292365.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 1692468.625,
+     "range_ns": 1693775.25,
+     "process_medians_ns": [
+      2256655.5,
+      1718784.5,
+      1869445.5,
+      1284792.0,
+      2589484.0,
+      1666152.75,
+      2283111.5,
+      1419528.0,
+      895708.75,
+      988022.6666666667
+     ],
+     "flagged": false
+    }
+   }
+  }
+ }
+}

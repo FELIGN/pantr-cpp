@@ -270,3 +270,20 @@ def test_1d_coupling_reduced_continuity() -> None:
             if abs(i - j) == 1:
                 expected[i, j] = 1
     np.testing.assert_array_equal(_dense(graph), expected)
+
+
+def test_cell_weights_not_1d_raises() -> None:
+    with pytest.raises(ValueError, match=r"cell_weights must have shape \(4,\); got \(4, 1\)"):
+        coupling_graph(create_uniform_space(2, 4), cell_weights=np.ones((4, 1)))
+
+
+def test_thb_cell_weights_passthrough_and_checks() -> None:
+    space = _thb_two_level()
+    n = space.grid.num_cells
+    weights = np.arange(1.0, n + 1.0)
+    graph = coupling_graph(space, cell_weights=weights)
+    np.testing.assert_array_equal(graph.vertex_weights, weights)
+    with pytest.raises(ValueError, match="cell_weights must have shape"):
+        coupling_graph(space, cell_weights=np.ones(n + 1))
+    with pytest.raises(ValueError, match="finite and non-negative"):
+        coupling_graph(space, cell_weights=-np.ones(n))

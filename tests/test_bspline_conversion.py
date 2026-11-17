@@ -14,13 +14,31 @@ from pantr.bspline import (
     create_from_bezier,
     create_uniform_periodic_knots,
 )
-from pantr.bspline._bspline_basis_core import _compute_basis_nurbs_book_impl
-from pantr.bspline._bspline_to_beziers import _first_basis_per_element
 from pantr.bspline.spanwise_element_extraction import SpanwiseElementExtraction
+from tests.oracles import bspline_exact
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _first_basis_per_element(space_1d: BsplineSpace1D) -> npt.NDArray[np.intp]:
+    """Index of the first B-spline function supported on each element.
+
+    Read off the public basis tabulation at the element midpoints, an oracle independent of
+    ``first_basis_per_interval`` (which the decomposition uses).
+
+    Args:
+        space_1d (BsplineSpace1D): A 1D B-spline space.
+
+    Returns:
+        npt.NDArray[np.intp]: First supported function index per element.
+    """
+    unique_knots, _ = space_1d.get_unique_knots_and_multiplicity(in_domain=True)
+    unique_knots = np.asarray(unique_knots, dtype=np.float64)
+    midpoints = 0.5 * (unique_knots[:-1] + unique_knots[1:])
+    _, first_basis = space_1d.tabulate_basis(midpoints, validate=False)
+    return np.ascontiguousarray(first_basis, dtype=np.intp)
 
 
 def _make_periodic_bspline(
@@ -50,11 +68,13 @@ def _make_periodic_bspline(
 
 
 def _eval_periodic_correct(f: Bspline, pts: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
-    """Evaluate a periodic B-spline using the mathematically correct algorithm.
+    """Evaluate a periodic B-spline by its definition, in exact arithmetic.
 
-    Uses the unclamped ``first_basis = knot_id - degree`` index with modulo-wrapped
-    control point lookup, which is the standard mathematical definition of a periodic
-    B-spline. This differs from ``f.evaluate()`` which uses a clamped first_basis.
+    The oracle is :mod:`tests.oracles.bspline_exact`: the Cox-de Boor recursion from the
+    definition on the unwrapped knot vector, with the control point of basis function ``i`` read
+    at ``i % n_stored`` (the standard definition of a periodic B-spline), summed over the local
+    functions in exact rational arithmetic and rounded once. It shares no code or formula with
+    the library's evaluation.
 
     Args:
         f (Bspline): A 1D periodic B-spline.
@@ -64,25 +84,11 @@ def _eval_periodic_correct(f: Bspline, pts: npt.NDArray[np.float64]) -> npt.NDAr
         np.ndarray: Evaluated values at the given points.
     """
     space_1d = f.space.spaces[0]
-    knots = space_1d.knots
-    p = space_1d.degree
-    tol = float(space_1d.tolerance)
-    n_stored = f.space.num_total_basis
-    ctrl = f._control_points  # shape (n_stored, rank)
-
-    # Compute knot spans using the non-periodic (unclamped) algorithm
-    basis_out = np.zeros((len(pts), p + 1), dtype=np.float64)
-    first_basis_arr = np.zeros(len(pts), dtype=np.int64)
-    _compute_basis_nurbs_book_impl(knots, p, False, tol, pts, basis_out, first_basis_arr)
-
-    rank = ctrl.shape[1]
-    result = np.zeros((len(pts), rank), dtype=np.float64)
-    for i in range(len(pts)):
-        s = int(first_basis_arr[i])
-        for j in range(p + 1):
-            idx = (s + j) % n_stored
-            result[i] += basis_out[i, j] * ctrl[idx]
-
+    ctrl = f.control_points  # shape (n_stored, rank)
+    rows = [
+        bspline_exact.derivative([space_1d.knots], [space_1d.degree], ctrl, [float(x)]) for x in pts
+    ]
+    result: npt.NDArray[np.float64] = bspline_exact.to_float_array(rows)
     return result.squeeze()
 
 
@@ -685,11 +691,16 @@ class TestFromBezier:
         assert not np.shares_memory(bez.control_points, bs.control_points)
 
     def test_from_bezier_copy_false(self) -> None:
-        """Test that from_bezier with copy=False shares the control point array."""
+        """Test that from_bezier with copy=False builds a B-spline with the same points.
+
+        The B-spline constructor copies its control points in, so the interim sharing of
+        ``copy=False`` ended with the port of ``Bspline`` (changelog).
+        """
         cp = np.array([[1.0], [2.0], [3.0]], dtype=np.float64)
         bez = Bezier(cp)
         bs = create_from_bezier(bez, copy=False)
-        assert np.shares_memory(bez.control_points, bs.control_points)
+        assert not np.shares_memory(bez.control_points, bs.control_points)
+        np.testing.assert_array_equal(bs.control_points, bez.control_points)
 
     def test_from_bezier_rational(self) -> None:
         """Test from_bezier preserves rationality."""
@@ -946,7 +957,7 @@ class TestToBeziers:
 class TestToBeziersSpanwiseParity:
     """Parity: to_beziers() control points match ``operator(idx).T @ ctrl_local``.
 
-    These tests catch drift between _to_beziers_impl and the extraction operators
+    These tests catch drift between ``to_beziers`` and the extraction operators
     cached by SpanwiseElementExtraction. The identity verified is::
 
         beziers[idx].control_points.reshape(N, rank) == M.T @ ctrl_local.reshape(N, rank)
@@ -957,9 +968,8 @@ class TestToBeziersSpanwiseParity:
     ``first_basis_d[i_d]`` (the index of the first supported function, which only
     equals ``i_d`` for multiplicity-1 interior knots).
 
-    The ``.T`` arises because ``_apply_bezier_extraction_1d_core`` computes
-    ``C_i^T @ P_local`` (column-convention operators matching the kernel at
-    ``_bspline_to_beziers.py:62``).
+    The ``.T`` arises because the decomposition computes ``C_i^T @ P_local`` along each direction
+    (column-convention operators, applied transposed by ``bspline::detail::mode_product``).
 
     Periodic spaces are excluded: ``SpanwiseElementExtraction`` raises
     ``NotImplementedError`` for them; periodic coverage lives in ``TestToBeziers``.
@@ -987,7 +997,7 @@ class TestToBeziersSpanwiseParity:
             # Single-element space: Bezier extraction is the identity everywhere,
             # so expected == ctrl_local. Exercises the identity short-circuit path.
             ([BsplineSpace1D([0.0, 0.0, 0.0, 1.0, 1.0, 1.0], 2)], 40),
-            # Degree-3 space: exercises order=4 in the Numba kernel and higher-degree
+            # Degree-3 space: exercises order=4 in the mode product and higher-degree
             # extraction operators with non-trivial entries.
             ([BsplineSpace1D([0.0, 0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0, 1.0], 3)], 50),
             # Repeated interior knots (multiplicity 2): the support offset advances

@@ -165,8 +165,9 @@ def create_distributed_function(  # noqa: PLR0913 -- public factory mirrors the 
     Args:
         global_function (Bspline | THBSpline): The global function to distribute,
             identical on every rank.
-        comm (Any): An MPI communicator (e.g. ``mpi4py.MPI.COMM_WORLD``); only its
-            ``rank`` and ``size`` are read.
+        comm (Any): An MPI communicator (e.g. ``mpi4py.MPI.COMM_WORLD``), or a duck-typed
+            one: its ``rank`` and ``size`` are read, and with more than one rank its
+            ``allgather`` is used (see :func:`create_distributed_space`).
         method (str): Partitioning strategy, ``"grid"`` (default) or ``"graph"``.  See
             :func:`~pantr.mpi.create_distributed_space`.
         backend (str | None): Partitioner backend; ``None`` selects each method's

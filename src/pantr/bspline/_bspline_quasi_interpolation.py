@@ -10,10 +10,11 @@ matrix on one knot-interval cell inside ``supp(B_β)``.  On a single cell the
 local interpolation recovers their exact coefficients and the operator is a
 projector onto the spline space (``Q B_β = B_β``).
 
-The same low-level helpers (:func:`_interval_interior_points`,
-:func:`_local_weight_row`, :func:`_tensor_point_grid`, :func:`_contract_weights`,
-:func:`_evaluate_func`) and :data:`QIKind` back the hierarchical quasi-interpolant
-in ``_thb_quasi_interpolation``.
+The tensor-product operator is built and applied in C++
+(``include/pantr/bspline/quasi_interpolate.hpp``): it lists the points to sample, this module
+calls ``f`` on them, and C++ contracts the samples with the weights. :data:`QIKind` and
+:func:`_evaluate_func` are shared with the hierarchical quasi-interpolant in
+``_thb_quasi_interpolation``, which is staged the same way.
 
 Main exports:
 
@@ -23,157 +24,23 @@ Main exports:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal, get_args
+from typing import TYPE_CHECKING, Any, Literal, get_args
 
 import numpy as np
 from numpy import typing as npt
 
+from .._ext import ext
 from ._bspline import Bspline
-from ._bspline_space_factory import get_greville_abscissae
 from ._bspline_space_nd import BsplineSpace
+
+_cpp: Any = ext.bspline
+"""The compiled quasi-interpolants (private; untyped: one class per dtype)."""
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from ._bspline_space_1d import BsplineSpace1D
-
 QIKind = Literal["llm"]
 """Supported quasi-interpolation kinds (Lee-Lyche-Mørken local projector)."""
-
-
-# ---------------------------------------------------------------------------
-# Local Lee-Lyche-Mørken building blocks (shared with the hierarchical QI)
-# ---------------------------------------------------------------------------
-
-
-def _interval_interior_points(lo: float, hi: float, order: int) -> npt.NDArray[np.float64]:
-    """Return ``order`` equispaced interior points of ``[lo, hi]``.
-
-    Interior placement keeps the points off the knots, where the local collocation
-    block can become singular.
-
-    Args:
-        lo (float): Interval lower bound.
-        hi (float): Interval upper bound.
-        order (int): Number of points (``degree + 1``).
-
-    Returns:
-        npt.NDArray[np.float64]: Shape ``(order,)`` strictly inside ``(lo, hi)``.
-    """
-    frac = np.arange(1, order + 1, dtype=np.float64) / (order + 1)
-    return np.asarray(lo + (hi - lo) * frac, dtype=np.float64)
-
-
-def _local_weight_row(
-    space1d: BsplineSpace1D,
-    points: npt.NDArray[np.float64],
-    target_index: int,
-) -> npt.NDArray[np.float64]:
-    """Return the local functional weights for one basis function on one interval.
-
-    ``points`` must all lie in a single knot interval where ``target_index`` is one
-    of the ``order`` nonzero B-splines.  The local collocation block is inverted so
-    that ``λ(f) = weights · f(points)`` recovers the coefficient of
-    ``B_{target_index}`` of the local degree-``p`` interpolant.
-
-    Args:
-        space1d (BsplineSpace1D): The 1D B-spline space.
-        points (npt.NDArray[np.float64]): ``order`` distinct points in one interval.
-        target_index (int): Index of the target basis function within ``space1d``
-            (0-indexed within the 1D space, not a global hierarchical dof index).
-
-    Returns:
-        npt.NDArray[np.float64]: Weights of shape ``(order,)``.
-
-    Raises:
-        ValueError: If the local collocation matrix is singular or nearly singular
-            (non-finite inverse), which indicates degenerate knot intervals.
-    """
-    basis, first_basis = space1d.tabulate_basis(points)
-    block = np.asarray(basis, dtype=np.float64)
-    try:
-        inv = np.asarray(np.linalg.inv(block), dtype=np.float64)
-    except np.linalg.LinAlgError as exc:
-        err = ValueError(f"Local collocation matrix for basis function {target_index} is singular.")
-        err.add_note("This usually indicates repeated or degenerate knot intervals.")
-        err.add_note(f"Points: {points.tolist()}")
-        raise err from exc
-    if not np.all(np.isfinite(inv)):
-        raise ValueError(
-            f"Local collocation matrix inversion for basis function {target_index} "
-            f"produced non-finite values (condition number too large). "
-            f"Points: {points.tolist()}"
-        )
-    local = target_index - int(first_basis[0])
-    return np.asarray(inv[local], dtype=np.float64)
-
-
-def _tensor_point_grid(per_dir_points: list[npt.NDArray[np.float64]]) -> npt.NDArray[np.float64]:
-    """Build the tensor-product point grid from per-direction point arrays.
-
-    Args:
-        per_dir_points (list[npt.NDArray[np.float64]]): One ``(order_k,)`` array per
-            direction.
-
-    Returns:
-        npt.NDArray[np.float64]: Points of shape ``(prod(order_k), dim)`` in C-order.
-    """
-    mesh = np.meshgrid(*per_dir_points, indexing="ij")
-    return np.stack([m.ravel() for m in mesh], axis=-1).astype(np.float64, copy=False)
-
-
-def _contract_weights(
-    weights: list[npt.NDArray[np.float64]],
-    values: npt.NDArray[np.float64],
-) -> npt.NDArray[np.float64]:
-    """Contract a local value tensor with per-direction weight vectors.
-
-    Args:
-        weights (list[npt.NDArray[np.float64]]): One ``(order_k,)`` weight vector per
-            direction.
-        values (npt.NDArray[np.float64]): Local values of shape
-            ``(order_0, ..., order_{d-1}, rank)``.
-
-    Returns:
-        npt.NDArray[np.float64]: The coefficient of shape ``(rank,)``.
-    """
-    result = np.asarray(values, dtype=np.float64)
-    for w in weights:
-        result = np.tensordot(w, result, axes=([0], [0]))
-    return result
-
-
-def _llm_tp_direction_data(
-    space1d: BsplineSpace1D,
-) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
-    """Precompute per-function local points and weights for a 1D space.
-
-    For each basis function the local interval is the knot span containing its
-    Greville abscissa (well inside the support, limiting extrapolation).
-
-    Args:
-        space1d (BsplineSpace1D): The 1D B-spline space.
-
-    Returns:
-        tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]: ``(points, weights)``,
-        each of shape ``(num_basis, degree + 1)``.
-    """
-    order = space1d.degree + 1
-    n_basis = space1d.num_basis
-    greville = np.asarray(get_greville_abscissae(space1d), dtype=np.float64)
-    breakpoints, _ = space1d.get_unique_knots_and_multiplicity(in_domain=True)
-    breaks = np.asarray(breakpoints, dtype=np.float64)
-    n_intervals = breaks.shape[0] - 1
-
-    points = np.empty((n_basis, order), dtype=np.float64)
-    weights = np.empty((n_basis, order), dtype=np.float64)
-    for j in range(n_basis):
-        mu = int(np.searchsorted(breaks, greville[j], side="right")) - 1
-        mu = min(max(mu, 0), n_intervals - 1)
-        pts = _interval_interior_points(float(breaks[mu]), float(breaks[mu + 1]), order)
-        points[j] = pts
-        weights[j] = _local_weight_row(space1d, pts, j)
-    return points, weights
 
 
 # ---------------------------------------------------------------------------
@@ -250,8 +117,9 @@ def quasi_interpolate_bspline(
 
     Raises:
         TypeError: If ``space`` is not a :class:`~pantr.bspline.BsplineSpace`.
-        ValueError: If ``kind`` is not recognized, or if ``func`` returns an output
-            with an invalid shape (0-D, more than 2-D, or wrong leading dimension).
+        ValueError: If ``kind`` is not recognized, ``space`` has no direction, or
+            ``func`` returns an output with an invalid shape (0-D, more than 2-D, or
+            wrong leading dimension).
 
     Note:
         All internal computation uses ``float64``.  The returned control points are
@@ -271,27 +139,13 @@ def quasi_interpolate_bspline(
     if kind not in get_args(QIKind):
         valid = ", ".join(repr(v) for v in get_args(QIKind))
         raise ValueError(f"Unknown kind {kind!r}; expected one of {valid}.")
+    if space.dim == 0:
+        # The previous release's message (NumPy's, from stacking no direction's points).
+        raise ValueError("need at least one array to stack")
 
-    dim = space.dim
-    num_basis = tuple(space.num_basis)
-    dir_data = [_llm_tp_direction_data(space.spaces[k]) for k in range(dim)]
-
-    multi_indices = list(np.ndindex(*num_basis))
-    orders = tuple(d + 1 for d in space.degrees)
-    block = int(np.prod(orders))
-
-    all_points = np.empty((len(multi_indices) * block, dim), dtype=np.float64)
-    for f_idx, multi in enumerate(multi_indices):
-        per_dir = [dir_data[k][0][multi[k]] for k in range(dim)]
-        all_points[f_idx * block : (f_idx + 1) * block] = _tensor_point_grid(per_dir)
-
-    values, rank, scalar = _evaluate_func(func, all_points)
-    value_tensor = values.reshape(len(multi_indices), *orders, rank)
-
-    coeffs = np.empty((len(multi_indices), rank), dtype=np.float64)
-    for f_idx, multi in enumerate(multi_indices):
-        weights = [dir_data[k][1][multi[k]] for k in range(dim)]
-        coeffs[f_idx] = _contract_weights(weights, value_tensor[f_idx])
-
-    control_points = coeffs.reshape(*num_basis, rank).astype(space.dtype, copy=False)
+    cls = _cpp.QuasiInterpolationF32 if space.dtype == np.float32 else _cpp.QuasiInterpolationF64
+    qi = cls(space._h)  # the local functionals, built before func is sampled
+    values, _rank, _scalar = _evaluate_func(func, qi.points())
+    coeffs = np.asarray(qi.coefficients(np.ascontiguousarray(values)))
+    control_points = coeffs.astype(space.dtype, copy=False)
     return Bspline(space, control_points)

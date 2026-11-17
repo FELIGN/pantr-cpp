@@ -11,16 +11,7 @@ import numpy as np
 import numpy.testing as np_testing
 import pytest
 
-from pantr.geometry import AABB
-from pantr.grid import (
-    Grid,
-    GridRestriction,
-    HierarchicalGrid,
-    TensorProductGrid,
-    hierarchical_grid,
-    uniform_grid,
-)
-from pantr.grid._hierarchical_grid import (
+from pantr._testing import (
     _MAX_DIAGNOSED_CELLS,
     _MAX_NAMED_CELLS,
     _block_size,
@@ -31,6 +22,15 @@ from pantr.grid._hierarchical_grid import (
     _peel,
     _rect_intersect,
     _try_merge,
+)
+from pantr.geometry import AABB
+from pantr.grid import (
+    Grid,
+    GridRestriction,
+    HierarchicalGrid,
+    TensorProductGrid,
+    hierarchical_grid,
+    uniform_grid,
 )
 
 if TYPE_CHECKING:
@@ -116,6 +116,41 @@ class TestBlockHelpers:
     def test_mark_region_cells_ignores_a_disjoint_block(self) -> None:
         mask = np.zeros((3,), dtype=np.bool_)
         _mark_region_cells(mask, (0,), (3,), ((5,), (8,)))
+        assert not mask.any()
+
+    @pytest.mark.parametrize(
+        ("mask", "error"),
+        [
+            (np.zeros((4,), dtype=np.int64), TypeError),  # converted to a bool copy
+            (np.zeros((4,), dtype=np.uint8), TypeError),
+            ([False] * 4, TypeError),  # not an array
+            (np.zeros((8,), dtype=np.bool_)[::2], ValueError),  # strided
+            (np.zeros((4,), dtype=np.bool_)[::-1], ValueError),
+        ],
+        ids=["int64", "uint8", "list", "strided", "negative-stride"],
+    )
+    def test_mark_region_cells_refuses_a_mask_it_would_copy(
+        self, mask: object, error: type[Exception]
+    ) -> None:
+        """A mask the helper cannot mark in place is refused, not marked in a hidden copy."""
+        with pytest.raises(error):
+            _mark_region_cells(mask, (0,), (4,), ((0,), (4,)))  # type: ignore[arg-type]
+
+    def test_mark_region_cells_refuses_a_read_only_mask(self) -> None:
+        mask = np.zeros((4,), dtype=np.bool_)
+        mask.flags.writeable = False
+        with pytest.raises(ValueError, match="writeable"):
+            _mark_region_cells(mask, (0,), (4,), ((0,), (4,)))
+        assert not mask.any()
+
+    @pytest.mark.parametrize("shape", [(2,), (4, 1), (5,)], ids=["short", "2-D", "long"])
+    def test_mark_region_cells_refuses_a_mask_not_shaped_like_the_region(
+        self, shape: tuple[int, ...]
+    ) -> None:
+        """A mask whose shape is not ``hi - lo`` is refused before anything is written."""
+        mask = np.zeros(shape, dtype=np.bool_)
+        with pytest.raises(ValueError, match="region's shape"):
+            _mark_region_cells(mask, (0,), (4,), ((0,), (4,)))
         assert not mask.any()
 
     def test_name_marked_cells_offsets_by_the_origin(self) -> None:
@@ -1530,7 +1565,7 @@ class TestHierarchicalGridRestrict:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Numba kernel backing (locate_many / collect_cell_bounds / encode / decode)
+# Batch methods (locate_many / collect_cell_bounds) against the scalar paths, and id round trips
 # ──────────────────────────────────────────────────────────────────────────────
 
 
@@ -1547,8 +1582,8 @@ def _irregular_grid(ndim: int, factor: int | tuple[int, ...]) -> HierarchicalGri
     return g
 
 
-class TestHierKernelEquivalence:
-    """Kernel-backed batch methods agree exactly with the scalar reference paths."""
+class TestHierBatchMethodsMatchScalar:
+    """The batch methods agree exactly with the scalar reference paths."""
 
     @pytest.mark.parametrize(("ndim", "factor"), [(1, 2), (2, 2), (2, (2, 3)), (3, 2)])
     def test_collect_cell_bounds_matches_scalar(
@@ -1587,33 +1622,34 @@ class TestHierKernelEquivalence:
 
     @pytest.mark.parametrize(("ndim", "factor"), [(1, 2), (2, 2), (2, (2, 3)), (3, 2)])
     def test_decode_encode_roundtrip(self, ndim: int, factor: int | tuple[int, ...]) -> None:
-        """_decode_flat_id and _encode_midx are mutually inverse over all cells."""
+        """cell_level/cell_multi_index and cell_id are mutually inverse over all cells."""
         g = _irregular_grid(ndim, factor)
         for cid in range(g.num_cells):
-            level, midx = g._decode_flat_id(cid)
-            assert g._encode_midx(level, midx) == cid
+            level, midx = g.cell_level(cid), g.cell_multi_index(cid)
+            assert g.cell_id(level, midx) == cid
 
     def test_encode_midx_inactive_positions(self) -> None:
-        """_encode_midx returns None for refined (non-leaf) and never-active positions."""
+        """cell_id returns None for refined (non-leaf) and never-active positions."""
         g = _grid_2d(4)
         g.refine(0, [0, 0], [2, 2])
         # (0, (0, 0)) was refined away -> not an active leaf.
-        assert g._encode_midx(0, (0, 0)) is None
+        assert g.cell_id(0, (0, 0)) is None
         # A level beyond the hierarchy.
-        assert g._encode_midx(5, (0, 0)) is None
+        assert g.cell_id(5, (0, 0)) is None
         # Level-1 position outside the refined region is not active.
-        assert g._encode_midx(1, (7, 7)) is None
+        assert g.cell_id(1, (7, 7)) is None
 
     def test_decode_out_of_range_raises(self) -> None:
-        """_decode_flat_id rejects out-of-range ids."""
+        """cell_level and cell_multi_index reject out-of-range ids."""
         g = _grid_2d(4)
-        with pytest.raises(IndexError, match="out of range"):
-            g._decode_flat_id(g.num_cells)
-        with pytest.raises(IndexError, match="out of range"):
-            g._decode_flat_id(-1)
+        for decode in (g.cell_level, g.cell_multi_index):
+            with pytest.raises(IndexError, match="out of range"):
+                decode(g.num_cells)
+            with pytest.raises(IndexError, match="out of range"):
+                decode(-1)
 
-    def test_kernel_state_tracks_mutation(self) -> None:
-        """Packed kernel arrays are rebuilt by refine/coarsen (results stay exact)."""
+    def test_batch_location_tracks_mutation(self) -> None:
+        """The compiled grid follows refine/coarsen (batch results stay exact)."""
         g = _grid_2d(8)
         rng = np.random.default_rng(17)
         pts = rng.random((500, 2))
@@ -1626,8 +1662,8 @@ class TestHierKernelEquivalence:
         expected2 = np.array([-1 if (c := g.locate(p)) is None else c for p in pts])
         np_testing.assert_array_equal(after_coarsen, expected2)
 
-    def test_restricted_grid_uses_fresh_packed_arrays(self) -> None:
-        """Grids built via restrict() (the _from_blocks path) locate correctly."""
+    def test_restricted_grid_locates(self) -> None:
+        """Grids built via restrict() locate correctly."""
         g = _grid_2d(8)
         g.refine(0, [0, 0], [4, 4])
         restr = g.restrict(np.arange(min(20, g.num_cells)))

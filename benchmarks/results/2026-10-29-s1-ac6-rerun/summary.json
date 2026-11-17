@@ -1,0 +1,139 @@
+{
+ "protocol": {
+  "k": 10,
+  "repeats": 30,
+  "threads": [
+   1,
+   8
+  ],
+  "cpus": "0-7",
+  "reference": "main",
+  "argv": [
+   "benchmarks/compare.py",
+   "--out-dir",
+   "benchmarks/results/2026-10-29-s1-ac6-rerun",
+   "--side",
+   "main=<main src>",
+   "--side",
+   "branch=<branch src>",
+   "--k",
+   "10",
+   "--threads",
+   "1",
+   "8",
+   "--cpus",
+   "0-7",
+   "--filter",
+   "^S1\\.tabulate_legendre_1d\\.large"
+  ]
+ },
+ "sides": {
+  "main": {
+   "commit": "11ab436abd94edf8f414d1ec2d9ed0bf77e38e89",
+   "extension": "none"
+  },
+  "branch": {
+   "commit": "365ef21d88236bac7c948b8509e80bb97805950f-dirty",
+   "extension": "pantr._pantr_v4 (v4, _pantr_v4.abi3.so)"
+  }
+ },
+ "machine": {
+  "cpu": "Intel(R) Xeon(R) Gold 6148 CPU @ 2.40GHz",
+  "platform": "Linux-5.15.0-144-generic-x86_64-with-glibc2.35",
+  "affinity": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7
+  ],
+  "governor": "schedutil"
+ },
+ "cases": {
+  "S1.tabulate_legendre_1d.large@t1": {
+   "what": {
+    "main": "tabulate_legendre_1d(3, 1000000 points)",
+    "branch": "tabulate_legendre_1d(3, 1000000 points)"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 3759067.75,
+     "range_ns": 181753.5,
+     "process_medians_ns": [
+      3806244.5,
+      3808131.0,
+      3805013.5,
+      3738775.5,
+      3853955.0,
+      3724001.5,
+      3710901.0,
+      3728477.0,
+      3779360.0,
+      3672201.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 3529148.75,
+     "range_ns": 183267.5,
+     "process_medians_ns": [
+      3417114.5,
+      3581129.5,
+      3587056.0,
+      3487312.0,
+      3495878.0,
+      3555280.0,
+      3478819.0,
+      3600382.0,
+      3504636.0,
+      3553661.5
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S1.tabulate_legendre_1d.large@t8": {
+   "what": {
+    "main": "tabulate_legendre_1d(3, 1000000 points)",
+    "branch": "tabulate_legendre_1d(3, 1000000 points)"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 836236.25,
+     "range_ns": 38799.5,
+     "process_medians_ns": [
+      856018.25,
+      819269.75,
+      841140.25,
+      831148.0,
+      831332.25,
+      818432.5,
+      857232.0,
+      828614.25,
+      847957.5,
+      849710.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 597726.9375,
+     "range_ns": 45315.625,
+     "process_medians_ns": [
+      582061.375,
+      577100.125,
+      599622.0,
+      600973.875,
+      603876.75,
+      596342.5,
+      622415.75,
+      582104.875,
+      599111.375,
+      594280.125
+     ],
+     "flagged": false
+    }
+   }
+  }
+ }
+}

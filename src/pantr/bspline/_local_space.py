@@ -1,7 +1,8 @@
 """Serial windowing helpers for distributing a B-spline or THB-spline space.
 
 These functions compute, without any MPI, the pieces a distributed local space is
-built from:
+built from (the halo and the owner kernels are the C++ library's,
+``include/pantr/bspline/local_space.hpp`` and ``include/pantr/thb/local_space.hpp``):
 
 - :func:`compute_halo`: the function-support closure of a set of owned cells for a
   tensor-product B-spline space.
@@ -27,12 +28,12 @@ hierarchical DOF ids of the space.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import numpy as np
 
-from ._local_space_core import _dof_owner_core, _halo_mask_core
-from ._thb_spline_space import THBSplineSpace, _func_support_1d
+from .._ext import ext
+from ._thb_spline_space import THBSplineSpace, _clamp_int
 
 if TYPE_CHECKING:
     import numpy.typing as npt
@@ -40,31 +41,8 @@ if TYPE_CHECKING:
     from ..grid import Partition
     from ._bspline_space_nd import BsplineSpace
 
-
-def _concatenate_per_axis(
-    lo_axes: list[npt.NDArray[np.int64]], hi_axes: list[npt.NDArray[np.int64]]
-) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64], npt.NDArray[np.int64]]:
-    """Flatten per-axis index arrays into the concatenated form the kernels take.
-
-    The kernels cannot hold a list of arrays, so the per-axis arrays are concatenated
-    and accompanied by the offsets at which each axis starts.
-
-    Args:
-        lo_axes (list[npt.NDArray[np.int64]]): One lower-bound array per axis.
-        hi_axes (list[npt.NDArray[np.int64]]): One upper-bound array per axis, same
-            lengths as ``lo_axes``.
-
-    Returns:
-        tuple[npt.NDArray[np.int64], npt.NDArray[np.int64], npt.NDArray[np.int64]]:
-        ``(lo_flat, hi_flat, axis_starts)`` with ``axis_starts`` of length ``dim + 1``.
-    """
-    axis_starts = np.zeros(len(lo_axes) + 1, dtype=np.int64)
-    np.cumsum([axis.shape[0] for axis in lo_axes], out=axis_starts[1:])
-    return (
-        np.ascontiguousarray(np.concatenate(lo_axes), dtype=np.int64),
-        np.ascontiguousarray(np.concatenate(hi_axes), dtype=np.int64),
-        axis_starts,
-    )
+_cpp: Any = ext.bspline
+"""The compiled windowing functions (private; untyped: one overload per dtype)."""
 
 
 def _reject_periodic(space: BsplineSpace) -> None:
@@ -106,42 +84,17 @@ def compute_halo(space: BsplineSpace, owned_cells: npt.ArrayLike) -> npt.NDArray
         IndexError: If any owned cell id is out of range ``[0, num_total_intervals)``.
     """
     _reject_periodic(space)
-    num_intervals = space.num_intervals
-    n_cells = space.num_total_intervals
+    if space._h is None:
+        raise ValueError("a B-spline space needs at least one direction")
     owned = np.asarray(owned_cells).ravel()
-    if owned.size == 0:
-        result = np.empty(0, dtype=np.int64)
-        result.flags.writeable = False
-        return result
-    if not np.issubdtype(owned.dtype, np.integer):
+    # An empty request is answered before the dtype is looked at.
+    if owned.size > 0 and not np.issubdtype(owned.dtype, np.integer):
         raise TypeError(
             f"compute_halo: owned_cells must be integer-valued; got dtype {owned.dtype}."
         )
-    owned = owned.astype(np.int64, copy=False)
-    if int(owned.min()) < 0 or int(owned.max()) >= n_cells:
-        raise IndexError(f"owned cell id out of range [0, {n_cells}).")
-
-    # Per-axis interval -> inclusive support-cell range: functions non-zero on
-    # interval c are [fb[c], fb[c] + degree]; their support is [fc[fb[c]], lc[fb[c]+p]].
-    lo_axes: list[npt.NDArray[np.int64]] = []
-    hi_axes: list[npt.NDArray[np.int64]] = []
-    for sp in space.spaces:
-        fb, fc, lc = _func_support_1d(sp)
-        lo_axes.append(fc[fb].astype(np.int64))
-        hi_axes.append(lc[fb + sp.degree].astype(np.int64))
-
-    mask = np.zeros(n_cells, dtype=np.bool_)
-    owned_multi = np.stack(np.unravel_index(owned, num_intervals), axis=-1).astype(np.int64)
-    lo_flat, hi_flat, axis_starts = _concatenate_per_axis(lo_axes, hi_axes)
-    _halo_mask_core(
-        lo_flat,
-        hi_flat,
-        axis_starts,
-        np.asarray(num_intervals, dtype=np.int64),
-        np.ascontiguousarray(owned_multi),
-        mask,
+    halo: npt.NDArray[np.int64] = _cpp.compute_halo(
+        space._h, np.ascontiguousarray(owned, dtype=np.int64)
     )
-    halo = np.setdiff1d(np.flatnonzero(mask), owned).astype(np.int64, copy=False)
     halo.flags.writeable = False
     return halo
 
@@ -168,30 +121,14 @@ def dof_owner(space: BsplineSpace, partition: Partition) -> npt.NDArray[np.int32
         ValueError: If ``partition.cell_owner`` length does not match
             ``space.num_total_intervals``.
     """
-    owners = dof_owner_windowed(space, partition, np.arange(space.num_total_basis))
+    _reject_periodic(space)
+    if space._h is None:
+        raise ValueError("a B-spline space needs at least one direction")
+    owners: npt.NDArray[np.int32] = _cpp.dof_owner(
+        space._h, np.ascontiguousarray(partition.cell_owner, dtype=np.int32)
+    )
+    owners.flags.writeable = False
     return owners
-
-
-def _support_ranges_per_axis(
-    space: BsplineSpace,
-) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64], npt.NDArray[np.int64]]:
-    """Collect the per-axis support-cell range of every basis function, kernel-ready.
-
-    Args:
-        space (BsplineSpace): Tensor-product B-spline space.
-
-    Returns:
-        tuple[npt.NDArray[np.int64], npt.NDArray[np.int64], npt.NDArray[np.int64]]:
-        ``(fc_flat, lc_flat, axis_starts)``: first and last support cell of every basis
-        function with the axes concatenated, plus the per-axis offsets.
-    """
-    fc_axes: list[npt.NDArray[np.int64]] = []
-    lc_axes: list[npt.NDArray[np.int64]] = []
-    for sp in space.spaces:
-        _, fc, lc = _func_support_1d(sp)
-        fc_axes.append(fc.astype(np.int64))
-        lc_axes.append(lc.astype(np.int64))
-    return _concatenate_per_axis(fc_axes, lc_axes)
 
 
 def dof_owner_windowed(
@@ -221,38 +158,16 @@ def dof_owner_windowed(
         IndexError: If any DOF id is out of range ``[0, num_total_basis)``.
     """
     _reject_periodic(space)
-    cell_owner = partition.cell_owner
-    if cell_owner.shape[0] != space.num_total_intervals:
-        raise ValueError(
-            f"partition has {cell_owner.shape[0]} cells; "
-            f"expected {space.num_total_intervals} (space.num_total_intervals)."
-        )
-
+    if space._h is None:
+        raise ValueError("a B-spline space needs at least one direction")
+    cell_owner = np.ascontiguousarray(partition.cell_owner, dtype=np.int32)
     requested = np.asarray(dofs).ravel()
     if requested.size and not np.issubdtype(requested.dtype, np.integer):
         raise TypeError(
             f"dof_owner_windowed: dofs must be integer-valued; got dtype {requested.dtype}."
         )
-    requested = requested.astype(np.int64, copy=False)
-    n_dofs = space.num_total_basis
-    if requested.size and (int(requested.min()) < 0 or int(requested.max()) >= n_dofs):
-        raise IndexError(f"DOF id out of range [0, {n_dofs}).")
-
-    owners = np.full(requested.size, -1, dtype=np.int32)
-    if requested.size == 0:
-        owners.flags.writeable = False
-        return owners
-
-    fc_flat, lc_flat, axis_starts = _support_ranges_per_axis(space)
-    _dof_owner_core(
-        fc_flat,
-        lc_flat,
-        axis_starts,
-        np.asarray(space.num_intervals, dtype=np.int64),
-        np.asarray(space.num_basis, dtype=np.int64),
-        np.ascontiguousarray(cell_owner, dtype=np.int32),
-        np.ascontiguousarray(requested),
-        owners,
+    owners: npt.NDArray[np.int32] = _cpp.dof_owner_windowed(
+        space._h, cell_owner, np.ascontiguousarray(requested, dtype=np.int64)
     )
     owners.flags.writeable = False
     return owners
@@ -331,7 +246,9 @@ def build_local(
             f"partition has {partition.n_cells} cells; "
             f"expected {global_space.num_total_intervals} (space.num_total_intervals)."
         )
-    owned = partition.owned_cells(rank)
+    # Compared with the rank as given, as the ownership masks below are: a rank that is not an
+    # integer owns no cell (`Partition.owned_cells` would truncate it first).
+    owned = np.flatnonzero(partition.cell_owner == rank).astype(np.int64)
     if owned.size == 0:
         raise ValueError(f"rank {rank} owns no cells; cannot build a local space.")
 
@@ -385,16 +302,9 @@ def _thb_halo(thb: THBSplineSpace, owned_cells: npt.NDArray[np.int64]) -> npt.ND
         IndexError: If any cell id in ``owned_cells`` is out of range
             ``[0, thb.grid.num_cells)``.
     """
-    owned = {int(c) for c in owned_cells}
-    owned_funcs: set[int] = set()
-    for c in owned:
-        owned_funcs.update(int(d) for d in thb.active_basis(c))
-    closure = [
-        c
-        for c in range(thb.grid.num_cells)
-        if any(int(d) in owned_funcs for d in thb.active_basis(c))
-    ]
-    halo = np.array(sorted(set(closure) - owned), dtype=np.int64)
+    thb._check_not_stale()
+    owned = np.array([_clamp_int(int(c)) for c in owned_cells], dtype=np.int64)
+    halo: npt.NDArray[np.int64] = _cpp.thb_compute_halo(thb._h, owned)
     halo.flags.writeable = False
     return halo
 
@@ -418,20 +328,9 @@ def _thb_dof_owner(thb: THBSplineSpace, partition: Partition) -> npt.NDArray[np.
         ValueError: If ``partition.cell_owner`` length does not match
             ``thb.grid.num_cells``.
     """
-    cell_owner = partition.cell_owner
-    if cell_owner.shape[0] != thb.grid.num_cells:
-        raise ValueError(
-            f"partition has {cell_owner.shape[0]} cells; expected {thb.grid.num_cells} "
-            f"(grid.num_cells)."
-        )
-    owners = np.full(thb.num_total_basis, -1, dtype=np.int32)
-    for c in range(thb.grid.num_cells):  # ascending: the first active cell wins (lex-first)
-        rank_c = int(cell_owner[c])
-        if rank_c < 0:
-            continue
-        for dof in thb.active_basis(c):
-            if owners[int(dof)] < 0:
-                owners[int(dof)] = rank_c
+    cell_owner = np.ascontiguousarray(partition.cell_owner, dtype=np.int32)
+    thb._check_not_stale()
+    owners: npt.NDArray[np.int32] = _cpp.thb_dof_owner(thb._h, cell_owner)
     owners.flags.writeable = False
     return owners
 
@@ -470,7 +369,9 @@ def _build_local_thb(thb: THBSplineSpace, partition: Partition, rank: int) -> Lo
             f"partition has {partition.n_cells} cells; expected {thb.grid.num_cells} "
             f"(grid.num_cells)."
         )
-    owned = partition.owned_cells(rank)
+    # Compared with the rank as given, as the ownership masks below are: a rank that is not an
+    # integer owns no cell (`Partition.owned_cells` would truncate it first).
+    owned = np.flatnonzero(partition.cell_owner == rank).astype(np.int64)
     if owned.size == 0:
         raise ValueError(f"rank {rank} owns no cells; cannot build a local space.")
 

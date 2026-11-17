@@ -917,3 +917,33 @@ def test_generator_degrees_same_as_list(basis_type: BasisType) -> None:
         "Likely the degrees generator was consumed before the evaluator loop."
     )
     nptest.assert_allclose(result_gen, result_list, atol=1e-14)
+
+
+def test_degree_beyond_the_native_integer_is_a_value_error() -> None:
+    """A negative degree outside the C++ int still reaches the C++ refusal, as a ValueError."""
+    with pytest.raises(ValueError, match="degree must be non-negative"):
+        tabulate_bernstein_1d(-(2**40), [0.5])
+    # A positive one is refused rather than tabulated at a clamped degree.
+    with pytest.raises(ValueError, match="exceeds the largest supported degree"):
+        tabulate_bernstein([2**31], np.array([[0.5]]))
+
+
+def test_non_native_byte_order_points_are_converted() -> None:
+    """Big-endian scattered points tabulate as their native float64 copy does."""
+    pts = np.array([[0.25, 0.5], [0.75, 1.0]])
+    nptest.assert_array_equal(
+        tabulate_bernstein([2, 1], pts.astype(">f8")), tabulate_bernstein([2, 1], pts)
+    )
+
+
+def test_argument_checks_kept_from_the_previous_release() -> None:
+    """Refusals the wrappers keep in the previous release's type and order."""
+    pts = np.array([[0.25, 0.5]])
+    with pytest.raises(ValueError, match="funcs_order must be 'C' or 'F'"):
+        tabulate_bernstein([1, 1], pts, funcs_order="c")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="is not a valid LagrangeVariant"):
+        tabulate_lagrange_1d(2, ["equispaces"], [0.5])  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="exceeds the largest supported degree"):
+        tabulate_bernstein_1d(2**31, [0.5])
+    with pytest.raises(TypeError):
+        tabulate_bernstein_1d(2**63, [0.5])

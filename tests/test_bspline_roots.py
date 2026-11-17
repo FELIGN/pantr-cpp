@@ -9,20 +9,14 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
-from pantr.bezier import find_roots as bezier_find_roots
-from pantr.bspline import Bspline, BsplineSpace, BsplineSpace1D, _bspline_roots, find_roots
-from pantr.bspline._bspline_roots import _max_insertions
-from pantr.bspline._bspline_roots_core import (
-    _insert_knot,
-    _is_zero_index,
-    _knot_average,
-    _merge_roots,
-    _morken_reimers_roots,
-    _residual_at,
-    _span_at,
-    _split_at_root,
-    _zero_index,
+from pantr._testing import (
+    bspline_find_roots_with_budget,
+    bspline_max_insertions,
+    bspline_merge_roots,
+    bspline_morken_reimers_roots,
 )
+from pantr.bezier import find_roots as bezier_find_roots
+from pantr.bspline import Bspline, BsplineSpace, BsplineSpace1D, find_roots
 from pantr.tolerance import get_strict
 
 _EPS: float = float(np.finfo(np.float64).eps)
@@ -901,121 +895,11 @@ def test_regression_a_double_root_at_high_degree_is_one_root_not_two(degree: int
 # --- Kernels --------------------------------------------------------------------------
 
 
-def test_knot_average_is_the_greville_abscissa() -> None:
-    """``_knot_average`` averages the ``degree`` knots that follow its coefficient index."""
-    degree = 3
-    knots = _open_knots(degree, np.linspace(0.0, 1.0, 5))
-
-    for index in range(len(knots) - degree - 1):
-        expected = float(np.mean(knots[index + 1 : index + degree + 1]))
-        assert _knot_average(knots, degree, index) == pytest.approx(expected, abs=_EPS)
-
-
-def test_span_at_stays_inside_the_last_span_of_the_domain() -> None:
-    """The span search brackets every point, and treats the end of the domain from the left."""
-    degree = 2
-    knots = _open_knots(degree, np.linspace(0.0, 1.0, 5))
-    num_coeffs = len(knots) - degree - 1
-
-    for point, expected in ((0.0, 2), (0.1, 2), (0.25, 3), (0.6, 4), (0.99, 5)):
-        assert _span_at(knots, num_coeffs, degree, point) == expected
-        assert knots[expected] <= point < knots[expected + 1]
-
-    # The one point no bracket contains: an open knot vector's last span is half open, so
-    # the search stops at it rather than walking into the clamped tail.
-    assert _span_at(knots, num_coeffs, degree, 1.0) == num_coeffs - 1
-
-
-def test_residual_at_evaluates_the_spline_it_is_given() -> None:
-    """``_residual_at`` is ``|f|``, and agrees with the public evaluator that certifies it."""
-    degree = 3
-    knots = _open_knots(degree, np.linspace(0.0, 1.0, 5))
-    coeffs = _polynomial_coefficients(knots, degree, (0.2, 0.5, 0.9))
-    num_coeffs = coeffs.shape[0]
-    work = np.empty(degree + 1, dtype=np.float64)
-    points = np.array([0.0, 0.2, 0.37, 0.5, 0.75, 0.9, 1.0])
-
-    expected = np.abs(np.asarray(_spline(knots, coeffs, degree).evaluate(points)).reshape(-1))
-    got = [_residual_at(knots, coeffs, num_coeffs, degree, float(p), work) for p in points]
-
-    np.testing.assert_allclose(got, expected, rtol=0.0, atol=(degree + 1) * _EPS)
-
-
-def test_zero_index_needs_a_non_zero_left_neighbour() -> None:
-    """A pinned coefficient is a barrier: no sign change is reported across it."""
-    coeffs = np.array([0.0, -1.0, 1.0, 1.0, -1.0])
-
-    assert _zero_index(coeffs, coeffs.shape[0], 1) == 2
-    assert _zero_index(coeffs, coeffs.shape[0], 3) == 4
-    assert _zero_index(np.array([0.0, 0.0, 1.0]), 3, 1) == -1
-
-
-def test_insert_knot_leaves_the_spline_unchanged() -> None:
-    """Boehm insertion refines the representation without moving the function."""
-    degree = 3
-    knots = _open_knots(degree, np.linspace(0.0, 1.0, 5))
-    num_coeffs = len(knots) - degree - 1
-    coeffs = np.linspace(-1.0, 2.0, num_coeffs) ** 2 - 0.5
-    sample = np.linspace(0.0, 1.0, 37)
-    before = np.asarray(_spline(knots, coeffs, degree).evaluate(sample)).reshape(-1)
-
-    buffer_knots = np.empty(knots.shape[0] + 1)
-    buffer_knots[: knots.shape[0]] = knots
-    buffer_coeffs = np.empty(num_coeffs + 1)
-    buffer_coeffs[:num_coeffs] = coeffs
-    point = 0.375
-    span = int(np.searchsorted(knots, point, side="right") - 1)
-    _insert_knot(buffer_knots, buffer_coeffs, num_coeffs, degree, point, span)
-
-    after = np.asarray(
-        _spline(buffer_knots, buffer_coeffs, degree).evaluate(sample), dtype=np.float64
-    ).reshape(-1)
-    np.testing.assert_allclose(after, before, rtol=0.0, atol=16 * _EPS)
-
-
-def test_split_at_root_leaves_an_open_knot_vector() -> None:
-    """The split raises the zero to multiplicity ``degree + 1`` and clamps the remainder.
-
-    This is the invariant that keeps every later span search inside the buffer: after the
-    caller shifts both arrays down by ``offset``, the knot vector is open again, this time
-    on ``[root, end]``, exactly as the original input was.
-    """
-    degree = 3
-    knots = _open_knots(degree, np.linspace(0.0, 1.0, 6))
-    coeffs = _polynomial_coefficients(knots, degree, (0.2, 0.5, 0.9))
-    num_coeffs = coeffs.shape[0]
-    capacity = num_coeffs + 4 * (degree + 1)
-    buffer_coeffs = np.empty(capacity)
-    buffer_coeffs[:num_coeffs] = coeffs
-    buffer_knots = np.empty(capacity + degree + 1)
-    buffer_knots[: knots.shape[0]] = knots
-
-    root = 0.5
-    num_live, offset = _split_at_root(
-        buffer_knots, buffer_coeffs, num_coeffs, degree, root, _zero_tol(coeffs, degree)
-    )
-
-    assert np.all(buffer_knots[offset : offset + degree + 1] == root)
-    assert buffer_knots[offset - 1] < root
-    assert buffer_coeffs[offset] == 0.0
-    assert num_live == num_coeffs + degree + 1  # 0.5 is not a breakpoint here
-
-
-def test_is_zero_index_rejects_an_index_outside_the_polygon() -> None:
-    """The tracker steps its index past the end, so the bound check has to hold there."""
-    coeffs = np.array([-1.0, 1.0, 2.0])
-
-    assert _is_zero_index(coeffs, 3, 1)
-    assert not _is_zero_index(coeffs, 3, 0)
-    assert not _is_zero_index(coeffs, 3, 3)
-
-
 def test_merge_roots_on_an_empty_input() -> None:
-    """No roots in, no roots out, and a buffer that is still safe to index."""
-    merged, labels, count = _merge_roots(np.empty(0), np.empty(0))
+    """No roots in, no roots out."""
+    merged, labels = bspline_merge_roots(np.empty(0), np.empty(0))
 
-    assert count == 0
-    assert merged.shape == (1,)
+    assert merged.shape == (0,)
     assert labels.shape == (0,)
 
 
@@ -1024,10 +908,10 @@ def test_merge_roots_collapses_a_run_but_not_a_gap() -> None:
     roots = np.array([0.1, 0.1 + 1e-9, 0.5, 0.9])
     radii = np.array([1e-8, 1e-8, 1e-12, 1e-12])
 
-    merged, labels, count = _merge_roots(roots, radii)
+    merged, labels = bspline_merge_roots(roots, radii)
 
-    assert count == 3
-    np.testing.assert_allclose(merged[:count], [0.1 + 0.5e-9, 0.5, 0.9], rtol=0.0, atol=1e-15)
+    assert merged.shape == (3,)
+    np.testing.assert_allclose(merged, [0.1 + 0.5e-9, 0.5, 0.9], rtol=0.0, atol=1e-15)
     # Every input names the run it joined, so a caller can put a run back the way it
     # found it when the midpoint turns out not to be a zero.
     np.testing.assert_array_equal(labels, [0, 0, 1, 2])
@@ -1040,7 +924,7 @@ def test_kernel_reports_a_zero_whose_budget_ran_out() -> None:
     coeffs = _polynomial_coefficients(knots, degree, (0.2, 0.5, 0.9))
     spline = _spline(knots, coeffs, degree)
 
-    _, _, truncated, abandoned = _morken_reimers_roots(
+    _, _, truncated, abandoned = bspline_morken_reimers_roots(
         knots,
         degree,
         coeffs,
@@ -1053,7 +937,7 @@ def test_kernel_reports_a_zero_whose_budget_ran_out() -> None:
     assert truncated + abandoned > 0
 
 
-def test_budget_exhaustion_warns(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_budget_exhaustion_warns() -> None:
     """A zero reported at an unconverged iterate says so: it may be less accurate than tol.
 
     A budget of eight is enough for the residual to certify all three zeros of this
@@ -1064,17 +948,14 @@ def test_budget_exhaustion_warns(monkeypatch: pytest.MonkeyPatch) -> None:
     degree = 3
     knots = _open_knots(degree, np.linspace(0.0, 1.0, 6))
     coeffs = _polynomial_coefficients(knots, degree, (0.2, 0.5, 0.9))
-    monkeypatch.setattr(_bspline_roots, "_max_insertions", lambda _degree: 8)
 
     with pytest.warns(RuntimeWarning, match="reported at the last iterate reached"):
-        found = find_roots(_spline(knots, coeffs, degree))
+        found = bspline_find_roots_with_budget(_spline(knots, coeffs, degree), 8)
 
     assert found.shape == (3,)
 
 
-def test_a_sign_change_the_budget_never_certified_is_not_silently_dropped(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_a_sign_change_the_budget_never_certified_is_not_silently_dropped() -> None:
     """Rejecting an uncertified iterate loses a zero, and losing one silently is not allowed.
 
     Uniform residual testing is what keeps a non-root out of the result, and the price is
@@ -1086,19 +967,18 @@ def test_a_sign_change_the_budget_never_certified_is_not_silently_dropped(
     degree = 3
     knots = _open_knots(degree, np.linspace(0.0, 1.0, 6))
     coeffs = _polynomial_coefficients(knots, degree, (0.2, 0.5, 0.9))
-    monkeypatch.setattr(_bspline_roots, "_max_insertions", lambda _degree: 1)
 
     with pytest.warns(RuntimeWarning, match="may be missing a root"):
-        found = find_roots(_spline(knots, coeffs, degree))
+        found = bspline_find_roots_with_budget(_spline(knots, coeffs, degree), 1)
 
     assert found.shape == (0,)
 
 
 def test_insertion_budget_grows_with_degree() -> None:
     """The budget is degree-aware: convergence is quadratic per ``degree - 1`` insertions."""
-    assert _max_insertions(1) == 64
-    assert _max_insertions(25) > 4 * _max_insertions(1) // 2
-    assert _max_insertions(5) > _max_insertions(3) > _max_insertions(1)
+    assert bspline_max_insertions(1) == 64
+    assert bspline_max_insertions(25) > 4 * bspline_max_insertions(1) // 2
+    assert bspline_max_insertions(5) > bspline_max_insertions(3) > bspline_max_insertions(1)
 
 
 # --- Public surface -------------------------------------------------------------------

@@ -18,11 +18,16 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from .._ext import ext
 from ..grid import Partition
+from ._comm import as_communicator
 from ._thread_policy import _ensure_default_thread_policy
 
 if TYPE_CHECKING:
     import numpy.typing as npt
+
+_cpp: Any = ext.mpi
+"""The compiled distributed algorithms (private)."""
 
 
 def from_dolfinx(
@@ -71,7 +76,7 @@ def from_dolfinx(
 
     Note:
         Calling this engages the default MPI thread policy: unless threads were
-        explicitly configured, this process's Numba thread pool is limited to one
+        explicitly configured, this process's parallel kernels are limited to one
         thread per rank. See :func:`pantr.mpi.configure_threads`.
     """
     _ensure_default_thread_policy()
@@ -88,40 +93,11 @@ def from_dolfinx(
         )
     original = np.asarray(topology.original_cell_index, dtype=np.int64)[:size_local]
     local_ids = _map_to_pantr(original, dolfinx_to_pantr, n_cells)
-
-    gathered = mesh.comm.allgather(local_ids)
-    n_parts = int(mesh.comm.size)
-    if len(gathered) != n_parts:
-        raise ValueError(
-            f"allgather returned {len(gathered)} entries but mesh.comm.size is {n_parts}; "
-            "the communicator's allgather is inconsistent."
+    return Partition._from_handle(
+        _cpp.partition_from_owner(
+            as_communicator(mesh.comm), np.ascontiguousarray(local_ids, dtype=np.int64), n_cells
         )
-    cell_owner = np.full(n_cells, -1, dtype=np.int32)
-    for owner_rank, ids in enumerate(gathered):
-        ids_arr = np.asarray(ids, dtype=np.int64)
-        if ids_arr.ndim != 1:
-            raise ValueError(
-                f"allgather result for rank {owner_rank} is not a 1-D array "
-                f"(got shape {ids_arr.shape})."
-            )
-        if ids_arr.size == 0:
-            continue
-        if int(ids_arr.min()) < 0 or int(ids_arr.max()) >= n_cells:
-            raise ValueError(
-                f"gathered cell ids from rank {owner_rank} are outside [0, {n_cells}): "
-                f"got range [{int(ids_arr.min())}, {int(ids_arr.max())}]."
-            )
-        conflict_mask = cell_owner[ids_arr] != -1
-        if bool(np.any(conflict_mask)):
-            conflict_cell = int(ids_arr[conflict_mask][0])
-            prev_owner = int(cell_owner[conflict_cell])
-            raise ValueError(
-                f"inconsistent partition: cell {conflict_cell} is claimed by both "
-                f"rank {prev_owner} and rank {owner_rank}."
-            )
-        cell_owner[ids_arr] = owner_rank
-
-    return Partition(cell_owner, n_parts)
+    )
 
 
 def _map_to_pantr(

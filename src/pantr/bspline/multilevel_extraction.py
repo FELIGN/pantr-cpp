@@ -33,21 +33,28 @@ Main exports:
 
 from __future__ import annotations
 
-from typing import cast, get_args
+import copy
+from typing import Any, cast, get_args
 
 import numpy as np
 import numpy.typing as npt
 
+from .._ext import ext
 from ..basis._basis_utils import _allocate_or_validate_out
 from ._thb_spline_space import THBSplineSpace
-from .spanwise_element_extraction import SpanwiseElementExtraction, Target
+from .spanwise_element_extraction import _TARGET_CODES, Target
+
+_cpp: Any = ext.bspline
+"""The compiled multi-level extractions (private; untyped: one class per dtype)."""
+
+_F32 = np.dtype(np.float32)
 
 
 class MultiLevelExtraction:
     r"""Per-element multi-level (Bézier) extraction for a :class:`THBSplineSpace`.
 
     Mirrors :class:`~pantr.bspline.SpanwiseElementExtraction`: it is constructed from a
-    space and a ``target`` reference basis, caches the single-level per-level extractions,
+    space and a ``target`` reference basis, builds the single-level per-level extractions,
     and exposes per-element operators via :meth:`operator`.  Because hierarchical
     refinement introduces a non-constant number of active functions per cell (and the
     hierarchical basis is not of tensor-product structure), the operators are ragged
@@ -70,23 +77,14 @@ class MultiLevelExtraction:
         :cite:p:`dangella2018multilevel`.
 
     Attributes:
+        _h (Any): The compiled extraction (``MultiLevelExtractionF64`` or
+            ``MultiLevelExtractionF32``); it computes each function's coefficients in the finer
+            levels' bases once, for every cell.
         _space (THBSplineSpace): The hierarchical space being extracted.
         _target (Target): The single-level reference basis tag.
-        _oslo (tuple[tuple[npt.NDArray[np.float64], ...], ...]): Cached per-level,
-            per-direction two-scale (Oslo) matrices; ``_oslo[m][k]`` maps level ``m``
-            to level ``m+1`` in direction ``k``.
-        _ext (dict[int, SpanwiseElementExtraction]): Cache of per-level single-level
-            extractions, built lazily.
-        _coeffs_cache (dict[tuple[int, tuple[int, ...], int], tuple[tuple[int, ...],
-            npt.NDArray[np.float64]]]): Memoized ``_element_coeffs`` results keyed
-            by ``(origin_level, multi, target_level)``.  A hierarchical function's
-            coefficients in a finer level's basis are independent of the cell, but a
-            function's support covers up to ``(p + 1) ** d`` cells per level, so the
-            per-cell operators would otherwise recompute each entry many times.
-            Cached coefficient arrays are frozen read-only.
     """
 
-    __slots__ = ("_coeffs_cache", "_ext", "_oslo", "_space", "_target")
+    __slots__ = ("_h", "_space", "_target")
 
     def __init__(self, space: THBSplineSpace, target: Target = "bezier") -> None:
         """Create a multi-level extraction for a hierarchical space.
@@ -105,14 +103,78 @@ class MultiLevelExtraction:
         if target not in get_args(Target):
             valid = ", ".join(repr(v) for v in get_args(Target))
             raise ValueError(f"Unknown target {target!r}; expected one of {valid}.")
+        if space._root_space.dtype == _F32:
+            self._h = _cpp.MultiLevelExtractionF32(space._h, _TARGET_CODES[target])
+        else:
+            self._h = _cpp.MultiLevelExtractionF64(space._h, _TARGET_CODES[target])
         self._space = space
         self._target = target
-        self._oslo = space._build_oslo_matrices()
-        self._ext: dict[int, SpanwiseElementExtraction] = {}
-        self._coeffs_cache: dict[
-            tuple[int, tuple[int, ...], int],
-            tuple[tuple[int, ...], npt.NDArray[np.float64]],
-        ] = {}
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        """Pickle through the constructor arguments, with a subclass's attributes as state.
+
+        Returns:
+            tuple[Any, ...]: The rebuilding function, its arguments and the extra attributes.
+        """
+        return (
+            _rebuild_extraction,
+            (type(self), self._space, self._target),
+            dict(self.__dict__) if hasattr(self, "__dict__") else None,
+        )
+
+    def __setstate__(
+        self, state: dict[str, Any] | tuple[dict[str, Any] | None, dict[str, Any]]
+    ) -> None:
+        """Restore a subclass's attributes, or rebuild from a previous release's pickle.
+
+        A previous release pickled the slots of a plain object, a pair ``(attributes, slots)``
+        with the attributes of a subclass (or ``None``) and the slot values. Such a state rebuilds
+        the compiled extraction from ``_space`` and ``_target`` and drops the other slots (the
+        Oslo matrices and the caches).
+
+        Args:
+            state (dict[str, Any] | tuple[dict[str, Any] | None, dict[str, Any]]): The pickled
+                state: a subclass's extra attributes, or the previous release's pair.
+        """
+        if isinstance(state, tuple):
+            extra, slots = state
+            MultiLevelExtraction.__init__(self, slots["_space"], slots["_target"])
+            state = extra or {}
+        if state:
+            self.__dict__.update(state)
+
+    def __copy__(self) -> MultiLevelExtraction:
+        """Copy: the new object shares the compiled extraction and the space.
+
+        Returns:
+            MultiLevelExtraction: The copy, of the same class, with the same attributes.
+        """
+        new = object.__new__(type(self))
+        new._h = self._h
+        new._space = self._space
+        new._target = self._target
+        if hasattr(self, "__dict__"):
+            new.__dict__.update(self.__dict__)
+        return new
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> MultiLevelExtraction:
+        """Deep copy: shares the compiled extraction and deep-copies the space.
+
+        Args:
+            memo (dict[int, Any]): The deep-copy memo.
+
+        Returns:
+            MultiLevelExtraction: The copy.
+        """
+        new = object.__new__(type(self))
+        memo[id(self)] = new
+        new._h = self._h
+        new._space = copy.deepcopy(self._space, memo)
+        new._target = self._target
+        if hasattr(self, "__dict__"):
+            for key, value in self.__dict__.items():
+                new.__dict__[key] = copy.deepcopy(value, memo)
+        return new
 
     # ------------------------------------------------------------------
     # Properties
@@ -192,6 +254,45 @@ class MultiLevelExtraction:
         """
         return self._space.active_basis(cid)
 
+    def _operator(
+        self,
+        cid: int,
+        out: npt.NDArray[np.float64] | None,
+        method: str,
+    ) -> npt.NDArray[np.float64]:
+        """Fill the rows of one of the compiled operators on cell ``cid``.
+
+        Args:
+            cid (int): Active cell flat id in ``[0, num_elements)``.
+            out (npt.NDArray[np.float64] | None): The caller's output array, or ``None``.
+            method (str): The compiled method: ``"multilevel_operator"`` or
+                ``"extraction_operator"``.
+
+        Returns:
+            npt.NDArray[np.float64]: The operator, in ``out`` when given.
+
+        Raises:
+            IndexError: If ``cid`` is out of range.
+            ValueError: If ``out`` has the wrong shape, dtype, or is not writeable.
+            RuntimeError: If the grid has been modified since construction.
+        """
+        space = self._space
+        space._check_not_stale()
+        cell = space._cell_id(cid)
+        n_active = int(self._h.num_active_on(cell))
+        # Every target's single-level operator is square: ``prod(degree + 1)`` columns.
+        n_cols = int(np.prod([p + 1 for p in space.degrees]))
+        result = cast(
+            npt.NDArray[np.float64],
+            _allocate_or_validate_out(out, (n_active, n_cols), np.float64),
+        )
+        # The compiled call writes a C-contiguous array; another layout is filled from one.
+        target = result if result.flags.c_contiguous else np.empty((n_active, n_cols), np.float64)
+        getattr(self._h, method)(cell, target)
+        if target is not result:
+            result[...] = target
+        return result
+
     def multilevel_operator(
         self,
         cid: int,
@@ -219,51 +320,7 @@ class MultiLevelExtraction:
             ValueError: If ``out`` has the wrong shape, dtype, or is not writeable.
             RuntimeError: If the grid has been modified since construction.
         """
-        space = self._space
-        space._check_not_stale()
-        grid = space.grid
-        level = grid.cell_level(cid)
-        cell_midx = grid.cell_multi_index(cid)
-        dim = space.dim
-        degrees = space.degrees
-        support = space._support[level]
-
-        contribs = space._cell_contributions(cid)
-        n_active = len(contribs)
-        first_basis = [int(support[d][0][cell_midx[d]]) for d in range(dim)]
-        n_per = tuple(degrees[d] + 1 for d in range(dim))
-        n_single = int(np.prod(n_per))
-
-        result = cast(
-            npt.NDArray[np.float64],
-            _allocate_or_validate_out(out, (n_active, n_single), np.float64),
-        )
-        result[...] = 0.0
-        for row, (_, origin_level, multi) in enumerate(contribs):
-            box_lo, coeffs = self._element_coeffs(origin_level, multi, level)
-            block = np.zeros(n_per, dtype=np.float64)
-            src_slices: list[slice] = []
-            dst_slices: list[slice] = []
-            covered = True
-            for d in range(dim):
-                offset = first_basis[d] - box_lo[d]
-                j0 = max(0, -offset)
-                j1 = min(n_per[d], coeffs.shape[d] - offset)
-                if j1 <= j0:
-                    covered = False
-                    break
-                dst_slices.append(slice(j0, j1))
-                src_slices.append(slice(offset + j0, offset + j1))
-            if not covered:
-                raise RuntimeError(
-                    f"multilevel_operator: cell {cid} row {row} "
-                    f"(origin_level={origin_level}, multi={multi}) — refined coefficient "
-                    "box does not overlap the cell window. This is a bug; please report "
-                    "it with the space and grid configuration."
-                )
-            block[tuple(dst_slices)] = coeffs[tuple(src_slices)]
-            result[row] = block.ravel()
-        return result
+        return self._operator(cid, out, "multilevel_operator")
 
     def operator(
         self,
@@ -292,99 +349,7 @@ class MultiLevelExtraction:
             ValueError: If ``out`` has the wrong shape, dtype, or is not writeable.
             RuntimeError: If the grid has been modified since construction.
         """
-        space = self._space
-        space._check_not_stale()
-        level = space.grid.cell_level(cid)
-        cell_midx = space.grid.cell_multi_index(cid)
-        level_ext = self._level_extraction(level)
-        n_in = int(np.prod(level_ext.input_shape_per_dir))
-        multilevel = self.multilevel_operator(cid)
-        result = cast(
-            npt.NDArray[np.float64],
-            _allocate_or_validate_out(out, (multilevel.shape[0], n_in), np.float64),
-        )
-        single_level_f64 = np.asarray(level_ext.operator(cell_midx), dtype=np.float64)
-        np.matmul(multilevel, single_level_f64, out=result)
-        return result
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _level_extraction(self, level: int) -> SpanwiseElementExtraction:
-        """Return (building and caching on first call) the single-level extraction for ``level``.
-
-        Args:
-            level (int): Hierarchy level.
-
-        Returns:
-            SpanwiseElementExtraction: Extraction of ``space.level_space(level)`` with
-            this object's ``target``.
-        """
-        ext = self._ext.get(level)
-        if ext is None:
-            ext = SpanwiseElementExtraction(self._space.level_space(level), self._target)
-            self._ext[level] = ext
-        return ext
-
-    def _element_coeffs(
-        self,
-        origin_level: int,
-        multi: tuple[int, ...],
-        target_level: int,
-    ) -> tuple[tuple[int, ...], npt.NDArray[np.float64]]:
-        """Express a hierarchical function on a cell in the level-``target_level`` basis.
-
-        Refines the originating B-spline ``B^{origin_level}_multi`` from its origin level
-        up to ``target_level``, applying the truncation at each intermediate level when the
-        space is truncated.  The result is the function's exact coefficients in the
-        level-``target_level`` tensor-product basis over the cell.
-
-        The result depends only on the arguments — not on the cell — so it is
-        memoized on the instance (see ``_coeffs_cache``); the returned ``coeffs``
-        array is shared across calls and frozen read-only.
-
-        Args:
-            origin_level (int): Level the function originates at.
-            multi (tuple[int, ...]): Per-axis function index at ``origin_level``.
-            target_level (int): The cell's level; the basis the result is expressed in.
-
-        Returns:
-            tuple[tuple[int, ...], npt.NDArray[np.float64]]: ``(box_lo, coeffs)`` over
-            the level-``target_level`` function box.  ``coeffs`` is read-only.
-
-        Raises:
-            ValueError: If ``origin_level > target_level``.
-        """
-        if origin_level > target_level:
-            raise ValueError(
-                f"origin_level ({origin_level}) must be <= target_level ({target_level})."
-            )
-        key = (origin_level, multi, target_level)
-        cached = self._coeffs_cache.get(key)
-        if cached is not None:
-            return cached
-        space = self._space
-        dim = space.dim
-        box_lo = [int(multi[d]) for d in range(dim)]
-        box_hi = [int(multi[d]) + 1 for d in range(dim)]
-        coeffs = np.ones((1,) * dim, dtype=np.float64)
-        for lvl in range(origin_level, target_level):
-            coeffs, box_lo, box_hi = THBSplineSpace._refine_box(
-                coeffs, box_lo, box_hi, self._oslo[lvl]
-            )
-            if space._truncate:
-                THBSplineSpace._truncate_box(
-                    coeffs,
-                    box_lo,
-                    box_hi,
-                    space._active_funcs[lvl + 1],
-                    space._level_spaces[lvl + 1].num_basis,
-                )
-        coeffs.flags.writeable = False
-        entry = (tuple(box_lo), coeffs)
-        self._coeffs_cache[key] = entry
-        return entry
+        return self._operator(cid, out, "extraction_operator")
 
     def __repr__(self) -> str:
         """Return a compact string representation.
@@ -396,3 +361,25 @@ class MultiLevelExtraction:
             f"MultiLevelExtraction(dim={self.dim}, target={self._target!r}, "
             f"num_elements={self.num_elements})"
         )
+
+
+def _rebuild_extraction(
+    cls: type[MultiLevelExtraction], space: THBSplineSpace, target: Target
+) -> MultiLevelExtraction:
+    """Rebuild a pickled extraction of class ``cls``, bypassing ``cls.__init__``.
+
+    A subclass's constructor may take other arguments; the previous release's pickles did not
+    call it either.
+
+    Args:
+        cls (type[MultiLevelExtraction]): The class of the pickled extraction.
+        space (THBSplineSpace): Its space.
+        target (Target): Its target basis tag.
+
+    Returns:
+        MultiLevelExtraction: The extraction (its extra attributes are restored by
+        ``__setstate__``).
+    """
+    extraction = cls.__new__(cls)
+    MultiLevelExtraction.__init__(extraction, space, target)
+    return extraction

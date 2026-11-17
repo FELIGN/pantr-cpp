@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
-import os
 import subprocess
 import sys
+import tomllib
+import types
 from pathlib import Path
 
 import pytest
 
+import pantr
 import pantr.mpi
+from tests._tree_env import subprocess_env
 
 
 def test_import_and_public_surface() -> None:
@@ -101,17 +104,12 @@ def test_require_mpi_returns_module_when_available() -> None:
 def test_pantr_toplevel_does_not_import_mpi() -> None:
     """``import pantr`` must not cause ``pantr.mpi`` to appear in ``sys.modules``.
 
-    The subprocess is pointed at the same source tree this process imported. ``pantr``
-    reaches this process through ``pytest.ini``'s ``pythonpath = src``, which a
+    The subprocess is pointed at this checkout's source tree (``tests._tree_env``).
+    ``pantr`` reaches this process through ``pytest.ini``'s ``pythonpath = src``, which a
     subprocess does not inherit; without the hand-off it would resolve whatever the
     editable install points at, and fail outright when that target no longer exists.
     """
-    src_dir = Path(pantr.__file__).resolve().parents[1]
-    inherited = os.environ.get("PYTHONPATH", "")
-    env = {
-        **os.environ,
-        "PYTHONPATH": f"{src_dir}{os.pathsep}{inherited}" if inherited else str(src_dir),
-    }
+    env = subprocess_env()
     result = subprocess.run(
         [
             sys.executable,
@@ -145,3 +143,143 @@ def test_core_does_not_import_pantr_mpi() -> None:
         if bad:
             offenders[module] = bad
     assert not offenders, f"serial-core modules importing pantr.mpi: {offenders}"
+
+
+# --------------------------------------------------------------------------- #
+# The pantr-mpi package: its MPI family check and its version pin
+# --------------------------------------------------------------------------- #
+
+
+class _FakeMpiComm:
+    """Stands in for ``mpi4py.MPI.Comm``: the type an mpi4py communicator is recognised by."""
+
+    rank = 0
+    size = 1
+
+
+def _fake_mpi4py(monkeypatch: pytest.MonkeyPatch, library_version: str) -> None:
+    """Install a fake ``mpi4py.MPI`` whose library reports ``library_version``."""
+    fake = types.ModuleType("mpi4py.MPI")
+    fake.Comm = _FakeMpiComm  # type: ignore[attr-defined]
+    fake.Get_library_version = lambda: library_version  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "mpi4py.MPI", fake)
+
+
+def _fake_build_info(monkeypatch: pytest.MonkeyPatch, family: str, built: str) -> None:
+    """Install a fake ``pantr_mpi._build_info`` recording ``family``."""
+    info = types.ModuleType("pantr_mpi._build_info")
+    info.FAMILY = family  # type: ignore[attr-defined]
+    info.BUILT_AGAINST = built  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "pantr_mpi._build_info", info)
+
+
+def _distribute(comm: object) -> None:
+    from pantr.bspline import create_uniform_space  # noqa: PLC0415
+
+    pantr.mpi.create_distributed_space(create_uniform_space([2], [4]), comm)
+
+
+@pytest.mark.parametrize(
+    ("family", "built", "loaded", "expected"),
+    [
+        ("openmpi", "Open MPI v5.0.3", "MPICH Version: 4.2.0\nMPICH Release date", "Open MPI"),
+        ("mpich", "MPICH 4.2.0", "Open MPI v5.0.3, package: Open MPI", "MPICH ABI"),
+        ("mpich", "Intel(R) MPI Library 2021.18.0", "Some MPI 5 ABI library", "MPICH ABI"),
+    ],
+)
+def test_mpi_family_mismatch_names_both(
+    monkeypatch: pytest.MonkeyPatch, family: str, built: str, loaded: str, expected: str
+) -> None:
+    """An mpi4py communicator of another MPI family than pantr-mpi's raises ImportError."""
+    _fake_mpi4py(monkeypatch, loaded)
+    _fake_build_info(monkeypatch, family, built)
+    with pytest.raises(ImportError, match=expected) as info:
+        _distribute(_FakeMpiComm())
+    assert built in str(info.value)
+    assert loaded.splitlines()[0].split(",")[0] in str(info.value)
+
+
+def test_mpi_family_match_then_loader_error_is_named(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A matching family that fails to load reports the MPI it was built for."""
+    _fake_mpi4py(monkeypatch, "Intel(R) MPI Library 2021.18.0 for Linux* OS")
+    _fake_build_info(monkeypatch, "mpich", "MPICH 4.2.0")
+    monkeypatch.setitem(sys.modules, "pantr_mpi._pantr_mpi", None)  # import raises ImportError
+    with pytest.raises(ImportError, match="failed to load.*Intel"):
+        _distribute(_FakeMpiComm())
+
+
+def test_custom_family_skips_the_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``custom`` (a source build against any MPI) goes straight to loading the extension."""
+    _fake_mpi4py(monkeypatch, "Some MPI 5 ABI library")
+    _fake_build_info(monkeypatch, "custom", "unknown MPI")
+    monkeypatch.setitem(sys.modules, "pantr_mpi._pantr_mpi", None)
+    with pytest.raises(ImportError, match="failed to load"):
+        _distribute(_FakeMpiComm())
+
+
+def test_mpi4py_comm_without_pantr_mpi(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An mpi4py communicator without pantr-mpi installed asks for ``pantr[mpi]``."""
+    _fake_mpi4py(monkeypatch, "MPICH Version: 4.2.0")
+    monkeypatch.setitem(sys.modules, "pantr_mpi._build_info", None)
+    with pytest.raises(ImportError, match=r"pantr-mpi.*pantr\[mpi\]"):
+        _distribute(_FakeMpiComm())
+
+
+def test_mpi_extra_pins_pantr_mpi_at_this_version() -> None:
+    """``pantr[mpi]`` pulls pantr-mpi at pantr's own version, which bindings/mpi builds.
+
+    pantr-mpi's sdist builds against an installed pantr of that same version (its headers and
+    CMake package), so its build requirements pin it too.
+    """
+    root = Path(__file__).resolve().parents[1]
+    if not (root / "pyproject.toml").exists():
+        pytest.skip("not run from a source tree")
+    extras = tomllib.loads((root / "pyproject.toml").read_text())["project"][
+        "optional-dependencies"
+    ]
+    assert f"pantr-mpi=={pantr.__version__}" in extras["mpi"]
+    mpi_project = tomllib.loads((root / "bindings/mpi/pyproject.toml").read_text())
+    assert f"pantr=={pantr.__version__}" in mpi_project["build-system"]["requires"]
+    version_input = mpi_project["tool"]["scikit-build"]["metadata"]["version"]["input"]
+    assert (root / "bindings/mpi" / version_input).resolve() == (
+        root / "src/pantr/__init__.py"
+    ).resolve()
+
+
+def test_mpi_below_funneled_is_refused() -> None:
+    """An mpi4py communicator of an MPI initialized at MPI_THREAD_SINGLE raises RuntimeError.
+
+    Run in a child process, since the thread level is fixed when MPI is initialized.
+    """
+    if importlib.util.find_spec("mpi4py") is None:
+        pytest.skip("mpi4py not installed")
+    try:
+        importlib.import_module("pantr_mpi._build_info")
+    except ImportError:
+        pytest.skip("pantr-mpi is not built here")
+    script = (
+        "import mpi4py\n"
+        "mpi4py.rc.thread_level = 'single'\n"
+        "from mpi4py import MPI\n"
+        "from pantr.bspline import create_uniform_space\n"
+        "import pantr.mpi\n"
+        "try:\n"
+        "    pantr.mpi.create_distributed_space(create_uniform_space([2], [4]), MPI.COMM_WORLD)\n"
+        "except RuntimeError as exc:\n"
+        "    print('refused:', exc)\n"
+        "else:\n"
+        "    print('accepted, level', MPI.Query_thread())\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=subprocess_env(),
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+    if "accepted" in result.stdout and "level 0" not in result.stdout:
+        pytest.skip(f"this MPI raised the requested thread level: {result.stdout.strip()}")
+    assert "refused:" in result.stdout, result.stdout
+    assert "MPI_THREAD_FUNNELED" in result.stdout

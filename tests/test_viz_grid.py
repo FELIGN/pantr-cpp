@@ -48,7 +48,7 @@ def test_cell_bounds_recovered() -> None:
     for cid in range(g.num_cells):
         lo, hi = g.cell_bounds(cid)
         cell = ug.get_cell(cid)
-        pts = np.asarray(cell.points)
+        pts = np.asarray(cell.points, dtype=np.float64)
         np.testing.assert_allclose(pts[:, :2].min(axis=0), lo)
         np.testing.assert_allclose(pts[:, :2].max(axis=0), hi)
 

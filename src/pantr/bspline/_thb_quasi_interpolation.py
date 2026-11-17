@@ -17,6 +17,10 @@ Lee-Lyche-Mørken local projector, evaluated on a **level-l active leaf cell** i
 component on the active ``B^l_β``, so ``λ^l_β(s) = c_β`` for any THB spline ``s`` and
 ``Q_H`` reproduces the THB space exactly.
 
+The points to sample and the contraction of the samples with the weights are the C++ library's
+(``pantr::thb::THBQuasiInterpolation``, ``include/pantr/thb/quasi_interpolate.hpp``); this module
+calls ``func`` on the points in between.
+
 Main exports:
 
 - :func:`quasi_interpolate_thb_spline`: quasi-interpolate a callable onto a
@@ -25,25 +29,23 @@ Main exports:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, get_args
+from typing import TYPE_CHECKING, Any, get_args
 
 import numpy as np
 from numpy import typing as npt
 
-from ._bspline_quasi_interpolation import (
-    QIKind,
-    _contract_weights,
-    _evaluate_func,
-    _interval_interior_points,
-    _local_weight_row,
-    _tensor_point_grid,
-)
-from ._bspline_space_factory import get_greville_abscissae
+from .._ext import ext
+from ._bspline_quasi_interpolation import QIKind, _evaluate_func
 from ._thb_spline import THBSpline
 from ._thb_spline_space import THBSplineSpace
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+_cpp: Any = ext.bspline
+"""The compiled THB quasi-interpolants (private; untyped: one class per dtype)."""
+
+_F32 = np.dtype(np.float32)
 
 
 def quasi_interpolate_thb_spline(
@@ -89,74 +91,11 @@ def quasi_interpolate_thb_spline(
         raise ValueError(f"Unknown kind {kind!r}; expected one of {valid}.")
     space._check_not_stale()
 
-    grid = space.grid
-    dim = space.dim
-    num_active = space.num_total_basis
-
-    # Candidate leaf cells per dof: cells whose level equals the contributing
-    # function's level (i.e. level-l active leaf cells inside supp(B^l_β)).
-    candidates: dict[int, list[tuple[int, tuple[int, ...]]]] = {}
-    for cid in range(grid.num_cells):
-        cell_lvl = grid.cell_level(cid)
-        for dof, level, multi in space._cell_contributions(cid):
-            if level == cell_lvl:
-                candidates.setdefault(dof, []).append((cid, multi))
-
-    greville_cache: dict[tuple[int, int], npt.NDArray[np.float64]] = {}
-
-    def _greville(level: int, k: int) -> npt.NDArray[np.float64]:
-        key = (level, k)
-        cached = greville_cache.get(key)
-        if cached is None:
-            cached = np.asarray(
-                get_greville_abscissae(space.level_space(level).spaces[k]), dtype=np.float64
-            )
-            greville_cache[key] = cached
-        return cached
-
-    orders = tuple(d + 1 for d in space.degrees)
-    block = int(np.prod(orders))
-    all_points = np.empty((num_active * block, dim), dtype=np.float64)
-    dof_weights: list[list[npt.NDArray[np.float64]]] = [[] for _ in range(num_active)]
-
-    for dof in range(num_active):
-        cand = candidates.get(dof)
-        if not cand:
-            raise RuntimeError(
-                f"active dof {dof} has no leaf cell at its level; the THB space is inconsistent."
-            )
-        level = space._dof_level(dof)
-        multi = cand[0][1]
-        target = np.array([_greville(level, k)[multi[k]] for k in range(dim)], dtype=np.float64)
-
-        # Pick the candidate leaf cell whose centre is nearest the Greville point
-        # (any leaf cell is exact for splines; this limits the local extrapolation).
-        best_cid, best_multi = cand[0]
-        best_dist = np.inf
-        for cell_id, cell_multi in cand:
-            lo, hi = grid.cell_bounds(cell_id)
-            dist = float(np.linalg.norm(0.5 * (lo + hi) - target))
-            if dist < best_dist:
-                best_dist, best_cid, best_multi = dist, cell_id, cell_multi
-        lo, hi = grid.cell_bounds(best_cid)
-        level_space = space.level_space(level)
-        per_dir_points: list[npt.NDArray[np.float64]] = []
-        for k in range(dim):
-            pts = _interval_interior_points(float(lo[k]), float(hi[k]), orders[k])
-            per_dir_points.append(pts)
-            # best_multi[k] is the per-direction index within the level-l
-            # tensor-product basis (not the global hierarchical dof index),
-            # which is what _local_weight_row expects.
-            dof_weights[dof].append(_local_weight_row(level_space.spaces[k], pts, best_multi[k]))
-        all_points[dof * block : (dof + 1) * block] = _tensor_point_grid(per_dir_points)
-
-    values, rank, scalar = _evaluate_func(func, all_points)
-    value_tensor = values.reshape(num_active, *orders, rank)
-
-    coeffs = np.empty((num_active, rank), dtype=np.float64)
-    for dof in range(num_active):
-        coeffs[dof] = _contract_weights(dof_weights[dof], value_tensor[dof])
-
+    f32 = space._root_space.dtype == _F32
+    qi = (_cpp.THBQuasiInterpolationF32 if f32 else _cpp.THBQuasiInterpolationF64)(space._h)
+    # the local functionals are built before func is sampled
+    values, _rank, scalar = _evaluate_func(func, qi.points())
+    coeffs = np.asarray(qi.coefficients(np.ascontiguousarray(values)))
     if scalar:
         return THBSpline(space, coeffs[:, 0])
     return THBSpline(space, coeffs)

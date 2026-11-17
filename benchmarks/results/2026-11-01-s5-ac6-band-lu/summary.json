@@ -1,0 +1,549 @@
+{
+ "protocol": {
+  "k": 10,
+  "repeats": 30,
+  "threads": [
+   1,
+   8
+  ],
+  "cpus": "0-7",
+  "reference": "main",
+  "argv": [
+   "benchmarks/compare.py",
+   "--out-dir",
+   "benchmarks/results/2026-11-01-s5-ac6-band-lu",
+   "--side",
+   "main=<main src>",
+   "--side",
+   "branch=<branch src>",
+   "--k",
+   "10",
+   "--threads",
+   "1",
+   "8",
+   "--cpus",
+   "0-7",
+   "--filter",
+   "^S5\\.(interpolate|l2_project)"
+  ]
+ },
+ "sides": {
+  "main": {
+   "commit": "11ab436abd94edf8f414d1ec2d9ed0bf77e38e89",
+   "extension": "none"
+  },
+  "branch": {
+   "commit": "521509d43e1c2c3527921bb9f9338b05cb0c911b",
+   "extension": "pantr._pantr_v4 (v4, _pantr_v4.abi3.so)"
+  }
+ },
+ "machine": {
+  "cpu": "Intel(R) Xeon(R) Gold 6148 CPU @ 2.40GHz",
+  "platform": "Linux-5.15.0-144-generic-x86_64-with-glibc2.35",
+  "affinity": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7
+  ],
+  "governor": "schedutil"
+ },
+ "cases": {
+  "S5.interpolate_bspline.tiny@t1": {
+   "what": {
+    "main": "interpolate_bspline on a 1D cubic space of 4 intervals (Greville nodes)",
+    "branch": "interpolate_bspline on a 1D cubic space of 4 intervals (Greville nodes)"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 168901.0,
+     "range_ns": 3867.875,
+     "process_medians_ns": [
+      170553.4166666667,
+      170009.375,
+      171295.5,
+      168783.8333333333,
+      167852.0833333333,
+      167513.625,
+      167833.75,
+      169018.1666666667,
+      167427.625,
+      170342.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 55514.09444444445,
+     "range_ns": 28891.590277777766,
+     "process_medians_ns": [
+      81900.8,
+      83559.72916666666,
+      55052.79411764706,
+      54668.13888888889,
+      55080.27777777778,
+      55927.05714285714,
+      55081.944444444445,
+      55120.88888888889,
+      55907.3,
+      55929.11111111111
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S5.l2_project_bspline.tiny@t1": {
+   "what": {
+    "main": "l2_project_bspline on a 1D cubic space of 4 intervals",
+    "branch": "l2_project_bspline on a 1D cubic space of 4 intervals"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 421564.2,
+     "range_ns": 29214.199999999953,
+     "process_medians_ns": [
+      421090.1,
+      430481.4,
+      420746.2,
+      444464.5,
+      415250.30000000005,
+      417184.8,
+      422130.80000000005,
+      429643.19999999995,
+      416437.5,
+      422038.30000000005
+     ]
+    },
+    "branch": {
+     "statistic_ns": 54399.526839339334,
+     "range_ns": 27620.05855855855,
+     "process_medians_ns": [
+      80733.16666666666,
+      54965.05882352941,
+      54003.375,
+      53730.92647058824,
+      53113.10810810811,
+      55616.37142857143,
+      56174.416666666664,
+      54399.48611111111,
+      54399.56756756757,
+      53452.13513513513
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S5.interpolate_bspline.medium@t1": {
+   "what": {
+    "main": "interpolate_bspline on a 1D cubic space of 100 intervals (Greville nodes)",
+    "branch": "interpolate_bspline on a 1D cubic space of 100 intervals (Greville nodes)"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 671447.6875,
+     "range_ns": 27493.833333333372,
+     "process_medians_ns": [
+      692908.5,
+      684299.6666666667,
+      685251.6666666667,
+      684233.5,
+      667154.5,
+      665414.6666666666,
+      670630.5,
+      671260.0,
+      667418.25,
+      671635.375
+     ]
+    },
+    "branch": {
+     "statistic_ns": 79057.83253205128,
+     "range_ns": 5674.320512820515,
+     "process_medians_ns": [
+      79567.85416666667,
+      83571.66666666667,
+      78088.98076923077,
+      78446.38461538462,
+      78540.26000000001,
+      79845.96153846153,
+      77897.34615384616,
+      79125.26923076923,
+      78990.39583333333,
+      80874.23076923078
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S5.l2_project_bspline.medium@t1": {
+   "what": {
+    "main": "l2_project_bspline on a 1D cubic space of 100 intervals",
+    "branch": "l2_project_bspline on a 1D cubic space of 100 intervals"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 1309288.0,
+     "range_ns": 110856.75,
+     "process_medians_ns": [
+      1341075.5,
+      1312667.0,
+      1337800.75,
+      1399968.75,
+      1294817.25,
+      1289112.0,
+      1305909.0,
+      1300604.5,
+      1302139.25,
+      1320028.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 120003.9705882353,
+     "range_ns": 7932.036199095019,
+     "process_medians_ns": [
+      119126.61764705883,
+      123828.79411764705,
+      127058.65384615384,
+      119288.0588235294,
+      120099.11764705883,
+      121245.5625,
+      119593.3125,
+      123195.64705882352,
+      119431.08823529413,
+      119908.82352941178
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S5.interpolate_bspline.large@t1": {
+   "what": {
+    "main": "interpolate_bspline on a 1D cubic space of 1000 intervals (Greville nodes)",
+    "branch": "interpolate_bspline on a 1D cubic space of 1000 intervals (Greville nodes)"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 26525583.75,
+     "range_ns": 1468881.5,
+     "process_medians_ns": [
+      26503890.0,
+      27380322.5,
+      26133539.0,
+      26608609.5,
+      25911441.0,
+      26425349.5,
+      26319288.0,
+      26986781.0,
+      26547277.5,
+      26824390.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 8876247.5,
+     "range_ns": 919563.5,
+     "process_medians_ns": [
+      9723837.5,
+      9074551.5,
+      8827757.0,
+      8879288.0,
+      8845230.0,
+      9112786.5,
+      8873207.0,
+      8861803.0,
+      8804274.0,
+      8986365.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S5.l2_project_bspline.large@t1": {
+   "what": {
+    "main": "l2_project_bspline on a 1D cubic space of 1000 intervals",
+    "branch": "l2_project_bspline on a 1D cubic space of 1000 intervals"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 158719595.0,
+     "range_ns": 4706098.5,
+     "process_medians_ns": [
+      160400970.5,
+      159070989.0,
+      159420012.5,
+      158368201.0,
+      156916192.5,
+      159325022.5,
+      157947400.0,
+      156633759.5,
+      158158777.5,
+      161339858.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 9467670.25,
+     "range_ns": 887727.5,
+     "process_medians_ns": [
+      10213048.5,
+      9584536.0,
+      9424813.0,
+      9440059.0,
+      9495281.5,
+      9355864.5,
+      9523490.5,
+      9497116.5,
+      9325321.0,
+      9342956.5
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S5.interpolate_bspline.tiny@t8": {
+   "what": {
+    "main": "interpolate_bspline on a 1D cubic space of 4 intervals (Greville nodes)",
+    "branch": "interpolate_bspline on a 1D cubic space of 4 intervals (Greville nodes)"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 173581.60416666666,
+     "range_ns": 87349.1875,
+     "process_medians_ns": [
+      173730.3333333333,
+      176101.0,
+      173432.875,
+      172924.75,
+      175381.0,
+      169284.5,
+      169499.125,
+      168471.75,
+      253900.875,
+      255820.9375
+     ]
+    },
+    "branch": {
+     "statistic_ns": 55440.57695195195,
+     "range_ns": 30463.159722222234,
+     "process_medians_ns": [
+      84875.89583333334,
+      59422.142857142855,
+      55515.194444444445,
+      57179.09459459459,
+      55034.11363636363,
+      54772.75,
+      54412.73611111111,
+      55365.95945945946,
+      55062.555555555555,
+      57563.357142857145
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S5.l2_project_bspline.tiny@t8": {
+   "what": {
+    "main": "l2_project_bspline on a 1D cubic space of 4 intervals",
+    "branch": "l2_project_bspline on a 1D cubic space of 4 intervals"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 422682.5375,
+     "range_ns": 16660.599999999977,
+     "process_medians_ns": [
+      433990.1,
+      420357.4,
+      417329.5,
+      421869.69999999995,
+      429470.0,
+      423495.375,
+      419550.2,
+      418751.3,
+      423841.9,
+      433073.4
+     ]
+    },
+    "branch": {
+     "statistic_ns": 54475.652777777774,
+     "range_ns": 2982.7456279809194,
+     "process_medians_ns": [
+      54879.83333333333,
+      53241.44594594595,
+      54071.47222222222,
+      56081.032258064515,
+      56201.529411764706,
+      53607.31081081081,
+      55505.36486486487,
+      53378.10810810811,
+      53218.78378378379,
+      55390.68571428572
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S5.interpolate_bspline.medium@t8": {
+   "what": {
+    "main": "interpolate_bspline on a 1D cubic space of 100 intervals (Greville nodes)",
+    "branch": "interpolate_bspline on a 1D cubic space of 100 intervals (Greville nodes)"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 677597.4166666666,
+     "range_ns": 46748.666666666744,
+     "process_medians_ns": [
+      695799.0,
+      657472.5,
+      660605.5,
+      704221.1666666667,
+      697991.3333333334,
+      685903.3333333334,
+      675337.5,
+      666747.25,
+      679857.3333333333,
+      667652.75
+     ]
+    },
+    "branch": {
+     "statistic_ns": 79193.65384615384,
+     "range_ns": 11234.338628762547,
+     "process_medians_ns": [
+      81449.14,
+      78319.86538461538,
+      80867.04000000001,
+      78467.0,
+      78730.55769230769,
+      78304.42307692306,
+      80312.34615384616,
+      79656.75,
+      77481.09615384616,
+      88715.4347826087
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S5.l2_project_bspline.medium@t8": {
+   "what": {
+    "main": "l2_project_bspline on a 1D cubic space of 100 intervals",
+    "branch": "l2_project_bspline on a 1D cubic space of 100 intervals"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 1310259.0,
+     "range_ns": 65734.5,
+     "process_medians_ns": [
+      1293854.0,
+      1307447.0,
+      1311999.5,
+      1354248.25,
+      1330322.5,
+      1306518.5,
+      1359588.5,
+      1308518.5,
+      1307264.75,
+      1328457.0
+     ]
+    },
+    "branch": {
+     "statistic_ns": 119415.66176470587,
+     "range_ns": 6123.5,
+     "process_medians_ns": [
+      120920.08823529413,
+      118462.38235294117,
+      123648.88235294117,
+      118912.5294117647,
+      118081.35294117648,
+      122810.11764705883,
+      117698.08823529413,
+      118658.17647058822,
+      119918.79411764705,
+      123821.58823529413
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S5.interpolate_bspline.large@t8": {
+   "what": {
+    "main": "interpolate_bspline on a 1D cubic space of 1000 intervals (Greville nodes)",
+    "branch": "interpolate_bspline on a 1D cubic space of 1000 intervals (Greville nodes)"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 26377929.0,
+     "range_ns": 1404173.5,
+     "process_medians_ns": [
+      26644440.0,
+      25924406.0,
+      26126254.0,
+      26505739.5,
+      26055545.5,
+      26250118.5,
+      27328579.5,
+      26938555.0,
+      27214104.0,
+      26242442.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 8886255.25,
+     "range_ns": 298097.0,
+     "process_medians_ns": [
+      8884514.0,
+      8863674.0,
+      8864356.0,
+      8865291.0,
+      8887996.5,
+      9063383.5,
+      8926086.0,
+      9050417.0,
+      8843427.5,
+      9141524.5
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S5.l2_project_bspline.large@t8": {
+   "what": {
+    "main": "l2_project_bspline on a 1D cubic space of 1000 intervals",
+    "branch": "l2_project_bspline on a 1D cubic space of 1000 intervals"
+   },
+   "sides": {
+    "main": {
+     "statistic_ns": 158772237.25,
+     "range_ns": 6519426.5,
+     "process_medians_ns": [
+      156858293.5,
+      156062575.0,
+      162557745.5,
+      156355829.5,
+      160128931.0,
+      157415543.5,
+      161224294.5,
+      156349811.0,
+      160809587.5,
+      162582001.5
+     ]
+    },
+    "branch": {
+     "statistic_ns": 9452735.75,
+     "range_ns": 312423.5,
+     "process_medians_ns": [
+      9546330.0,
+      9701985.5,
+      9397396.5,
+      9402770.5,
+      9457570.0,
+      9447901.5,
+      9683370.0,
+      9389562.0,
+      9621618.5,
+      9401424.5
+     ],
+     "flagged": false
+    }
+   }
+  }
+ }
+}

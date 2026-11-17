@@ -2,32 +2,27 @@
 
 from __future__ import annotations
 
+import copy as _copy
+import functools
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Literal, overload
 
 import numpy as np
 from numpy import typing as npt
 
-from .._transform_control_points import _apply_affine_to_control_points
-from ._bezier_collapse import _collapse_along_axis
-from ._bezier_compose import _compose_bezier
-from ._bezier_degree import (
-    _degree_elevate_bezier,
-    _degree_reduce_bezier,
-    _degree_reduction_l2_error,
-    _minimize_degree_bezier,
-)
-from ._bezier_derivative import _derivative_bezier
-from ._bezier_eval import _evaluate_bezier, _evaluate_bezier_deriv
-from ._bezier_product import _multiply_bezier
-from ._bezier_restrict import _restrict_bezier
-from ._bezier_slice import _slice_bezier
-from ._bezier_split import _split_bezier
+from .._ext import ext
+from ..basis._basis_utils import _validate_out_array
+from ..quad import PointsLattice
 
 if TYPE_CHECKING:
     from ..bspline import Bspline
-    from ..quad import PointsLattice
     from ..transform import AffineTransform
+
+_cpp: Any = ext.bezier
+"""The compiled Bezier values (private; untyped: one class per dtype)."""
+
+_F32: np.dtype[np.float32] = np.dtype(np.float32)
+_F64: np.dtype[np.float64] = np.dtype(np.float64)
 
 
 class Bezier:
@@ -37,13 +32,30 @@ class Bezier:
     degree in each parametric direction is inferred from the control point
     array shape: ``degree[d] = control_points.shape[d] - 1``.
 
+    The value is immutable: the control points are copied in at construction
+    and read-only, and the operations that take ``in_place=True`` replace the
+    compiled value this object holds rather than writing into it. A Bézier made
+    by a ``copy=False`` conversion from a B-spline shares the B-spline's
+    control-point array, which is as immutable: an in-place operation on the
+    B-spline replaces its compiled value and leaves that array as it was.
+
     Attributes:
-        _control_points (npt.NDArray[np.float32 | np.float64]): Control point
-            array with shape ``(*degrees_plus_1, rank)``, where the last axis
-            is the output rank (including the homogeneous weight for rational).
+        _h (Any): The compiled value (``BezierF64`` or ``BezierF32``).
+        _shape (tuple[int, ...]): Control point shape ``(*degrees_plus_1, cp_size)``,
+            where the last axis includes the homogeneous weight for rational.
         _is_rational (bool): Whether the Bézier is rational (last control
             point coordinate is a homogeneous weight).
+        _dtype (np.dtype): ``float32`` or ``float64``.
+
+    The read-only control point view is read from ``_h`` on first use and kept
+    in the instance (``control_points`` is a cached property that refuses
+    assignment).
     """
+
+    _h: Any
+    _shape: tuple[int, ...]
+    _is_rational: bool
+    _dtype: np.dtype[np.float32] | np.dtype[np.float64]
 
     def __init__(
         self,
@@ -55,8 +67,9 @@ class Bezier:
         Args:
             control_points (npt.ArrayLike): Control points. Shape must be at
                 least 2D: ``(*degrees_plus_1, rank)``. A 1D input of shape
-                ``(n,)`` is reshaped to ``(n, 1)`` (scalar field). Integer
-                arrays are cast to ``float64``.
+                ``(n,)`` is reshaped to ``(n, 1)`` (scalar field). They are
+                copied. ``float32`` input stays ``float32``; any other real
+                dtype (integers and booleans included) is cast to ``float64``.
             is_rational (bool): Whether the Bézier is rational. Defaults to
                 False.
 
@@ -64,30 +77,101 @@ class Bezier:
             ValueError: If the control points have fewer than 1 entry in any
                 parametric direction.
             ValueError: If the Bézier has rank smaller than 1.
+            TypeError: If the control points are complex.
         """
-        cp = np.asarray(control_points)
-        if np.issubdtype(cp.dtype, np.integer):
-            cp = cp.astype(np.float64)
-        if cp.ndim < 1:
-            raise ValueError("Control points must be at least 1D.")
-        if cp.ndim == 1:
-            cp = cp[:, np.newaxis]
+        cp = _as_control_points(control_points)
+        rational = bool(is_rational)
+        f32 = cp.dtype is _F32
+        # Stored in the instance dict directly: an attribute write would go through `__setattr__`.
+        d = self.__dict__
+        d["_h"] = (_cpp.BezierF32 if f32 else _cpp.BezierF64)(cp, rational)
+        d["_shape"] = cp.shape
+        d["_is_rational"] = rational
+        d["_dtype"] = _F32 if f32 else _F64
 
-        if cp.ndim < 2:  # pragma: no cover - guarded by the reshape above  # noqa: PLR2004
-            raise ValueError("Control points must be at least 2D after reshape.")
+    def _set_handle(
+        self,
+        h: Any,  # noqa: ANN401
+        shape: tuple[int, ...] | None = None,
+        dtype: np.dtype[Any] | None = None,
+    ) -> None:
+        """Hold a compiled value and cache what the properties return (DR-25).
 
-        for d in range(cp.ndim - 1):
-            if cp.shape[d] < 1:
-                raise ValueError(
-                    f"Control points must have at least 1 entry in parametric "
-                    f"direction {d}, got {cp.shape[d]}."
-                )
+        Args:
+            h (Any): The compiled value.
+            shape (tuple[int, ...] | None): Its control point shape, when the caller knows it.
+            dtype (np.dtype | None): Its dtype, when the caller knows it.
+        """
+        f32 = isinstance(h, _cpp.BezierF32) if dtype is None else dtype == _F32
+        d = self.__dict__
+        d["_h"] = h
+        d["_shape"] = tuple(h.shape) if shape is None else shape
+        d["_is_rational"] = bool(h.rational)
+        d["_dtype"] = _F32 if f32 else _F64
+        # Drop the control-point view of the previous value; the next read takes the new one.
+        d.pop("control_points", None)
 
-        self._control_points: npt.NDArray[np.float32 | np.float64] = cp
-        self._is_rational = is_rational
+    @classmethod
+    def _from_handle(cls, h: Any) -> Bezier:  # noqa: ANN401
+        """Wrap a compiled value without copying it.
 
-        if self.rank <= 0:
-            raise ValueError(f"The Bézier must have at least rank one. Got rank {self.rank}.")
+        Args:
+            h (Any): The compiled value.
+
+        Returns:
+            Bezier: The wrapper.
+        """
+        b = object.__new__(cls)
+        b._set_handle(h)
+        return b
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        """Pickle through the constructor, with a subclass's own attributes as state.
+
+        Returns:
+            tuple[Any, ...]: The class, the constructor arguments and the extra attributes.
+        """
+        return (type(self), (self.control_points, self._is_rational), _extra_state(self))
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Restore extra attributes, or rebuild from a previous release's pickle.
+
+        A previous release pickled the plain attributes ``_control_points`` and ``_is_rational``;
+        such a state rebuilds the compiled value from them.
+
+        Args:
+            state (dict[str, Any]): The pickled state.
+        """
+        state = dict(state)
+        if "_control_points" in state:
+            cp = state.pop("_control_points")
+            Bezier.__init__(self, cp, bool(state.pop("_is_rational", False)))
+        self.__dict__.update(state)
+
+    def __copy__(self) -> Bezier:
+        """Copy: the new object shares the immutable compiled value.
+
+        Returns:
+            Bezier: The copy, of the same class, with the same attributes.
+        """
+        new = object.__new__(type(self))
+        new.__dict__.update(self.__dict__)
+        return new
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> Bezier:
+        """Deep copy: shares the immutable compiled value and deep-copies any other attribute.
+
+        Args:
+            memo (dict[int, Any]): The deep-copy memo.
+
+        Returns:
+            Bezier: The copy.
+        """
+        new = object.__new__(type(self))
+        memo[id(self)] = new
+        for key, value in self.__dict__.items():
+            new.__dict__[key] = value if key in _VALUE_ATTRS else _copy.deepcopy(value, memo)
+        return new
 
     @property
     def dim(self) -> int:
@@ -96,7 +180,7 @@ class Bezier:
         Returns:
             int: Number of parametric dimensions.
         """
-        return self._control_points.ndim - 1
+        return len(self._shape) - 1
 
     @property
     def degree(self) -> tuple[int, ...]:
@@ -106,17 +190,53 @@ class Bezier:
             tuple[int, ...]: Polynomial degree for each parametric dimension,
             computed as ``shape[d] - 1``.
         """
-        return tuple(s - 1 for s in self._control_points.shape[:-1])
+        return tuple(s - 1 for s in self._shape[:-1])
 
-    @property
+    @functools.cached_property
     def control_points(self) -> npt.NDArray[np.float32 | np.float64]:
         """Get the control points of the Bézier.
 
         Returns:
             npt.NDArray[np.float32 | np.float64]: Control point array with
-            shape ``(*degrees_plus_1, rank)``.
+            shape ``(*degrees_plus_1, rank)``, read-only: a view of the
+            immutable value, which keeps the values it showed when it was read
+            even after an in-place operation on this object.
         """
-        return self._control_points
+        # Read once and kept in the instance dict, so later reads cost no call; `__setattr__` and
+        # `__delattr__` refuse the name, as they did for the plain property it replaces.
+        cp: npt.NDArray[np.float32 | np.float64] = self._h.control_points
+        return cp
+
+    def __setattr__(self, name: str, value: object) -> None:
+        """Refuse assigning ``control_points``, a read-only property.
+
+        Args:
+            name (str): The attribute.
+            value (object): The value.
+
+        Raises:
+            AttributeError: For ``control_points``.
+        """
+        if name == "control_points":
+            raise AttributeError(
+                f"property 'control_points' of {type(self).__name__!r} object has no setter"
+            )
+        object.__setattr__(self, name, value)
+
+    def __delattr__(self, name: str) -> None:
+        """Refuse deleting ``control_points``, a read-only property.
+
+        Args:
+            name (str): The attribute.
+
+        Raises:
+            AttributeError: For ``control_points``.
+        """
+        if name == "control_points":
+            raise AttributeError(
+                f"property 'control_points' of {type(self).__name__!r} object has no deleter"
+            )
+        object.__delattr__(self, name)
 
     @property
     def is_rational(self) -> bool:
@@ -139,8 +259,8 @@ class Bezier:
         Returns:
             int: Output rank of the Bézier.
         """
-        rk = int(self._control_points.shape[-1])
-        return rk - 1 if self.is_rational else rk
+        rk = self._shape[-1]
+        return rk - 1 if self._is_rational else rk
 
     @property
     def dtype(self) -> npt.DTypeLike:
@@ -150,7 +270,7 @@ class Bezier:
             npt.DTypeLike: The numpy dtype (float32 or float64) of the control
             point array.
         """
-        return self._control_points.dtype
+        return self._dtype
 
     # ------------------------------------------------------------------
     # Evaluation
@@ -180,7 +300,12 @@ class Bezier:
             ValueError: If the points dtype does not match the Bézier dtype,
                 or if ``out`` has incorrect shape or dtype.
         """
-        return _evaluate_bezier(self, pts, out)
+        if isinstance(pts, PointsLattice):
+            self._check_lattice(pts)
+            raw = self._h.evaluate_lattice(pts._h)
+        else:
+            raw = self._h.evaluate(self._points_2d(pts))
+        return _finish(raw, out, self._dtype)
 
     def evaluate_derivatives(
         self,
@@ -203,6 +328,10 @@ class Bezier:
             out (npt.NDArray[np.float32 | np.float64] | None): Optional
                 pre-allocated output array. Defaults to None.
 
+        An order above the degree of a non-rational Bézier gives zero, or NaN
+        in a component whose control points hold a NaN or an infinity and at a
+        point with a NaN or infinite coordinate.
+
         Returns:
             npt.NDArray[np.float32 | np.float64]: Mixed partial derivative
             values.
@@ -223,7 +352,67 @@ class Bezier:
             True
         """
         orders_seq: Sequence[int] = [orders] * self.dim if isinstance(orders, int) else orders
-        return _evaluate_bezier_deriv(self, pts, orders_seq, out)
+        orders_tuple = tuple(orders_seq)
+        # Checked before the points, as before; the compiled call checks them again.
+        if len(orders_tuple) != self.dim:
+            raise ValueError(f"len(orders) ({len(orders_tuple)}) must match dim ({self.dim}).")
+        if any(o < 0 for o in orders_tuple):
+            raise ValueError("All derivative orders must be non-negative.")
+        if isinstance(pts, PointsLattice):
+            self._check_lattice(pts)
+            raw = self._h.evaluate_derivatives_lattice(pts._h, list(orders_tuple))
+        else:
+            raw = self._h.evaluate_derivatives(self._points_2d(pts), list(orders_tuple))
+        return _finish(raw, out, self._dtype)
+
+    def _check_lattice(self, pts: PointsLattice) -> None:
+        """Check a lattice's dimension and dtype against this Bézier, as before.
+
+        Args:
+            pts (PointsLattice): The lattice.
+
+        Raises:
+            ValueError: On a dimension or dtype mismatch.
+        """
+        dtype = self._dtype
+        if self.dim == 1:
+            if pts.dim != 1:
+                raise ValueError("PointsLattice must be 1D for a 1D Bézier.")
+            if pts.dtype != dtype:
+                raise ValueError(f"Points dtype ({pts.dtype}) must match Bézier dtype ({dtype}).")
+            return
+        if pts.dim != self.dim:
+            raise ValueError(f"PointsLattice dim ({pts.dim}) must match Bézier dim ({self.dim}).")
+        if pts.dtype != dtype:
+            raise ValueError(
+                f"PointsLattice dtype ({pts.dtype}) must match Bézier dtype ({dtype})."
+            )
+
+    def _points_2d(self, pts: Any) -> npt.NDArray[np.float32 | np.float64]:  # noqa: ANN401
+        """Check points against this Bézier and view them as a C-contiguous ``(n, dim)`` array.
+
+        Args:
+            pts (Any): The points: ``(n,)`` for a 1D Bézier, ``(n, dim)`` otherwise.
+
+        Returns:
+            npt.NDArray[np.float32 | np.float64]: The points, ``(n, dim)``.
+
+        Raises:
+            ValueError: On a shape or dtype mismatch (the messages of the previous release).
+        """
+        arr = np.asarray(pts)
+        dtype = self._dtype
+        if self.dim == 1:
+            if arr.ndim != 1:
+                raise ValueError("Points must be a 1D array for a 1D Bézier.")
+            if arr.dtype != dtype:
+                raise ValueError(f"Points dtype ({arr.dtype}) must match Bézier dtype ({dtype}).")
+            return np.ascontiguousarray(arr).reshape(-1, 1)
+        if arr.ndim != 2 or arr.shape[1] != self.dim:  # noqa: PLR2004
+            raise ValueError(f"pts must be a 2D array with {self.dim} columns.")
+        if arr.dtype != dtype:
+            raise ValueError(f"Points dtype ({arr.dtype}) must match Bézier dtype ({dtype}).")
+        return np.ascontiguousarray(arr)
 
     # ------------------------------------------------------------------
     # Derivative (returns new Bezier)
@@ -240,16 +429,15 @@ class Bezier:
         result has degree ``p - 1`` (or ``p`` when ``keep_degree=True``).
 
         For rational Bézier, the quotient rule is applied, producing a
-        rational Bézier of degree ``2p`` in direction ``d`` (or the original
-        degree when ``keep_degree=True``).
+        rational Bézier of degree ``2p`` in direction ``d``; ``keep_degree``
+        is not consulted.
 
         Args:
             direction (int): Parametric direction for differentiation.
                 Must be in ``[0, dim)``. Defaults to 0.
-            keep_degree (bool): If ``True``, the result preserves the same
-                degree as the original Bézier by fusing derivative and degree
-                elevation. This is useful, for instance, when computing
-                derivatives of rational polynomials (in the numerator).
+            keep_degree (bool): If ``True``, the result of a non-rational
+                Bézier preserves the original degree by fusing derivative and
+                degree elevation. Ignored for a rational Bézier.
                 Defaults to ``False``.
 
         Returns:
@@ -270,11 +458,7 @@ class Bezier:
             >>> f.derivative(keep_degree=True).degree
             (2,)
         """
-        if direction < 0 or direction >= self.dim:
-            raise ValueError(f"direction must be in [0, {self.dim}), got {direction}.")
-        if self.degree[direction] < 1:
-            raise ValueError("Derivative of a degree-0 Bézier is not defined.")
-        return _derivative_bezier(self, direction, keep_degree=keep_degree)
+        return Bezier._from_handle(self._h.derivative(direction, bool(keep_degree)))
 
     # ------------------------------------------------------------------
     # Degree elevation
@@ -304,20 +488,7 @@ class Bezier:
             increments = (degree_increments,) * self.dim
         else:
             increments = tuple(degree_increments)
-
-        if len(increments) != self.dim:
-            raise ValueError(
-                f"Number of degree increments ({len(increments)}) "
-                f"must match dimension ({self.dim})."
-            )
-
-        if any(inc < 0 for inc in increments):
-            raise ValueError("Degree increments must be non-negative.")
-
-        if all(inc == 0 for inc in increments):
-            raise ValueError("At least one degree increment must be positive.")
-
-        return _degree_elevate_bezier(self, increments)
+        return Bezier._from_handle(self._h.elevate_degree(list(increments)))
 
     # ------------------------------------------------------------------
     # Degree reduction
@@ -330,7 +501,8 @@ class Bezier:
         each parametric direction.  Among the polynomials of the lower degree
         that reproduce this one at the ends of the parametric domain, the result
         is the one closest in :math:`L^2([0, 1]^{\dim})`; the endpoint values are
-        reproduced exactly, bit for bit.
+        reproduced exactly, value for value, when the control points are finite (the
+        bits too, except that a ``-0.0`` comes back as ``+0.0``).
 
         Unlike :meth:`elevate_degree`, this operation is **not exact** in
         general: the result is an approximation of the original mapping.  Use
@@ -363,14 +535,17 @@ class Bezier:
             ValueError: If the object is rational and the reduction drives a
                 control weight to zero or below.
         """
-        return _degree_reduce_bezier(self, self._checked_decrements(degree_decrements))
+        decrements = list(self._checked_decrements(degree_decrements))
+        return Bezier._from_handle(_cpp.reduce_degree(self._h, decrements))
 
     def degree_reduction_error(self, degree_decrements: int | Sequence[int]) -> float:
         r"""Compute the :math:`L^2` error that :meth:`reduce_degree` would introduce.
 
-        The value is exact rather than an estimate: it is
-        :math:`\lVert f - g \rVert_{L^2}` for the reduction *g* this Bézier would
-        produce, obtained from the Bernstein mass matrix rather than by sampling.
+        The value is :math:`\lVert f - g \rVert_{L^2}` for the reduction *g* this
+        Bézier would produce, obtained from the Bernstein mass matrix rather than by
+        sampling: exact in exact arithmetic, and computed in floating point, where the
+        Gram contraction loses relative accuracy as the degree grows (no bound is
+        derived for it; at high degree the value is an estimate).
         Rank components are combined in the Euclidean sense, and for a rational
         Bézier the norm is taken over the homogeneous coefficients, not over the
         projected mapping.
@@ -393,7 +568,8 @@ class Bezier:
             ValueError: If all degree decrements are zero.
             ValueError: If the number of decrements does not match the dimension.
             ValueError: If any decrement exceeds the current degree in that
-                direction.
+                direction, or the degree exceeds 61 (the round trip's elevation needs
+                exact binomial coefficients).
 
         Example:
             >>> import numpy as np
@@ -402,8 +578,8 @@ class Bezier:
             >>> round(bezier.degree_reduction_error(1), 6)
             0.138013
         """
-        decrements = self._checked_decrements(degree_decrements)
-        return _degree_reduction_l2_error(self, decrements)
+        decrements = list(self._checked_decrements(degree_decrements))
+        return float(_cpp.degree_reduction_error(self._h, decrements))
 
     def _checked_decrements(self, degree_decrements: int | Sequence[int]) -> tuple[int, ...]:
         """Normalise and validate a degree-decrement argument.
@@ -475,6 +651,11 @@ class Bezier:
             Bezier: A new Bézier with the lowest degree that preserves
             accuracy.  If no reduction is possible, returns a copy.
 
+        Raises:
+            ValueError: If a direction's degree exceeds 61, the largest for which the
+                binomial coefficients of the round trip are exact, or ``tol`` is NaN
+                or infinite.
+
         Example:
             >>> import numpy as np
             >>> b = Bezier(np.array([3.0, 3.0, 3.0, 1.0]).reshape(4, 1))
@@ -482,7 +663,7 @@ class Bezier:
             (3,)
             >>> b_min = b.minimize_degree()
         """
-        return _minimize_degree_bezier(self, tol)
+        return Bezier._from_handle(_cpp.minimize_degree(self._h, tol))
 
     # ------------------------------------------------------------------
     # Multiply
@@ -505,12 +686,19 @@ class Bezier:
             other (Bezier): The second Bézier operand. Must have the same
                 dimension, dtype, and rank as ``self``.
 
+        NaN or infinite control points propagate: every product control point
+        whose formula reads one is NaN or infinite.
+
         Returns:
             Bezier: A new Bézier representing ``self * other``.
 
         Raises:
             ValueError: If the operands have different dimensions, dtypes,
                 or ranks.
+            OverflowError: If finite control points give a non-finite product
+                control point: the product exceeds the dtype's range or, with two or
+                more directions, an intermediate of the formula (products of binomial
+                coefficients and control points) exceeds the range of ``float64``.
 
         Example:
             >>> import numpy as np
@@ -524,7 +712,17 @@ class Bezier:
             >>> np.allclose((f * g).evaluate(np.array([0.5])), [0.25])  # same via __mul__
             True
         """
-        return _multiply_bezier(self, other)
+        # Checked here, in this order, for the messages that spell the dtypes; the compiled call
+        # checks dimension and rank again.
+        if self.dim != other.dim:
+            raise ValueError(
+                f"Operands must have the same dimension. Got {self.dim} and {other.dim}."
+            )
+        if self._dtype != other._dtype:
+            raise ValueError(
+                f"Operands must have the same dtype. Got {self._dtype} and {other._dtype}."
+            )
+        return Bezier._from_handle(self._h.multiply(other._h))
 
     __mul__ = multiply
 
@@ -560,7 +758,7 @@ class Bezier:
                 degree past the exactness envelope of the binomial-coefficient
                 kernel. The envelope is *multiplicative* in the two degrees, so it
                 binds at far lower inputs than degree elevation's additive one. See
-                ``pantr.bezier._bezier_compose._compose_bezier`` for which
+                ``include/pantr/bezier/compose.hpp`` for which
                 configurations are exempt and why.
 
         Example:
@@ -568,7 +766,26 @@ class Bezier:
             >>> g = Bezier(np.array([[0.2], [0.8]]))
             >>> h = f.compose(g)
         """
-        return _compose_bezier(self, inner)
+        if self._dtype != inner._dtype:
+            # The checks that come before the dtype one, for their messages and order; with equal
+            # dtypes the compiled call makes them all.
+            if self._is_rational:
+                raise TypeError(
+                    "Composition is not supported for rational Béziers (outer is rational)."
+                )
+            if inner._is_rational:
+                raise TypeError(
+                    "Composition is not supported for rational Béziers (inner is rational)."
+                )
+            if inner.rank != self.dim:
+                raise ValueError(
+                    f"Inner Bézier rank ({inner.rank}) must equal outer Bézier "
+                    f"parametric dimension ({self.dim})."
+                )
+            raise ValueError(
+                f"Operands must have the same dtype. Got {self._dtype} and {inner._dtype}."
+            )
+        return Bezier._from_handle(self._h.compose(inner._h))
 
     # ------------------------------------------------------------------
     # Reverse and permute
@@ -609,16 +826,11 @@ class Bezier:
             >>> np.allclose(f.evaluate(np.array([0.3])), [0.7])
             True
         """
-        if direction < 0 or direction >= self.dim:
-            raise ValueError(f"direction must be in [0, {self.dim}), got {direction}.")
-
-        from .._control_points_utils import _reverse_control_points  # noqa: PLC0415
-
-        new_cp = _reverse_control_points(self._control_points, direction, in_place=in_place)
-
+        h = self._h.reversed(direction)
         if in_place:
+            self._set_handle(h, self._shape, self._dtype)
             return None
-        return Bezier(new_cp, is_rational=self._is_rational)
+        return Bezier._from_handle(h)
 
     @overload
     def permute_directions(
@@ -661,17 +873,15 @@ class Bezier:
             (2, 1)
         """
         perm = list(permutation)
+        # Checked here for the message, which spells the Python list; the compiled call checks it
+        # again.
         if sorted(perm) != list(range(self.dim)):
             raise ValueError(f"permutation must be a permutation of range({self.dim}), got {perm}.")
-
-        from .._control_points_utils import _permute_control_points  # noqa: PLC0415
-
-        new_cp = _permute_control_points(self._control_points, perm, self.dim)
-
+        h = self._h.permuted(perm)
         if in_place:
-            self._control_points = new_cp
+            self._set_handle(h)
             return None
-        return Bezier(new_cp, is_rational=self._is_rational)
+        return Bezier._from_handle(h)
 
     # ------------------------------------------------------------------
     # Affine transformation
@@ -720,16 +930,14 @@ class Bezier:
             >>> np.allclose(shifted.control_points, [[1.0, 2.0], [2.0, 3.0]])
             True
         """
-        new_cp = _apply_affine_to_control_points(
-            self._control_points,
-            self._is_rational,
-            affine.matrix,
-            affine.offset,
-            in_place=in_place,
+        h = self._h.transformed(
+            np.ascontiguousarray(affine.matrix, dtype=np.float64),
+            np.ascontiguousarray(affine.offset, dtype=np.float64),
         )
         if in_place:
+            self._set_handle(h, self._shape, self._dtype)
             return None
-        return Bezier(new_cp, is_rational=self._is_rational)
+        return Bezier._from_handle(h)
 
     # ------------------------------------------------------------------
     # Restrict
@@ -780,7 +988,8 @@ class Bezier:
                 )
             bounds_per_dim = seq  # type: ignore[assignment]
 
-        # Validate bounds.
+        # Validated here for the messages, which spell the bounds as given; the compiled call
+        # validates them again.
         for i, b in enumerate(bounds_per_dim):
             if b is None:
                 continue
@@ -795,7 +1004,11 @@ class Bezier:
                     f"Bounds ({lower}, {upper}) must lie within [0, 1] in direction {i}."
                 )
 
-        return _restrict_bezier(self, bounds_per_dim)
+        return Bezier._from_handle(
+            self._h.restrict(
+                [None if b is None else (float(b[0]), float(b[1])) for b in bounds_per_dim]
+            )
+        )
 
     # ------------------------------------------------------------------
     # Split
@@ -834,10 +1047,11 @@ class Bezier:
         """
         if direction < 0 or direction >= self.dim:
             raise ValueError(f"direction must be in [0, {self.dim}), got {direction}.")
+        # Checked here for the message, which spells the value as given.
         if value <= 0.0 or value >= 1.0:
             raise ValueError(f"value must be strictly inside (0, 1), got {value}.")
-
-        return _split_bezier(self, direction, value)
+        left, right = self._h.split(direction, float(value))
+        return Bezier._from_handle(left), Bezier._from_handle(right)
 
     # ------------------------------------------------------------------
     # Slice and boundary
@@ -884,10 +1098,13 @@ class Bezier:
         """
         if axis < 0 or axis >= self.dim:
             raise ValueError(f"axis must be in [0, {self.dim}), got {axis}.")
+        # Checked here for the message, which spells the value as given.
         if value < 0.0 or value > 1.0:
             raise ValueError(f"value must be in [0, 1], got {value}.")
-
-        return _slice_bezier(self, axis, value)
+        if self.dim == 1:
+            point: npt.NDArray[np.float32 | np.float64] = self._h.slice_point(axis, float(value))
+            return point
+        return Bezier._from_handle(self._h.slice(axis, float(value)))
 
     def boundary(self, axis: int, side: int) -> Bezier | npt.NDArray[np.float32 | np.float64]:
         """Extract the boundary of the Bézier along one parametric direction.
@@ -979,7 +1196,15 @@ class Bezier:
         if axis < 0 or axis >= self.dim:
             raise ValueError(f"axis must be in [0, {self.dim}), got {axis}.")
 
-        return _collapse_along_axis(self, axis, values)
+        values_arr = np.asarray(values, dtype=self._dtype)
+        # Checked here for the message, which spells the array's shape.
+        if values_arr.ndim != 1 or values_arr.shape[0] != self.dim - 1:
+            raise ValueError(
+                f"values must have length dim - 1 = {self.dim - 1}, got shape {values_arr.shape}."
+            )
+        return Bezier._from_handle(
+            self._h.collapse_along_axis(axis, np.ascontiguousarray(values_arr))
+        )
 
     # ------------------------------------------------------------------
     # Conversion
@@ -993,8 +1218,10 @@ class Bezier:
 
         Args:
             copy (bool): If ``True`` (default), the control points are
-                deep-copied into the new B-spline. If ``False``, the
-                B-spline shares the same underlying control point array.
+                deep-copied before they reach the B-spline. If ``False``, this
+                Bézier's read-only control point view is passed on. Either way
+                the B-spline constructor copies them into its own immutable
+                buffer, so the result shares no memory with this Bézier.
 
         Returns:
             ~pantr.bspline.Bspline: Equivalent B-spline representation.
@@ -1009,7 +1236,7 @@ class Bezier:
             knots[p + 1 :] = 1.0
             spaces.append(BsplineSpace1D(knots, p))
 
-        cp = self._control_points.copy() if copy else self._control_points
+        cp = self.control_points.copy() if copy else self.control_points
         return BsplineCls(BsplineSpace(spaces), cp, self._is_rational)
 
     # ------------------------------------------------------------------
@@ -1060,7 +1287,8 @@ def create_from_bspline(bspline: Bspline, *, copy: bool = True) -> Bezier:
             knot structure.
         copy (bool): If ``True`` (default), the control points are
             deep-copied into the new Bézier. If ``False``, the Bézier
-            shares the same underlying control point array.
+            shares the B-spline's own control point array (read-only
+            through the Bézier) and keeps it alive.
 
     Returns:
         Bezier: The equivalent Bézier.
@@ -1070,5 +1298,89 @@ def create_from_bspline(bspline: Bspline, *, copy: bool = True) -> Bezier:
     """
     if not bspline.space.has_Bezier_like_knots():
         raise ValueError("B-spline does not have Bézier-like knots. Cannot convert to Bézier.")
-    cp = bspline.control_points.copy() if copy else bspline.control_points
-    return Bezier(cp, is_rational=bspline.is_rational)
+    if copy:
+        return Bezier(bspline.control_points, is_rational=bspline.is_rational)
+    return Bezier._from_handle(bspline._h.to_bezier(False))
+
+
+_VALUE_ATTRS = frozenset({"_h", "_shape", "_is_rational", "_dtype", "control_points"})
+"""The attributes that hold the immutable value and what is cached from it (shared by copies)."""
+
+
+def _extra_state(b: Bezier) -> dict[str, Any]:
+    """Get a Bézier's attributes other than its value, for pickling a subclass.
+
+    Args:
+        b (Bezier): The Bézier.
+
+    Returns:
+        dict[str, Any]: The other attributes (empty for a plain Bézier).
+    """
+    return {k: v for k, v in b.__dict__.items() if k not in _VALUE_ATTRS}
+
+
+def _as_control_points(control_points: npt.ArrayLike) -> npt.NDArray[np.float32 | np.float64]:
+    """Normalise control points for the compiled constructor.
+
+    Args:
+        control_points (npt.ArrayLike): The control points.
+
+    Returns:
+        npt.NDArray[np.float32 | np.float64]: A C-contiguous native ``float32`` or ``float64``
+        array of rank at least 2.
+
+    Raises:
+        ValueError: If the input is a 0-d array.
+        TypeError: If the input is complex.
+    """
+    cp = np.asarray(control_points)
+    dtype = cp.dtype
+    if (dtype is _F64 or dtype is _F32) and cp.ndim >= 2 and cp.flags.c_contiguous:  # noqa: PLR2004
+        return cp  # the common case, already normalised
+    if cp.ndim < 1:
+        raise ValueError("Control points must be at least 1D.")
+    if cp.ndim == 1:
+        cp = cp[:, np.newaxis]
+    kind = cp.dtype.kind
+    if kind == "c":
+        raise TypeError(f"Bézier control points must be real; got dtype {cp.dtype}.")
+    target = _F32 if kind == "f" and cp.dtype.itemsize == 4 else _F64  # noqa: PLR2004
+    return np.ascontiguousarray(cp, dtype=target)
+
+
+def _class_for(dtype: np.dtype[Any]) -> Any:  # noqa: ANN401
+    """Get the compiled class of a dtype.
+
+    Args:
+        dtype (np.dtype): ``float32`` or ``float64``.
+
+    Returns:
+        Any: ``BezierF32`` or ``BezierF64``.
+    """
+    return _cpp.BezierF32 if dtype == _F32 else _cpp.BezierF64
+
+
+def _finish(
+    raw: npt.NDArray[np.float32 | np.float64],
+    out: npt.NDArray[np.float32 | np.float64] | None,
+    dtype: np.dtype[Any],
+) -> npt.NDArray[np.float32 | np.float64]:
+    """Drop a unit rank axis and honour ``out``, as the previous release did.
+
+    Args:
+        raw (npt.NDArray[np.float32 | np.float64]): The compiled result, rank axis last.
+        out (npt.NDArray[np.float32 | np.float64] | None): The caller's output array, if any.
+        dtype (np.dtype): The Bézier's dtype.
+
+    Returns:
+        npt.NDArray[np.float32 | np.float64]: ``out`` filled, or the result.
+
+    Raises:
+        ValueError: If ``out`` has the wrong shape or dtype, or is not writeable.
+    """
+    result = raw[..., 0] if raw.shape[-1] == 1 else raw
+    if out is None:
+        return result
+    _validate_out_array(out, result.shape, dtype)
+    out[...] = result
+    return out

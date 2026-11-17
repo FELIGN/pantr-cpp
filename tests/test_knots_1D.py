@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, cast
 
 import numpy as np
@@ -10,23 +11,31 @@ import numpy.typing as npt
 import pytest
 
 from pantr.bspline import (
+    Bspline,
+    BsplineSpace,
+    BsplineSpace1D,
     create_cardinal_knots,
     create_uniform_open_knots,
     create_uniform_periodic_knots,
 )
-from pantr.bspline._bspline_knots import (
-    _get_knots_ends_and_dtype,
-    _validate_knot_input,
-)
+from pantr.bspline._bspline_knots import _get_knots_ends_and_dtype
 from pantr.tolerance import get_strict
 
+_UNIFORM_FACTORIES = [create_uniform_open_knots, create_uniform_periodic_knots]
+"""The two public factories that validate ``(num_intervals, degree, continuity, domain, dtype)``."""
 
-class TestValidateKnotInput:
-    """Tests for `_validate_knot_input`."""
 
-    def test_valid_inputs(self) -> None:
+@pytest.mark.parametrize("factory", _UNIFORM_FACTORIES)
+class TestUniformKnotArgumentValidation:
+    """Tests for the argument checks of the uniform knot factories.
+
+    These checks used to be tested on the private validator ``_validate_knot_input``; they
+    are now reached through the public factories, which apply them before building any knot.
+    """
+
+    def test_valid_inputs(self, factory: Callable[..., npt.NDArray[Any]]) -> None:
         """Accept well-formed parameters without raising."""
-        _validate_knot_input(
+        factory(
             num_intervals=2,
             degree=2,
             continuity=1,
@@ -34,10 +43,15 @@ class TestValidateKnotInput:
             dtype=np.float64,
         )
 
-    def test_domain_order_error(self) -> None:
-        """Reject domains whose start exceeds the end."""
-        with pytest.raises(ValueError, match=r"domain\[0\] must be less than domain\[1\]"):
-            _validate_knot_input(
+    def test_domain_order_error(self, factory: Callable[..., npt.NDArray[Any]]) -> None:
+        """Reject domains whose start exceeds the end.
+
+        The factory resolves the domain before the validator runs, so the message is the
+        resolver's (``end must be greater than start``), not the validator's
+        ``domain[0] must be less than domain[1]``, which no public path reaches any more.
+        """
+        with pytest.raises(ValueError, match="end must be greater than start"):
+            factory(
                 num_intervals=2,
                 degree=2,
                 continuity=1,
@@ -45,10 +59,10 @@ class TestValidateKnotInput:
                 dtype=np.float64,
             )
 
-    def test_negative_num_intervals_error(self) -> None:
+    def test_negative_num_intervals_error(self, factory: Callable[..., npt.NDArray[Any]]) -> None:
         """Reject negative interval counts."""
         with pytest.raises(ValueError, match="num_intervals must be at least 1"):
-            _validate_knot_input(
+            factory(
                 num_intervals=-1,
                 degree=2,
                 continuity=1,
@@ -56,10 +70,10 @@ class TestValidateKnotInput:
                 dtype=np.float64,
             )
 
-    def test_zero_num_intervals_error(self) -> None:
+    def test_zero_num_intervals_error(self, factory: Callable[..., npt.NDArray[Any]]) -> None:
         """Reject a zero interval count: a mesh with no cell has nothing defined over it."""
         with pytest.raises(ValueError, match="num_intervals must be at least 1"):
-            _validate_knot_input(
+            factory(
                 num_intervals=0,
                 degree=2,
                 continuity=1,
@@ -67,10 +81,10 @@ class TestValidateKnotInput:
                 dtype=np.float64,
             )
 
-    def test_negative_degree_error(self) -> None:
+    def test_negative_degree_error(self, factory: Callable[..., npt.NDArray[Any]]) -> None:
         """Reject negative spline degrees."""
         with pytest.raises(ValueError, match="degree must be non-negative"):
-            _validate_knot_input(
+            factory(
                 num_intervals=2,
                 degree=-1,
                 continuity=1,
@@ -78,10 +92,12 @@ class TestValidateKnotInput:
                 dtype=np.float64,
             )
 
-    def test_invalid_continuity_upper_bound_error(self) -> None:
+    def test_invalid_continuity_upper_bound_error(
+        self, factory: Callable[..., npt.NDArray[Any]]
+    ) -> None:
         """Reject continuity higher than degree - 1."""
         with pytest.raises(ValueError, match="Continuity must be between"):
-            _validate_knot_input(
+            factory(
                 num_intervals=2,
                 degree=2,
                 continuity=2,
@@ -89,10 +105,12 @@ class TestValidateKnotInput:
                 dtype=np.float64,
             )
 
-    def test_invalid_continuity_lower_bound_error(self) -> None:
+    def test_invalid_continuity_lower_bound_error(
+        self, factory: Callable[..., npt.NDArray[Any]]
+    ) -> None:
         """Reject continuity less than -1."""
         with pytest.raises(ValueError, match="Continuity must be between"):
-            _validate_knot_input(
+            factory(
                 num_intervals=2,
                 degree=2,
                 continuity=-2,
@@ -100,10 +118,26 @@ class TestValidateKnotInput:
                 dtype=np.float64,
             )
 
-    def test_invalid_dtype_error(self) -> None:
-        """Reject non-floating dtype requests."""
+    def test_invalid_dtype_error(self, factory: Callable[..., npt.NDArray[Any]]) -> None:
+        """Reject floating dtypes that are neither float32 nor float64."""
         with pytest.raises(ValueError, match="dtype must be float32 or float64"):
-            _validate_knot_input(
+            factory(
+                num_intervals=2,
+                degree=2,
+                continuity=1,
+                domain=(np.float16(0.0), np.float16(1.0)),
+                dtype=np.float16,
+            )
+
+    def test_non_floating_dtype_error(self, factory: Callable[..., npt.NDArray[Any]]) -> None:
+        """Reject non-floating dtype requests.
+
+        The old test passed ``np.int32`` to the validator and matched ``dtype must be
+        float32 or float64``; through the factory an integer dtype is refused earlier, with
+        ``dtype must be a floating-point type``, and ``float16`` (above) reaches the old message.
+        """
+        with pytest.raises(ValueError, match="dtype must be a floating-point type"):
+            factory(
                 num_intervals=2,
                 degree=2,
                 continuity=1,
@@ -350,6 +384,80 @@ class TestCreateUniformPeriodicKnotVector:
         """Reject continuity outside valid range."""
         with pytest.raises(ValueError, match="Continuity must be between"):
             create_uniform_periodic_knots(2, 2, continuity=2)
+
+
+class TestUniformPeriodicKnotsArePeriodic:
+    """The knot vector is the periodic continuation of its interior knots, for every continuity.
+
+    Regression for a factory that extended a vector with repeated interior knots (continuity
+    ``1 <= c <= p - 2``) by distinct linspace knots, so that ``K[i + n m] = K[i] + L`` failed and a
+    periodic spline on it jumped at the seam.
+    """
+
+    @pytest.mark.parametrize("dtype", [np.float32, np.float64])
+    def test_extension_is_periodic_for_every_continuity(
+        self, dtype: type[np.floating[Any]]
+    ) -> None:
+        """``K[i + n m] = K[i] + L`` within four roundings, for ``n`` 1-8, ``p`` 0-6, ``c`` < ``p``.
+
+        The images of one ``linspace`` knot differ by the rounding of one subtraction and of the
+        interval multiple: ``4 eps max|K|``.
+        """
+        eps = float(np.finfo(dtype).eps)
+        for n in range(1, 9):
+            for p in range(7):
+                for c in range(-1, p):
+                    knots = create_uniform_periodic_knots(n, p, c, dtype=dtype)
+                    shift = n * (p - c)
+                    bound = 4.0 * eps * float(np.max(np.abs(knots)))
+                    err = np.abs(knots[shift:].astype(np.float64) - knots[:-shift] - 1.0)
+                    assert err.size == knots.size - shift
+                    assert np.all(err <= bound), (n, p, c, float(err.max()), bound)
+
+    def test_hand_worked_extension(self) -> None:
+        """Each knot past an end repeats like the interior ones (``p = 3, c = 1, n = 4``)."""
+        knots = create_uniform_periodic_knots(4, 3, 1)
+        expected = [-0.25] * 2 + [0.0] * 2 + [0.25] * 2 + [0.5] * 2 + [0.75] * 2 + [1.0] * 2
+        expected += [1.25] * 2
+        nptest.assert_array_equal(knots, np.array(expected))
+
+    def test_partial_outer_multiplicity(self) -> None:
+        """When ``c + 1`` is not a multiple of ``p - c`` the farthest knot repeats fewer times.
+
+        ``p = 5, c = 3, n = 2``: multiplicity 2, four knots past each end, so two distinct knots
+        twice each; ``p = 6, c = 2, n = 2``: multiplicity 4, three past each end, one knot thrice.
+        """
+        k = create_uniform_periodic_knots(2, 5, 3)
+        nptest.assert_array_equal(k[:4], [-1.0, -1.0, -0.5, -0.5])
+        nptest.assert_array_equal(k[-4:], [1.5, 1.5, 2.0, 2.0])
+        k = create_uniform_periodic_knots(2, 6, 2)
+        nptest.assert_array_equal(k[:3], [-0.5] * 3)
+        nptest.assert_array_equal(k[-3:], [1.5] * 3)
+
+    @pytest.mark.parametrize(
+        ("degree", "continuity"), [(p, c) for p in (3, 4, 5) for c in range(p)]
+    )
+    def test_periodic_spline_has_no_seam_jump(self, degree: int, continuity: int) -> None:
+        """``|f^(k)(0) - f^(k)(1)| <= 8 (p + 1) (2 p n)^k eps`` for ``k <= c``, random coefficients.
+
+        Every row of the ticket's table with ``c >= 0`` (``c = -1`` has no seam to be smooth at);
+        the rows with ``c = 0`` and ``c = p - 1`` were correct before and are the controls.
+
+        The factor ``(2 p n)^k`` is the scale of the ``k``-th derivative of a degree-``p`` spline on
+        ``n`` equal intervals and ``8 (p + 1) eps`` the rounding of one evaluation (an admitted
+        heuristic bound, not a derived one).
+        """
+        n = 6
+        eps = float(np.finfo(np.float64).eps)
+        knots = create_uniform_periodic_knots(n, degree, continuity)
+        space = BsplineSpace1D(knots, degree, periodic=True)
+        rng = np.random.default_rng(0)
+        spline = Bspline(BsplineSpace([space]), rng.uniform(-1.0, 1.0, (space.num_basis, 1)))
+        ends = np.array([[0.0], [1.0]])
+        for k in range(continuity + 1):
+            values = np.asarray(spline.evaluate_derivatives(ends, [k])).ravel()
+            bound = 8.0 * (degree + 1) * (2.0 * degree * n) ** k * eps
+            assert abs(values[0] - values[1]) <= bound, (k, float(values[0] - values[1]), bound)
 
 
 class TestCreateCardinalBsplineKnotVector:

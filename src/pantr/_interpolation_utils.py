@@ -1,12 +1,12 @@
 """Shared utilities for interpolation and fitting modules.
 
-Provides constants and helpers used by both
-:mod:`pantr.bezier._bezier_interpolate` and
-:mod:`pantr.bspline._bspline_interpolate`.
+Provides constants and helpers used by :mod:`pantr.bspline._bspline_interpolate` and, for the
+tolerance check, :mod:`pantr.bezier._bezier_interpolate` (Bézier fitting runs in C++).
 """
 
 from __future__ import annotations
 
+import math
 from typing import Any, cast
 
 import numpy as np
@@ -14,6 +14,25 @@ import numpy.typing as npt
 
 SVD_TOL_FACTOR: float = 100.0
 """Factor multiplied by machine epsilon for default SVD truncation tolerance."""
+
+
+def check_svd_tolerance(tol: float | None) -> None:
+    """Refuse a truncation tolerance that is not finite and non-negative.
+
+    A NaN or infinite tolerance truncates every singular value, so the fit would return zero
+    coefficients as if it had succeeded. A negative one keeps every singular value, an exactly zero
+    one included, and the solve divides by it (NaN coefficients). Zero is accepted: it truncates
+    only the singular values that are exactly zero.
+
+    Args:
+        tol (float | None): User-provided tolerance, or ``None`` for the default.
+
+    Raises:
+        ValueError: If ``tol`` is NaN, infinite or negative.
+    """
+    if tol is not None and not (math.isfinite(tol) and tol >= 0.0):
+        msg = f"tol must be finite and non-negative, got {tol}"
+        raise ValueError(msg)
 
 
 def resolve_svd_tolerance(dtype: npt.DTypeLike, tol: float | None) -> float:
@@ -33,7 +52,9 @@ def resolve_svd_tolerance(dtype: npt.DTypeLike, tol: float | None) -> float:
     Raises:
         TypeError: If ``dtype`` is not a floating-point dtype and ``tol`` is
             ``None``.
+        ValueError: If ``tol`` is NaN, infinite or negative.
     """
+    check_svd_tolerance(tol)
     if tol is not None:
         return tol
     return SVD_TOL_FACTOR * float(np.finfo(cast(type[np.floating[Any]], dtype)).eps)

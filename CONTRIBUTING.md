@@ -5,15 +5,22 @@ development setup and the conventions the project follows.
 
 ## Development setup
 
-PaNTr targets Python 3.11–3.14. Clone the repository and install the package
-with all development and optional-feature dependencies:
+PaNTr targets Python 3.12–3.14. Clone the repository, install the development
+and optional-feature dependencies, and build the extension:
 
 ```bash
 git clone https://github.com/FELIGN/pantr.git
 cd pantr
-pip install -e ".[dev]"
+make install          # the dev extra and the build tools, then make ext
 pre-commit install
 ```
+
+There is no editable install (`pip install -e .` is not supported): `make ext`
+compiles the C++ extension into `src/pantr`, where `pytest.ini`'s
+`pythonpath = src` finds it. It needs a C++20 compiler, CMake 3.28 or later and
+Ninja. Run `make ext` again after changing anything under `include/`,
+`bindings/` or `providers/`; the test session refuses a module older than those
+sources.
 
 The `dev` extra pulls in every optional feature (`mpi`, `metis`, `viz`, `docs`)
 so the full test suite runs with nothing silently skipped.
@@ -28,7 +35,7 @@ ruff check .                             # lint
 ruff format --check .                    # formatting
 mypy --config-file mypy.ini src tests    # static types (strict)
 PYTHONPATH=src lint-imports              # import-boundary contracts
-pytest                                   # tests (JIT enabled)
+pytest                                   # tests
 ```
 
 `make pre-pull-request` runs all of them in one go, plus the docs build.
@@ -36,11 +43,11 @@ pytest                                   # tests (JIT enabled)
 Build the documentation the same way CI does:
 
 ```bash
-NUMBA_DISABLE_JIT=1 make docs SPHINXOPTS="-W --keep-going -j auto"
+make docs SPHINXOPTS="-W --keep-going -j auto"
 ```
 
 > Coverage is opt-in: a plain `pytest` run carries none. To run the coverage gate
-> locally: `NUMBA_DISABLE_JIT=1 pytest --cov=src/pantr --cov-report=xml`, which
+> locally: `pytest --cov=src/pantr --cov-report=xml`, which
 > applies the `coverage.toml` threshold of 85%.
 
 The optional MPI smoke tests under `tests/mpi/` are skipped unless
@@ -54,13 +61,11 @@ PANTR_RUN_MPI=1 mpiexec -n 2 python -m pytest tests/mpi/
 
 - **Types**: strict mypy; all public and private functions must be fully typed.
 - **Docstrings**: Google-style, enforced by Ruff's `pydocstyle` rules. Private
-  functions are documented too; Numba kernels carry a `Note:` stating that no
-  input validation is performed.
-- **Style**: Ruff, line length 100, target Python 3.11.
-- **Layering**: the library is organized in three strict layers — public API,
-  implementation helpers (all input validation), and Numba kernels (no
-  validation). Review the architecture section of the documentation before
-  adding code.
+  functions are documented too, and so is the C++ (Google style in `///` comments).
+- **Style**: Ruff, line length 100, target Python 3.12.
+- **Layering**: the public Python API is a thin wrapper over private bindings of
+  the C++ library, which validates its inputs once; see `design/python_wrappers.md`
+  before adding code.
 
 ## Commits and branches
 

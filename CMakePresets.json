@@ -1,0 +1,83 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 28, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "PANTR_NATIVE_ARCH": "OFF",
+        "PANTR_WARNINGS_AS_ERRORS": "ON",
+        "FETCHCONTENT_BASE_DIR": "${sourceDir}/build/_deps"
+      }
+    },
+    { "name": "gcc", "hidden": true, "cacheVariables": { "CMAKE_CXX_COMPILER": "g++" } },
+    { "name": "clang", "hidden": true, "cacheVariables": { "CMAKE_CXX_COMPILER": "clang++" } },
+    {
+      "name": "asan-ubsan",
+      "hidden": true,
+      "description": "UBSan must not recover, or it reports and still exits 0.",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer"
+      }
+    },
+    {
+      "name": "tsan",
+      "hidden": true,
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_CXX_FLAGS": "-fsanitize=thread -fno-omit-frame-pointer"
+      }
+    },
+    { "name": "gcc-release", "inherits": ["gcc", "base"] },
+    { "name": "clang-release", "inherits": ["clang", "base"] },
+    { "name": "gcc-scalar", "inherits": ["gcc", "base"], "cacheVariables": { "PANTR_FORCE_SCALAR": "ON" } },
+    { "name": "gcc-asan-ubsan", "inherits": ["asan-ubsan", "gcc", "base"] },
+    { "name": "gcc-tsan", "inherits": ["tsan", "gcc", "base"] },
+    { "name": "clang-asan-ubsan", "inherits": ["asan-ubsan", "clang", "base"] },
+    { "name": "clang-tsan", "inherits": ["tsan", "clang", "base"] }
+  ],
+  "buildPresets": [
+    { "name": "gcc-release", "configurePreset": "gcc-release" },
+    { "name": "clang-release", "configurePreset": "clang-release" },
+    { "name": "gcc-scalar", "configurePreset": "gcc-scalar" },
+    { "name": "gcc-asan-ubsan", "configurePreset": "gcc-asan-ubsan" },
+    { "name": "gcc-tsan", "configurePreset": "gcc-tsan" },
+    { "name": "clang-asan-ubsan", "configurePreset": "clang-asan-ubsan" },
+    { "name": "clang-tsan", "configurePreset": "clang-tsan" }
+  ],
+  "testPresets": [
+    { "name": "base", "hidden": true, "output": { "outputOnFailure": true } },
+    { "name": "gcc-release", "inherits": "base", "configurePreset": "gcc-release" },
+    { "name": "clang-release", "inherits": "base", "configurePreset": "clang-release" },
+    { "name": "gcc-scalar", "inherits": "base", "configurePreset": "gcc-scalar" },
+    {
+      "name": "gcc-asan-ubsan",
+      "inherits": "base",
+      "configurePreset": "gcc-asan-ubsan",
+      "environment": { "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1", "ASAN_OPTIONS": "detect_leaks=1" }
+    },
+    {
+      "name": "gcc-tsan",
+      "inherits": "base",
+      "configurePreset": "gcc-tsan",
+      "environment": { "TSAN_OPTIONS": "halt_on_error=1:second_deadlock_stack=1" }
+    },
+    {
+      "name": "clang-asan-ubsan",
+      "inherits": "base",
+      "configurePreset": "clang-asan-ubsan",
+      "environment": { "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1", "ASAN_OPTIONS": "detect_leaks=1" }
+    },
+    {
+      "name": "clang-tsan",
+      "inherits": "base",
+      "configurePreset": "clang-tsan",
+      "environment": { "TSAN_OPTIONS": "halt_on_error=1:second_deadlock_stack=1" }
+    }
+  ]
+}

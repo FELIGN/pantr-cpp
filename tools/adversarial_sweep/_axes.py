@@ -7,8 +7,7 @@ knot multiplicities up to ``degree + 1``, non-clamped and periodic knot vectors,
 translated domains, empty and single-element inputs, and ``NaN``/``inf``.
 
 Two profiles are provided. ``FULL`` is the sweep proper; ``SMOKE`` is the bounded
-subset the CI test runs, small enough that recompiling every kernel into a fresh
-Numba cache stays affordable.
+subset the CI test runs, small enough to stay affordable under the sanitizers.
 """
 
 from __future__ import annotations

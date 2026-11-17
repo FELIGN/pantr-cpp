@@ -587,6 +587,16 @@ class TestTensorProductQuadrature:
         nptest.assert_allclose(rule.points, [[0.25, 0.5], [0.75, 0.5]])
         nptest.assert_allclose(rule.weights, [0.5, 0.5])
 
+    def test_c_order_on_a_two_by_three_rule(self) -> None:
+        # Two and three distinct nodes: C order (axis 1 fastest) and F order differ at every
+        # interior point, so this pins the order where the one-node case above cannot.
+        x0, w0 = np.array([0.1, 0.9]), np.array([0.25, 0.75])
+        x1, w1 = np.array([0.2, 0.5, 0.8]), np.array([0.5, 0.3, 0.2])
+        rule = tensor_product_quadrature([(x0, w0), (x1, w1)])
+        expected = [(x0[i], x1[j]) for i in range(2) for j in range(3)]
+        nptest.assert_array_equal(rule.points, expected)
+        nptest.assert_array_equal(rule.weights, [w0[i] * w1[j] for i in range(2) for j in range(3)])
+
     def test_weights_are_outer_product(self) -> None:
         rule = tensor_product_quadrature(
             [(np.array([0.5]), np.array([0.3])), (np.array([0.5]), np.array([0.4]))]
@@ -653,3 +663,48 @@ class TestGaussLegendreQuadrature:
     def test_validation(self, ndim: int, npts: int | list[int], match: str) -> None:
         with pytest.raises(ValueError, match=match):
             gauss_legendre_quadrature(ndim, npts)
+
+
+class TestWrapperArgumentConversion:
+    """Arguments the Python wrappers convert before the C++ library sees them."""
+
+    def test_zero_dimensional_weights_are_refused(self) -> None:
+        """A 0-d weight array is not promoted to 1-d on the way in."""
+        with pytest.raises(ValueError, match="weights must be 1D"):
+            QuadratureRule([[0.5]], 1.0)
+        with pytest.raises(ValueError, match="nodes and weights must be 1D"):
+            tensor_product_quadrature([(0.5, 1.0)])
+
+    def test_non_native_byte_order_coordinates(self) -> None:
+        """Big-endian coordinates are converted to native float64, as any other dtype."""
+        lattice = PointsLattice([(np.arange(3) / 2.0).astype(">f8")])
+        assert lattice.dtype == np.float64
+        nptest.assert_array_equal(lattice.pts_per_dir[0], [0.0, 0.5, 1.0])
+
+    def test_complex_coordinates_are_refused(self) -> None:
+        """Complex coordinates are refused rather than losing their imaginary part."""
+        with pytest.raises(ValueError, match="must be real"):
+            PointsLattice([np.array([0.0, 1.0j])])
+
+    def test_a_float_count_is_refused(self) -> None:
+        """A non-integer point count is refused, not truncated."""
+        with pytest.raises(TypeError):
+            create_lagrange_points_lattice(LagrangeVariant.EQUISPACES, [2.7])  # type: ignore[list-item]
+
+
+def test_dtype_scalar_answer_does_not_depend_on_call_order() -> None:
+    """A float64 scalar given as dtype first must not make a float32 scalar select float64.
+
+    ``np.float64(1.0)`` and ``np.float32(1.0)`` compare and hash equal; the dtype chosen must
+    depend on ``np.dtype(arg)`` only.
+    """
+    assert get_gauss_legendre_1d(3, np.float64(1.0))[0].dtype == np.float64
+    assert get_gauss_legendre_1d(3, np.float32(1.0))[0].dtype == np.float32
+
+
+def test_quadrature_argument_order_kept_from_the_previous_release() -> None:
+    """Check ndim before reading npts, and the variant before a lattice's counts."""
+    with pytest.raises(ValueError, match="ndim must be >= 1"):
+        gauss_legendre_quadrature(0, None)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="is not a valid LagrangeVariant"):
+        create_lagrange_points_lattice("foo", [2.5])  # type: ignore[arg-type, list-item]

@@ -10,14 +10,12 @@ from __future__ import annotations
 import numpy as np
 from numpy import typing as npt
 
+from .._ext import ext
 from ..bspline import Bspline, BsplineSpace
-from ..transform import AffineTransform
-from ._compat import make_compat
-from ._primitives import _linear_space_1d, create_circle
+from ._primitives import _linear_space_1d, _points, _sweep_pair
 from ._validation import _PHYSICAL_DIM, _pad_to_3d, _promote_to_rational
 
 _MAX_DIM_FOR_OPERATIONS = 2
-_NORM_TOL = 1e-14
 
 
 def create_extrusion(bspline: Bspline, displacement: npt.ArrayLike) -> Bspline:
@@ -99,141 +97,27 @@ def create_ruled(bspline1: Bspline, bspline2: Bspline) -> Bspline:
         >>> annulus.dim
         2
     """
-    if bspline1.dim != bspline2.dim:
-        raise ValueError(
-            f"Both B-splines must have the same dim, got {bspline1.dim} and {bspline2.dim}."
-        )
-    if bspline1.dim > _MAX_DIM_FOR_OPERATIONS:
-        raise ValueError(f"ruled requires dim <= {_MAX_DIM_FOR_OPERATIONS}, got {bspline1.dim}.")
-
-    b1, b2 = make_compat(bspline1, bspline2)
-
-    # Promote to rational if needed
-    is_rational = b1.is_rational or b2.is_rational
-    if is_rational:
-        b1 = _promote_to_rational(b1)
-        b2 = _promote_to_rational(b2)
-
-    cp1 = b1.control_points
-    cp2 = b2.control_points
-    rank_full = cp1.shape[-1]
-
-    new_cp = np.empty((*cp1.shape[:-1], 2, rank_full), dtype=cp1.dtype)
-    new_cp[..., 0, :] = cp1
-    new_cp[..., 1, :] = cp2
-
-    spaces = [*b1.space.spaces, _linear_space_1d(dtype=b1.dtype)]
-    new_space = BsplineSpace(spaces)
-    return Bspline(new_space, new_cp, is_rational=is_rational)
+    return Bspline._from_handle(ext.cad.create_ruled(bspline1._h, bspline2._h))
 
 
-def _normalize_axis_vector(axis: int | npt.ArrayLike) -> npt.NDArray[np.float64]:
-    """Convert an axis specification to a unit 3D vector.
+def _axis_vector(axis: int | npt.ArrayLike) -> list[float]:
+    """Read an axis specification as the direction the compiled function takes.
 
     Args:
-        axis: An ``int`` (coordinate axis) or array-like direction.
+        axis (int | npt.ArrayLike): An ``int`` (coordinate axis) or array-like direction.
 
     Returns:
-        npt.NDArray[np.float64]: Unit vector of shape ``(3,)``.
+        list[float]: The unit vector of a coordinate axis, or the direction's coordinates (the
+        compiled function zero-pads, checks and normalizes them).
 
     Raises:
-        ValueError: If the vector is zero.
+        IndexError: If an ``int`` is outside ``[-3, 3)``.
     """
     if isinstance(axis, int | np.integer):
         v = np.zeros(_PHYSICAL_DIM, dtype=np.float64)
         v[int(axis)] = 1.0
-        return v
-
-    v = np.zeros(_PHYSICAL_DIM, dtype=np.float64)
-    arr = np.asarray(axis, dtype=np.float64).ravel()
-    v[: arr.size] = arr
-    norm = np.linalg.norm(v)
-    if norm == 0:
-        raise ValueError("Rotation axis must be non-zero.")
-    v /= norm
-    return v
-
-
-def _build_axis_alignment_transform(
-    pt: npt.NDArray[np.float64],
-    v: npt.NDArray[np.float64],
-) -> AffineTransform:
-    """Build a transform that translates *pt* to origin and aligns *v* with Z.
-
-    Args:
-        pt: Point on the rotation axis (shape ``(3,)``).
-        v: Unit rotation axis vector (shape ``(3,)``).
-
-    Returns:
-        AffineTransform: The combined translate-then-rotate transform.
-    """
-    z_hat = np.array([0.0, 0.0, 1.0])
-    n = np.cross(v, z_hat)
-    gamma = float(np.arccos(np.clip(v[2], -1.0, 1.0)))
-
-    t_translate = AffineTransform.translation(-pt)
-    if np.linalg.norm(n) > _NORM_TOL:
-        t_rotate = AffineTransform.rotation_3d(gamma, axis=n)
-        return t_rotate @ t_translate
-    elif v[2] < 0:
-        # v = -z, flip via rotation by pi around x
-        t_rotate = AffineTransform.rotation_3d(np.pi, axis=0)
-        return t_rotate @ t_translate
-    else:
-        return t_translate
-
-
-def _revolve_control_points(
-    cw: npt.NDArray[np.float64],
-    arc: Bspline,
-) -> npt.NDArray[np.float64]:
-    """Revolve weighted homogeneous control points around the Z axis.
-
-    For each control point in *cw*, builds a per-point transform
-    ``M = Rz(theta) * Tz(z) * Sxy(rho)`` and applies it to the arc
-    control points, multiplying by the original weight.
-
-    Args:
-        cw: Control points in Z-aligned frame, shape ``(*num_basis, 4)``.
-        arc: Circular arc B-spline.
-
-    Returns:
-        npt.NDArray[np.float64]: Revolved control points of shape
-        ``(*num_basis, n_arc, 4)``.
-    """
-    aw = arc.control_points
-    nrb_shape = cw.shape[:-1]
-    n_arc = aw.shape[0]
-    qw = np.empty((*nrb_shape, n_arc, _PHYSICAL_DIM + 1), dtype=np.float64)
-
-    wx = cw[..., 0]
-    wy = cw[..., 1]
-    wz = cw[..., 2]
-    w = cw[..., _PHYSICAL_DIM]
-    rho = np.hypot(wx, wy)
-    theta = np.arctan2(wy, wx)
-    theta[theta < 0] += 2 * np.pi
-    sin_t = np.sin(theta)
-    cos_t = np.cos(theta)
-
-    for idx in np.ndindex(nrb_shape):
-        r = float(rho[idx])
-        r_cos = r * float(cos_t[idx])
-        r_sin = r * float(sin_t[idx])
-
-        m = np.zeros((4, 4), dtype=np.float64)
-        m[0, 0] = r_cos
-        m[0, 1] = -r_sin
-        m[1, 0] = r_sin
-        m[1, 1] = r_cos
-        m[2, 3] = float(wz[idx])
-        m[3, 3] = 1.0
-
-        qi = aw @ m.T
-        qi[..., _PHYSICAL_DIM] *= float(w[idx])
-        qw[idx] = qi
-
-    return qw
+        return v.tolist()
+    return np.asarray(axis, dtype=np.float64).ravel().tolist()
 
 
 def create_revolution(
@@ -268,30 +152,10 @@ def create_revolution(
         ValueError: If ``bspline.dim > 2``.
         ValueError: If ``bspline.rank != 3``.
     """
-    if bspline.dim > _MAX_DIM_FOR_OPERATIONS:
-        raise ValueError(
-            f"create_revolution requires dim <= {_MAX_DIM_FOR_OPERATIONS}, got {bspline.dim}."
-        )
-    if bspline.rank != _PHYSICAL_DIM:
-        raise ValueError(f"create_revolution requires rank == {_PHYSICAL_DIM}, got {bspline.rank}.")
-
-    pt = _pad_to_3d(point)
-    v = _normalize_axis_vector(axis)
-    t = _build_axis_alignment_transform(pt, v)
-
-    nrb = _promote_to_rational(bspline)
-    nrb_transformed = nrb.transform(t)
-    assert nrb_transformed is not None
-
-    arc = create_circle(angle=angle)
-    qw = _revolve_control_points(np.asarray(nrb_transformed.control_points, dtype=np.float64), arc)
-
-    spaces = [*nrb_transformed.space.spaces, *arc.space.spaces]
-    new_space = BsplineSpace(spaces)
-    result = Bspline(new_space, qw, is_rational=True)
-    result_back = result.transform(t.inverse)
-    assert result_back is not None
-    return result_back
+    h = ext.cad.create_revolution(
+        bspline._h, _points(point), _axis_vector(axis), _sweep_pair(angle)
+    )
+    return Bspline._from_handle(h)
 
 
 def create_sweep(section: Bspline, trajectory: Bspline) -> Bspline:

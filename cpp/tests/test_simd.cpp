@@ -1,0 +1,67 @@
+// The SIMD level macros: exactly one level, consistent name and lane counts. Built twice: in the
+// main suite (target ISA) and with PANTR_SIMD_FORCE_SCALAR (PANTR_TEST_EXPECT_SCALAR).
+#include <doctest/doctest.h>
+
+#include <pantr/core/simd.hpp>
+#include <pantr/parallel/affinity.hpp>
+
+#include <cstddef>
+#include <string>
+
+namespace {
+
+constexpr int kLevels = 0
+#if defined(PANTR_SIMD_AVX512)
+                        + 1
+#endif
+#if defined(PANTR_SIMD_AVX2)
+                        + 1
+#endif
+#if defined(PANTR_SIMD_NEON)
+                        + 1
+#endif
+#if defined(PANTR_SIMD_SCALAR)
+                        + 1
+#endif
+    ;
+static_assert(kLevels == 1, "exactly one PANTR_SIMD_* level must be defined");
+
+}  // namespace
+
+TEST_CASE("simd: one level, its name, and its lane counts") {
+  const std::string name = pantr::simd::isa_name;
+#if defined(PANTR_TEST_EXPECT_SCALAR)
+  CHECK(name == "scalar");
+#endif
+#if defined(PANTR_SIMD_AVX512)
+  CHECK(name == "avx512");
+  CHECK(pantr::simd::lanes<double> == 8);
+  CHECK(pantr::simd::lanes<float> == 16);
+#elif defined(PANTR_SIMD_AVX2)
+  CHECK(name == "avx2");
+  CHECK(pantr::simd::lanes<double> == 4);
+  CHECK(pantr::simd::lanes<float> == 8);
+#elif defined(PANTR_SIMD_NEON)
+  CHECK(name == "neon");
+  CHECK(pantr::simd::lanes<double> == 2);
+  CHECK(pantr::simd::lanes<float> == 4);
+#else
+  CHECK(name == "scalar");
+  CHECK(pantr::simd::lanes<double> == 1);
+  CHECK(pantr::simd::lanes<float> == 1);
+#endif
+}
+
+TEST_CASE("simd: the level a CI leg pins through PANTR_TEST_EXPECT_ISA") {
+  // Read at run time, from a channel the compiler flags cannot drop along with -march. Unset
+  // outside the CI legs that pin a level, where there is nothing to compare against. The scalar
+  // test binary pins its level by its own definition, whatever the leg's -march says.
+#if defined(PANTR_TEST_EXPECT_SCALAR)
+  const char* expected = "scalar";
+#else
+  const char* expected = pantr::parallel::detail::env_value("PANTR_TEST_EXPECT_ISA");
+#endif
+  if (expected != nullptr) {
+    CHECK(std::string(pantr::simd::isa_name) == std::string(expected));
+  }
+}

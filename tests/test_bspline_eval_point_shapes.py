@@ -1,12 +1,12 @@
-"""No illegal point argument may escape Layer 2 into a Numba kernel.
+"""No illegal point argument may get past the point checks of ``Bspline.evaluate``.
 
-The 1D ``Bspline`` evaluation path coerced nothing and checked no rank, so two
-classes of bad input got past validation entirely:
+The 1D ``Bspline`` evaluation path of the previous release (a Numba kernel) coerced
+nothing and checked no rank, so two classes of bad input got past validation entirely:
 
 * a ``(n_pts, 1)`` array reached the Cox-de Boor kernel and died inside it, with
   ``numba.core.errors.TypingError: No implementation of function Function(<class
   'int'>) found for signature: >>> int(array(int64, 1d, C))`` raised from
-  ``_bspline_basis_core.py`` where the kernel does
+  ``_bspline_basis_core.py`` (since replaced by the C++ evaluation) where the kernel did
   ``int(np.searchsorted(knots, pt, side="right")) - 1`` on what it assumes is a
   scalar. With the JIT disabled the same input surfaced as ``TypeError: only
   0-dimensional arrays can be converted to Python scalars``;
