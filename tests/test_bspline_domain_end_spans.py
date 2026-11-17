@@ -84,13 +84,16 @@ def test_the_derivatives_at_a_heavy_end_are_those_of_the_left_limit() -> None:
 
     Oracle: on ``[1, 2)`` the basis is one polynomial piece, so its derivative at ``2`` is the
     limit of the derivative at ``2 - h``; with ``h = 1e-9`` the difference is ``h`` times the
-    second derivative, at most ``4 h`` here (knot spacing 1, degree 2), plus rounding.
+    second derivative, at most ``4 h`` here (knot spacing 1, degree 2), plus the rounding of the
+    two derivatives, ``16 (p + 1) eps (2 p)`` each (the C++ ``check_derivatives`` bound, h = 1).
     """
     space = BsplineSpace1D(_RIGHT_HEAVY, _P)
     d_end, f_end = space.tabulate_basis_derivatives([2.0], 1)
     d_in, f_in = space.tabulate_basis_derivatives([2.0 - 1e-9], 1)
     assert int(f_end[0]) == int(f_in[0]) == 1
-    np.testing.assert_allclose(d_end[0, 1], d_in[0, 1], rtol=0.0, atol=4e-9 + 1e-12)
+    np.testing.assert_allclose(
+        d_end[0, 1], d_in[0, 1], rtol=0.0, atol=4e-9 + 2 * 16 * (_P + 1) * _EPS * (2 * _P)
+    )
 
 
 def test_a_parameter_within_tolerance_below_a_clamped_start_is_in_the_first_span() -> None:

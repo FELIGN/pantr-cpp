@@ -217,9 +217,11 @@ def _linear_scan_span(knots: npt.NDArray[Any], u_last: float, n: int, degree: in
     """The ``O(n)`` scan ``_blossom_span`` replaced, kept here as the reference oracle.
 
     Verbatim from the kernel before the change, including its ``k = n`` fall-through when
-    no half-open span contains ``u_last``. A consistency check (mirror M5): it is the defining
-    scan the binary search must reproduce, not an independent computation of the blossom; the
-    independent oracle is :class:`TestBlossomAgainstThePolarForm` below.
+    no half-open span contains ``u_last``, so it is an oracle for ``u_last >= knots[0]`` only
+    (below the first knot the search now takes the span of that knot). A consistency check
+    (mirror M5): it is the defining scan the binary search must reproduce, not an independent
+    computation of the blossom; the independent oracle is
+    :class:`TestBlossomAgainstThePolarForm` below.
     """
     k = n
     for idx in range(n + degree):

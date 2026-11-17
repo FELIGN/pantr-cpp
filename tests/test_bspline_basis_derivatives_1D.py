@@ -573,8 +573,8 @@ def test_top_derivative_of_a_cardinal_bspline_at_high_degree(p: int) -> None:
     order-p row are ``(-1)^(p - m) C(p, m)``. The row factor ``p! / (p - k)!`` used to be a 64-bit
     integer product, which wraps once it exceeds 2^63 (from p = 21 on), leaving those rows wrong
     by an O(1) relative factor; p = 20 is the control below the wrap. The tolerance is the one
-    ``check_top_derivative_of_cardinal`` (C++ suite) asserts: rounding ``(p + 1) 2^p eps`` with
-    unit knot spacing, about 2e-8 at p = 22, with a margin.
+    ``check_top_derivative_of_cardinal`` (C++ suite) asserts, a heuristic: rounding taken as
+    ``(p + 1) 2^p eps`` with unit knot spacing (2e-7 at p = 25), with an admitted margin.
     """
     space = BsplineSpace1D(create_cardinal_knots(2 * p, p), p)
     vals, _ = space.tabulate_basis_derivatives([p + 0.5], n_deriv=p)

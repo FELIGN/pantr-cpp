@@ -286,8 +286,9 @@ class MapEvaluator {
   /// The first-derivative rows of the basis recurrence divide by knot differences. `xi` is clipped
   /// into the closed domain, where no such difference is zero (see `detail::basis_derivs_point`):
   /// at an end beside an empty span, such as the end `2` of knots `[0, 0, 0, 1, 2, 2, 2, 3]` at
-  /// degree 2, the span search takes the last non-empty span. The status is still checked, as the
-  /// recurrence reports it.
+  /// degree 2, the span search takes the last non-empty span. So the status cannot be false here;
+  /// it is checked because the recurrence returns it as a `[[nodiscard]]` status, and whether to
+  /// drop the check is left open.
   ///
   /// Returns:
   ///     bool: False when a direction's recurrence met a zero divisor; `jac` is then incomplete

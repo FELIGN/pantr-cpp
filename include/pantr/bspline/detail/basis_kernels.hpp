@@ -44,10 +44,12 @@ struct SpanAndFirst {
 ///
 /// A point inside the in-domain spans already lies in a non-empty one (`knots[raw] <= pt <
 /// knots[raw + 1]`), so its span, right-continuous at an interior knot, is kept. Outside them the
-/// nearest in-domain span is taken, skipping empty ones: the span next to an end is empty when the
-/// start knot is repeated more than `degree + 1` times, or the end knot `degree + 1` times before a
-/// trailing knot, and the recurrences return zeros there. The walk stays in `[degree, max_id]`,
-/// which holds a non-empty span since a space has at least one interval.
+/// nearest in-domain span is taken, skipping empty ones: the span next to an end is empty when
+/// `knots[degree] == knots[degree + 1]` (as a start knot repeated more than `degree + 1` times
+/// gives) or `knots[size - degree - 2] == knots[size - degree - 1]` (an end knot repeated
+/// `degree + 1` times before a trailing knot), and the recurrences return zeros there. The walk
+/// stays in `[degree, max_id]`, which holds a non-empty span since a space has at least one
+/// interval.
 ///
 /// Note:
 ///     Inputs are assumed to be correct (no validation performed).
@@ -88,7 +90,7 @@ template <StorageFloat K, StorageFloat P>
 /// Args:
 ///     knots (const K*): Knot vector.
 ///     degree (int): Degree.
-///     knot_id (std::size_t): Clamped span of `pt`.
+///     knot_id (std::size_t): The span of `pt`, as `span_and_first` gives it.
 ///     pt (P): Point.
 ///     out (P*): `degree + 1` values.
 ///     left (K*): Scratch, `degree + 1` values.
@@ -236,10 +238,12 @@ template <StorageFloat K, StorageFloat P>
       std::swap(s1, s2);
     }
   }
-  // Row k times degree! / (degree - k)!, accumulated in double: k - 1 roundings, so a relative
-  // error of at most about (k - 1) eps / 2 at any degree (the 64-bit integer product the Numba
-  // kernel used wraps from degree 21 on). The rows past the degree are left as the recurrence
-  // wrote them, exactly zero: no term of the loops above contributes to an order k > degree.
+  // Row k times degree! / (degree - k)!, accumulated in double: the factor carries k - 1
+  // roundings and applying it one more, so a relative error of at most about k eps / 2 (a 64-bit
+  // integer product would wrap from degree 21 on). The factor is finite while it stays below
+  // DBL_MAX, which 170! does and 171! does not: from degree 171 the top rows overflow to inf or
+  // NaN, unreported. The rows past the degree are left as the recurrence wrote them, exactly zero:
+  // no term of the loops above contributes to an order k > degree.
   double fac = static_cast<double>(degree);
   for (int k = 1; k <= (std::min)(n_deriv, degree); ++k) {
     for (int j = 0; j <= degree; ++j) {

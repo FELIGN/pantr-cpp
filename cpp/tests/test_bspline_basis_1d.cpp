@@ -674,9 +674,9 @@ double cardinal_top_derivative(int p, int m) {
 }
 
 void check_top_derivative_of_cardinal(int p) {
-  // Absolute bound: the coefficients of the recurrence are at most 2^p with unit knot spacing and
-  // the sum has p + 1 terms, so the rounding error is (p + 1) 2^p eps, about 2e-8 at p = 22;
-  // 1e-6 is that with a margin of 50.
+  // Absolute bound, a heuristic: taking the coefficients of the recurrence as at most 2^p with
+  // unit knot spacing and the sum as p + 1 terms, the rounding error is (p + 1) 2^p eps, about
+  // 2e-8 at p = 22 and 2e-7 at p = 25; 1e-6 is an admitted margin over that (about 5 at p = 25).
   const auto knots = bs::cardinal_knots<double>(2 * p, p);
   const bs::BsplineSpace1D<double> s(sp(knots), p, true);
   const std::vector<double> pts = {static_cast<double>(p) + 0.5};

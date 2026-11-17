@@ -968,7 +968,8 @@ TEST_CASE("bspline: a point in the band below an empty start span has the start'
   // left of 0 is empty, and a point inside the tolerance band left of 0 used to land there and
   // divide by zero in the derivative recurrence. It now takes the first non-empty span [0, 1).
   // Oracle: the derivative at 0, 2 (c1 - c0) = 2; the point differs from it by 1e-17 times a
-  // second derivative of 4. Tolerance 8 eps on a value of 2, plus that shift.
+  // second derivative of 4, 4e-17, below one unit of roundoff of 2. Tolerance 8 eps on a value of
+  // 2, which covers it.
   const std::vector<double> knots = {0, 0, 0, 0, 1, 1, 1};
   std::vector<bs::BsplineSpace1D<double>> spaces;
   spaces.emplace_back(sp(knots), 2);
