@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **Never run `git push` without first running the full check suite** (ruff, ruff format, mypy, import-lint, pytest, docs build). This applies every time — new PRs, review fixes, hotfixes, everything. `make pre-pull-request` runs all of it; the individual commands are in the Commands section below.
 - **Run every check on the whole repo, not on single files.** Checking one file while skipping a repo-wide check has let real failures through.
-- Always run commands in the `pantr-cpp` conda environment, as `conda run -n pantr-cpp <command>`. Do not use `conda activate` — shell state does not persist between tool calls, so an `activate` in one call is gone by the next. Not the `pantr` environment: its editable install belongs to the FELIGN/pantr checkout, so `import pantr` there loads a different tree without any error.
+- Always run commands in the `pantr-cpp` conda environment, as `conda run -n pantr-cpp <command>`. Do not use `conda activate` — shell state does not persist between tool calls, so an `activate` in one call is gone by the next. Add `--no-capture-output` for anything long or interactive: by default `conda run` holds stdout until the process exits and does not pass stdin, so a slow command looks hung and a heredoc reaches it empty. Not the `pantr` environment: its editable install belongs to the FELIGN/pantr checkout, so `import pantr` there loads a different tree without any error.
 - Always use git worktrees for implementing changes (via the `EnterWorktree` tool or `git worktree add`). `pytest.ini` sets `pythonpath = src`, so tests import the worktree's own source without a per-worktree reinstall.
 
 ## Commands
@@ -28,7 +28,7 @@ ruff format .                                               # format
 mypy --config-file mypy.ini src tests                       # type check
 make import-lint                                            # import boundaries (core must not import pantr.mpi)
 make dependency-check                                       # no numba/threadpoolctl; scipy only in its boundary modules
-make docs SPHINXOPTS="-W --keep-going -j auto"              # docs build (matches CI)
+make docs SPHINXOPTS="-W --keep-going -j 8"                 # docs build (CI passes -j auto; locally auto reads the machine's CPU count, not the affinity mask)
 make install                                                # dev env: every extra + build tools, then make ext (no editable install)
 pip install "pantr[mpi]"                                    # opt in to MPI (pantr.mpi + mpi4py)
 PANTR_RUN_MPI=1 mpiexec -n 2 python -m pytest tests/mpi/    # MPI smoke tests (needs mpi4py + MPI launcher)
