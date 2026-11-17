@@ -120,12 +120,12 @@ struct DerivScratch {
 /// (A2.3), into `out` (`(n_deriv + 1) x (degree + 1)`, row-major). Row 0 equals
 /// `basis_funcs_point`'s result; rows past the degree are zero.
 ///
-/// The knot differences, values and coefficients are held in `K`; each row is scaled by the
-/// integer `degree! / (degree - k)!` in double (as an integer factor times a float32 promotes to
-/// double), stored in `P`. The `ndu` denominators of the value triangle are guarded as in
-/// `basis_funcs_point`; the three divisions of the derivative rows are not (as in A2.3), and one
-/// whose divisor is zero, which a basis function of empty support produces (a knot repeated more
-/// than `degree + 1` times within the point's support), is reported rather than performed.
+/// The knot differences, values and coefficients are held in `K`; each row is scaled by
+/// `degree! / (degree - k)!`, accumulated and applied in double, and stored in `P`. The `ndu`
+/// denominators of the value triangle are guarded as in `basis_funcs_point`; the three divisions of
+/// the derivative rows are not (as in A2.3), and one whose divisor is zero, which a basis function
+/// of empty support produces (a knot repeated more than `degree + 1` times within the point's
+/// support), is reported rather than performed.
 ///
 /// Returns:
 ///     bool: False when a derivative row met a zero divisor; `out` is then incomplete.
@@ -209,17 +209,16 @@ template <StorageFloat K, StorageFloat P>
       std::swap(s1, s2);
     }
   }
-  // Row k times degree! / (degree - k)!, a 64-bit integer product applied in double; zero from
-  // k = degree + 1 on. The product wraps as the Numba kernel's did once degree! / (degree - k)!
-  // exceeds 2^63 - 1, which first happens at degree 21 (from order 19 on, 21! / 2! > 2^63): those
-  // rows are then wrong, as they were before.
-  std::uint64_t fac = static_cast<std::uint64_t>(static_cast<std::int64_t>(degree));
-  for (int k = 1; k <= n_deriv; ++k) {
-    const auto f = static_cast<double>(static_cast<std::int64_t>(fac));
+  // Row k times degree! / (degree - k)!, accumulated in double: k - 1 roundings, so a relative
+  // error of at most about (k - 1) eps / 2 at any degree (the 64-bit integer product the Numba
+  // kernel used wraps from degree 21 on). The rows past the degree are left as the recurrence
+  // wrote them, exactly zero: no term of the loops above contributes to an order k > degree.
+  double fac = static_cast<double>(degree);
+  for (int k = 1; k <= (std::min)(n_deriv, degree); ++k) {
     for (int j = 0; j <= degree; ++j) {
-      out_at(k, j) = static_cast<P>(static_cast<double>(out_at(k, j)) * f);
+      out_at(k, j) = static_cast<P>(static_cast<double>(out_at(k, j)) * fac);
     }
-    fac *= static_cast<std::uint64_t>(static_cast<std::int64_t>(degree - k));
+    fac *= static_cast<double>(degree - k);
   }
   return true;
 }
