@@ -9,6 +9,13 @@ U1-U9 (unverified items) and V1-V12 (verified claims) are defined here. "Lesson 
 learned. Where this design was later
 amended in the build, the amendment is recorded in the plan or in the short notes beside this file.
 
+**Amended 2026-11-17: no root finding.** By the maintainer's decision the built-in root finder
+(the `Builtin` provider, `pantr.bezier.find_roots`, `find_monotone_root`, the provider switch and
+`pantr.bspline.find_roots` with its Morken-Reimers finder) was removed. Every passage below that
+describes them as present, planned, tested or benchmarked is a record of the port, not of the
+tree: root finding returns only with the BeRF-FR provider (issue #22), whose design is
+`design/root_seam.md`.
+
 Source state read: pantr-cpp `main` 11ab436; BeRF-FR `b865e64a` (its build scheme as a pattern only,
 no code copied). Where this design deviates from the letter of a ruling, it says so and why
 (section 15).

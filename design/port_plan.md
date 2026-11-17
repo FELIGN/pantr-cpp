@@ -11,6 +11,13 @@ below:
   planning and approved with the plan (R11); **QB1-QB11** (QB3 unused) are defaults the plan proceeds on unless
   overruled; **P0a, P0b, P1, ...** are the build items; **S0-S9** the stages.
 
+**Amended 2026-11-17: no root finding.** By the maintainer's decision the built-in root finder
+(the `Builtin` provider, `pantr.bezier.find_roots`, `find_monotone_root`, the provider switch and
+`pantr.bspline.find_roots` with its Morken-Reimers finder) was removed. Every passage below that
+describes them as present, planned, tested or benchmarked is a record of the port, not of the
+tree: root finding returns only with the BeRF-FR provider (issue #22), whose design is
+`design/root_seam.md`.
+
 ## Rulings
 
 - **R0** The port's fixed decisions: one backend (C++ replaces Python/Numba module by module, no

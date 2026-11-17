@@ -796,10 +796,9 @@
   the value, where it was a `ValueError` for the axis, and `SpanwiseElementExtraction` of a
   periodic space with an invalid variant raises `ValueError` for the variant, where it raised
   `NotImplementedError`), and an object that is not a space, or `orders=1.0`, fails with another
-  message. A `Bezier` with the
-  B-spline's number of directions, dtype and rank given as `other` to `multiply` raises
-  `TypeError` from the binding, where it raised `AttributeError` ("... has no attribute
-  'space'").
+  message. A `Bezier` with the B-spline's number of directions, dtype and rank given as `other`
+  to `multiply` raises `TypeError` from the binding, where it raised `AttributeError` ("... has no
+  attribute 'space'").
 - **`SpanwiseElementExtraction` takes any number of directions** (its `apply` family raised
   `NotImplementedError` beyond three) and **any memory layout** for the operand, `out`, `scratch`
   and the cell indices, through a temporary where needed. The previous kernels raised Numba's
@@ -815,9 +814,10 @@
   a call has two faults, a read-only or wrongly typed `scratch` is reported before a too-small
   one. `ExtractionStructView` keeps its fields, now holding those views; the Numba kernels it was
   meant to feed are gone.
-- **`Bspline.multiply` and the rational `Bspline.derivative` run in pantr's C++ library**; names, signatures, defaults and messages are unchanged except as listed
-  here and in the entries on inputs outside the annotated types above. The rational `derivative`
-  is the quotient rule over `multiply`, so it moves with it.
+- **`Bspline.multiply` and the rational `Bspline.derivative` run in pantr's C++ library**; names,
+  signatures, defaults and messages are unchanged except as listed here and in the entries on
+  inputs outside the annotated types above. The rational `derivative` is the quotient rule over
+  `multiply`, so it moves with it.
   - **Product values move in the last bits; knot vectors do not.** The knot vectors, degrees,
     boundary types (open, periodic or unclamped, per direction), tolerances, rank, dtype and
     `is_rational` of a product are the previous release's to the bit in all 1 811 random products
@@ -1324,15 +1324,13 @@
   unchanged except as under Fixed.
 
 ### Removed
-- **pantr no longer finds roots.** `pantr.bezier.find_roots`, `pantr.bezier.find_monotone_root`,
-  `pantr.bezier.set_root_provider`, `pantr.bezier.get_root_provider` and
-  `pantr.bspline.find_roots` are gone, with the C++ root finder behind them
-  (`include/pantr/roots/` and `include/pantr/bspline/roots.hpp`) and the private modules
-  `pantr.bezier._find_roots`, `pantr.bezier._root_finding`, `pantr.bspline._bspline_roots` and
-  `pantr.bspline._bspline_roots_core`, `pantr.bezier._root_finding_core`, `_yuksel_core`,
-  `_clipping_core` and `_batch_core` of the previous release. Code that calls them gets an
-  `AttributeError` (an `ImportError` for `from pantr.bezier import find_roots`). Root finding will
-  come back with the BeRF-FR provider, in a separate package; until then pantr has none of its own.
+- **pantr no longer finds roots.** `pantr.bezier.find_roots` and `find_monotone_root`, and
+  `pantr.bspline.find_roots`, are gone, with the private modules behind them
+  (`pantr.bezier._find_roots`, `_root_finding`, `_root_finding_core`, `_yuksel_core`,
+  `_clipping_core` and `_batch_core`, and `pantr.bspline._bspline_roots` and
+  `_bspline_roots_core`). Code that calls them gets an `AttributeError` (an `ImportError` for
+  `from pantr.bezier import find_roots`). Root finding will come back with the BeRF-FR provider,
+  in a separate package; until then pantr has none of its own.
 
 ### Fixed
 - **`create_uniform_periodic_knots` (and the periodic `create_uniform_space`) returns a periodic
