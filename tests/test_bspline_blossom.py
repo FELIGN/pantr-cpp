@@ -243,7 +243,12 @@ def _random_open_knots(
 
 
 class TestBlossomSpan:
-    """The binary span search agrees with the linear scan on every valid input."""
+    """The binary span search agrees with the linear scan on clamped vectors.
+
+    The scan is the reference for ``u >= knots[0]`` on vectors whose last span is non-empty
+    (the generated vectors here); below the first knot, and past an empty last span, the search
+    departs from it on purpose (``tests/test_bspline_domain_end_spans.py``).
+    """
 
     @pytest.mark.parametrize("degree", [1, 2, 3, 4, 5])
     @pytest.mark.parametrize("n_interior", [0, 1, 2, 5])
