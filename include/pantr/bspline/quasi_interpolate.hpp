@@ -3,9 +3,9 @@
 ///
 /// Each coefficient is a local point-value functional `lambda_j(f) = sum_k a_{j,k} f(x_{j,k})`:
 /// per direction, the `degree + 1` points are equispaced inside the knot interval holding the
-/// function's Greville abscissa (the one to its right at a break), or its neighbour where that
-/// interval misses the function's support (see `detail::llm_direction`), and the weights are the
-/// function's row of the inverse of the local collocation block there. On one interval the
+/// function's Greville abscissa (the one to its right at a break), or the nearest interval of the
+/// function's support where that one misses it (see `detail::llm_direction`), and the weights are
+/// the function's row of the inverse of the local collocation block there. On one interval the
 /// `degree + 1` nonzero B-splines span the polynomials of that degree, so where the chosen interval
 /// lies in the function's support the local interpolant recovers its coefficient exactly and the
 /// operator reproduces the space (`Q B_j = B_j`). A periodic function's abscissa is wrapped into
@@ -150,22 +150,20 @@ void llm_weight_row(const BsplineSpace1D<T>& space, std::size_t j, std::span<con
 ///
 /// The interval of function `j` is the one holding its Greville abscissa (the one to the right at a
 /// break; the end interval for an abscissa outside the domain) when that interval lies in the
-/// function's support, and otherwise its neighbour that does (cyclically, in a periodic space).
-/// The abscissa misses the support only at a break of multiplicity at least `degree + 1` bounding
-/// it: the function ending there and the one starting there both have the mean of `degree` copies
-/// of the break as their abscissa, which lands on the break or rounds to either side of it, and the
-/// support of such a function is the single interval on the other side. That argument assumes the
-/// knots of a periodic space past the domain are the periodic images of its own; where they are
-/// not, the wrapped abscissa can lie away from the support. Membership is read from each
-/// interval's block (its first function at a probe point inside the interval), not from the
-/// comparison of the abscissa with the breaks.
+/// function's support, and otherwise the nearest interval that does (the left one first at equal
+/// distance; cyclically, in a periodic space). Where a periodic space's knots past the domain are
+/// the periodic images of its own, the abscissa misses the support only at a break of multiplicity
+/// at least `degree + 1` bounding it: the function ending there and the one starting there both
+/// have the mean of `degree` copies of the break as their abscissa, which lands on the break or
+/// rounds to either side of it, and the support of such a function is the single interval on the
+/// other side, a neighbour. Where they are not images, the wrapped abscissa can lie farther away.
+/// Membership is read from each interval's block (its first function at a probe point inside the
+/// interval), not from the comparison of the abscissa with the breaks.
 ///
 /// Raises:
-///     value_error: Neither the interval holding a function's abscissa nor a neighbour of it lies
-///         in the function's support: none of the domain does (a knot repeated past `degree + 1`
-///         times, or a function outside the domain), or the knots of a periodic space past the
-///         domain are not the periodic images of its own; a local collocation block is singular
-///         (an exactly zero or NaN pivot) or its inverse is not finite.
+///     value_error: A function has no interval of the domain in its support (a knot repeated past
+///         `degree + 1` times, or a function outside the domain); a local collocation block is
+///         singular (an exactly zero or NaN pivot) or its inverse is not finite.
 template <StorageFloat T>
 [[nodiscard]] LlmDirection llm_direction(const BsplineSpace1D<T>& space) {
   const auto order = static_cast<std::size_t>(space.degree()) + 1;
@@ -206,22 +204,28 @@ template <StorageFloat T>
     const auto above = static_cast<std::size_t>(it - breaks.begin());
     std::size_t mu = above == 0 ? 0 : (std::min)(above - 1, n_intervals - 1);
     if (!holds(mu, j)) {
-      // The abscissa is on, or rounded across, a break bounding the support (see the docstring):
-      // the support is the interval on the other side of it, wrapping in a periodic space.
+      // The abscissa is on, or rounded across, a break bounding the support, or (non-image ghost
+      // knots) wrapped away from it (see the docstring): take the nearest interval that holds the
+      // function, the left one first at equal distance, wrapping in a periodic space.
       const bool periodic = space.periodic();
-      const bool has_left = mu > 0 || periodic;
-      const bool has_right = mu + 1 < n_intervals || periodic;
-      const std::size_t left = (mu + n_intervals - 1) % n_intervals;
-      const std::size_t right = (mu + 1) % n_intervals;
-      if (has_left && holds(left, j)) {
-        mu = left;
-      } else if (has_right && holds(right, j)) {
-        mu = right;
-      } else {
+      bool found = false;
+      for (std::size_t d = 1; d < n_intervals && !found; ++d) {
+        const bool has_left = mu >= d || periodic;
+        const bool has_right = mu + d < n_intervals || periodic;
+        const std::size_t left = (mu + n_intervals - d) % n_intervals;
+        const std::size_t right = (mu + d) % n_intervals;
+        if (has_left && holds(left, j)) {
+          mu = left;
+          found = true;
+        } else if (has_right && holds(right, j)) {
+          mu = right;
+          found = true;
+        }
+      }
+      if (!found) {
         throw value_error("Basis function " + std::to_string(j) +
-                          " has no knot interval of the domain in its support at or beside its "
-                          "Greville abscissa, so no quasi-interpolation functional can be built "
-                          "for it.");
+                          " has no knot interval of the domain in its support, so no "
+                          "quasi-interpolation functional can be built for it.");
       }
     }
     llm_interval_points(static_cast<double>(breaks[mu]), static_cast<double>(breaks[mu + 1]), pts);

@@ -118,9 +118,7 @@ def quasi_interpolate_bspline(
     Raises:
         TypeError: If ``space`` is not a :class:`~pantr.bspline.BsplineSpace`.
         ValueError: If ``kind`` is not recognized, ``space`` has no direction, a basis
-            function of ``space`` has no knot interval of the domain in its support (or, in
-            a periodic space whose knots past the domain are not the periodic images of its
-            own, none beside its Greville abscissa), or
+            function of ``space`` has no knot interval of the domain in its support, or
             ``func`` returns an output with an invalid shape (0-D, more than 2-D, or
             wrong leading dimension).
 
