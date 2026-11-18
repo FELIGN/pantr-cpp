@@ -150,8 +150,9 @@ void llm_weight_row(const BsplineSpace1D<T>& space, std::size_t j, std::span<con
 ///
 /// The interval of function `j` is the one holding its Greville abscissa (the one to the right at a
 /// break; the end interval for an abscissa outside the domain) when that interval lies in the
-/// function's support, and otherwise the nearest interval that does (the left one first at equal
-/// distance; cyclically, in a periodic space). Where a periodic space's knots past the domain are
+/// function's support, and otherwise the nearest interval that does, distance counted in intervals
+/// (the left one first at equal distance; cyclically, in a periodic space, while a non-periodic
+/// space's search does not wrap). Where a periodic space's knots past the domain are
 /// the periodic images of its own, the abscissa misses the support only at a break of multiplicity
 /// at least `degree + 1` bounding it: the function ending there and the one starting there both
 /// have the mean of `degree` copies of the break as their abscissa, which lands on the break or
