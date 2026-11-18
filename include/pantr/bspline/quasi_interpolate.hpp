@@ -8,14 +8,15 @@
 /// the local collocation block there. On one interval the `degree + 1` nonzero B-splines span the
 /// polynomials of that degree, so where the chosen interval lies in the function's support the
 /// local interpolant recovers its coefficient exactly and the operator reproduces the space
-/// (`Q B_j = B_j`). In a periodic space the abscissae are still read from the wrapped and sorted
-/// array rather than per function, which finds an interval of the function only for some knot
-/// vectors. Points, local blocks, weights and coefficients are
-/// `double`, as before (the blocks are tabulated over the space's own knots, so a `float` space's
-/// rounded knots carry into them); a caller rounds the coefficients to the space's type.
+/// (`Q B_j = B_j`). A periodic function's abscissa is wrapped into the domain, and its position in
+/// a block whose functions wrap past `num_basis` is taken modulo `num_basis`. Points, local blocks,
+/// weights and coefficients are `double`, as before (the blocks are tabulated over the space's own
+/// knots, so a `float` space's rounded knots carry into them); a caller rounds the coefficients to
+/// the space's type.
 #pragma once
 
 #include "pantr/bspline/bspline.hpp"
+#include "pantr/bspline/knot_factories.hpp"
 #include "pantr/bspline/space.hpp"
 #include "pantr/bspline/space_1d.hpp"
 #include "pantr/config.hpp"
@@ -82,14 +83,25 @@ inline void llm_interval_points(double lo, double hi, std::span<double> out) noe
 
 /// The position of function `j` among the functions `first, ..., first + degree` of a block.
 ///
+/// A periodic block near the domain's end numbers its functions past `num_basis`, `first + k`
+/// standing for `(first + k) mod num_basis`, so the position is reduced modulo `num_basis` there.
+///
 /// Args:
+///     space (const BsplineSpace1D<T>&): The 1D space.
 ///     j (std::size_t): The function, in `[0, num_basis)`.
 ///     first (std::int64_t): The block's first function, as `tabulate_basis` returns it.
 ///
 /// Returns:
-///     long long: `j - first`; `j` is in the block when it lies in `[0, degree]`.
-[[nodiscard]] inline long long llm_local_index(std::size_t j, std::int64_t first) noexcept {
-  return static_cast<long long>(j) - first;
+///     long long: The position; `j` is in the block when it lies in `[0, degree]`.
+template <StorageFloat T>
+[[nodiscard]] long long llm_local_index(const BsplineSpace1D<T>& space, std::size_t j,
+                                        std::int64_t first) noexcept {
+  const long long local = static_cast<long long>(j) - first;
+  if (!space.periodic()) {
+    return local;
+  }
+  const long long n = space.num_basis();
+  return ((local % n) + n) % n;
 }
 
 /// The weight row of function `j` for the points `pts` of one knot interval: row `j - first` of
@@ -125,7 +137,7 @@ void llm_weight_row(const BsplineSpace1D<T>& space, std::size_t j, std::span<con
   }
   // The callers choose the interval inside the function's support, so this holds for a consistent
   // space; it keeps a caller's wrong index from reading outside the inverse.
-  const long long local = llm_local_index(j, first.data()[0]);
+  const long long local = llm_local_index<T>(space, j, first.data()[0]);
   if (local < 0 || local >= order) {
     throw index_error("basis function " + std::to_string(j) +
                       " is not among the functions of the block starting at " +
@@ -140,21 +152,30 @@ void llm_weight_row(const BsplineSpace1D<T>& space, std::size_t j, std::span<con
 /// Raises:
 ///     value_error: A local collocation block is singular (an exactly zero or NaN pivot) or its
 ///         inverse is not finite.
-///     index_error: The target function is not among the block's functions (a Python index
-///         outside `[-order, order)`, as before).
+///     index_error: The target function is not among the block's functions.
 template <StorageFloat T>
 [[nodiscard]] LlmDirection llm_direction(const BsplineSpace1D<T>& space) {
   const auto order = static_cast<std::size_t>(space.degree()) + 1;
   const auto n = static_cast<std::size_t>(space.num_basis());
-  const std::vector<T> greville = space.greville();
+  const auto [lo, hi] = space.domain();
+  // The abscissae in the functions' own order: `greville()` wraps a periodic space's into the
+  // domain and sorts them, so its entry j is in general another function's.
+  const std::vector<T> greville =
+      greville_abscissae<T>(space.knots(), space.degree(), n, false, lo, hi);
   const std::span<const T> breaks = space.unique_knots_and_multiplicity(true).first;
   const std::size_t n_intervals = breaks.size() - 1;
   LlmDirection out{NdArray<double>({n, order}, for_overwrite),
                    NdArray<double>({n, order}, for_overwrite)};
   std::vector<double> pts(order);
   for (std::size_t j = 0; j < n; ++j) {
+    T gj = greville[j];
+    if (space.periodic()) {
+      // Into [lo, hi), as `greville_abscissae` wraps.
+      const T shifted = gj - lo;
+      gj = lo + numpy_mod<T>(shifted, hi - lo);
+    }
     // searchsorted(breaks, g, side="right") - 1, clamped to an interval.
-    const auto g = static_cast<double>(greville[j]);
+    const auto g = static_cast<double>(gj);
     const auto it = std::upper_bound(breaks.begin(), breaks.end(), g,
                                      [](double v, T b) { return v < static_cast<double>(b); });
     const auto above = static_cast<std::size_t>(it - breaks.begin());
@@ -168,7 +189,7 @@ template <StorageFloat T>
     const std::int64_t first =
         space.template tabulate_basis<double>(std::span<const double>(pts.data(), 1))
             .second.data()[0];
-    const long long local = llm_local_index(j, first);
+    const long long local = llm_local_index<T>(space, j, first);
     if (local < 0 || local >= static_cast<long long>(order)) {
       mu = (mu + n_intervals - 1) % n_intervals;
       llm_interval_points(static_cast<double>(breaks[mu]), static_cast<double>(breaks[mu + 1]),
