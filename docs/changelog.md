@@ -36,7 +36,7 @@
   domain in its support** (an interior knot repeated more than `degree + 1` times, or a function
   lying wholly before or after the domain) raises `ValueError` naming the function; the previous
   release built a functional for it on an interval outside its support and returned an
-  unrelated coefficient, which does not change the spline on the domain.
+  unrelated coefficient, which does not change the spline on the domain, or raised `IndexError`.
 - **`Bezier.multiply` and `Bspline.multiply` of finite control points whose product overflows**
   raise `OverflowError`; the previous release returned `inf` control points with NumPy's
   "overflow encountered in multiply" `RuntimeWarning`. With two or more parametric directions the

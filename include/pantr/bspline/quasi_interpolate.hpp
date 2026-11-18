@@ -3,17 +3,16 @@
 ///
 /// Each coefficient is a local point-value functional `lambda_j(f) = sum_k a_{j,k} f(x_{j,k})`:
 /// per direction, the `degree + 1` points are equispaced inside the knot interval holding the
-/// function's Greville abscissa (the one to its right at a break), or the support's interval
-/// nearest to it where the abscissa misses the support (see `detail::llm_direction`), and the
-/// weights are the function's row of the inverse of the local collocation block there. On one
-/// interval the `degree + 1` nonzero B-splines span the polynomials of that degree, so where the
-/// chosen interval lies in the function's support the local interpolant recovers its coefficient
-/// exactly and the operator reproduces the space
-/// (`Q B_j = B_j`). A periodic function's abscissa is wrapped into the domain, and its position in
-/// a block whose functions wrap past `num_basis` is taken modulo `num_basis`. Points, local blocks,
-/// weights and coefficients are `double`, as before (the blocks are tabulated over the space's own
-/// knots, so a `float` space's rounded knots carry into them); a caller rounds the coefficients to
-/// the space's type.
+/// function's Greville abscissa (the one to its right at a break), or its neighbour where that
+/// interval misses the function's support (see `detail::llm_direction`), and the weights are the
+/// function's row of the inverse of the local collocation block there. On one interval the
+/// `degree + 1` nonzero B-splines span the polynomials of that degree, so where the chosen interval
+/// lies in the function's support the local interpolant recovers its coefficient exactly and the
+/// operator reproduces the space (`Q B_j = B_j`). A periodic function's abscissa is wrapped into
+/// the domain, and its position in a block whose functions wrap past `num_basis` is taken modulo
+/// `num_basis`. Points, local blocks, weights and coefficients are `double`, as before (the blocks
+/// are tabulated over the space's own knots, so a `float` space's rounded knots carry into them);
+/// a caller rounds the coefficients to the space's type.
 #pragma once
 
 #include "pantr/bspline/bspline.hpp"
@@ -150,12 +149,13 @@ void llm_weight_row(const BsplineSpace1D<T>& space, std::size_t j, std::span<con
 /// Build one direction's Lee-Lyche-Mørken data.
 ///
 /// The interval of function `j` is the one holding its Greville abscissa (the one to the right at a
-/// break) when that interval lies in the function's support, and otherwise the interval of the
-/// support nearest to it (cyclically, in a periodic space). The abscissa misses the support only
-/// at a break of multiplicity `degree + 1` that bounds it: the function ending there has the break
-/// as its abscissa, and the mean of the `degree` equal knots of a function starting there can round
-/// below the break. Membership is read from each interval's block, in integers, not from the
-/// comparison of the abscissa with the breaks.
+/// break; the end interval for an abscissa outside the domain) when that interval lies in the
+/// function's support, and otherwise its neighbour that does (cyclically, in a periodic space).
+/// The abscissa misses the support only at a break of multiplicity at least `degree + 1` bounding
+/// it: the function ending there and the one starting there both have the mean of `degree` copies
+/// of the break as their abscissa, which lands on the break or rounds to either side of it, and the
+/// support of such a function is the single interval on the other side. Membership is read from
+/// each interval's block, in integers, not from the comparison of the abscissa with the breaks.
 ///
 /// Raises:
 ///     value_error: A function has no interval of the domain in its support (a knot repeated past
@@ -201,27 +201,22 @@ template <StorageFloat T>
     const auto above = static_cast<std::size_t>(it - breaks.begin());
     std::size_t mu = above == 0 ? 0 : (std::min)(above - 1, n_intervals - 1);
     if (!holds(mu, j)) {
-      // The abscissa is on, or rounded across, a break of multiplicity degree + 1 bounding the
-      // support (see the docstring): take the nearest interval of the support.
-      std::size_t best = n_intervals;
-      std::size_t best_dist = 0;
-      for (std::size_t c = 0; c < n_intervals; ++c) {
-        if (!holds(c, j)) {
-          continue;
-        }
-        const std::size_t span = c > mu ? c - mu : mu - c;
-        const std::size_t dist = space.periodic() ? (std::min)(span, n_intervals - span) : span;
-        if (best == n_intervals || dist < best_dist) {
-          best = c;
-          best_dist = dist;
-        }
-      }
-      if (best == n_intervals) {
+      // The abscissa is on, or rounded across, a break bounding the support (see the docstring):
+      // the support is the interval on the other side of it, wrapping in a periodic space.
+      const bool periodic = space.periodic();
+      const bool has_left = mu > 0 || periodic;
+      const bool has_right = mu + 1 < n_intervals || periodic;
+      const std::size_t left = (mu + n_intervals - 1) % n_intervals;
+      const std::size_t right = (mu + 1) % n_intervals;
+      if (has_left && holds(left, j)) {
+        mu = left;
+      } else if (has_right && holds(right, j)) {
+        mu = right;
+      } else {
         throw value_error("Basis function " + std::to_string(j) +
                           " has no knot interval of the domain in its support, so no "
                           "quasi-interpolation functional can be built for it.");
       }
-      mu = best;
     }
     llm_interval_points(static_cast<double>(breaks[mu]), static_cast<double>(breaks[mu + 1]), pts);
     llm_weight_row<T>(space, j, pts, std::span<double>(out.weights.data() + j * order, order));

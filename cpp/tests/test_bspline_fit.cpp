@@ -2679,18 +2679,22 @@ TEST_CASE("QuasiInterpolation: a periodic function is sampled at its own Grevill
 }
 
 TEST_CASE("QuasiInterpolation: a function with no support in the domain is refused") {
-  // A knot of multiplicity degree + 2 inside the domain leaves one function identically zero,
-  // and a clamped end repeated past degree + 1 one outside the domain; no interval of the domain
-  // holds them, so no functional can be built. Oracle: the documented refusal, a value_error
-  // naming the function, rather than an index error or the row of another function.
-  const std::vector<double> inner = clamped(2, {0.5, 0.5, 0.5, 0.5});
-  CHECK_THROWS_AS(
-      static_cast<void>(bs::QuasiInterpolation<double>(space_of<double>({Dir{inner, 2}}))),
-      pantr::value_error);
-  const std::vector<double> outer = {0.0, 1.0, 1.0, 1.0, 2.0, 3.0, 4.0, 5.0, 5.0};
-  CHECK_THROWS_AS(
-      static_cast<void>(bs::QuasiInterpolation<double>(space_of<double>({Dir{outer, 2}}))),
-      pantr::value_error);
+  // A knot of multiplicity degree + 2 inside the domain leaves one function (3) identically zero,
+  // and an extra knot before a domain start of multiplicity degree + 1 leaves one (0) wholly
+  // before the domain; no interval of the domain holds them, so no functional can be built.
+  // Oracle: the documented refusal, a value_error naming the function, rather than an index error
+  // or the row of another function. The spaces are built first, so the check sees the
+  // quasi-interpolant's error alone.
+  const bs::BsplineSpace<double> inner =
+      space_of<double>({Dir{clamped(2, {0.5, 0.5, 0.5, 0.5}), 2}});
+  CHECK_THROWS_WITH_AS(static_cast<void>(bs::QuasiInterpolation<double>(inner)),
+                       doctest::Contains("Basis function 3 has no knot interval"),
+                       pantr::value_error);
+  const bs::BsplineSpace<double> outer =
+      space_of<double>({Dir{{0.0, 1.0, 1.0, 1.0, 2.0, 3.0, 4.0, 5.0, 5.0}, 2}});
+  CHECK_THROWS_WITH_AS(static_cast<void>(bs::QuasiInterpolation<double>(outer)),
+                       doctest::Contains("Basis function 0 has no knot interval"),
+                       pantr::value_error);
 }
 
 TEST_CASE_TEMPLATE("QuasiInterpolation: periodic spaces are reproduced", T, float, double) {
@@ -2744,8 +2748,8 @@ TEST_CASE_TEMPLATE("QuasiInterpolation: periodic spaces are reproduced", T, floa
     check_qi_reproduces<T>({Dir{knots, 4, true}}, 1, 125);
   }
   SUBCASE("discontinuous (C-1) periodic spaces, degrees 1 to 3") {
-    // Every knot repeated degree + 1 times: each function lives on one interval, and the one that
-    // ends at the domain's start wraps to the last interval.
+    // Every knot repeated degree + 1 times: each function lives on one interval, and the abscissa
+    // of the one ending at the domain's end wraps to the domain's start.
     for (const int p : {1, 2, 3}) {
       for (const int n : {2, 3, 7, 11}) {
         INFO("degree " << p << ", " << n << " intervals");
