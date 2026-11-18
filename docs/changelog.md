@@ -1357,6 +1357,16 @@
   the end of the curve, and one at or past the end beside an empty span used that span, returning
   a control point; each now uses the nearest non-empty span, and a NaN parameter gives NaN.
   Inherited from the previous release.
+- **`quasi_interpolate_bspline` reproduces every spline of the space** (#9). Two families of spaces
+  returned coefficients wrong by an error of order 1, with no exception: a knot of multiplicity
+  `degree + 1` in the interior, where the function ending at the knot was sampled on the interval
+  to its right, outside its support; and periodic spaces, where function `j` was given the
+  `j`-th entry of the wrapped and sorted Greville abscissae, another function's (the uniform
+  periodic cubics of 6 and 12 intervals among them). Each function is now sampled on an interval
+  of its own support, chosen from its own abscissa. The sample points of every periodic space
+  change as a result, so the quasi-interpolant of a function outside the space differs there by
+  the approximation error; non-periodic spaces keep theirs, except where they had the defect.
+  Inherited from the previous release.
 - **`create_uniform_periodic_knots` (and the periodic `create_uniform_space`) returns a periodic
   knot vector for every continuity.** For `1 <= continuity <= degree - 2` it extended the repeated
   interior knots past both ends by distinct, evenly spaced knots, so `K[i + n m] = K[i] + L` (`n`
