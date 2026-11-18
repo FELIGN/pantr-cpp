@@ -1009,7 +1009,15 @@ _REPORTED_QI_CASES: dict[str, Callable[[], BsplineSpace]] = {
     "cubic, knot 1/2 four times": lambda: _space_from_knots(
         (_knots(3, [0.25, 0.5, 0.5, 0.5, 0.5, 0.75]), 3)
     ),
+    "periodic cubic, 6 intervals": lambda: create_uniform_space(3, 6, periodic=True),
+    "periodic cubic, 12 intervals": lambda: create_uniform_space(3, 12, periodic=True),
 }
+
+# Every uniform periodic space of maximum regularity of degree 3 with 4 to 16 intervals, and of
+# degrees 2 and 4 with 5 to 12.
+_PERIODIC_SWEEP: list[tuple[int, int]] = [(3, n) for n in range(4, 17)] + [
+    (p, n) for p in (2, 4) for n in range(5, 13)
+]
 
 
 class TestQuasiInterpolateOracles:
@@ -1102,6 +1110,38 @@ class TestQuasiInterpolateOracles:
         """
         space = create_uniform_space(3, 6, periodic=True)
         ctrl = _dyadic_ctrl((6, 1), seed=1)
+        spline = quasi_interpolate_bspline(_exact_sampler(space, ctrl), space)
+        got = np.asarray(spline.control_points)
+        assert float(np.max(np.abs(got - ctrl))) <= _qi_bound(space, float(np.max(np.abs(ctrl))))
+
+    @pytest.mark.parametrize(("degree", "intervals"), _PERIODIC_SWEEP)
+    def test_quasi_interpolant_reproduces_uniform_periodic_spaces(
+        self, degree: int, intervals: int
+    ) -> None:
+        """Oracle: the invariant ``Q B = B`` on ``create_uniform_space(degree, n, periodic=True)``.
+
+        Bug caught: a function given another function's Greville abscissa (read from the wrapped
+        and sorted array), or its block row looked up without the wrap past ``num_basis``: the
+        coefficients come back shifted, an error of order 1 (the previous release did this for the
+        cubics of 6 and 12 intervals).
+        """
+        space = create_uniform_space(degree, intervals, periodic=True)
+        ctrl = _dyadic_ctrl((int(space.num_basis[0]), 1), seed=10 * degree + intervals)
+        spline = quasi_interpolate_bspline(_exact_sampler(space, ctrl), space)
+        got = np.asarray(spline.control_points)
+        assert float(np.max(np.abs(got - ctrl))) <= _qi_bound(space, float(np.max(np.abs(ctrl))))
+
+    def test_quasi_interpolant_reproduces_a_non_uniform_periodic_quartic(self) -> None:
+        """Oracle: ``Q B = B`` on a periodic quartic with breaks 0, 1/8, 1/4, 3/8, 1/2, 1.
+
+        The ghost knots are the periodic images of the domain's. Function 2's abscissa wraps to
+        the last interval, whose block numbers it past ``num_basis``. Bug caught: the block row
+        looked up without the wrap (an index error, or another function's row).
+        """
+        breaks = [0.0, 0.125, 0.25, 0.375, 0.5, 1.0]
+        knots = [x - 1.0 for x in breaks[1:5]] + breaks + [x + 1.0 for x in breaks[1:5]]
+        space = BsplineSpace([BsplineSpace1D(np.array(knots), 4, periodic=True)])
+        ctrl = _dyadic_ctrl((int(space.num_basis[0]), 1), seed=4)
         spline = quasi_interpolate_bspline(_exact_sampler(space, ctrl), space)
         got = np.asarray(spline.control_points)
         assert float(np.max(np.abs(got - ctrl))) <= _qi_bound(space, float(np.max(np.abs(ctrl))))

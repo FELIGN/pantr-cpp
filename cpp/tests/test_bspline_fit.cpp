@@ -2651,13 +2651,45 @@ TEST_CASE_TEMPLATE("QuasiInterpolation: a spline with a discontinuity is reprodu
   }
 }
 
-TEST_CASE("QuasiInterpolation: a periodic cubic of 6 intervals is reproduced") {
-  // Oracle: the invariant Q B = B. A periodic cubic space of 6 intervals on [0, 1], knots as
-  // `uniform_periodic_knots` makes them (the space `create_uniform_space(3, 6, periodic=True)` of
-  // the Python API). Bug caught: the coefficients returned cyclically shifted, an error of order 1
-  // (the previous release did this, and so for 12 intervals).
-  const std::vector<double> knots = bs::uniform_periodic_knots<double>(6, 3, 2, 0.0, 1.0);
-  check_qi_reproduces<double>({Dir{knots, 3, true}}, 1, 113);
+TEST_CASE_TEMPLATE("QuasiInterpolation: periodic spaces are reproduced", T, float, double) {
+  // Oracle: the invariant Q B = B. The Greville abscissae of a periodic space, wrapped into the
+  // domain, are not in the order of the functions, and the functions of a block near the domain's
+  // end are numbered past `num_basis`. Bug caught: function j given another function's abscissa
+  // (the coefficients returned cyclically shifted, an error of order 1; the previous release did
+  // this for the uniform cubics of 6 and 12 intervals), and a block row looked up without the
+  // wrap.
+  SUBCASE("uniform, maximum regularity: degree 3 with 4 to 16 intervals, 2 and 4 with 5 to 12") {
+    for (const int p : {2, 3, 4}) {
+      const int lo = p == 3 ? 4 : 5;
+      const int hi = p == 3 ? 16 : 12;
+      for (int n = lo; n <= hi; ++n) {
+        INFO("degree " << p << ", " << n << " intervals");
+        const std::vector<double> knots = bs::uniform_periodic_knots<double>(n, p, p - 1, 0.0, 1.0);
+        check_qi_reproduces<T>({Dir{knots, p, true}}, 1, static_cast<unsigned>(200 + 20 * p + n));
+      }
+    }
+  }
+  SUBCASE("non-uniform cubic and quartic, the ghost knots the periodic images of the domain's") {
+    // Cubic: breaks 0, 0.1, 0.35, 0.5, 0.8, 1, three knots past each end.
+    const std::vector<double> cubic = {-0.65, -0.5, -0.2, 0.0, 0.1,  0.35,
+                                       0.5,   0.8,  1.0,  1.1, 1.35, 1.5};
+    check_qi_reproduces<T>({Dir{cubic, 3, true}}, 1, 118);
+    // Quartic: breaks 0, 1/8, 1/4, 3/8, 1/2, 1 (dyadic), four knots past each end. The sorted
+    // abscissae give function 2 an interval two intervals past its support's end.
+    const std::vector<double> quartic = {-0.875, -0.75, -0.625, -0.5,  0.0,  0.125, 0.25,
+                                         0.375,  0.5,   1.0,    1.125, 1.25, 1.375, 1.5};
+    check_qi_reproduces<T>({Dir{quartic, 4, true}}, 1, 122);
+  }
+  SUBCASE("uniform quadratic, C0 (each knot twice), and a shifted domain") {
+    check_qi_reproduces<T>({Dir{bs::uniform_periodic_knots<double>(5, 2, 0, 0.0, 1.0), 2, true}}, 1,
+                           119);
+    check_qi_reproduces<T>({Dir{bs::uniform_periodic_knots<double>(6, 3, 2, -0.75, 2.25), 3, true}},
+                           2, 120);
+  }
+  SUBCASE("2D, a periodic direction of 6 intervals by a clamped one") {
+    check_qi_reproduces<T>(
+        {Dir{bs::uniform_periodic_knots<double>(6, 3, 2, 0.0, 1.0), 3, true}, cubic_dir()}, 1, 121);
+  }
 }
 
 TEST_CASE_TEMPLATE(
