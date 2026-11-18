@@ -325,6 +325,20 @@ class THBSplineSpace {
   /// order. The 1D values are computed in `double` whatever the root's storage type `T`, on the
   /// level spaces' knots in `T`.
   ///
+  /// At a cell's bounds the 1D search is right-continuous at a knot, with one exception. Where a
+  /// bound is a knot of multiplicity `degree + 1` of the level tabulated (every new breakpoint of
+  /// a space refined with regularity -1), a point at it, or within the membership slack outside
+  /// it, is evaluated on the cell's own span: the limit from inside the cell, so the values sum to
+  /// one at the upper bound as inside. At an upper bound on a knot of lower multiplicity the
+  /// values are the cell's limits as well, but the derivatives of an order above the continuity
+  /// there are those of the piece to the right of the bound (as in the previous release). A bound
+  /// is recognised as that knot only where the two are equal in floating point: where they differ
+  /// by rounding (a `float` root, or a bound not exactly representable, from the second refinement
+  /// of a non-dyadic root on), the functions of the cell can still all vanish at that bound, a
+  /// known limit. Where the
+  /// space is discontinuous, a bound shared by two cells has a value per cell, and each cell
+  /// returns its own.
+  ///
   /// No dimension limit applies (the Python implementation refused more than 24 directions, a
   /// limit of its einsum subscripts).
   ///
@@ -719,9 +733,9 @@ class THBSplineSpace {
   //
   // The points were checked against the cell, which lies inside the domain up to the membership
   // slack, so the 1D kernel is run without its own domain check; a point within the slack of an
-  // end is evaluated on the nearest in-domain span. An order above the degree is zero: the kernel
-  // is asked for `degree + 1`, whose slice is exactly zero, rather than for an order that sizes
-  // an array by the caller's number.
+  // end is evaluated on the nearest non-empty in-domain span. An order above the degree is zero:
+  // the kernel is asked for `degree + 1`, whose slice is exactly zero, rather than for an order
+  // that sizes an array by the caller's number.
   //
   // The 1D search is right-continuous at a knot, so at the cell's upper bound it takes the span to
   // the right of the cell (and a point within the slack outside either bound a span outside it).
@@ -734,6 +748,9 @@ class THBSplineSpace {
   // cell's span. Where they share functions, a cell function the neighbour lacks vanishes at the
   // shared knot from inside as well, so the values are the cell's limits and the point is left as
   // the search placed it; its derivatives there are the neighbouring piece's, as before.
+  // The bounds and the knots are compared exactly: a bound that differs from its knot by rounding
+  // (a `float` root, or bounds and knots subdivided along different routes) is not recognised,
+  // and the cell's functions can still vanish there (stated as a limit in `tabulate_basis`).
   void tabulate_1d(std::int64_t level, std::size_t k, std::int64_t order,
                    mdview<const double, 2> pts, std::pair<double, double> bounds,
                    detail::Basis1D& out) const {

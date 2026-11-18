@@ -892,6 +892,22 @@ class THBSplineSpace:
         on the cell.  Mirrors the ``(basis, first_basis)`` two-return of
         :meth:`~pantr.bspline.BsplineSpace.tabulate_basis`.
 
+        At a cell's bounds the 1D B-spline search is right-continuous at a knot, with
+        one exception.  Where a bound is a knot of multiplicity ``degree + 1`` of the
+        level tabulated (every new breakpoint of a space refined with
+        ``regularity=-1``), a point at it, or within the slack outside it, is evaluated
+        on the cell's own span: the limit from inside the cell, so the values sum to
+        one at the upper bound as inside.  At an upper bound on a knot of lower
+        multiplicity the values are the cell's limits as well, but the derivatives
+        (:meth:`tabulate_basis_derivatives`) of an order above the continuity there
+        are those of the piece to the right of the bound, as in the previous release.
+        A bound is recognised as that knot only where the two are equal in floating
+        point: where they differ by rounding (a ``float32`` root, or a bound not
+        exactly representable, from the second refinement of a non-dyadic root on),
+        the functions of the cell can still all vanish at that bound, a known limit.
+        Where the space is discontinuous, a bound shared by two cells has a value per
+        cell, and each cell returns its own.
+
         Args:
             cid (int): Active cell flat id in ``[0, grid.num_cells)``.
             pts (npt.ArrayLike): Parametric points of shape ``(..., dim)`` lying in
@@ -934,6 +950,7 @@ class THBSplineSpace:
         B-spline derivatives; truncated functions apply their stored coefficients to
         the B-spline derivatives at their representation level.  The returned columns
         are ordered as ``dofs`` (the sorted global dofs, equal to :meth:`active_basis`).
+        At a cell's bounds the derivatives are taken as :meth:`tabulate_basis` states.
 
         Args:
             cid (int): Active cell flat id in ``[0, grid.num_cells)``.
