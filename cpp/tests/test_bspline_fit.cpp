@@ -55,7 +55,6 @@
 //  * Quasi-interpolant: the blocks it inverts carry the roundings of the space's own type (the
 //    basis of a `float` space is tabulated in `float` even at `double` points), `(6 p + 1) u_T`
 //    per entry, besides the `double` inverse; `check_qi_reproduces` states the sum.
-//
 #include <doctest/doctest.h>
 
 #include "bspline_test_support.hpp"
@@ -2649,6 +2648,29 @@ TEST_CASE_TEMPLATE("QuasiInterpolation: a spline with a discontinuity is reprodu
     check_qi_reproduces<T>({Dir{clamped(2, {0.5, 0.5, 0.5}), 2}, Dir{clamped(3, {0.5}), 3}}, 1,
                            117);
   }
+  SUBCASE("cubic, the knot 0.7 four times: abscissae that round off the break") {
+    // The mean of three copies of 0.7 rounds below 0.7, so the abscissa of the function that
+    // starts at the knot lies left of its support, and that of the function that ends there may
+    // lie right of its. Bug caught: an interval chosen by comparing the abscissa with the break,
+    // outside the support on either side.
+    check_qi_reproduces<T>({Dir{clamped(3, {0.3, 0.7, 0.7, 0.7, 0.7, 0.9}), 3}}, 1, 123);
+    check_qi_reproduces<T>({Dir{clamped(2, {0.1, 0.3, 0.3, 0.3, 0.7, 0.7, 0.7, 0.9}), 2}}, 1, 124);
+  }
+}
+
+TEST_CASE("QuasiInterpolation: a function with no support in the domain is refused") {
+  // A knot of multiplicity degree + 2 inside the domain leaves one function identically zero,
+  // and a clamped end repeated past degree + 1 one outside the domain; no interval of the domain
+  // holds them, so no functional can be built. Oracle: the documented refusal, a value_error
+  // naming the function, rather than an index error or the row of another function.
+  const std::vector<double> inner = clamped(2, {0.5, 0.5, 0.5, 0.5});
+  CHECK_THROWS_AS(
+      static_cast<void>(bs::QuasiInterpolation<double>(space_of<double>({Dir{inner, 2}}))),
+      pantr::value_error);
+  const std::vector<double> outer = {0.0, 1.0, 1.0, 1.0, 2.0, 3.0, 4.0, 5.0, 5.0};
+  CHECK_THROWS_AS(
+      static_cast<void>(bs::QuasiInterpolation<double>(space_of<double>({Dir{outer, 2}}))),
+      pantr::value_error);
 }
 
 TEST_CASE_TEMPLATE("QuasiInterpolation: periodic spaces are reproduced", T, float, double) {
@@ -2685,6 +2707,33 @@ TEST_CASE_TEMPLATE("QuasiInterpolation: periodic spaces are reproduced", T, floa
                            119);
     check_qi_reproduces<T>({Dir{bs::uniform_periodic_knots<double>(6, 3, 2, -0.75, 2.25), 3, true}},
                            2, 120);
+  }
+  SUBCASE("non-uniform quartic whose sorted abscissae miss the functions' supports") {
+    // Breaks 0, 1/16, 5/32, 7/32, 1/4, 1/2, 21/32, 23/32, 1 (dyadic), four knots past each end.
+    // Bug caught: the abscissae read from the wrapped and sorted array instead of per function.
+    const std::vector<double> br = {0.0, 0.0625,  0.15625, 0.21875, 0.25,
+                                    0.5, 0.65625, 0.71875, 1.0};
+    std::vector<double> knots;
+    for (std::size_t i = br.size() - 5; i + 1 < br.size(); ++i) {
+      knots.push_back(br[i] - 1.0);
+    }
+    knots.insert(knots.end(), br.begin(), br.end());
+    for (std::size_t i = 1; i <= 4; ++i) {
+      knots.push_back(br[i] + 1.0);
+    }
+    check_qi_reproduces<T>({Dir{knots, 4, true}}, 1, 125);
+  }
+  SUBCASE("discontinuous (C-1) periodic spaces, degrees 1 to 3") {
+    // Every knot repeated degree + 1 times: each function lives on one interval, and the one that
+    // ends at the domain's start wraps to the last interval.
+    for (const int p : {1, 2, 3}) {
+      for (const int n : {2, 3, 7, 11}) {
+        INFO("degree " << p << ", " << n << " intervals");
+        check_qi_reproduces<T>(
+            {Dir{bs::uniform_periodic_knots<double>(n, p, -1, 0.0, 1.0), p, true}}, 1,
+            static_cast<unsigned>(300 + 20 * p + n));
+      }
+    }
   }
   SUBCASE("2D, a periodic direction of 6 intervals by a clamped one") {
     check_qi_reproduces<T>(
