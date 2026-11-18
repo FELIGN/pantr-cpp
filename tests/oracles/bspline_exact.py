@@ -51,7 +51,9 @@ class ExactBasis:
     Attributes:
         span (int): The knot span the point is evaluated on: the first ``j`` in
             ``[degree, len(knots) - degree - 2]`` with ``x < knots[j + 1]``, else the last (so the
-            right end of the domain is evaluated on the last span, as the library does), or, with
+            right end of the domain is evaluated on the last span, as the library does where the
+            first and last in-domain spans are non-empty; beside an empty end span the library
+            takes the nearest non-empty one and this the empty span), or, with
             ``extend``, the first ``j`` in ``[0, len(knots) - 2]`` with ``knots[j] <= x <
             knots[j + 1]``: the periodic extension past the domain.
     """

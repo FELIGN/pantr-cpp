@@ -445,7 +445,7 @@ TEST_CASE("locate refuses a default threshold that overflows") {
   CHECK(run(ctx, {}).cell_ids.size() == 0);
 }
 
-TEST_CASE("locate abandons a candidate whose Jacobian is undefined at the domain end") {
+TEST_CASE("locate near a domain end beside an empty span raises nothing") {
   // Knots [0,0,0,1,2,2,2,3], degree 2: the domain is [0, 2], and its end 2 is a knot of full
   // multiplicity before a trailing knot. The first-derivative recurrence used to divide by zero
   // there (the span search clamped onto the empty [2, 2]); it now takes the last non-empty span,

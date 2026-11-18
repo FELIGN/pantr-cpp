@@ -81,7 +81,9 @@ inline bool within(double got, const Rational& want, double tol) {
 
 /// The span the library must evaluate `x` on: the first `j` in `[degree, size - degree - 2]` with
 /// `x < u[j + 1]`, else the last (so the right end of the domain is evaluated on the last span, and
-/// a point left of the domain on the first). A linear scan, not a binary search plus clamps.
+/// a point left of the domain on the first). A linear scan, not a binary search plus clamps. It is
+/// the library's rule only where the first and last in-domain spans are non-empty: beside an empty
+/// end span the library takes the nearest non-empty one, and this returns the empty span.
 inline std::size_t span_of(const std::vector<Rational>& u, int degree, const Rational& x) {
   const std::size_t last = u.size() - static_cast<std::size_t>(degree) - 2;
   for (std::size_t j = static_cast<std::size_t>(degree); j < last; ++j) {
