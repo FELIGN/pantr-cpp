@@ -2658,6 +2658,26 @@ TEST_CASE_TEMPLATE("QuasiInterpolation: a spline with a discontinuity is reprodu
   }
 }
 
+TEST_CASE("QuasiInterpolation: a periodic function is sampled at its own Greville abscissa") {
+  // Oracle: closed form. `periodic_dir()` is the cubic on the knots i / 8, so function j's own
+  // abscissa is (j - 1) / 8, wrapped into [0, 1): exact, never on the far side of a break, and
+  // inside the interval [(j - 1) / 8, j / 8) modulo the period, which lies in the support. Its
+  // points are that interval's at 1/5, ..., 4/5 of it. Bug caught: the abscissa read from the
+  // wrapped and sorted array, entry j being function j + 1's (the interval [j / 8, (j + 1) / 8),
+  // also in the support, so Q B = B alone cannot see it).
+  const bs::QuasiInterpolation<double> qi(space_of<double>({periodic_dir()}));
+  const NdArray<double> pts = qi.points();
+  REQUIRE(pts.size() == 8 * 4);
+  for (std::size_t j = 0; j < 8; ++j) {
+    const double lo = static_cast<double>((j + 7) % 8) / 8.0;
+    for (std::size_t k = 0; k < 4; ++k) {
+      INFO("function " << j << ", point " << k);
+      const double step = 0.125 * (static_cast<double>(k + 1) / 5.0);
+      CHECK(pts.data()[j * 4 + k] == lo + step);
+    }
+  }
+}
+
 TEST_CASE("QuasiInterpolation: a function with no support in the domain is refused") {
   // A knot of multiplicity degree + 2 inside the domain leaves one function identically zero,
   // and a clamped end repeated past degree + 1 one outside the domain; no interval of the domain
@@ -2696,8 +2716,8 @@ TEST_CASE_TEMPLATE("QuasiInterpolation: periodic spaces are reproduced", T, floa
     const std::vector<double> cubic = {-0.65, -0.5, -0.2, 0.0, 0.1,  0.35,
                                        0.5,   0.8,  1.0,  1.1, 1.35, 1.5};
     check_qi_reproduces<T>({Dir{cubic, 3, true}}, 1, 118);
-    // Quartic: breaks 0, 1/8, 1/4, 3/8, 1/2, 1 (dyadic), four knots past each end. The sorted
-    // abscissae give function 2 an interval two intervals past its support's end.
+    // Quartic: breaks 0, 1/8, 1/4, 3/8, 1/2, 1 (dyadic), four knots past each end. Function 2's
+    // abscissa wraps to the last interval, whose block numbers it past `num_basis`.
     const std::vector<double> quartic = {-0.875, -0.75, -0.625, -0.5,  0.0,  0.125, 0.25,
                                          0.375,  0.5,   1.0,    1.125, 1.25, 1.375, 1.5};
     check_qi_reproduces<T>({Dir{quartic, 4, true}}, 1, 122);
