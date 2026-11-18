@@ -1004,6 +1004,13 @@ _QI_CASES: dict[str, Callable[[], tuple[BsplineSpace, tuple[int, ...]]]] = {
     ),
 }
 
+# The spaces of the bug report on which the quasi-interpolant returned wrong coefficients.
+_REPORTED_QI_CASES: dict[str, Callable[[], BsplineSpace]] = {
+    "cubic, knot 1/2 four times": lambda: _space_from_knots(
+        (_knots(3, [0.25, 0.5, 0.5, 0.5, 0.5, 0.75]), 3)
+    ),
+}
+
 
 class TestQuasiInterpolateOracles:
     """Oracles for :func:`quasi_interpolate_bspline`."""
@@ -1086,6 +1093,34 @@ class TestQuasiInterpolateOracles:
         a = quasi_interpolate_bspline(lambda pts: column(pts)[:, 0], space)
         b = quasi_interpolate_bspline(column, space)
         np.testing.assert_array_equal(np.asarray(a.control_points), np.asarray(b.control_points))
+
+    @pytest.mark.parametrize("seed", range(3, 14))
+    def test_quasi_interpolant_reproduces_a_spline_with_a_discontinuity(self, seed: int) -> None:
+        """Oracle: the invariant ``Q B = B`` on a cubic with the interior knot 1/2 four times.
+
+        The Greville abscissa of the function that ends at the knot is the knot itself. Bug
+        caught: the interval to its right taken for that function, outside its support, and the
+        weight row of another function read in its place (an error of order 1; the previous
+        release did this).
+        """
+        space = _space_from_knots((_knots(3, [0.25, 0.5, 0.5, 0.5, 0.5, 0.75]), 3))
+        ctrl = _dyadic_ctrl((int(space.num_basis[0]), 1), seed=seed)
+        spline = quasi_interpolate_bspline(_exact_sampler(space, ctrl), space)
+        got = np.asarray(spline.control_points)
+        assert float(np.max(np.abs(got - ctrl))) <= _qi_bound(space, float(np.max(np.abs(ctrl))))
+
+    @pytest.mark.parametrize("name", list(_REPORTED_QI_CASES))
+    def test_the_reported_wrong_answers_are_reproduced(self, name: str) -> None:
+        """Oracle: ``Q B = B`` on the spaces of the bug report, its control points (seed 3).
+
+        The report sampled ``B`` in floating point; here the samples are exact, so the bound is the
+        derived one. Bug caught: the two wrong answers of the report coming back.
+        """
+        space = _REPORTED_QI_CASES[name]()
+        ctrl = _dyadic_ctrl((int(np.prod(space.num_basis)), 1), seed=3)
+        spline = quasi_interpolate_bspline(_exact_sampler(space, ctrl), space)
+        got = np.asarray(spline.control_points)
+        assert float(np.max(np.abs(got - ctrl))) <= _qi_bound(space, float(np.max(np.abs(ctrl))))
 
 
 # ---------------------------------------------------------------------------
@@ -1288,7 +1323,7 @@ class TestInputLayouts:
 class TestKnownDefects:
     """Defects found while writing the oracles above, pinned as expected failures.
 
-    Both are in the algorithm and are shared with the previous release (probed against it).
+    The defect is in the algorithm and is shared with the previous release (probed against it).
     """
 
     @pytest.mark.xfail(
@@ -1307,23 +1342,6 @@ class TestKnownDefects:
         """
         space = create_uniform_space(3, 6, periodic=True)
         ctrl = _dyadic_ctrl((6, 1), seed=1)
-        spline = quasi_interpolate_bspline(_exact_sampler(space, ctrl), space)
-        got = np.asarray(spline.control_points)
-        assert float(np.max(np.abs(got - ctrl))) <= _qi_bound(space, float(np.max(np.abs(ctrl))))
-
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "Q B != B for a knot of multiplicity degree + 1: the Greville abscissa of the function "
-            "that ends at the knot picks the interval to its right, outside the function's "
-            "support, and the block row is indexed from the end (the previous release does the "
-            "same)"
-        ),
-    )
-    def test_quasi_interpolant_reproduces_a_spline_with_a_discontinuity(self) -> None:
-        """Oracle: the invariant ``Q B = B`` on a cubic with the interior knot 1/2 four times."""
-        space = _space_from_knots((_knots(3, [0.25, 0.5, 0.5, 0.5, 0.5, 0.75]), 3))
-        ctrl = _dyadic_ctrl((int(space.num_basis[0]), 1), seed=3)
         spline = quasi_interpolate_bspline(_exact_sampler(space, ctrl), space)
         got = np.asarray(spline.control_points)
         assert float(np.max(np.abs(got - ctrl))) <= _qi_bound(space, float(np.max(np.abs(ctrl))))

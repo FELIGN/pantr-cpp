@@ -56,10 +56,10 @@
 //    basis of a `float` space is tabulated in `float` even at `double` points), `(6 p + 1) u_T`
 //    per entry, besides the `double` inverse; `check_qi_reproduces` states the sum.
 //
-// Known defects. Two tests are marked `doctest::should_fail()`: they state the invariant `Q B = B`
-// for a space where the quasi-interpolant is wrong (a knot of multiplicity `degree + 1`; some
-// periodic spaces) and are expected to fail. Both defects are in the previous release as well.
-// When one is fixed its test reports that it passed unexpectedly: remove the marker then.
+// Known defects. One test is marked `doctest::should_fail()`: it states the invariant `Q B = B`
+// for a space where the quasi-interpolant is wrong (some periodic spaces) and is expected to fail.
+// The defect is in the previous release as well. When it is fixed its test reports that it passed
+// unexpectedly: remove the marker then.
 #include <doctest/doctest.h>
 
 #include "bspline_test_support.hpp"
@@ -2631,20 +2631,28 @@ TEST_CASE_TEMPLATE("QuasiInterpolation: every spline of the space is reproduced,
   }
 }
 
-TEST_CASE(
-    "QuasiInterpolation: a spline with a discontinuity is not reproduced (known defect, expected "
-    "to fail)" *
-    doctest::should_fail()) {
-  // KNOWN DEFECT, pinned as an expected failure so that the day it is fixed this test says so.
-  // The interval of a function is the one holding its Greville abscissa, taken as the interval to
-  // the right of a break. For a knot of multiplicity degree + 1 (a discontinuity) the Greville
-  // abscissa of the function that ends there is that knot, so the interval chosen lies to the right
-  // of the function's support, `local` in `llm_direction` is -1 and indexes the block from the
-  // end ("a Python index outside [-order, order), as before"): the functional of another
-  // function. The header states Q B_j = B_j for every space; it fails here (the previous release
-  // fails the same way). Cubic with the interior knot 1/2 four times: the error of a coefficient is
-  // of order 1.
-  check_qi_reproduces<double>({Dir{clamped(3, {0.25, 0.5, 0.5, 0.5, 0.5, 0.75}), 3}}, 1, 112);
+TEST_CASE_TEMPLATE("QuasiInterpolation: a spline with a discontinuity is reproduced", T, float,
+                   double) {
+  // Oracle: the invariant Q B = B. For a knot of multiplicity degree + 1 (a discontinuity) the
+  // Greville abscissa of the function that ends there is that knot; the interval to its right lies
+  // outside the function's support, so the functional is built on the interval to its left. Bug
+  // caught: the interval to the right taken anyway, whose block does not hold the function, and a
+  // row of another function read in its place (an error of order 1 in a coefficient; the previous
+  // release did this).
+  SUBCASE("cubic, interior knot four times") {
+    check_qi_reproduces<T>({Dir{clamped(3, {0.25, 0.5, 0.5, 0.5, 0.5, 0.75}), 3}}, 1, 112);
+  }
+  SUBCASE("linear, interior knot twice; quadratic, two interior knots three times, rank 2") {
+    check_qi_reproduces<T>({Dir{clamped(1, {0.25, 0.5, 0.5, 0.75}), 1}}, 1, 114);
+    check_qi_reproduces<T>({Dir{clamped(2, {0.25, 0.25, 0.25, 0.5, 0.75, 0.75, 0.75}), 2}}, 2, 115);
+  }
+  SUBCASE("cubic, a discontinuity next to the clamped start") {
+    check_qi_reproduces<T>({Dir{clamped(3, {0.25, 0.25, 0.25, 0.25, 0.5}), 3}}, 1, 116);
+  }
+  SUBCASE("2D, a discontinuity in one direction") {
+    check_qi_reproduces<T>({Dir{clamped(2, {0.5, 0.5, 0.5}), 2}, Dir{clamped(3, {0.5}), 3}}, 1,
+                           117);
+  }
 }
 
 TEST_CASE(
