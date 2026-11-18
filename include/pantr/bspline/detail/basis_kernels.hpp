@@ -22,11 +22,13 @@
 
 namespace pantr::bspline::detail {
 
-/// The clamped knot span of a point and the index of the first basis function non-zero there.
+/// The knot span of a point and the index of the first basis function non-zero there.
 ///
 /// Attributes:
-///     knot_id (std::size_t): Span index `k` with `knots[k] <= pt < knots[k + 1]`, clamped to the
-///         in-domain spans `[degree, size - degree - 2]`.
+///     knot_id (std::size_t): Span index `k` with `knots[k] <= pt < knots[k + 1]` when that is an
+///         in-domain span (`[degree, size - degree - 2]`); otherwise the nearest non-empty
+///         in-domain span: the last for a point at or past the domain end (or a NaN), the first
+///         for a point below the start.
 ///     first (std::int64_t): First supported basis function, `knot_id - degree`. For a
 ///         non-periodic space it is at most `num_basis - degree - 1` (`num_basis` is
 ///         `size - degree - 1` and `knot_id <= size - degree - 2`), so the last point addresses the
@@ -38,7 +40,16 @@ struct SpanAndFirst {
 };
 
 /// Locate `pt`'s span (`searchsorted(knots, pt, side="right") - 1`, a NaN point past the end) and
-/// clamp it as `SpanAndFirst` states.
+/// bring it into the in-domain spans as `SpanAndFirst` states.
+///
+/// A point inside the in-domain spans already lies in a non-empty one (`knots[raw] <= pt <
+/// knots[raw + 1]`), so its span, right-continuous at an interior knot, is kept. Outside them the
+/// nearest in-domain span is taken, skipping empty ones: the span next to an end is empty when
+/// `knots[degree] == knots[degree + 1]` (as a start knot repeated more than `degree + 1` times
+/// gives) or `knots[size - degree - 2] == knots[size - degree - 1]` (an end knot repeated
+/// `degree + 1` times before a trailing knot), and the recurrences return zeros there. The walk
+/// stays in `[degree, max_id]`, which holds a non-empty span since a space has at least one
+/// interval.
 ///
 /// Note:
 ///     Inputs are assumed to be correct (no validation performed).
@@ -49,9 +60,23 @@ template <StorageFloat K, StorageFloat P>
   const auto it = std::upper_bound(knots.begin(), knots.end(), p,
                                    [](W v, K k) { return v < static_cast<W>(k); });
   const auto raw = static_cast<std::ptrdiff_t>(it - knots.begin()) - 1;
+  const auto min_id = static_cast<std::ptrdiff_t>(degree);
   const auto max_id = static_cast<std::ptrdiff_t>(knots.size()) - degree - 2;
-  std::ptrdiff_t id = (std::min)(raw, max_id);
-  id = (std::max)(id, static_cast<std::ptrdiff_t>(degree));
+  const auto empty = [&](std::ptrdiff_t k) {
+    return !(knots[static_cast<std::size_t>(k)] < knots[static_cast<std::size_t>(k + 1)]);
+  };
+  std::ptrdiff_t id = raw;
+  if (raw > max_id) {
+    id = max_id;
+    while (id > min_id && empty(id)) {
+      --id;
+    }
+  } else if (raw < min_id) {
+    id = min_id;
+    while (id < max_id && empty(id)) {
+      ++id;
+    }
+  }
   return {static_cast<std::size_t>(id), static_cast<std::int64_t>(id - degree)};
 }
 
@@ -65,7 +90,7 @@ template <StorageFloat K, StorageFloat P>
 /// Args:
 ///     knots (const K*): Knot vector.
 ///     degree (int): Degree.
-///     knot_id (std::size_t): Clamped span of `pt`.
+///     knot_id (std::size_t): The span of `pt`, as `span_and_first` gives it.
 ///     pt (P): Point.
 ///     out (P*): `degree + 1` values.
 ///     left (K*): Scratch, `degree + 1` values.
@@ -120,12 +145,16 @@ struct DerivScratch {
 /// (A2.3), into `out` (`(n_deriv + 1) x (degree + 1)`, row-major). Row 0 equals
 /// `basis_funcs_point`'s result; rows past the degree are zero.
 ///
-/// The knot differences, values and coefficients are held in `K`; each row is scaled by the
-/// integer `degree! / (degree - k)!` in double (as an integer factor times a float32 promotes to
-/// double), stored in `P`. The `ndu` denominators of the value triangle are guarded as in
-/// `basis_funcs_point`; the three divisions of the derivative rows are not (as in A2.3), and one
-/// whose divisor is zero, which a basis function of empty support produces (a knot repeated more
-/// than `degree + 1` times within the point's support), is reported rather than performed.
+/// The knot differences, values and coefficients are held in `K`; each row is scaled by
+/// `degree! / (degree - k)!`, accumulated and applied in double, and stored in `P`. The `ndu`
+/// denominators of the value triangle are guarded as in `basis_funcs_point`; the three divisions of
+/// the derivative rows are not (as in A2.3), and one whose divisor is zero is reported rather than
+/// performed. Each divisor is a knot difference across the span, formed as `right + left`: for a
+/// point in the closed span `[knots[knot_id], knots[knot_id + 1]]` both terms are non-negative
+/// and one is positive, so no divisor is zero there. Outside it the two terms can cancel: far
+/// away, as at -1e20 on the span [0, 1), and within the tolerance band beside a span shorter than
+/// the rounding of the point's offset, as at -1e-15 on the first span [0, 1e-32) of the unsnapped
+/// knots [0, 0, 0, 1e-32, 1, 1, 1].
 ///
 /// Returns:
 ///     bool: False when a derivative row met a zero divisor; `out` is then incomplete.
@@ -209,17 +238,18 @@ template <StorageFloat K, StorageFloat P>
       std::swap(s1, s2);
     }
   }
-  // Row k times degree! / (degree - k)!, a 64-bit integer product applied in double; zero from
-  // k = degree + 1 on. The product wraps as the Numba kernel's did once degree! / (degree - k)!
-  // exceeds 2^63 - 1, which first happens at degree 21 (from order 19 on, 21! / 2! > 2^63): those
-  // rows are then wrong, as they were before.
-  std::uint64_t fac = static_cast<std::uint64_t>(static_cast<std::int64_t>(degree));
-  for (int k = 1; k <= n_deriv; ++k) {
-    const auto f = static_cast<double>(static_cast<std::int64_t>(fac));
+  // Row k times degree! / (degree - k)!, accumulated in double: the factor carries k - 1
+  // roundings and applying it one more, so a relative error of at most about k eps / 2 (a 64-bit
+  // integer product would wrap from degree 21 on). The factor is finite while it stays below
+  // DBL_MAX, which 170! does and 171! does not: from degree 171 the top rows overflow to inf or
+  // NaN, unreported. The rows past the degree are left as the recurrence wrote them, exactly zero:
+  // no term of the loops above contributes to an order k > degree.
+  double fac = static_cast<double>(degree);
+  for (int k = 1; k <= (std::min)(n_deriv, degree); ++k) {
     for (int j = 0; j <= degree; ++j) {
-      out_at(k, j) = static_cast<P>(static_cast<double>(out_at(k, j)) * f);
+      out_at(k, j) = static_cast<P>(static_cast<double>(out_at(k, j)) * fac);
     }
-    fac *= static_cast<std::uint64_t>(static_cast<std::int64_t>(degree - k));
+    fac *= static_cast<double>(degree - k);
   }
   return true;
 }

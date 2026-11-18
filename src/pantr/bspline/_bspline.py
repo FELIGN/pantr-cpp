@@ -471,11 +471,11 @@ class Bspline:
                 before the points.
             TypeError: If an order is not an integer (anything without
                 ``__index__``).
-            ZeroDivisionError: If the basis derivative recurrence divides by zero,
-                which happens only on an empty span a point at an end of the domain
-                is assigned to (``knots[degree] == knots[degree + 1]`` at the start,
-                ``knots[-degree - 2] == knots[-degree - 1]`` at the end); ``out`` is
-                then unwritten.
+            ZeroDivisionError: If the basis derivative recurrence divides by zero;
+                ``out`` is then unwritten. No divisor is zero inside the domain. A
+                point of the tolerance band outside it can meet one beside a span
+                shorter than the rounding of its offset, as ``-1e-15`` on the
+                unsnapped knots ``[0, 0, 0, 1e-32, 1, 1, 1]``.
 
         Note:
             Special values are not guarded. The quotient rule of a rational B-spline

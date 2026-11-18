@@ -657,26 +657,37 @@ _LEFT_HEAVY = np.array([0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0])
 """Degree 2 with the left end repeated four times (p + 2): the span just left of 0 is empty."""
 
 
-def test_a_zero_divisor_in_the_derivative_recurrence_raises_in_every_dimension() -> None:
-    """A point inside the tolerance band of the empty span raises ``ZeroDivisionError``.
+def test_a_point_in_the_band_below_a_heavy_start_has_the_derivative_of_the_start() -> None:
+    """A band point below a start repeated ``p + 2`` times takes the first non-empty span.
 
-    The 1D evaluation returned ``nan`` there before, silently; every dimension now raises, as the
-    n-dimensional evaluation and the basis tabulation did.
+    This holds in every dimension and for a rational spline. It used to land on the empty span
+    ``[0, 0)``, where the derivative recurrence divided by zero and raised ``ZeroDivisionError``.
+    Oracle: the value and derivative at the start ``0.0``, which the point differs from by
+    ``1e-17`` times a derivative of order one, far below ``8 eps``.
     """
     s1 = BsplineSpace([BsplineSpace1D(_LEFT_HEAVY, 2)])
     b1 = Bspline(s1, np.arange(4.0))
     bad = np.array([-1e-17])
-    with pytest.raises(ZeroDivisionError):
-        b1.evaluate_derivatives(bad, [1])
+    start = np.array([0.0])
+    got = b1.evaluate_derivatives(bad, [1])
+    assert np.isfinite(got).all()
+    np.testing.assert_allclose(got, b1.evaluate_derivatives(start, [1]), rtol=0, atol=8 * _EPS64)
     s2 = BsplineSpace([BsplineSpace1D(_LEFT_HEAVY, 2), _space_1d(1)])
-    with pytest.raises(ZeroDivisionError):
-        Bspline(s2, np.arange(8.0)).evaluate_derivatives(np.array([[-1e-17, 0.5]]), [1, 0])
+    b2 = Bspline(s2, np.arange(8.0))
+    np.testing.assert_allclose(
+        b2.evaluate_derivatives(np.array([[-1e-17, 0.5]]), [1, 0]),
+        b2.evaluate_derivatives(np.array([[0.0, 0.5]]), [1, 0]),
+        rtol=0,
+        atol=8 * _EPS64,
+    )
     rational = Bspline(s1, np.array([[1.0, 1.0], [2.0, 1.0], [3.0, 1.0], [4.0, 1.0]]), True)
-    with pytest.raises(ZeroDivisionError):
-        rational.evaluate_derivatives(bad, [1])
-    # Order zero divides by nothing, and the value is finite.
-    assert np.isfinite(b1.evaluate_derivatives(bad, [0])).all()
-    assert np.isfinite(b1.evaluate(bad)).all()
+    np.testing.assert_allclose(
+        rational.evaluate_derivatives(bad, [1]),
+        rational.evaluate_derivatives(start, [1]),
+        rtol=0,
+        atol=8 * _EPS64,
+    )
+    np.testing.assert_allclose(b1.evaluate(bad), b1.evaluate(start), rtol=0, atol=8 * _EPS64)
 
 
 def test_points_outside_the_domain_and_nan_are_refused() -> None:

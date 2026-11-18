@@ -38,7 +38,6 @@ value there. The quasi-interpolant adds the rounding of its local blocks (below)
 from __future__ import annotations
 
 import math
-import re
 from collections.abc import Callable, Sequence
 from fractions import Fraction
 from typing import Any
@@ -1199,11 +1198,15 @@ class TestDtypeDecisions:
             interpolate_bspline(func, space, boundary_derivatives=[(0, 7)])
         assert len(calls) == 2  # the system is built, and refused, before the function is sampled
 
-    def test_a_degenerate_end_span_raises_zero_division_error(self) -> None:
-        """The derivative recurrence's zero divisor reaches Python as ZeroDivisionError.
+    def test_derivative_rows_at_an_end_beside_an_empty_span_build(self) -> None:
+        """Derivative rows at a domain end next to an empty span no longer divide by zero.
 
-        Knots ``0 0 0 1 2 2 3 4`` (degree 2): the domain ends at 2, whose clamped last span is
-        empty, so the order-2 row at the right end divides by zero; order 1 does not.
+        Regression. Knots ``0 0 0 1 2 2 3 4`` (degree 2): the domain ends at 2, whose clamped last
+        span used to be the empty ``[2, 2]``, so the order-2 row at the right end raised
+        ``ZeroDivisionError``. The end now takes the last non-empty span ``[1, 2)``; the rows'
+        values are pinned against the analytic derivatives in the C++ suite
+        (``collocation_matrix: derivative rows at an end beside an empty span are the left
+        limit``), and here the fit only has to build and be finite.
         """
         space = BsplineSpace([BsplineSpace1D(np.array([0, 0, 0, 1, 2, 2, 3, 4.0]), 2)])
         nodes = np.array([0.0, 0.5, 1.0, 1.5, 2.0])
@@ -1211,9 +1214,11 @@ class TestDtypeDecisions:
         def func(lat: PointsLattice) -> npt.NDArray[Any]:
             return lat.get_all_points()[:, 0]
 
-        with pytest.raises(ZeroDivisionError, match=re.escape("division by zero")):
-            interpolate_bspline(func, space, nodes=nodes, boundary_derivatives=[(0, 2)])
-        interpolate_bspline(func, space, nodes=nodes, boundary_derivatives=[(0, 1)])
+        for right in (1, 2):
+            spline = interpolate_bspline(
+                func, space, nodes=nodes, boundary_derivatives=[(0, right)]
+            )
+            assert np.isfinite(np.asarray(spline.control_points)).all()
 
 
 class TestInputLayouts:

@@ -624,13 +624,14 @@
   `AttributeError` ("... has no attribute 'ndim'"); a `numpy.matrix` or a `memoryview` is accepted
   too (they raised `ValueError` and `TypeError`).
 - **`tabulate_basis_derivatives` raises `ZeroDivisionError` at every batch size** when the
-  derivative recurrence divides by zero, at order `n_deriv >= 1`. That happens only on an empty
-  clamped span: a point left of the domain (within the tolerance) is assigned the first in-domain
-  span, empty when `knots[degree] == knots[degree + 1]` (for instance a first knot repeated more
-  than `degree + 1` times), and a point at or right of the domain end the last one, empty when
-  `knots[-degree - 2] == knots[-degree - 1]`. Whether an empty span divides by zero depends on how
-  many knots coincide there and on `n_deriv`; at degree 0 it never does. The previous release
-  raised it below 4096 points and returned without an error for a larger batch, in the same cases.
+  derivative recurrence divides by zero, at order `n_deriv >= 1`. No divisor is zero inside the
+  domain; it happens where the knot differences cancel, at a point far outside the domain with
+  `validate=False` (`-1e20` on `[0, 0, 0, 0, 1, 1, 1]` at degree 2), or at a point of the
+  tolerance band beside a span shorter than the rounding of its offset (`-1e-15` on
+  `[0, 0, 0, 1e-32, 1, 1, 1]` at degree 2 with `snap_knots=False`). At degree 0 it never does.
+  The previous release raised it below 4096 points and returned without an error for a larger
+  batch. (A point at or within the tolerance of a domain end beside an empty span no longer
+  divides by zero: see *Fixed*.)
 - **No `RuntimeWarning` from `create_uniform_open_knots`, `create_uniform_periodic_knots` or
   `BsplineSpace1D`** at an infinite domain end or a span that overflows the dtype; the knot vectors
   and tolerances are the same.
@@ -743,9 +744,9 @@
   directions)) and one from
   `2**63` a `TypeError`. The orders are checked before the
   points.
-- **A derivative whose recurrence divides by zero** (a point inside the tolerance band of an
-  empty span) raises `ZeroDivisionError` in every dimension and at any number of points. The
-  previous release returned NaN, `±inf` or 0.0 with one direction, and with two or three
+- **A derivative whose recurrence divides by zero** (where the knot differences cancel, as at a
+  point of the tolerance band beside a span shorter than the rounding of its offset) raises
+  `ZeroDivisionError` in every dimension and at any number of points. The previous release returned NaN, `±inf` or 0.0 with one direction, and with two or three
   raised up to 4 095 points and returned NaN from 4 096; at such a point an order above the
   degree returned 0.0 with one direction, and with two or three from 4 096 points (it raised
   below), and now raises too.
@@ -1037,8 +1038,8 @@
   an interior knot line can be reported in the other cell of that line; the tie rule applies to the
   coordinates returned.
   - **A point whose only preimage sits at a discontinuity** (a knot of multiplicity `degree + 1`, as
-    at the closed end of knots `[0, 0, 0, 1, 2, 2, 2, 3]` at degree 2) can be found in one release
-    and not in the other.
+    at the closed end of knots `[0, 0, 0, 1, 2, 2, 2, 3]` at degree 2, whose end is now evaluated
+    on the last non-empty span: see *Fixed*) can be found in one release and not in the other.
   - **An explicit `tol` of a few units in the last place of the physical coordinates or less**
     leaves whether a point is found to rounding, in this release as in the previous one, so the two
     can differ there (in the sample, at 3 units or fewer and not from 4).
@@ -1052,10 +1053,10 @@
   - **Where a Newton step reaches a Jacobian that is undefined or not finite**, the candidate is now
     abandoned, as a rank-deficient one is, instead of raising `numpy.linalg.LinAlgError` ("SVD did
     not converge", with one direction or from 4 096 points) or `ZeroDivisionError` ("division by
-    zero", with two or three directions below that): at the end of a domain closed by a knot of full
-    multiplicity before a trailing knot (knots `[0, 0, 0, 1, 2, 2, 2, 3]` at degree 2), or with an
-    infinite NURBS weight. The point is reported not found unless another candidate or start finds
-    it.
+    zero", with two or three directions below that), as with an infinite NURBS weight. (The end
+    of a domain closed by a knot of full multiplicity before a trailing knot, knots
+    `[0, 0, 0, 1, 2, 2, 2, 3]` at degree 2, no longer has an undefined Jacobian: see *Fixed*.)
+    The point is reported not found unless another candidate or start finds it.
   - **A query point near `1.7e308` with a `tol` of that size** is reported not found, where the
     previous release raised `ValueError` for a point outside the knot vector domain.
   - **The `RuntimeWarning`s numpy emitted on overflow** (control points near `1e300`, weights near
@@ -1333,6 +1334,29 @@
   in a separate package; until then pantr has none of its own.
 
 ### Fixed
+- **B-spline basis derivatives from degree 21 on are correct at every order.** The row of order
+  `k` was scaled by `degree! / (degree - k)!` formed as a 64-bit integer, which wraps once it
+  passes `2^63`: from degree 21 (orders 19 to 21; at degree 25 orders 16 to 25) those rows were
+  wrong by an arbitrary factor, sign included, with no error, in
+  `BsplineSpace1D.tabulate_basis_derivatives` and everything built on it (B-spline derivatives,
+  collocation with boundary derivatives, `locate`, THB derivatives). The factor is now accumulated
+  in `double`. Rows of degree 20 and below differ from the previous release's in the last bits at
+  most. The factor overflows a `double` from degree 171, where the top rows are `inf` or NaN with
+  no error. Inherited from the previous release.
+- **A point below the start, or at or above the end, of a domain beside an empty span is evaluated
+  on the nearest non-empty span.** When the start knot is repeated past `degree + 1`
+  (`[0, 0, 0, 0, 1, 1, 1]` at degree 2) or the end knot reaches `degree + 1` before a trailing knot
+  (`[0, 0, 0, 1, 2, 2, 2, 3, 3]`), the span search clamped a point within the tolerance below the
+  start, or at or within the tolerance above the end, onto the empty span at that end: the basis
+  there was all zeros, the spline evaluated to 0, and a derivative raised `ZeroDivisionError`. It
+  now takes the first non-empty span below the start and the last one at or above the end (the
+  limit from inside the domain), in `tabulate_basis`, `tabulate_basis_derivatives`,
+  `Bspline.evaluate` and `evaluate_derivatives`, collocation and `locate`; a point outside the band
+  with `validate=False` takes the same span. The C++ blossom (`pantr::bspline::blossom`) of a
+  parameter within the tolerance below a clamped start used the last span, giving the blossom of
+  the end of the curve, and one at or past the end beside an empty span used that span, returning
+  a control point; each now uses the nearest non-empty span, and a NaN parameter gives NaN.
+  Inherited from the previous release.
 - **`create_uniform_periodic_knots` (and the periodic `create_uniform_space`) returns a periodic
   knot vector for every continuity.** For `1 <= continuity <= degree - 2` it extended the repeated
   interior knots past both ends by distinct, evenly spaced knots, so `K[i + n m] = K[i] + L` (`n`

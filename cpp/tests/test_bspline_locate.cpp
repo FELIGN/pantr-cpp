@@ -445,11 +445,13 @@ TEST_CASE("locate refuses a default threshold that overflows") {
   CHECK(run(ctx, {}).cell_ids.size() == 0);
 }
 
-TEST_CASE("locate abandons a candidate whose Jacobian is undefined at the domain end") {
-  // Knots [0,0,0,1,2,2,2,3], degree 2: the domain is [0, 2], and at its end 2 (a knot of full
-  // multiplicity before a trailing knot) the first-derivative recurrence divides by zero. A
-  // Newton step from cell 1 is clipped onto that end; the candidate is abandoned there instead
-  // of raising. Oracle: whatever comes back satisfies the residual contract, or is not found.
+TEST_CASE("locate near a domain end beside an empty span raises nothing") {
+  // Knots [0,0,0,1,2,2,2,3], degree 2: the domain is [0, 2], and its end 2 is a knot of full
+  // multiplicity before a trailing knot. The first-derivative recurrence used to divide by zero
+  // there (the span search clamped onto the empty [2, 2]); it now takes the last non-empty span,
+  // so a Newton step clipped onto that end has a defined Jacobian and this no longer exercises
+  // the abandon path. Kept as a check that locating near that end raises nothing. Oracle:
+  // whatever comes back satisfies the residual contract, or is not found.
   const std::vector<double> t{0.0, 0.0, 0.0, 1.0, 2.0, 2.0, 2.0, 3.0};
   const std::vector<double> cp{0.0, 4.0, -4.0, 1.0, 2.0};
   const bs::Bspline<double> b(bs::BsplineSpace<double>({space1d<double>(t, 2)}),

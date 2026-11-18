@@ -1077,32 +1077,26 @@ TEST_CASE("blossom: refusals, degree zero and the span search") {
   CHECK(bs::detail::blossom_span<double>(sp(kn), 0.5, 3) == 3);
   CHECK(bs::detail::blossom_span<double>(sp(kn), 1.0, 3) == 3);
   CHECK(bs::detail::blossom_span<double>(sp(kn), std::numeric_limits<double>::quiet_NaN(), 3) == 3);
-  // The value below the start of a clamped vector is not asserted here: it is the inherited
-  // defect pinned by "inherited: blossom span below a clamped start".
+  // Below the first knot: the span of the first knot itself, the one 0.0 gets (the regression
+  // cases below).
 }
 
-// ---- inherited defects, pinned (parity pins)
-// -----------------------------------------------------
-//
-// The tests below are parity pins. Each states the CORRECT behavior and is marked
-// `doctest::should_fail`, so it is reported as an expected failure while the defect stands and
-// fails the suite loudly the day the defect is fixed (then drop the decorator). The same defect is
-// in the pure-Python implementation this code replaces, and the port keeps its behavior: the
-// project holds such defects for a later review, and none is fixed in the port.
+// ---- below a clamped start (regression) -------------------------------------------------------
 
-TEST_CASE("inherited: blossom span below a clamped start" * doctest::should_fail()) {
+TEST_CASE("inherited: blossom span below a clamped start") {
   // The first span of a clamped vector holds the parameters below its start (the blossom of a
   // value within the tolerance below the domain start must be that of the start), which is the
-  // span `degree`, here 2. The search returns the last span instead.
+  // span `degree`, here 2. The search used to return the last span.
   const std::vector<double> kn{0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0};
   CHECK(bs::detail::blossom_span<double>(sp(kn), -8.9e-16, 3) == 2);
 }
 
-TEST_CASE("inherited: blossom value below a clamped start" * doctest::should_fail()) {
+TEST_CASE("inherited: blossom value below a clamped start") {
   // Control points 1..4 of a clamped quadratic: a parameter 4 eps below the start (accepted with a
   // tolerance of 8 eps) must give the value at the start, 1, up to the shift times the slope plus
   // rounding. Slope at most p * max|dP| / min span = 2 * 1 / 0.5 = 4; rounding 8 * 4 units of
-  // roundoff for points of magnitude at most 4. The last span's polynomial gives 2.
+  // roundoff for points of magnitude at most 4. The last span's polynomial, which the search used
+  // to pick, gives 2.
   const std::vector<double> kn{0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0};
   const std::vector<double> cp{1.0, 2.0, 3.0, 4.0};
   const double eps = std::numeric_limits<double>::epsilon();
@@ -1115,6 +1109,35 @@ TEST_CASE("inherited: blossom value below a clamped start" * doctest::should_fai
   CHECK(want[0] == 1.0);
   CHECK(std::abs(got[0] - want[0]) <= 4.0 * std::abs(u) + 8.0 * 4.0 * unit_roundoff<double>());
 }
+
+TEST_CASE("blossom: a parameter at an end beside an empty span takes the last non-empty span") {
+  // Regression. Knots [0, 0, 0, 1, 2, 2, 2, 3, 3] at degree 2: the domain ends at 2, and the last
+  // span the search reached there, n = 5, is the empty [2, 2). The blossom now starts from the
+  // last non-empty span [1, 2), index 3. Oracle (de Boor on that span by hand, control points
+  // P_i = i + 1): f[1.5, 2] takes alpha 0.5 and 0.75 at level 1 (u = 1.5) and 1 at level 2
+  // (u = 2), so it is (P2 + P3) / 2 = 3.5; f[2, 2] = P3 = 4, the end value. Rounding: two levels
+  // of convex combinations of values at most 6, taken as 8 * 6 units of roundoff.
+  const std::vector<double> kn{0.0, 0.0, 0.0, 1.0, 2.0, 2.0, 2.0, 3.0, 3.0};
+  CHECK(bs::detail::blossom_span<double>(sp(kn), 2.0, 5) == 3);
+  CHECK(bs::detail::blossom_span<double>(sp(kn), 1.5, 5) == 3);
+  const std::vector<double> cp{1.0, 2.0, 3.0, 4.0, 5.0, 6.0};
+  const mdview<const double, 2> ctrl(cp.data(), 6, 1);
+  const double tol = 8.0 * std::numeric_limits<double>::epsilon();
+  const double r = 8.0 * 6.0 * unit_roundoff<double>();
+  const std::vector<double> mixed = {1.5, 2.0};
+  const std::vector<double> end = {2.0, 2.0};
+  CHECK(std::abs(bs::blossom<double>(sp(kn), 2, ctrl, sp(mixed), tol)[0] - 3.5) <= r);
+  CHECK(std::abs(bs::blossom<double>(sp(kn), 2, ctrl, sp(end), tol)[0] - 4.0) <= r);
+}
+
+// ---- inherited defects, pinned (parity pins)
+// -----------------------------------------------------
+//
+// The tests below are parity pins. Each states the CORRECT behavior and is marked
+// `doctest::should_fail`, so it is reported as an expected failure while the defect stands and
+// fails the suite loudly the day the defect is fixed (then drop the decorator). The same defect is
+// in the pure-Python implementation this code replaces, and the port keeps its behavior: the
+// project holds such defects for a later review, and none is fixed in the port.
 
 namespace {
 

@@ -963,24 +963,30 @@ TEST_CASE("bspline: derivative orders are checked before the points, length firs
                        pantr::value_error);
 }
 
-TEST_CASE("bspline: a zero divisor in the basis recurrence is a status, not a plausible value") {
-  // Degree 2 with the left end repeated four times (p + 2): the span just left of 0 is empty, and a
-  // point inside the tolerance band left of 0 divides by zero in the derivative recurrence.
+TEST_CASE("bspline: a point in the band below an empty start span has the start's derivative") {
+  // Regression. Degree 2 with the left end repeated four times (p + 2): the clamped span just
+  // left of 0 is empty, and a point inside the tolerance band left of 0 used to land there and
+  // divide by zero in the derivative recurrence. It now takes the first non-empty span [0, 1).
+  // Oracle: on [0, 1) the Bernstein coefficients are 2, 3, 4, so the curve is 2 + 2 x: its
+  // derivative is 2 everywhere and its value at -1e-17 is 2 - 2e-17, below one unit of roundoff
+  // of 2. Tolerance 8 eps on values of 2.
   const std::vector<double> knots = {0, 0, 0, 0, 1, 1, 1};
   std::vector<bs::BsplineSpace1D<double>> spaces;
   spaces.emplace_back(sp(knots), 2);
   const std::vector<double> cp = {1, 2, 3, 4};
   const bs::Bspline<double> b(bs::BsplineSpace<double>(std::move(spaces)), sp(cp), false);
-  const std::vector<double> bad = {-1e-17};
-  const mdview<const double, 2> view(bad.data(), 1, 1);
+  const std::vector<double> band = {-1e-17};
+  const mdview<const double, 2> view(band.data(), 1, 1);
   const auto r = bs::evaluate_derivatives<double, double>(b, view, std::vector<int>{1});
-  CHECK_FALSE(r.complete);
+  REQUIRE(r.complete);
+  CHECK(std::abs(r.values.data()[0] - 2.0) <= 8.0 * std::numeric_limits<double>::epsilon());
   NdArray<double> out({1, 1});
-  CHECK_FALSE(
-      bs::evaluate_derivatives<double, double>(b, view, std::vector<int>{1}, out.view<2>()));
-  // Order zero divides by nothing.
+  CHECK(bs::evaluate_derivatives<double, double>(b, view, std::vector<int>{1}, out.view<2>()));
+  CHECK(std::abs(out.data()[0] - 2.0) <= 8.0 * std::numeric_limits<double>::epsilon());
+  // The value is the start's, c1 = 2.
   const auto v = bs::evaluate_derivatives<double, double>(b, view, std::vector<int>{0});
-  CHECK(v.complete);
+  REQUIRE(v.complete);
+  CHECK(std::abs(v.values.data()[0] - 2.0) <= 8.0 * std::numeric_limits<double>::epsilon());
 }
 
 // ---- the lattice by sum factorisation ---------------------------------------------------------

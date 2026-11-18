@@ -118,9 +118,10 @@ struct RowRange {
 /// Raises:
 ///     value_error: `count` differs from the number of rows in `range`, and is not one row
 ///         assigned to none (NumPy's broadcast message).
-///     std::domain_error: The derivative recurrence met a zero divisor (an empty clamped span at
-///         that domain end, as an unclamped knot vector repeating its end knot has); the binding
-///         raises `ZeroDivisionError`, as the previous implementation's float division did.
+///     std::domain_error: The derivative recurrence met a zero divisor; the binding raises
+///         `ZeroDivisionError`, as the previous implementation's float division did. No divisor
+///         is zero at a domain end in the knots' type (see `detail::basis_derivs_point`); `x` is
+///         that end converted to `P`, which a narrower `P` can round outside the closed span.
 template <StorageFloat T, StorageFloat P>
 void put_derivative_rows(const BsplineSpace1D<T>& space, P x, long long count, RowRange range,
                          NdArray<P>& mat) {

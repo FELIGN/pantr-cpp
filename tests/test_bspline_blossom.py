@@ -217,9 +217,11 @@ def _linear_scan_span(knots: npt.NDArray[Any], u_last: float, n: int, degree: in
     """The ``O(n)`` scan ``_blossom_span`` replaced, kept here as the reference oracle.
 
     Verbatim from the kernel before the change, including its ``k = n`` fall-through when
-    no half-open span contains ``u_last``. A consistency check (mirror M5): it is the defining
-    scan the binary search must reproduce, not an independent computation of the blossom; the
-    independent oracle is :class:`TestBlossomAgainstThePolarForm` below.
+    no half-open span contains ``u_last``, so it is an oracle for ``u_last >= knots[0]`` only
+    (below the first knot the search now takes the span of that knot). A consistency check
+    (mirror M5): it is the defining scan the binary search must reproduce, not an independent
+    computation of the blossom; the independent oracle is
+    :class:`TestBlossomAgainstThePolarForm` below.
     """
     k = n
     for idx in range(n + degree):
@@ -241,7 +243,12 @@ def _random_open_knots(
 
 
 class TestBlossomSpan:
-    """The binary span search agrees with the linear scan on every valid input."""
+    """The binary span search agrees with the linear scan on clamped vectors.
+
+    The scan is the reference for ``u >= knots[0]`` on vectors whose last span is non-empty
+    (the generated vectors here); below the first knot, and past an empty last span, the search
+    departs from it on purpose (``tests/test_bspline_domain_end_spans.py``).
+    """
 
     @pytest.mark.parametrize("degree", [1, 2, 3, 4, 5])
     @pytest.mark.parametrize("n_interior", [0, 1, 2, 5])
@@ -270,21 +277,24 @@ class TestBlossomSpan:
             1.0 + 1e-12,
         ]
         for u in probes:
+            # Below the first knot the scan fell through to ``n``, the defect fixed for #7: such
+            # a value belongs to the span of the first knot, which the scan gives at that knot.
+            ref = max(float(u), float(knots[0]))
             assert int(_blossom_span(knots, float(u), n)) == _linear_scan_span(
-                knots, float(u), n, degree
+                knots, ref, n, degree
             ), f"degree={degree} u={u!r} knots={knots.tolist()}"
 
-    def test_below_the_first_knot_gives_the_rightmost_span(self) -> None:
-        """Preserved behaviour: an under-range parameter falls through to span ``n``.
+    def test_below_the_first_knot_gives_the_first_span(self) -> None:
+        """An under-range parameter takes the span of the first knot, ``degree`` when clamped.
 
         Reachable through Layer 2, which accepts parameters up to its tolerance below the
-        domain start. The scan returned ``n`` here because no span matched; the binary
-        search would give ``-1`` without the guard.
+        domain start. The linear scan this search replaced fell through to the last span
+        ``n`` here, so the blossom was that of the end of the curve.
         """
         knots = np.array([0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0])
         n = knots.shape[0] - 4
-        assert int(_blossom_span(knots, -1e-9, n)) == n
-        assert _linear_scan_span(knots, -1e-9, n, 2) == n
+        assert int(_blossom_span(knots, -1e-9, n)) == 2
+        assert int(_blossom_span(knots, 0.0, n)) == 2
 
     def test_at_and_beyond_the_last_knot_clamps(self) -> None:
         """The right domain endpoint and anything past it both give span ``n``."""

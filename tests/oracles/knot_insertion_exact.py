@@ -116,7 +116,18 @@ def oslo_matrix(
 
 
 def _span_of(knots: Sequence[Fraction], degree: int, x: Fraction) -> int:
-    """Get the span a point is evaluated on: the library's rule, as :class:`ExactBasis` has it."""
+    """Get the span a point is evaluated on, as :class:`ExactBasis` has it.
+
+    This is the library's rule only where the first and last in-domain spans are non-empty.
+
+    Args:
+        knots (Sequence[Fraction]): The knot vector.
+        degree (int): The degree.
+        x (Fraction): The point.
+
+    Returns:
+        int: The span index.
+    """
     last = len(knots) - degree - 2
     return next((j for j in range(degree, last) if x < knots[j + 1]), last)
 

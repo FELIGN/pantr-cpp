@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from math import comb
 from typing import Any, cast
 
 import numpy as np
@@ -10,7 +11,7 @@ import pytest
 
 from pantr import _testing
 from pantr.basis import tabulate_bernstein_1d
-from pantr.bspline import BsplineSpace1D, create_uniform_periodic_knots
+from pantr.bspline import BsplineSpace1D, create_cardinal_knots, create_uniform_periodic_knots
 from tests.oracles import bspline_exact
 
 # ---------------------------------------------------------------------------
@@ -556,3 +557,26 @@ class TestBezierFastPath:
         pts = np.array([0.1, 0.4, 0.7])
         d, _ = spline.tabulate_basis_derivatives(pts, n_deriv=2)
         np.testing.assert_allclose(d[:, 2, :], [[2.0, -4.0, 2.0]] * 3, atol=1e-12)
+
+
+# ---------------------------------------------------------------------------
+# Regression: the row factor p! / (p - k)! wrapped a 64-bit integer from degree 21
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("p", [20, 21, 22, 25])
+def test_top_derivative_of_a_cardinal_bspline_at_high_degree(p: int) -> None:
+    """The p-th derivative row of a cardinal B-spline is the binomial differences.
+
+    Oracle (analytic): the p-th derivative of the cardinal B-spline of degree p is the p-th
+    finite difference of the indicator of a unit interval, so the p + 1 nonzero entries of the
+    order-p row are ``(-1)^(p - m) C(p, m)``. The row factor ``p! / (p - k)!`` used to be a 64-bit
+    integer product, which wraps once it exceeds 2^63 (from p = 21 on), leaving those rows wrong
+    by an O(1) relative factor; p = 20 is the control below the wrap. The tolerance is the one
+    ``check_top_derivative_of_cardinal`` (C++ suite) asserts, a heuristic: rounding taken as
+    ``(p + 1) 2^p eps`` with unit knot spacing (2e-7 at p = 25), with an admitted margin.
+    """
+    space = BsplineSpace1D(create_cardinal_knots(2 * p, p), p)
+    vals, _ = space.tabulate_basis_derivatives([p + 0.5], n_deriv=p)
+    want = np.array([(-1.0) ** (p - m) * comb(p, m) for m in range(p + 1)])
+    np.testing.assert_allclose(vals[0, p, :], want, rtol=0.0, atol=1e-6)
