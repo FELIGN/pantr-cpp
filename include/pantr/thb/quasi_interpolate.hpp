@@ -120,8 +120,10 @@ class THBQuasiInterpolation {
   /// Raises:
   ///     state_error: An active function has no leaf cell at its level (a tiling
   ///         `HierarchicalGrid::from_blocks` accepted without validating it).
-  ///     value_error, index_error: A local collocation block is singular, or its inverse is not
-  ///         finite (`bspline::detail::llm_weight_row`).
+  ///     value_error: A local collocation block is singular, or its inverse is not finite
+  ///         (`bspline::detail::llm_weight_row`).
+  ///     index_error: A function is not among the functions of its leaf cell's block (the
+  ///         precondition `bspline::detail::llm_weight_row` checks).
   explicit THBQuasiInterpolation(THBSplineSpace<T> space) : space_(std::move(space)) {
     const std::size_t d = space_.dim();
     for (const int p : space_.degrees()) {
