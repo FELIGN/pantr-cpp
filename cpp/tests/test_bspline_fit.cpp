@@ -2698,9 +2698,31 @@ TEST_CASE("QuasiInterpolation: a function with no support in the domain is refus
   CHECK_THROWS_WITH_AS(static_cast<void>(bs::QuasiInterpolation<double>(outer)),
                        doctest::Contains("Basis function 0 has no knot interval"),
                        pantr::value_error);
+  // Periodic cubic on [0, 1] whose knots before the domain leave function 1 wholly before it: the
+  // refusal after the cyclic search, not an index error from the weight row.
+  const bs::BsplineSpace<double> periodic = space_of<double>(
+      {Dir{{-1.0, -0.5, -0.25, 0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0, 1.25, 1.5, 2.0}, 3, true}});
+  CHECK_THROWS_WITH_AS(static_cast<void>(bs::QuasiInterpolation<double>(periodic)),
+                       doctest::Contains("Basis function 1 has no knot interval"),
+                       pantr::value_error);
 }
 
-TEST_CASE("QuasiInterpolation: a weight row of a function outside the block is refused") {
+TEST_CASE("QuasiInterpolation: a missed function takes the nearest interval, the left one first") {
+  // Oracle: closed form. Periodic quadratic on [-1/16, 1] (dyadic knots): function 0's support is
+  // three intervals, its abscissa in the middle one misses it (the ghost knots are not periodic
+  // images), and both neighbours hold it, at distance one in interval count. Its points are the
+  // left one's, [-1/16, 0), at 1/4, 2/4, 3/4 of it. Bug caught: the right neighbour taken first
+  // ([13/16, 1)), which Q B = B cannot see since both intervals lie in the support.
+  const bs::QuasiInterpolation<double> qi(space_of<double>(
+      {Dir{{-1.25, -1.125, -0.0625, 0.0, 0.8125, 0.8125, 1.0, 1.0, 1.0625}, 2, true}}));
+  const NdArray<double> pts = qi.points();
+  for (std::size_t k = 0; k < 3; ++k) {
+    INFO("point " << k);
+    CHECK(pts.data()[k] == -0.0625 + 0.0625 * (static_cast<double>(k + 1) / 4.0));
+  }
+}
+
+TEST_CASE("QuasiInterpolation: a weight row is its block's, and refused outside the block") {
   // Oracle: the documented precondition of `llm_weight_row`, an index_error for every function
   // outside the interval's block, and for each function inside it the row of the inverse whose
   // product with the block's basis values at the points is the unit vector of its position. A

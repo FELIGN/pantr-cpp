@@ -1174,19 +1174,35 @@ class TestQuasiInterpolateOracles:
         got = np.asarray(spline.control_points)
         assert float(np.max(np.abs(got - ctrl))) <= _qi_bound(space, float(np.max(np.abs(ctrl))))
 
-    def test_a_function_with_no_support_in_the_domain_is_refused(self) -> None:
-        """A quadratic with the interior knot 1/2 four times: function 3 is identically zero.
+    @pytest.mark.parametrize(
+        ("knots", "degree", "periodic", "function"),
+        [
+            # Quadratic with the interior knot 1/2 four times: function 3 is identically zero.
+            (_knots(2, [0.5, 0.5, 0.5, 0.5]), 2, False, 3),
+            # Periodic cubic on [0, 1] whose knots before the domain leave function 1 wholly
+            # before it: refused after the cyclic search.
+            (
+                np.array([-1.0, -0.5, -0.25, 0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0, 1.25, 1.5, 2.0]),
+                3,
+                True,
+                1,
+            ),
+        ],
+    )
+    def test_a_function_with_no_support_in_the_domain_is_refused(
+        self, knots: npt.NDArray[Any], degree: int, periodic: bool, function: int
+    ) -> None:
+        """Oracle: the documented ``ValueError`` naming the function, raised before any sampling.
 
-        Oracle: the documented ``ValueError`` naming the function, raised before any sampling.
         Bug caught: a functional built on an interval outside the function's support (an unrelated
         coefficient) or an ``IndexError``, as the previous release did.
         """
-        space = _space_from_knots((_knots(2, [0.5, 0.5, 0.5, 0.5]), 2))
+        space = BsplineSpace([BsplineSpace1D(knots, degree, periodic=periodic)])
 
         def never_sampled(pts: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
             raise AssertionError("the function was sampled before the refusal")
 
-        with pytest.raises(ValueError, match=r"Basis function 3 has no knot interval"):
+        with pytest.raises(ValueError, match=rf"Basis function {function} has no knot interval"):
             quasi_interpolate_bspline(never_sampled, space)
 
     def test_quasi_interpolant_reproduces_a_periodic_space_with_non_image_ghost_knots(
