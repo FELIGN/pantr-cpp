@@ -1162,7 +1162,7 @@ class TestQuasiInterpolateOracles:
         assert float(np.max(np.abs(got - ctrl))) <= _qi_bound(space, float(np.max(np.abs(ctrl))))
 
     @pytest.mark.parametrize("name", list(_REPORTED_QI_CASES))
-    def test_the_reported_wrong_answers_are_reproduced(self, name: str) -> None:
+    def test_the_reported_spaces_are_reproduced(self, name: str) -> None:
         """Oracle: ``Q B = B`` on the spaces of the bug report, its control points (seed 3).
 
         The report sampled ``B`` in floating point; here the samples are exact, so the bound is the
@@ -1174,17 +1174,50 @@ class TestQuasiInterpolateOracles:
         got = np.asarray(spline.control_points)
         assert float(np.max(np.abs(got - ctrl))) <= _qi_bound(space, float(np.max(np.abs(ctrl))))
 
-    def test_a_function_with_no_support_in_the_domain_is_refused(self) -> None:
-        """A quadratic with the interior knot 1/2 four times: function 3 is identically zero.
+    @pytest.mark.parametrize(
+        ("knots", "periodic", "function"),
+        [
+            # Quadratic with the interior knot 1/2 four times: function 3 is identically zero.
+            (_knots(2, [0.5, 0.5, 0.5, 0.5]), False, 3),
+            # Periodic quadratic whose knots past the domain [1/8, 15/16] are not the periodic
+            # images of its own: function 0's wrapped abscissa lies away from its support.
+            (
+                np.array(
+                    [
+                        -0.57701022741379504,
+                        -0.32582389302027487,
+                        0.125,
+                        0.125,
+                        0.25,
+                        0.75,
+                        0.75,
+                        0.8125,
+                        0.8125,
+                        0.9375,
+                        1.2324736223316861,
+                        1.6518084640671651,
+                    ]
+                ),
+                True,
+                0,
+            ),
+        ],
+    )
+    def test_a_function_with_no_support_beside_its_abscissa_is_refused(
+        self, knots: npt.NDArray[Any], periodic: bool, function: int
+    ) -> None:
+        """Oracle: the documented ``ValueError`` naming the function, raised before any sampling.
 
-        Oracle: the documented ``ValueError`` naming the function. Bug caught: a functional built
-        on an interval outside the function's support (an unrelated coefficient) or an
-        ``IndexError``, as the previous release did.
+        Bug caught: a functional built on an interval outside the function's support (an unrelated
+        coefficient) or an ``IndexError``, as the previous release did.
         """
-        space = _space_from_knots((_knots(2, [0.5, 0.5, 0.5, 0.5]), 2))
-        ctrl = _dyadic_ctrl((int(space.num_basis[0]), 1), seed=3)
-        with pytest.raises(ValueError, match=r"Basis function 3 has no knot interval"):
-            quasi_interpolate_bspline(_exact_sampler(space, ctrl), space)
+        space = BsplineSpace([BsplineSpace1D(knots, 2, periodic=periodic)])
+
+        def never_sampled(pts: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
+            raise AssertionError("the function was sampled before the refusal")
+
+        with pytest.raises(ValueError, match=rf"Basis function {function} has no knot interval"):
+            quasi_interpolate_bspline(never_sampled, space)
 
 
 # ---------------------------------------------------------------------------
