@@ -3,11 +3,12 @@
 ///
 /// Each coefficient is a local point-value functional `lambda_j(f) = sum_k a_{j,k} f(x_{j,k})`:
 /// per direction, the `degree + 1` points are equispaced inside the knot interval holding the
-/// function's Greville abscissa (the one to its right at a break, the one to its left where the
-/// function's support ends at the break), and the weights are the function's row of the inverse of
-/// the local collocation block there. On one interval the `degree + 1` nonzero B-splines span the
-/// polynomials of that degree, so where the chosen interval lies in the function's support the
-/// local interpolant recovers its coefficient exactly and the operator reproduces the space
+/// function's Greville abscissa (the one to its right at a break), or the support's interval
+/// nearest to it where the abscissa misses the support (see `detail::llm_direction`), and the
+/// weights are the function's row of the inverse of the local collocation block there. On one
+/// interval the `degree + 1` nonzero B-splines span the polynomials of that degree, so where the
+/// chosen interval lies in the function's support the local interpolant recovers its coefficient
+/// exactly and the operator reproduces the space
 /// (`Q B_j = B_j`). A periodic function's abscissa is wrapped into the domain, and its position in
 /// a block whose functions wrap past `num_basis` is taken modulo `num_basis`. Points, local blocks,
 /// weights and coefficients are `double`, as before (the blocks are tabulated over the space's own
@@ -135,8 +136,7 @@ void llm_weight_row(const BsplineSpace1D<T>& space, std::size_t j, std::span<con
         "Local collocation matrix inversion for basis function " + std::to_string(j) +
         " produced non-finite values (condition number too large). Points: " + py_list(pts));
   }
-  // The callers choose the interval inside the function's support, so this holds for a consistent
-  // space; it keeps a caller's wrong index from reading outside the inverse.
+  // The precondition on `j`, checked because a caller's wrong index would read outside the inverse.
   const long long local = llm_local_index<T>(space, j, first.data()[0]);
   if (local < 0 || local >= order) {
     throw index_error("basis function " + std::to_string(j) +
@@ -149,10 +149,18 @@ void llm_weight_row(const BsplineSpace1D<T>& space, std::size_t j, std::span<con
 
 /// Build one direction's Lee-Lyche-Mørken data.
 ///
+/// The interval of function `j` is the one holding its Greville abscissa (the one to the right at a
+/// break) when that interval lies in the function's support, and otherwise the interval of the
+/// support nearest to it (cyclically, in a periodic space). The abscissa misses the support only
+/// at a break of multiplicity `degree + 1` that bounds it: the function ending there has the break
+/// as its abscissa, and the mean of the `degree` equal knots of a function starting there can round
+/// below the break. Membership is read from each interval's block, in integers, not from the
+/// comparison of the abscissa with the breaks.
+///
 /// Raises:
-///     value_error: A local collocation block is singular (an exactly zero or NaN pivot) or its
-///         inverse is not finite.
-///     index_error: The target function is not among the block's functions.
+///     value_error: A function has no interval of the domain in its support (a knot repeated past
+///         `degree + 1` times, or a function outside the domain); a local collocation block is
+///         singular (an exactly zero or NaN pivot) or its inverse is not finite.
 template <StorageFloat T>
 [[nodiscard]] LlmDirection llm_direction(const BsplineSpace1D<T>& space) {
   const auto order = static_cast<std::size_t>(space.degree()) + 1;
@@ -167,6 +175,18 @@ template <StorageFloat T>
   LlmDirection out{NdArray<double>({n, order}, for_overwrite),
                    NdArray<double>({n, order}, for_overwrite)};
   std::vector<double> pts(order);
+  // The first function of each interval's block, read at the interval's first sample point.
+  std::vector<double> probes(n_intervals);
+  for (std::size_t c = 0; c < n_intervals; ++c) {
+    llm_interval_points(static_cast<double>(breaks[c]), static_cast<double>(breaks[c + 1]), pts);
+    probes[c] = pts[0];
+  }
+  const NdArray<std::int64_t> firsts =
+      space.template tabulate_basis<double>(std::span<const double>(probes)).second;
+  const auto holds = [&](std::size_t c, std::size_t j) {
+    const long long local = llm_local_index<T>(space, j, firsts.data()[c]);
+    return local >= 0 && local < static_cast<long long>(order);
+  };
   for (std::size_t j = 0; j < n; ++j) {
     T gj = greville[j];
     if (space.periodic()) {
@@ -180,21 +200,30 @@ template <StorageFloat T>
                                      [](double v, T b) { return v < static_cast<double>(b); });
     const auto above = static_cast<std::size_t>(it - breaks.begin());
     std::size_t mu = above == 0 ? 0 : (std::min)(above - 1, n_intervals - 1);
-    llm_interval_points(static_cast<double>(breaks[mu]), static_cast<double>(breaks[mu + 1]), pts);
-    // At a break of multiplicity degree + 1 the abscissa of the function that ends there is the
-    // break itself, and the interval to its right lies outside the function's support: take the
-    // one to its left. Every other abscissa lies inside its function's support, short of its end,
-    // so the interval found holds the function. (Interval 0 has no left neighbour in a
-    // non-periodic space; the wrap then makes `llm_weight_row` raise.)
-    const std::int64_t first =
-        space.template tabulate_basis<double>(std::span<const double>(pts.data(), 1))
-            .second.data()[0];
-    const long long local = llm_local_index<T>(space, j, first);
-    if (local < 0 || local >= static_cast<long long>(order)) {
-      mu = (mu + n_intervals - 1) % n_intervals;
-      llm_interval_points(static_cast<double>(breaks[mu]), static_cast<double>(breaks[mu + 1]),
-                          pts);
+    if (!holds(mu, j)) {
+      // The abscissa is on, or rounded across, a break of multiplicity degree + 1 bounding the
+      // support (see the docstring): take the nearest interval of the support.
+      std::size_t best = n_intervals;
+      std::size_t best_dist = 0;
+      for (std::size_t c = 0; c < n_intervals; ++c) {
+        if (!holds(c, j)) {
+          continue;
+        }
+        const std::size_t span = c > mu ? c - mu : mu - c;
+        const std::size_t dist = space.periodic() ? (std::min)(span, n_intervals - span) : span;
+        if (best == n_intervals || dist < best_dist) {
+          best = c;
+          best_dist = dist;
+        }
+      }
+      if (best == n_intervals) {
+        throw value_error("Basis function " + std::to_string(j) +
+                          " has no knot interval of the domain in its support, so no "
+                          "quasi-interpolation functional can be built for it.");
+      }
+      mu = best;
     }
+    llm_interval_points(static_cast<double>(breaks[mu]), static_cast<double>(breaks[mu + 1]), pts);
     llm_weight_row<T>(space, j, pts, std::span<double>(out.weights.data() + j * order, order));
     std::copy(pts.begin(), pts.end(), out.points.data() + j * order);
   }
