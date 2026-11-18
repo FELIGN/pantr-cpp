@@ -626,11 +626,12 @@
 - **`tabulate_basis_derivatives` raises `ZeroDivisionError` at every batch size** when the
   derivative recurrence divides by zero, at order `n_deriv >= 1`. No divisor is zero inside the
   domain; it happens where the knot differences cancel, at a point far outside the domain with
-  `validate=False` (`-1e20` on `[0, 0, 0, 0, 1, 1, 1]`), or at a point of the tolerance band beside
-  a span shorter than the rounding of its offset (`-1e-15` on the unsnapped
-  `[0, 0, 0, 1e-32, 1, 1, 1]`). At degree 0 it never does. The previous release raised it below
-  4096 points and returned without an error for a larger batch. (A point at or within the tolerance
-  of a domain end beside an empty span no longer divides by zero: see *Fixed*.)
+  `validate=False` (`-1e20` on `[0, 0, 0, 0, 1, 1, 1]` at degree 2), or at a point of the
+  tolerance band beside a span shorter than the rounding of its offset (`-1e-15` on
+  `[0, 0, 0, 1e-32, 1, 1, 1]` at degree 2 with `snap_knots=False`). At degree 0 it never does.
+  The previous release raised it below 4096 points and returned without an error for a larger
+  batch. (A point at or within the tolerance of a domain end beside an empty span no longer
+  divides by zero: see *Fixed*.)
 - **No `RuntimeWarning` from `create_uniform_open_knots`, `create_uniform_periodic_knots` or
   `BsplineSpace1D`** at an infinite domain end or a span that overflows the dtype; the knot vectors
   and tolerances are the same.
@@ -1037,8 +1038,8 @@
   an interior knot line can be reported in the other cell of that line; the tie rule applies to the
   coordinates returned.
   - **A point whose only preimage sits at a discontinuity** (a knot of multiplicity `degree + 1`, as
-    at the closed end of knots `[0, 0, 0, 1, 2, 2, 2, 3]` at degree 2) can be found in one release
-    and not in the other.
+    at the closed end of knots `[0, 0, 0, 1, 2, 2, 2, 3]` at degree 2, whose end is now evaluated
+    on the last non-empty span: see *Fixed*) can be found in one release and not in the other.
   - **An explicit `tol` of a few units in the last place of the physical coordinates or less**
     leaves whether a point is found to rounding, in this release as in the previous one, so the two
     can differ there (in the sample, at 3 units or fewer and not from 4).
@@ -1333,37 +1334,43 @@
   in a separate package; until then pantr has none of its own.
 
 ### Fixed
-- **B-spline basis derivatives of degree 21 and above are correct at every order.** The row of
-  order `k` was scaled by `degree! / (degree - k)!` formed as a 64-bit integer, which wraps once it
+- **B-spline basis derivatives from degree 21 on are correct at every order.** The row of order
+  `k` was scaled by `degree! / (degree - k)!` formed as a 64-bit integer, which wraps once it
   passes `2^63`: from degree 21 (orders 19 to 21; at degree 25 orders 16 to 25) those rows were
   wrong by an arbitrary factor, sign included, with no error, in
   `BsplineSpace1D.tabulate_basis_derivatives` and everything built on it (B-spline derivatives,
   collocation with boundary derivatives, `locate`, THB derivatives). The factor is now accumulated
   in `double`. Rows of degree 20 and below differ from the previous release's in the last bits at
-  most. Inherited from the previous release.
-- **A point at or within the tolerance of a domain end beside an empty span is evaluated on the
-  nearest non-empty span.** When the end knot is repeated past `degree + 1` at the start
-  (`[0, 0, 0, 0, 1, 1, 1]` at degree 2) or reaches `degree + 1` before a trailing knot at the end
-  (`[0, 0, 0, 1, 2, 2, 2, 3, 3]`), the span search clamped such a point onto the empty span at that
-  end: the basis there was all zeros, the spline evaluated to 0, and a derivative raised
-  `ZeroDivisionError`. It now takes the first non-empty span below the start and the last one at or
-  above the end (the limit from inside the domain), in `tabulate_basis`,
-  `tabulate_basis_derivatives`, `Bspline.evaluate` and `evaluate_derivatives`, collocation and
-  `locate`; a point outside the band with `validate=False` takes the same span. The C++ blossom
-  (`pantr::bspline::blossom`) of a parameter within the tolerance below a clamped start used the
-  last span, giving the blossom of the end of the curve; it now uses the first. Inherited from the
-  previous release.
+  most. The factor overflows a `double` from degree 171, where the top rows are `inf` or NaN with
+  no error. Inherited from the previous release.
+- **A point below the start, or at or above the end, of a domain beside an empty span is evaluated
+  on the nearest non-empty span.** When the start knot is repeated past `degree + 1`
+  (`[0, 0, 0, 0, 1, 1, 1]` at degree 2) or the end knot reaches `degree + 1` before a trailing knot
+  (`[0, 0, 0, 1, 2, 2, 2, 3, 3]`), the span search clamped a point within the tolerance below the
+  start, or at or within the tolerance above the end, onto the empty span at that end: the basis
+  there was all zeros, the spline evaluated to 0, and a derivative raised `ZeroDivisionError`. It
+  now takes the first non-empty span below the start and the last one at or above the end (the
+  limit from inside the domain), in `tabulate_basis`, `tabulate_basis_derivatives`,
+  `Bspline.evaluate` and `evaluate_derivatives`, collocation and `locate`; a point outside the band
+  with `validate=False` takes the same span. The C++ blossom (`pantr::bspline::blossom`) of a
+  parameter within the tolerance below a clamped start used the last span, giving the blossom of
+  the end of the curve, and one at or past the end beside an empty span used that span, returning
+  a control point; each now uses the nearest non-empty span, and a NaN parameter gives NaN.
+  Inherited from the previous release.
 - **`THBSplineSpace.tabulate_basis` sums to one at the upper edge of a cell that ends on a knot of
-  multiplicity `degree + 1`** (every new breakpoint of a space refined with `regularity=-1`). The
-  1D search is right-continuous at a knot, so at such an edge it took the span to the right of the
-  cell, where every function of the cell vanishes: the values summed to 0. A point at such a bound
-  is now evaluated on the cell's own span, the limit from inside the cell, for the values and the
-  derivatives. At an upper edge on a knot of lower multiplicity nothing changes: the values are
-  the cell's limits already, and the derivatives of an order above the continuity there are those
-  of the piece to the right of the edge, as in the previous release. A known limit remains: an
-  edge is recognised only where the cell bound equals the knot in floating point, so with a
-  `float32` root, or from the second refinement of a root whose knots are not dyadic, some cell
-  edges still sum to 0. Inherited from the previous release.
+  multiplicity `degree + 1`** (every new breakpoint of a space refined with `regularity=-1`), where
+  the cell bound and the knot are the same `double`. The 1D search is right-continuous at a knot,
+  so at such an edge it took the span to the right of the cell, where every function of the cell
+  vanishes: the values summed to 0. A point at such a bound is now evaluated on the cell's own
+  span, the limit from inside the cell, for the values and the derivatives. At an upper edge on a
+  knot of lower multiplicity nothing changes: the values are the cell's limits already, and the
+  derivatives of an order above the continuity there are those of the piece to the right of the
+  edge, as in the previous release. A known limit remains: the grid's cell bounds and the level
+  knots are formed by different arithmetic, and where they differ by rounding (a subdivision
+  factor other than 2, later refinements of a root whose knots are not dyadic, or a `float32`
+  root with such knots) a bound lying past its knot, on the neighboring cell's side, is not
+  recognized, and the basis there can still sum to 0, at an upper or a lower edge. Inherited from
+  the previous release.
 - **`create_uniform_periodic_knots` (and the periodic `create_uniform_space`) returns a periodic
   knot vector for every continuity.** For `1 <= continuity <= degree - 2` it extended the repeated
   interior knots past both ends by distinct, evenly spaced knots, so `K[i + n m] = K[i] + L` (`n`

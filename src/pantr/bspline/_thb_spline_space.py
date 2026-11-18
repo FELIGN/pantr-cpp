@@ -901,12 +901,15 @@ class THBSplineSpace:
         multiplicity the values are the cell's limits as well, but the derivatives
         (:meth:`tabulate_basis_derivatives`) of an order above the continuity there
         are those of the piece to the right of the bound, as in the previous release.
-        A bound is recognised as that knot only where the two are equal in floating
-        point: where they differ by rounding (a ``float32`` root, or a bound not
-        exactly representable, from the second refinement of a non-dyadic root on),
-        the functions of the cell can still all vanish at that bound, a known limit.
         Where the space is discontinuous, a bound shared by two cells has a value per
         cell, and each cell returns its own.
+
+        Known limit: the cell bounds (from the grid) and the level knots are formed by
+        different arithmetic, and the two are compared exactly.  Where they differ by
+        rounding (a subdivision factor other than 2, later refinements of a root whose
+        knots are not dyadic, or a ``float32`` root with such knots), a bound lying
+        past its knot, on the neighboring cell's side, is not recognized, and the
+        functions of the cell can all vanish at that bound.
 
         Args:
             cid (int): Active cell flat id in ``[0, grid.num_cells)``.

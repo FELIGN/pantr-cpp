@@ -331,13 +331,15 @@ class THBSplineSpace {
   /// it, is evaluated on the cell's own span: the limit from inside the cell, so the values sum to
   /// one at the upper bound as inside. At an upper bound on a knot of lower multiplicity the
   /// values are the cell's limits as well, but the derivatives of an order above the continuity
-  /// there are those of the piece to the right of the bound (as in the previous release). A bound
-  /// is recognised as that knot only where the two are equal in floating point: where they differ
-  /// by rounding (a `float` root, or a bound not exactly representable, from the second refinement
-  /// of a non-dyadic root on), the functions of the cell can still all vanish at that bound, a
-  /// known limit. Where the
+  /// there are those of the piece to the right of the bound (as in the previous release). Where the
   /// space is discontinuous, a bound shared by two cells has a value per cell, and each cell
   /// returns its own.
+  ///
+  /// Known limit: the cell bounds (from the grid) and the level knots are formed by different
+  /// arithmetic, and the two are compared exactly. Where they differ by rounding (a subdivision
+  /// factor other than 2, later refinements of a root whose knots are not dyadic, or a `float`
+  /// root with such knots), a bound lying past its knot, on the neighboring cell's side, is not
+  /// recognized, and the functions of the cell can all vanish at that bound.
   ///
   /// No dimension limit applies (the Python implementation refused more than 24 directions, a
   /// limit of its einsum subscripts).
@@ -748,9 +750,9 @@ class THBSplineSpace {
   // cell's span. Where they share functions, a cell function the neighbour lacks vanishes at the
   // shared knot from inside as well, so the values are the cell's limits and the point is left as
   // the search placed it; its derivatives there are the neighbouring piece's, as before.
-  // The bounds and the knots are compared exactly: a bound that differs from its knot by rounding
-  // (a `float` root, or bounds and knots subdivided along different routes) is not recognised,
-  // and the cell's functions can still vanish there (stated as a limit in `tabulate_basis`).
+  // The bounds and the knots are compared exactly: a bound past its knot by rounding, on the
+  // neighbor's side, is not recognized, and the cell's functions can still vanish there (the
+  // known limit stated in `tabulate_basis`).
   void tabulate_1d(std::int64_t level, std::size_t k, std::int64_t order,
                    mdview<const double, 2> pts, std::pair<double, double> bounds,
                    detail::Basis1D& out) const {
