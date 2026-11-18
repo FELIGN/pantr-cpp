@@ -1357,20 +1357,6 @@
   the end of the curve, and one at or past the end beside an empty span used that span, returning
   a control point; each now uses the nearest non-empty span, and a NaN parameter gives NaN.
   Inherited from the previous release.
-- **`THBSplineSpace.tabulate_basis` sums to one at the upper edge of a cell that ends on a knot of
-  multiplicity `degree + 1`** (every new breakpoint of a space refined with `regularity=-1`), where
-  the cell bound and the knot are the same `double`. The 1D search is right-continuous at a knot,
-  so at such an edge it took the span to the right of the cell, where every function of the cell
-  vanishes: the values summed to 0. A point at such a bound is now evaluated on the cell's own
-  span, the limit from inside the cell, for the values and the derivatives. At an upper edge on a
-  knot of lower multiplicity nothing changes: the values are the cell's limits already, and the
-  derivatives of an order above the continuity there are those of the piece to the right of the
-  edge, as in the previous release. A known limit remains: the grid's cell bounds and the level
-  knots are formed by different arithmetic, and where they differ by rounding (a subdivision
-  factor other than 2, later refinements of a root whose knots are not dyadic, or a `float32`
-  root with such knots) a bound lying past its knot, on the neighboring cell's side, is not
-  recognized, and the basis there can still sum to 0, at an upper or a lower edge. Inherited from
-  the previous release.
 - **`create_uniform_periodic_knots` (and the periodic `create_uniform_space`) returns a periodic
   knot vector for every continuity.** For `1 <= continuity <= degree - 2` it extended the repeated
   interior knots past both ends by distinct, evenly spaced knots, so `K[i + n m] = K[i] + L` (`n`

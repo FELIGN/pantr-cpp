@@ -892,25 +892,6 @@ class THBSplineSpace:
         on the cell.  Mirrors the ``(basis, first_basis)`` two-return of
         :meth:`~pantr.bspline.BsplineSpace.tabulate_basis`.
 
-        At a cell's bounds the 1D B-spline search is right-continuous at a knot, with
-        one exception.  Where a bound is a knot of multiplicity ``degree + 1`` of the
-        level tabulated (every new breakpoint of a space refined with
-        ``regularity=-1``), a point at it, or within the slack outside it, is evaluated
-        on the cell's own span: the limit from inside the cell, so the values sum to
-        one at the upper bound as inside.  At an upper bound on a knot of lower
-        multiplicity the values are the cell's limits as well, but the derivatives
-        (:meth:`tabulate_basis_derivatives`) of an order above the continuity there
-        are those of the piece to the right of the bound, as in the previous release.
-        Where the space is discontinuous, a bound shared by two cells has a value per
-        cell, and each cell returns its own.
-
-        Known limit: the cell bounds (from the grid) and the level knots are formed by
-        different arithmetic, and the two are compared exactly.  Where they differ by
-        rounding (a subdivision factor other than 2, later refinements of a root whose
-        knots are not dyadic, or a ``float32`` root with such knots), a bound lying
-        past its knot, on the neighboring cell's side, is not recognized, and the
-        functions of the cell can all vanish at that bound.
-
         Args:
             cid (int): Active cell flat id in ``[0, grid.num_cells)``.
             pts (npt.ArrayLike): Parametric points of shape ``(..., dim)`` lying in
@@ -953,7 +934,6 @@ class THBSplineSpace:
         B-spline derivatives; truncated functions apply their stored coefficients to
         the B-spline derivatives at their representation level.  The returned columns
         are ordered as ``dofs`` (the sorted global dofs, equal to :meth:`active_basis`).
-        At a cell's bounds the derivatives are taken as :meth:`tabulate_basis` states.
 
         Args:
             cid (int): Active cell flat id in ``[0, grid.num_cells)``.
