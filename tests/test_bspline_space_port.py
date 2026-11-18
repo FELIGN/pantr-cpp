@@ -119,10 +119,12 @@ def test_a_point_in_the_tolerance_band_takes_the_first_non_empty_span(n: int) ->
 
 @pytest.mark.parametrize("n", [1, 5000])
 def test_order_zero_at_the_band_point_is_the_basis_at_the_start(n: int) -> None:
-    """``n_deriv=0`` at the band point gives the values at ``0.0``, within ``16 eps`` (8 p eps).
+    """``n_deriv=0`` at the band point gives the values at ``0.0``, within ``8 eps``.
 
     The point is ``1e-17`` outside the first span, so the middle function is ``-2e-17`` there:
-    a polynomial piece slightly outside its interval, not a defect.
+    a polynomial piece slightly outside its interval, not a defect (the version this replaced
+    asserted the values non-negative, which that piece breaks). ``8 eps`` is the bound it put on
+    the values above 1.
     """
     space = BsplineSpace1D(_LEFT_HEAVY, 2)
     at = n // 2
@@ -132,7 +134,7 @@ def test_order_zero_at_the_band_point_is_the_basis_at_the_start(n: int) -> None:
     assert values.shape == (n, 1, 3)
     assert first.shape == (n,)
     assert np.isfinite(values).all()
-    np.testing.assert_allclose(values[at, 0], [1.0, 0.0, 0.0], rtol=0, atol=16 * _eps(np.float64))
+    np.testing.assert_allclose(values[at, 0], [1.0, 0.0, 0.0], rtol=0, atol=8 * _eps(np.float64))
 
 
 @pytest.mark.parametrize("dtype", _DTYPES, ids=_DTYPE_IDS)
