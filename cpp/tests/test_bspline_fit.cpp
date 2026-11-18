@@ -2701,38 +2701,51 @@ TEST_CASE("QuasiInterpolation: a function with no support in the domain is refus
 }
 
 TEST_CASE("QuasiInterpolation: a weight row of a function outside the block is refused") {
-  // Oracle: the documented precondition of `llm_weight_row`, an index_error, rather than a row of
-  // the inverse read for another function (a negative position counted from the end, as the
-  // previous release did) or past its end. Bug caught: the bounds check dropped or applied before
-  // the periodic wrap.
-  std::vector<double> pts(3);
-  std::vector<double> row(3);
-  bs::detail::llm_interval_points(0.0, 0.5, pts);
-  // Quadratic on [0, 1/2, 1]: the block of [0, 1/2) is functions 0 to 2.
-  const bs::BsplineSpace<double> open = space_of<double>({Dir{clamped(2, {0.5}), 2}});
-  CHECK_THROWS_WITH_AS(bs::detail::llm_weight_row<double>(open.spaces()[0], 3, pts, row),
-                       doctest::Contains("basis function 3 is not among the functions"),
-                       pantr::index_error);
-  bs::detail::llm_weight_row<double>(open.spaces()[0], 2, pts, row);
-  // Periodic cubic on the knots i / 8: of its 8 functions, the 4 after the block of [0, 1/8),
-  // cyclically, are not in it.
-  const bs::BsplineSpace<double> closed = space_of<double>({periodic_dir()});
-  const bs::BsplineSpace1D<double>& dir = closed.spaces()[0];
-  std::vector<double> cubic_pts(4);
-  std::vector<double> cubic_row(4);
-  bs::detail::llm_interval_points(0.0, 0.125, cubic_pts);
-  const std::int64_t first =
-      dir.template tabulate_basis<double>(std::span<const double>(cubic_pts)).second.data()[0];
-  for (std::int64_t k = 0; k < 8; ++k) {
-    const auto j = static_cast<std::size_t>(((first + k) % 8 + 8) % 8);
-    INFO("position " << k << ", function " << j);
-    if (k < 4) {
-      CHECK_NOTHROW(bs::detail::llm_weight_row<double>(dir, j, cubic_pts, cubic_row));
-    } else {
-      CHECK_THROWS_AS(bs::detail::llm_weight_row<double>(dir, j, cubic_pts, cubic_row),
-                      pantr::index_error);
+  // Oracle: the documented precondition of `llm_weight_row`, an index_error for every function
+  // outside the interval's block, and for each function inside it the row of the inverse whose
+  // product with the block's basis values at the points is the unit vector of its position. A
+  // wrong row is another position's unit vector, so the 1/2 threshold below separates the two
+  // outcomes; it is not an accuracy bound. Bug caught: a negative position counted from the end
+  // (the previous release), and the bounds check applied before the periodic wrap.
+  const auto check_block = [](const bs::BsplineSpace1D<double>& dir, double lo, double hi) {
+    const auto order = static_cast<std::size_t>(dir.degree()) + 1;
+    const auto n = static_cast<std::int64_t>(dir.num_basis());
+    std::vector<double> pts(order);
+    std::vector<double> row(order);
+    bs::detail::llm_interval_points(lo, hi, pts);
+    const auto [values, firsts] = dir.template tabulate_basis<double>(std::span<const double>(pts));
+    const std::int64_t first = firsts.data()[0];
+    for (std::int64_t j = 0; j < n; ++j) {
+      const std::int64_t position = dir.periodic() ? ((j - first) % n + n) % n : j - first;
+      INFO("block [" << lo << ", " << hi << "), first " << first << ", function " << j);
+      if (position < 0 || position >= static_cast<std::int64_t>(order)) {
+        CHECK_THROWS_WITH_AS(
+            bs::detail::llm_weight_row<double>(dir, static_cast<std::size_t>(j), pts, row),
+            doctest::Contains("basis function " + std::to_string(j) + " is not among"),
+            pantr::index_error);
+        continue;
+      }
+      bs::detail::llm_weight_row<double>(dir, static_cast<std::size_t>(j), pts, row);
+      for (std::size_t c = 0; c < order; ++c) {
+        double dot = 0.0;
+        for (std::size_t k = 0; k < order; ++k) {
+          dot += row[k] * values.data()[k * order + c];
+        }
+        const double unit = static_cast<std::int64_t>(c) == position ? 1.0 : 0.0;
+        CHECK(std::abs(dot - unit) < 0.5);
+      }
     }
-  }
+  };
+  // Quadratic on [0, 1/2, 1]: the block of [0, 1/2) is functions 0 to 2 (function 3 past it), the
+  // block of [1/2, 1) functions 1 to 3 (function 0 before it, a negative position).
+  const bs::BsplineSpace<double> open = space_of<double>({Dir{clamped(2, {0.5}), 2}});
+  check_block(open.spaces()[0], 0.0, 0.5);
+  check_block(open.spaces()[0], 0.5, 1.0);
+  // Periodic cubic on the knots i / 8: the block of the last interval numbers its functions past
+  // `num_basis`, so some of its functions have a negative unwrapped position.
+  const bs::BsplineSpace<double> closed = space_of<double>({periodic_dir()});
+  check_block(closed.spaces()[0], 0.0, 0.125);
+  check_block(closed.spaces()[0], 0.875, 1.0);
 }
 
 TEST_CASE_TEMPLATE("QuasiInterpolation: periodic spaces are reproduced", T, float, double) {
@@ -2805,6 +2818,14 @@ TEST_CASE_TEMPLATE("QuasiInterpolation: periodic spaces are reproduced", T, floa
       check_qi_reproduces<T>(
           {Dir{bs::uniform_periodic_knots<double>(3, 3, -1, start, start + 1.0), 3, true}}, 1, 127);
     }
+  }
+  SUBCASE("quadratic whose knots past the domain are not the images of its own") {
+    // Domain [1/8, 15/16], ghost knots -3/4, -1/2 and 5/4, 7/4: function 0's wrapped abscissa lies
+    // in an interval that, like both its neighbours, is outside its support. Bug caught: only the
+    // neighbours searched (a refusal of a valid space), or an interval outside the support used.
+    const std::vector<double> knots = {-0.75, -0.5,   0.125,  0.125,  0.25, 0.75,
+                                       0.75,  0.8125, 0.8125, 0.9375, 1.25, 1.75};
+    check_qi_reproduces<T>({Dir{knots, 2, true}}, 1, 128);
   }
   SUBCASE("2D, a periodic direction of 6 intervals by a clamped one") {
     check_qi_reproduces<T>(
