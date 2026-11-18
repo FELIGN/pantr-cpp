@@ -154,13 +154,18 @@ void llm_weight_row(const BsplineSpace1D<T>& space, std::size_t j, std::span<con
 /// The abscissa misses the support only at a break of multiplicity at least `degree + 1` bounding
 /// it: the function ending there and the one starting there both have the mean of `degree` copies
 /// of the break as their abscissa, which lands on the break or rounds to either side of it, and the
-/// support of such a function is the single interval on the other side. Membership is read from
-/// each interval's block, in integers, not from the comparison of the abscissa with the breaks.
+/// support of such a function is the single interval on the other side. That argument assumes the
+/// knots of a periodic space past the domain are the periodic images of its own; where they are
+/// not, the wrapped abscissa can lie away from the support. Membership is read from each
+/// interval's block (its first function at a probe point inside the interval), not from the
+/// comparison of the abscissa with the breaks.
 ///
 /// Raises:
-///     value_error: A function has no interval of the domain in its support (a knot repeated past
-///         `degree + 1` times, or a function outside the domain); a local collocation block is
-///         singular (an exactly zero or NaN pivot) or its inverse is not finite.
+///     value_error: Neither the interval holding a function's abscissa nor a neighbour of it lies
+///         in the function's support: none of the domain does (a knot repeated past `degree + 1`
+///         times, or a function outside the domain), or the knots of a periodic space past the
+///         domain are not the periodic images of its own; a local collocation block is singular
+///         (an exactly zero or NaN pivot) or its inverse is not finite.
 template <StorageFloat T>
 [[nodiscard]] LlmDirection llm_direction(const BsplineSpace1D<T>& space) {
   const auto order = static_cast<std::size_t>(space.degree()) + 1;
@@ -214,8 +219,9 @@ template <StorageFloat T>
         mu = right;
       } else {
         throw value_error("Basis function " + std::to_string(j) +
-                          " has no knot interval of the domain in its support, so no "
-                          "quasi-interpolation functional can be built for it.");
+                          " has no knot interval of the domain in its support at or beside its "
+                          "Greville abscissa, so no quasi-interpolation functional can be built "
+                          "for it.");
       }
     }
     llm_interval_points(static_cast<double>(breaks[mu]), static_cast<double>(breaks[mu + 1]), pts);

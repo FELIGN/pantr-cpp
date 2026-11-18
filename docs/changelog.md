@@ -37,6 +37,10 @@
   lying wholly before or after the domain) raises `ValueError` naming the function; the previous
   release built a functional for it on an interval outside its support and returned an
   unrelated coefficient, which does not change the spline on the domain, or raised `IndexError`.
+  The same `ValueError` is raised for a periodic space whose knots past the domain are not the
+  periodic images of its own, where a function's wrapped Greville abscissa can lie away from its
+  support; the previous release returned coefficients for such a space without checking that each
+  functional lay in its function's support.
 - **`Bezier.multiply` and `Bspline.multiply` of finite control points whose product overflows**
   raise `OverflowError`; the previous release returned `inf` control points with NumPy's
   "overflow encountered in multiply" `RuntimeWarning`. With two or more parametric directions the
