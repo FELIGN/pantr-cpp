@@ -3,14 +3,14 @@
 ///
 /// Each coefficient is a local point-value functional `lambda_j(f) = sum_k a_{j,k} f(x_{j,k})`:
 /// per direction, the `degree + 1` points are equispaced inside the knot interval holding the
-/// function's Greville abscissa, and the weights are the function's row of the inverse of the
-/// local collocation block there. On one interval the `degree + 1` nonzero B-splines span the
+/// function's Greville abscissa (the one to its right at a break, the one to its left where the
+/// function's support ends at the break), and the weights are the function's row of the inverse of
+/// the local collocation block there. On one interval the `degree + 1` nonzero B-splines span the
 /// polynomials of that degree, so where the chosen interval lies in the function's support the
 /// local interpolant recovers its coefficient exactly and the operator reproduces the space
-/// (`Q B_j = B_j`). Two cases inherited from the previous release break that: a Greville abscissa
-/// on a break of full multiplicity picks the interval to its right, outside the support, and in
-/// a periodic space the abscissae are read in sorted order rather than per function; both are
-/// pinned as known failures in the tests. Points, local blocks, weights and coefficients are
+/// (`Q B_j = B_j`). In a periodic space the abscissae are still read from the wrapped and sorted
+/// array rather than per function, which finds an interval of the function only for some knot
+/// vectors. Points, local blocks, weights and coefficients are
 /// `double`, as before (the blocks are tabulated over the space's own knots, so a `float` space's
 /// rounded knots carry into them); a caller rounds the coefficients to the space's type.
 #pragma once
@@ -80,6 +80,18 @@ inline void llm_interval_points(double lo, double hi, std::span<double> out) noe
   }
 }
 
+/// The position of function `j` among the functions `first, ..., first + degree` of a block.
+///
+/// Args:
+///     j (std::size_t): The function, in `[0, num_basis)`.
+///     first (std::int64_t): The block's first function, as `tabulate_basis` returns it.
+///
+/// Returns:
+///     long long: `j - first`; `j` is in the block when it lies in `[0, degree]`.
+[[nodiscard]] inline long long llm_local_index(std::size_t j, std::int64_t first) noexcept {
+  return static_cast<long long>(j) - first;
+}
+
 /// The weight row of function `j` for the points `pts` of one knot interval: row `j - first` of
 /// the inverse of the local collocation block, `first` the first function non-zero there, so that
 /// `weights . f(pts)` is the coefficient of `B_j` of the local interpolant.
@@ -94,8 +106,7 @@ inline void llm_interval_points(double lo, double hi, std::span<double> out) noe
 /// Raises:
 ///     value_error: The local collocation block is singular (an exactly zero or NaN pivot) or its
 ///         inverse is not finite.
-///     index_error: `j` is not among the block's functions (a Python index outside
-///         `[-order, order)`, as before).
+///     index_error: `j` is not among the block's functions.
 template <StorageFloat T>
 void llm_weight_row(const BsplineSpace1D<T>& space, std::size_t j, std::span<const double> pts,
                     std::span<double> row) {
@@ -112,13 +123,13 @@ void llm_weight_row(const BsplineSpace1D<T>& space, std::size_t j, std::span<con
         "Local collocation matrix inversion for basis function " + std::to_string(j) +
         " produced non-finite values (condition number too large). Points: " + py_list(pts));
   }
-  long long local = static_cast<long long>(j) - first.data()[0];
-  if (local < -order || local >= order) {
-    throw index_error("index " + std::to_string(local) + " is out of bounds for axis 0 with size " +
-                      std::to_string(order));
-  }
-  if (local < 0) {
-    local += order;  // a negative index counts from the end, as before
+  // The callers choose the interval inside the function's support, so this holds for a consistent
+  // space; it keeps a caller's wrong index from reading outside the inverse.
+  const long long local = llm_local_index(j, first.data()[0]);
+  if (local < 0 || local >= order) {
+    throw index_error("basis function " + std::to_string(j) +
+                      " is not among the functions of the block starting at " +
+                      std::to_string(first.data()[0]) + ".");
   }
   const double* src = inv->data() + static_cast<std::size_t>(local) * pts.size();
   std::copy(src, src + pts.size(), row.begin());
@@ -147,8 +158,22 @@ template <StorageFloat T>
     const auto it = std::upper_bound(breaks.begin(), breaks.end(), g,
                                      [](double v, T b) { return v < static_cast<double>(b); });
     const auto above = static_cast<std::size_t>(it - breaks.begin());
-    const std::size_t mu = above == 0 ? 0 : (std::min)(above - 1, n_intervals - 1);
+    std::size_t mu = above == 0 ? 0 : (std::min)(above - 1, n_intervals - 1);
     llm_interval_points(static_cast<double>(breaks[mu]), static_cast<double>(breaks[mu + 1]), pts);
+    // At a break of multiplicity degree + 1 the abscissa of the function that ends there is the
+    // break itself, and the interval to its right lies outside the function's support: take the
+    // one to its left. Every other abscissa lies inside its function's support, short of its end,
+    // so the interval found holds the function. (Interval 0 has no left neighbour in a
+    // non-periodic space; the wrap then makes `llm_weight_row` raise.)
+    const std::int64_t first =
+        space.template tabulate_basis<double>(std::span<const double>(pts.data(), 1))
+            .second.data()[0];
+    const long long local = llm_local_index(j, first);
+    if (local < 0 || local >= static_cast<long long>(order)) {
+      mu = (mu + n_intervals - 1) % n_intervals;
+      llm_interval_points(static_cast<double>(breaks[mu]), static_cast<double>(breaks[mu + 1]),
+                          pts);
+    }
     llm_weight_row<T>(space, j, pts, std::span<double>(out.weights.data() + j * order, order));
     std::copy(pts.begin(), pts.end(), out.points.data() + j * order);
   }

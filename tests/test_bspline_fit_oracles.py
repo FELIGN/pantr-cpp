@@ -1094,6 +1094,18 @@ class TestQuasiInterpolateOracles:
         b = quasi_interpolate_bspline(column, space)
         np.testing.assert_array_equal(np.asarray(a.control_points), np.asarray(b.control_points))
 
+    def test_quasi_interpolant_reproduces_a_periodic_cubic_with_six_intervals(self) -> None:
+        """Oracle: the invariant ``Q B = B`` on ``create_uniform_space(3, 6, periodic=True)``.
+
+        Bug caught: the coefficients returned cyclically shifted, an error of order 1 (the
+        previous release did this).
+        """
+        space = create_uniform_space(3, 6, periodic=True)
+        ctrl = _dyadic_ctrl((6, 1), seed=1)
+        spline = quasi_interpolate_bspline(_exact_sampler(space, ctrl), space)
+        got = np.asarray(spline.control_points)
+        assert float(np.max(np.abs(got - ctrl))) <= _qi_bound(space, float(np.max(np.abs(ctrl))))
+
     @pytest.mark.parametrize("seed", range(3, 14))
     def test_quasi_interpolant_reproduces_a_spline_with_a_discontinuity(self, seed: int) -> None:
         """Oracle: the invariant ``Q B = B`` on a cubic with the interior knot 1/2 four times.
@@ -1318,33 +1330,6 @@ class TestInputLayouts:
         ctrl = np.asarray(spline.control_points)
         assert ctrl.dtype == np.float64
         np.testing.assert_allclose(ctrl[:, 0], np.arange(5.0), rtol=0.0, atol=1e-14)
-
-
-class TestKnownDefects:
-    """Defects found while writing the oracles above, pinned as expected failures.
-
-    The defect is in the algorithm and is shared with the previous release (probed against it).
-    """
-
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "Q B != B for some periodic spaces (cubic with 6 or 12 intervals; 5, 7, 8, 9, 10 "
-            "pass): the abscissa of function j is read from the wrapped and sorted Greville array "
-            "and the block row is taken in the unwrapped numbering (the previous release does the "
-            "same)"
-        ),
-    )
-    def test_quasi_interpolant_reproduces_a_periodic_cubic_with_six_intervals(self) -> None:
-        """Oracle: the invariant ``Q B = B`` on ``create_uniform_space(3, 6, periodic=True)``.
-
-        The coefficients come back cyclically shifted, an error of order 1.
-        """
-        space = create_uniform_space(3, 6, periodic=True)
-        ctrl = _dyadic_ctrl((6, 1), seed=1)
-        spline = quasi_interpolate_bspline(_exact_sampler(space, ctrl), space)
-        got = np.asarray(spline.control_points)
-        assert float(np.max(np.abs(got - ctrl))) <= _qi_bound(space, float(np.max(np.abs(ctrl))))
 
 
 def test_fit_with_no_node_in_a_direction_raises() -> None:

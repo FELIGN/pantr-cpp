@@ -56,10 +56,6 @@
 //    basis of a `float` space is tabulated in `float` even at `double` points), `(6 p + 1) u_T`
 //    per entry, besides the `double` inverse; `check_qi_reproduces` states the sum.
 //
-// Known defects. One test is marked `doctest::should_fail()`: it states the invariant `Q B = B`
-// for a space where the quasi-interpolant is wrong (some periodic spaces) and is expected to fail.
-// The defect is in the previous release as well. When it is fixed its test reports that it passed
-// unexpectedly: remove the marker then.
 #include <doctest/doctest.h>
 
 #include "bspline_test_support.hpp"
@@ -2655,19 +2651,11 @@ TEST_CASE_TEMPLATE("QuasiInterpolation: a spline with a discontinuity is reprodu
   }
 }
 
-TEST_CASE(
-    "QuasiInterpolation: some periodic spaces are not reproduced (known defect, expected to fail)" *
-    doctest::should_fail()) {
-  // KNOWN DEFECT, pinned as an expected failure. A periodic cubic space of 6 intervals on [0, 1],
-  // knots as `uniform_periodic_knots` makes them (the space `create_uniform_space(3, 6,
-  // periodic=True)` of the Python API), returns its coefficients cyclically shifted, an error of
-  // order 1 (the previous release does the same, and so do 12 intervals; 5, 7, 8, 9 and 10
-  // intervals, and the exact-translate knots of `periodic_dir()`, pass).
-  // Mechanism, observed in a scratch copy and not applied: `llm_direction` takes the abscissa of
-  // function j from `space.greville()`, which for a periodic space is wrapped into the domain and
-  // sorted (NumPy's order), so entry j is another function's abscissa, and `local = j - first` is
-  // taken in the unwrapped numbering. With the abscissae of the functions in order and `local`
-  // reduced modulo the number of functions, every case above reproduces.
+TEST_CASE("QuasiInterpolation: a periodic cubic of 6 intervals is reproduced") {
+  // Oracle: the invariant Q B = B. A periodic cubic space of 6 intervals on [0, 1], knots as
+  // `uniform_periodic_knots` makes them (the space `create_uniform_space(3, 6, periodic=True)` of
+  // the Python API). Bug caught: the coefficients returned cyclically shifted, an error of order 1
+  // (the previous release did this, and so for 12 intervals).
   const std::vector<double> knots = bs::uniform_periodic_knots<double>(6, 3, 2, 0.0, 1.0);
   check_qi_reproduces<double>({Dir{knots, 3, true}}, 1, 113);
 }
