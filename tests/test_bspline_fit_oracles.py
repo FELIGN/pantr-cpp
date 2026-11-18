@@ -1174,6 +1174,18 @@ class TestQuasiInterpolateOracles:
         got = np.asarray(spline.control_points)
         assert float(np.max(np.abs(got - ctrl))) <= _qi_bound(space, float(np.max(np.abs(ctrl))))
 
+    def test_a_function_with_no_support_in_the_domain_is_refused(self) -> None:
+        """A quadratic with the interior knot 1/2 four times: function 3 is identically zero.
+
+        Oracle: the documented ``ValueError`` naming the function. Bug caught: a functional built
+        on an interval outside the function's support (an unrelated coefficient) or an
+        ``IndexError``, as the previous release did.
+        """
+        space = _space_from_knots((_knots(2, [0.5, 0.5, 0.5, 0.5]), 2))
+        ctrl = _dyadic_ctrl((int(space.num_basis[0]), 1), seed=3)
+        with pytest.raises(ValueError, match=r"Basis function 3 has no knot interval"):
+            quasi_interpolate_bspline(_exact_sampler(space, ctrl), space)
+
 
 # ---------------------------------------------------------------------------
 # dtype and argument decisions

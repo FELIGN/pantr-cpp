@@ -2697,6 +2697,41 @@ TEST_CASE("QuasiInterpolation: a function with no support in the domain is refus
                        pantr::value_error);
 }
 
+TEST_CASE("QuasiInterpolation: a weight row of a function outside the block is refused") {
+  // Oracle: the documented precondition of `llm_weight_row`, an index_error, rather than a row of
+  // the inverse read for another function (a negative position counted from the end, as the
+  // previous release did) or past its end. Bug caught: the bounds check dropped or applied before
+  // the periodic wrap.
+  std::vector<double> pts(3);
+  std::vector<double> row(3);
+  bs::detail::llm_interval_points(0.0, 0.5, pts);
+  // Quadratic on [0, 1/2, 1]: the block of [0, 1/2) is functions 0 to 2.
+  const bs::BsplineSpace<double> open = space_of<double>({Dir{clamped(2, {0.5}), 2}});
+  CHECK_THROWS_WITH_AS(bs::detail::llm_weight_row<double>(open.spaces()[0], 3, pts, row),
+                       doctest::Contains("basis function 3 is not among the functions"),
+                       pantr::index_error);
+  bs::detail::llm_weight_row<double>(open.spaces()[0], 2, pts, row);
+  // Periodic cubic on the knots i / 8: of its 8 functions, the 4 after the block of [0, 1/8),
+  // cyclically, are not in it.
+  const bs::BsplineSpace<double> closed = space_of<double>({periodic_dir()});
+  const bs::BsplineSpace1D<double>& dir = closed.spaces()[0];
+  std::vector<double> cubic_pts(4);
+  std::vector<double> cubic_row(4);
+  bs::detail::llm_interval_points(0.0, 0.125, cubic_pts);
+  const std::int64_t first =
+      dir.template tabulate_basis<double>(std::span<const double>(cubic_pts)).second.data()[0];
+  for (std::int64_t k = 0; k < 8; ++k) {
+    const auto j = static_cast<std::size_t>(((first + k) % 8 + 8) % 8);
+    INFO("position " << k << ", function " << j);
+    if (k < 4) {
+      CHECK_NOTHROW(bs::detail::llm_weight_row<double>(dir, j, cubic_pts, cubic_row));
+    } else {
+      CHECK_THROWS_AS(bs::detail::llm_weight_row<double>(dir, j, cubic_pts, cubic_row),
+                      pantr::index_error);
+    }
+  }
+}
+
 TEST_CASE_TEMPLATE("QuasiInterpolation: periodic spaces are reproduced", T, float, double) {
   // Oracle: the invariant Q B = B. The Greville abscissae of a periodic space, wrapped into the
   // domain, are not in the order of the functions, and the functions of a block near the domain's
