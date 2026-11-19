@@ -627,30 +627,142 @@ TEST_CASE("THBSplineSpace: the plain hierarchical basis does not sum to one at a
   CHECK(std::abs(sum - 1.0) <= unity_bound(hb));
 }
 
-// Bug (present in the previous release as well, identically): on a root of regularity -1 (a knot
-// of full multiplicity at every breakpoint) refined once, the basis tabulated at a point equal to a
-// cell's upper bound `hi` sums to 0 for some cells, where the partition of unity gives 1. The
-// parity pin states the correct sum and is marked as an expected failure, so the suite stays green;
-// when the evaluation is repaired this case fails and must be unmarked.
-TEST_CASE("inherited: regularity -1 basis vanishes at a cell's upper edge" *
-          doctest::should_fail()) {
+namespace {
+
+/// The sum of the active functions of cell `cid` at the single point `pt`.
+template <class T>
+double basis_sum(const THBSplineSpace<T>& space, I64 cid, const std::vector<double>& pt) {
+  const pantr::thb::TabulatedBasis tab = tabulate(space, cid, pt, Ivec(space.dim(), 0));
+  double sum = 0.0;
+  for (std::size_t j = 0; j < tab.dofs.size(); ++j) {
+    sum += tab.values.data()[j];
+  }
+  return sum;
+}
+
+/// Check the partition of unity of a 1D space at both bounds of every cell.
+template <class T>
+void check_unity_at_every_edge_1d(const THBSplineSpace<T>& space) {
+  for (I64 cid = 0; cid < space.grid().num_cells(); ++cid) {
+    CAPTURE(cid);
+    const auto [lo, hi] = space.grid().cell_bounds(cid);
+    CHECK(std::abs(basis_sum(space, cid, {lo[0]}) - 1.0) <= unity_bound(space));
+    CHECK(std::abs(basis_sum(space, cid, {hi[0]}) - 1.0) <= unity_bound(space));
+  }
+}
+
+/// Count the bounds of a 1D space's cells that lie past the knot of multiplicity `degree + 1` they
+/// stand for, on the neighboring cell's side: an upper bound above the knot ending the cell's
+/// interval at its own level, or a lower bound below the knot starting it. The grid forms its
+/// bounds and the level spaces their knots by different arithmetic, so the two can differ by
+/// rounding; a test of such bounds needs at least one, or it does not exercise them.
+template <class T>
+I64 count_bounds_past_full_knots(const THBSplineSpace<T>& space) {
+  I64 count = 0;
+  const auto full = static_cast<I64>(space.level_space(0).spaces()[0].degree()) + 1;
+  for (I64 cid = 0; cid < space.grid().num_cells(); ++cid) {
+    const I64 level = space.grid().cell_level(cid);
+    const auto at = static_cast<std::size_t>(space.grid().cell_multi_index(cid)[0]);
+    const bs::BsplineSpace<T> level_space = space.level_space(level);
+    const auto [knots, mult] = level_space.spaces()[0].unique_knots_and_multiplicity(true);
+    const auto [lo, hi] = space.grid().cell_bounds(cid);
+    if (mult[at + 1] == full && hi[0] > static_cast<double>(knots[at + 1])) {
+      ++count;
+    }
+    if (mult[at] == full && lo[0] < static_cast<double>(knots[at])) {
+      ++count;
+    }
+  }
+  return count;
+}
+
+}  // namespace
+
+// Regression (present in the previous release as well): on a root of regularity -1 (a knot of full
+// multiplicity at every breakpoint) refined once, the basis tabulated at a cell's upper bound `hi`
+// summed to 0 for the cells ending on a knot of multiplicity degree + 1: the 1D search, right-
+// continuous at a knot, took the span to the right of the cell, whose functions are not the
+// cell's. A point the search places in a span sharing no function with the cell's is now
+// evaluated on the cell's span (the limit from inside).
+TEST_CASE("inherited: regularity -1 basis vanishes at a cell's upper edge") {
   // Degree 2 on four equal spans, regularity -1, the two left root cells refined: cells 0 and 1
   // are the level-0 cells (indices 2 and 3), cells 2 to 5 the level-1 cells (indices 0 to 3). The
-  // vanishing sum is at the upper edge of cells 2 and 4.
+  // vanishing sum was at the upper edge of cells 2 and 4; every cell and both edges are checked.
   const THBSplineSpace<double> space =
       make_space(Setup{{k2}, {2}, {2}, {-1}, {{0, {0}, {2}}}, true});
   REQUIRE(space.grid().num_cells() == 6);
-  for (const I64 cid : {I64{2}, I64{4}}) {
+  check_unity_at_every_edge_1d(space);
+}
+
+TEST_CASE("THBSplineSpace: regularity -1 derivatives at a cell's upper edge are the left limit") {
+  // On a cell every function is one polynomial piece, so its first derivative at `hi` is the limit
+  // of the derivative at `hi - h`; with h = 1e-10 they differ by at most h |f''|. A quadratic
+  // Bernstein function on a span of width w = 1/8 has |f''| <= 4 / w^2 = 256, and a truncated
+  // function combines at most p + 1 = 3 of them with coefficients in [0, 1], so h |f''| <= 7.7e-8;
+  // 1e-6 is that with an admitted margin. Before the fix the derivatives at `hi` of cells 2 and 4
+  // were all zero.
+  const THBSplineSpace<double> space =
+      make_space(Setup{{k2}, {2}, {2}, {-1}, {{0, {0}, {2}}}, true});
+  for (I64 cid = 0; cid < space.grid().num_cells(); ++cid) {
     CAPTURE(cid);
     const auto [lo, hi] = space.grid().cell_bounds(cid);
-    const std::vector<double> edge = {hi[0]};
-    const pantr::thb::TabulatedBasis tab = tabulate(space, cid, edge, {0});
-    double sum = 0.0;
-    for (std::size_t j = 0; j < tab.dofs.size(); ++j) {
-      sum += tab.values.data()[j];
+    // Order 0 as well, per function: |f'| <= 3 * 2 / w = 48, so h |f'| <= 4.8e-9.
+    for (const I64 order : {I64{0}, I64{1}}) {
+      CAPTURE(order);
+      const pantr::thb::TabulatedBasis at = tabulate(space, cid, {hi[0]}, {order});
+      const pantr::thb::TabulatedBasis in = tabulate(space, cid, {hi[0] - 1e-10}, {order});
+      REQUIRE(at.dofs.size() == in.dofs.size());
+      for (std::size_t j = 0; j < at.dofs.size(); ++j) {
+        CAPTURE(j);
+        CHECK(std::abs(at.values.data()[j] - in.values.data()[j]) <= 1e-6);
+      }
     }
-    CHECK(std::abs(sum - 1.0) <= unity_bound(space));
   }
+}
+
+TEST_CASE("THBSplineSpace: regularity -1 basis sums to one at every upper edge in 2D") {
+  // A 2D root of regularity -1 in both directions with the lower-left 2 x 2 root cells refined:
+  // at every cell, the upper edge in each direction (at the other's midpoint) and the upper corner.
+  const THBSplineSpace<double> space =
+      make_space(Setup{{k2, k2}, {2, 2}, {2, 2}, {-1, -1}, {{0, {0, 0}, {2, 2}}}, true});
+  for (I64 cid = 0; cid < space.grid().num_cells(); ++cid) {
+    CAPTURE(cid);
+    const auto [lo, hi] = space.grid().cell_bounds(cid);
+    const double m0 = 0.5 * (lo[0] + hi[0]);
+    const double m1 = 0.5 * (lo[1] + hi[1]);
+    CHECK(std::abs(basis_sum(space, cid, {hi[0], m1}) - 1.0) <= unity_bound(space));
+    CHECK(std::abs(basis_sum(space, cid, {m0, hi[1]}) - 1.0) <= unity_bound(space));
+    CHECK(std::abs(basis_sum(space, cid, {hi[0], hi[1]}) - 1.0) <= unity_bound(space));
+  }
+}
+
+// The three cases below have cell bounds that differ from their knots by rounding: the grid forms
+// a bound as `root_lo + i * size` (and the upper one as `lo + size`), the level spaces their knots
+// by subdividing each span of the level above. The cell's span is found from its integer index, so
+// a bound past its knot is evaluated on the cell's span like a bound equal to it.
+
+TEST_CASE("THBSplineSpace: regularity -1 basis sums to one at every edge with a factor of 3") {
+  const THBSplineSpace<double> space =
+      make_space(Setup{{k2}, {2}, {3}, {-1}, {{0, {2}, {4}}}, true});
+  REQUIRE(count_bounds_past_full_knots(space) > 0);
+  check_unity_at_every_edge_1d(space);
+}
+
+TEST_CASE(
+    "THBSplineSpace: regularity -1 basis sums to one at every edge of a non-dyadic root "
+    "refined twice") {
+  const THBSplineSpace<double> space =
+      make_space(Setup{{k2n}, {2}, {2}, {-1}, {{0, {0}, {4}}, {1, {2}, {7}}}, true});
+  REQUIRE(count_bounds_past_full_knots(space) > 0);
+  check_unity_at_every_edge_1d(space);
+}
+
+TEST_CASE("THBSplineSpace: regularity -1 basis sums to one at every edge of a float root") {
+  const std::vector<double> knots = {0.0, 0.0, 0.0, 0.1, 0.2, 0.3, 1.0, 1.0, 1.0};
+  const THBSplineSpace<float> space =
+      make_space<float>(Setup{{knots}, {2}, {2}, {-1}, {{0, {1}, {4}}}, true});
+  REQUIRE(count_bounds_past_full_knots(space) > 0);
+  check_unity_at_every_edge_1d(space);
 }
 
 /// Derivatives against central finite differences of the values.

@@ -2908,3 +2908,22 @@ def test_a_regularity_that_is_not_an_integer_is_refused(regularity: object) -> N
     root = create_uniform_space([3, 3], [4, 4])
     with pytest.raises(TypeError):
         create_thb_space(root, 2, regularity=regularity)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("edge", ["lo", "hi"])
+def test_regularity_minus_one_basis_sums_to_one_at_each_cell_edge(edge: str) -> None:
+    """Every cell's basis sums to one at both of its edges (#8 reproduction).
+
+    Regularity -1 makes every new breakpoint a knot of multiplicity ``degree + 1``. The basis at
+    the upper edge of a cell ending on such a knot summed to 0: the 1D search, right-continuous at
+    a knot, took the span to the right of the cell, whose functions are not the cell's. Oracle:
+    the partition of unity, within ``VALUE_ATOL`` per value times the number of active functions.
+    """
+    knots = np.array([0, 0, 0, 0.25, 0.5, 0.75, 1, 1, 1.0])
+    root = BsplineSpace([BsplineSpace1D(knots, 2)])
+    thb = create_thb_space(root, 2, regularity=-1).refine_region(0, [0], [2])
+    for cid in range(thb.grid.num_cells):
+        lo, hi = thb.grid.cell_bounds(cid)
+        x = hi[0] if edge == "hi" else lo[0]
+        values, dofs = thb.tabulate_basis(cid, np.array([[x]]))
+        assert abs(float(values.sum()) - 1.0) <= VALUE_ATOL * len(dofs), (cid, x)
