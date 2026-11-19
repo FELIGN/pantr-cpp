@@ -73,11 +73,12 @@ template <StorageFloat T>
     return {last_index_of_first_domain_class<T>(knots, degree, tol), u_left};
   }
   if (value >= u_right - tol) {
-    // The last span of non-zero length, as evaluation takes it (#29). Span `n_basis - 1` is empty
-    // when `knots[n_basis - 1] == knots[n_basis]`; once `degree + 2` or more knots equal the end,
-    // the first function of that span's window, the one the multiplicity count selects, has
-    // empty support. The rule is exact, where the multiplicity count and the start of the domain
-    // compare with `tol`.
+    // The last span of non-zero length, as evaluation takes it. Span `n_basis - 1` is empty when
+    // `knots[n_basis - 1] == knots[n_basis]`; once `knots[n_basis - degree - 1 .. n_basis]` are
+    // all equal, the first function of that span's window, the one the multiplicity count
+    // selects, has empty support. The rule is exact, where the multiplicity count and the start
+    // of the domain compare with `tol`: in a space built without snapping, a `knots[k]` within
+    // `tol` of the end is counted as a copy of it, and the slice there can be off by order one.
     return {span_and_first<T, T>(knots, degree, knots[n_basis]).knot_id, u_right};
   }
   const auto above = std::upper_bound(knots.begin(), knots.end(), value, [](double v, T knot) {

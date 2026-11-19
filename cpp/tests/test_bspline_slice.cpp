@@ -299,7 +299,9 @@ TEST_CASE_TEMPLATE(
   // at the end of the last non-empty span exactly one function is non-zero, the one whose knots
   // `knots[i + 1 .. i + degree + 1]` all equal the end (its value there, taken from the left, is
   // 1), so the boundary is that function's slab of control points. Every corner-cutting weight is
-  // 1 or the step is skipped, so the slab is compared bit for bit.
+  // 1 or the step is skipped: the right knot of each weight equals the end `u`, so
+  // `(u - l) / (u - l)` is exactly 1, and `1 * b + 0 * a` is exact for finite `a`. The slab is
+  // therefore compared bit for bit.
   struct Case {
     std::vector<double> knots;
     int degree;
