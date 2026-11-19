@@ -305,10 +305,15 @@ TEST_CASE_TEMPLATE(
     int degree;
     std::size_t end_function;
   };
+  // The first three have `degree + 2` equal end knots, the fourth `degree + 3`; the last
+  // `degree + 1` before a trailing knot, an empty last span whose end was already right and is
+  // now reached through the corner cutting rather than a copy.
   const std::vector<Case> cases = {
       {{0, 1, 1}, 0, 0},
       {{0, 0, 1, 2, 2, 2, 3}, 1, 2},
       {{0, 0, 0, 1, 2, 3, 3, 3, 3, 4, 4}, 2, 4},
+      {{0, 0, 1, 2, 2, 2, 2, 3}, 1, 2},
+      {{0, 0, 1, 2, 2, 3}, 1, 2},
   };
   for (const Case& c : cases) {
     for (const bool rational : {false, true}) {

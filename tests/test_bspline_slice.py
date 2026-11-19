@@ -304,15 +304,15 @@ class TestSliceEndBesideEmptySpans:
         by_boundary = srf.boundary(0, 1)
         assert isinstance(by_slice, Bspline)
         assert isinstance(by_boundary, Bspline)
-        np.testing.assert_allclose(by_slice.evaluate(self._V[:, None]), ref, atol=1e-13)
-        np.testing.assert_allclose(by_boundary.evaluate(self._V[:, None]), ref, atol=1e-13)
+        np.testing.assert_allclose(by_slice.evaluate(self._V[:, None]), ref, rtol=0, atol=1e-13)
+        np.testing.assert_allclose(by_boundary.evaluate(self._V[:, None]), ref, rtol=0, atol=1e-13)
 
         crv = Bspline(
             BsplineSpace([sp0]), np.random.default_rng(1).standard_normal((sp0.num_basis, 2))
         )
         ref_pt = crv.evaluate(np.array([end]))
-        np.testing.assert_allclose(crv.slice(0, end), ref_pt, atol=1e-14)
-        np.testing.assert_allclose(crv.boundary(0, 1), ref_pt, atol=1e-14)
+        np.testing.assert_allclose(crv.slice(0, end), ref_pt, rtol=0, atol=1e-14)
+        np.testing.assert_allclose(crv.boundary(0, 1), ref_pt, rtol=0, atol=1e-14)
 
 
 class TestSliceDtype:

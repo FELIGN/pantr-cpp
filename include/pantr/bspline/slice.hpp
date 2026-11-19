@@ -75,8 +75,9 @@ template <StorageFloat T>
   if (value >= u_right - tol) {
     // The last span of non-zero length, as evaluation takes it (#29). Span `n_basis - 1` is empty
     // when `knots[n_basis - 1] == knots[n_basis]`; once `degree + 2` or more knots equal the end,
-    // the multiplicity there reaches `degree` and selects the first function of that span's
-    // window, whose support is empty.
+    // the first function of that span's window, the one the multiplicity count selects, has
+    // empty support. The rule is exact, where the multiplicity count and the start of the domain
+    // compare with `tol`.
     return {span_and_first<T, T>(knots, degree, knots[n_basis]).knot_id, u_right};
   }
   const auto above = std::upper_bound(knots.begin(), knots.end(), value, [](double v, T knot) {
