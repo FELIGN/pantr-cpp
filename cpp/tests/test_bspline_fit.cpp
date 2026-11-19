@@ -55,11 +55,6 @@
 //  * Quasi-interpolant: the blocks it inverts carry the roundings of the space's own type (the
 //    basis of a `float` space is tabulated in `float` even at `double` points), `(6 p + 1) u_T`
 //    per entry, besides the `double` inverse; `check_qi_reproduces` states the sum.
-//
-// Known defects. Two tests are marked `doctest::should_fail()`: they state the invariant `Q B = B`
-// for a space where the quasi-interpolant is wrong (a knot of multiplicity `degree + 1`; some
-// periodic spaces) and are expected to fail. Both defects are in the previous release as well.
-// When one is fixed its test reports that it passed unexpectedly: remove the marker then.
 #include <doctest/doctest.h>
 
 #include "bspline_test_support.hpp"
@@ -2631,37 +2626,233 @@ TEST_CASE_TEMPLATE("QuasiInterpolation: every spline of the space is reproduced,
   }
 }
 
-TEST_CASE(
-    "QuasiInterpolation: a spline with a discontinuity is not reproduced (known defect, expected "
-    "to fail)" *
-    doctest::should_fail()) {
-  // KNOWN DEFECT, pinned as an expected failure so that the day it is fixed this test says so.
-  // The interval of a function is the one holding its Greville abscissa, taken as the interval to
-  // the right of a break. For a knot of multiplicity degree + 1 (a discontinuity) the Greville
-  // abscissa of the function that ends there is that knot, so the interval chosen lies to the right
-  // of the function's support, `local` in `llm_direction` is -1 and indexes the block from the
-  // end ("a Python index outside [-order, order), as before"): the functional of another
-  // function. The header states Q B_j = B_j for every space; it fails here (the previous release
-  // fails the same way). Cubic with the interior knot 1/2 four times: the error of a coefficient is
-  // of order 1.
-  check_qi_reproduces<double>({Dir{clamped(3, {0.25, 0.5, 0.5, 0.5, 0.5, 0.75}), 3}}, 1, 112);
+TEST_CASE_TEMPLATE("QuasiInterpolation: a spline with a discontinuity is reproduced", T, float,
+                   double) {
+  // Oracle: the invariant Q B = B. For a knot of multiplicity degree + 1 (a discontinuity) the
+  // Greville abscissa of the function that ends there is that knot; the interval to its right lies
+  // outside the function's support, so the functional is built on the interval to its left. Bug
+  // caught: the interval to the right taken anyway, whose block does not hold the function, and a
+  // row of another function read in its place (an error of order 1 in a coefficient; the previous
+  // release did this).
+  SUBCASE("cubic, interior knot four times") {
+    check_qi_reproduces<T>({Dir{clamped(3, {0.25, 0.5, 0.5, 0.5, 0.5, 0.75}), 3}}, 1, 112);
+  }
+  SUBCASE("linear, interior knot twice; quadratic, two interior knots three times, rank 2") {
+    check_qi_reproduces<T>({Dir{clamped(1, {0.25, 0.5, 0.5, 0.75}), 1}}, 1, 114);
+    check_qi_reproduces<T>({Dir{clamped(2, {0.25, 0.25, 0.25, 0.5, 0.75, 0.75, 0.75}), 2}}, 2, 115);
+  }
+  SUBCASE("cubic, a discontinuity next to the clamped start") {
+    check_qi_reproduces<T>({Dir{clamped(3, {0.25, 0.25, 0.25, 0.25, 0.5}), 3}}, 1, 116);
+  }
+  SUBCASE("2D, a discontinuity in one direction") {
+    check_qi_reproduces<T>({Dir{clamped(2, {0.5, 0.5, 0.5}), 2}, Dir{clamped(3, {0.5}), 3}}, 1,
+                           117);
+  }
+  SUBCASE("cubic, a knot four times: abscissae that round off the break") {
+    // The mean of three copies of 0.7 rounds below 0.7 in `double` (exact in `float`), and that of
+    // three copies of 0.9 rounds below 0.9 in `float` (exact in `double`), so in each type one of
+    // the two spaces has the abscissa of the function that starts at the knot left of its support.
+    // Bug caught: an interval chosen by comparing the abscissa with the break, outside the support.
+    check_qi_reproduces<T>({Dir{clamped(3, {0.3, 0.7, 0.7, 0.7, 0.7, 0.9}), 3}}, 1, 123);
+    check_qi_reproduces<T>({Dir{clamped(3, {0.3, 0.9, 0.9, 0.9, 0.9, 0.95}), 3}}, 1, 126);
+    // Quadratic, two knots three times: the mean of two equal knots is exact, so the abscissae lie
+    // on the breaks, on both sides of each.
+    check_qi_reproduces<T>({Dir{clamped(2, {0.1, 0.3, 0.3, 0.3, 0.7, 0.7, 0.7, 0.9}), 2}}, 1, 124);
+  }
 }
 
-TEST_CASE(
-    "QuasiInterpolation: some periodic spaces are not reproduced (known defect, expected to fail)" *
-    doctest::should_fail()) {
-  // KNOWN DEFECT, pinned as an expected failure. A periodic cubic space of 6 intervals on [0, 1],
-  // knots as `uniform_periodic_knots` makes them (the space `create_uniform_space(3, 6,
-  // periodic=True)` of the Python API), returns its coefficients cyclically shifted, an error of
-  // order 1 (the previous release does the same, and so do 12 intervals; 5, 7, 8, 9 and 10
-  // intervals, and the exact-translate knots of `periodic_dir()`, pass).
-  // Mechanism, observed in a scratch copy and not applied: `llm_direction` takes the abscissa of
-  // function j from `space.greville()`, which for a periodic space is wrapped into the domain and
-  // sorted (NumPy's order), so entry j is another function's abscissa, and `local = j - first` is
-  // taken in the unwrapped numbering. With the abscissae of the functions in order and `local`
-  // reduced modulo the number of functions, every case above reproduces.
-  const std::vector<double> knots = bs::uniform_periodic_knots<double>(6, 3, 2, 0.0, 1.0);
-  check_qi_reproduces<double>({Dir{knots, 3, true}}, 1, 113);
+TEST_CASE("QuasiInterpolation: a periodic function is sampled at its own Greville abscissa") {
+  // Oracle: closed form. `periodic_dir()` is the cubic on the knots i / 8, so function j's own
+  // abscissa is (j - 1) / 8, wrapped into [0, 1): exact, never on the far side of a break, and
+  // inside the interval [(j - 1) / 8, j / 8) modulo the period, which lies in the support. Its
+  // points are that interval's at 1/5, ..., 4/5 of it. Bug caught: the abscissa read from the
+  // wrapped and sorted array, entry j being function j + 1's (the interval [j / 8, (j + 1) / 8),
+  // also in the support, so Q B = B alone cannot see it).
+  const bs::QuasiInterpolation<double> qi(space_of<double>({periodic_dir()}));
+  const NdArray<double> pts = qi.points();
+  REQUIRE(pts.size() == 8 * 4);
+  for (std::size_t j = 0; j < 8; ++j) {
+    const double lo = static_cast<double>((j + 7) % 8) / 8.0;
+    for (std::size_t k = 0; k < 4; ++k) {
+      INFO("function " << j << ", point " << k);
+      const double step = 0.125 * (static_cast<double>(k + 1) / 5.0);
+      CHECK(pts.data()[j * 4 + k] == lo + step);
+    }
+  }
+}
+
+TEST_CASE("QuasiInterpolation: a function with no support in the domain is refused") {
+  // A knot of multiplicity degree + 2 inside the domain leaves one function (3) identically zero,
+  // and an extra knot before a domain start of multiplicity degree + 1 leaves one (0) wholly
+  // before the domain; no interval of the domain holds them, so no functional can be built.
+  // Oracle: the documented refusal, a value_error naming the function, rather than an index error
+  // or the row of another function. The spaces are built first, so the check sees the
+  // quasi-interpolant's error alone.
+  const bs::BsplineSpace<double> inner =
+      space_of<double>({Dir{clamped(2, {0.5, 0.5, 0.5, 0.5}), 2}});
+  CHECK_THROWS_WITH_AS(static_cast<void>(bs::QuasiInterpolation<double>(inner)),
+                       doctest::Contains("Basis function 3 has no knot interval"),
+                       pantr::value_error);
+  const bs::BsplineSpace<double> outer =
+      space_of<double>({Dir{{0.0, 1.0, 1.0, 1.0, 2.0, 3.0, 4.0, 5.0, 5.0}, 2}});
+  CHECK_THROWS_WITH_AS(static_cast<void>(bs::QuasiInterpolation<double>(outer)),
+                       doctest::Contains("Basis function 0 has no knot interval"),
+                       pantr::value_error);
+  // Periodic cubic on [0, 1] whose knots before the domain leave function 1 wholly before it: the
+  // refusal after the cyclic search, not an index error from the weight row.
+  const bs::BsplineSpace<double> periodic = space_of<double>(
+      {Dir{{-1.0, -0.5, -0.25, 0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0, 1.25, 1.5, 2.0}, 3, true}});
+  CHECK_THROWS_WITH_AS(static_cast<void>(bs::QuasiInterpolation<double>(periodic)),
+                       doctest::Contains("Basis function 1 has no knot interval"),
+                       pantr::value_error);
+}
+
+TEST_CASE("QuasiInterpolation: a missed function takes the nearest interval, the left one first") {
+  // Oracle: closed form. Periodic quadratic on [-1/16, 1] (dyadic knots): function 0's support is
+  // three intervals, its abscissa in the middle one misses it (the ghost knots are not periodic
+  // images), and both neighbours hold it, at distance one in interval count. Its points are the
+  // left one's, [-1/16, 0), at 1/4, 2/4, 3/4 of it. Bug caught: the right neighbour taken first
+  // ([13/16, 1)), which Q B = B cannot see since both intervals lie in the support.
+  const bs::QuasiInterpolation<double> qi(space_of<double>(
+      {Dir{{-1.25, -1.125, -0.0625, 0.0, 0.8125, 0.8125, 1.0, 1.0, 1.0625}, 2, true}}));
+  const NdArray<double> pts = qi.points();
+  for (std::size_t k = 0; k < 3; ++k) {
+    INFO("point " << k);
+    CHECK(pts.data()[k] == -0.0625 + 0.0625 * (static_cast<double>(k + 1) / 4.0));
+  }
+}
+
+TEST_CASE("QuasiInterpolation: a weight row is its block's, and refused outside the block") {
+  // Oracle: the documented precondition of `llm_weight_row`, an index_error for every function
+  // outside the interval's block, and for each function inside it the row of the inverse whose
+  // product with the block's basis values at the points is the unit vector of its position. A
+  // wrong row is another position's unit vector, so the 1/2 threshold below separates the two
+  // outcomes; it is not an accuracy bound. Bug caught: a negative position counted from the end
+  // (the previous release), and the bounds check applied before the periodic wrap.
+  const auto check_block = [](const bs::BsplineSpace1D<double>& dir, double lo, double hi) {
+    const auto order = static_cast<std::size_t>(dir.degree()) + 1;
+    const auto n = static_cast<std::int64_t>(dir.num_basis());
+    std::vector<double> pts(order);
+    std::vector<double> row(order);
+    bs::detail::llm_interval_points(lo, hi, pts);
+    const auto [values, firsts] = dir.template tabulate_basis<double>(std::span<const double>(pts));
+    const std::int64_t first = firsts.data()[0];
+    for (std::int64_t j = 0; j < n; ++j) {
+      const std::int64_t position = dir.periodic() ? ((j - first) % n + n) % n : j - first;
+      INFO("block [" << lo << ", " << hi << "), first " << first << ", function " << j);
+      if (position < 0 || position >= static_cast<std::int64_t>(order)) {
+        CHECK_THROWS_WITH_AS(
+            bs::detail::llm_weight_row<double>(dir, static_cast<std::size_t>(j), pts, row),
+            doctest::Contains("basis function " + std::to_string(j) + " is not among"),
+            pantr::index_error);
+        continue;
+      }
+      bs::detail::llm_weight_row<double>(dir, static_cast<std::size_t>(j), pts, row);
+      for (std::size_t c = 0; c < order; ++c) {
+        double dot = 0.0;
+        for (std::size_t k = 0; k < order; ++k) {
+          dot += row[k] * values.data()[k * order + c];
+        }
+        const double unit = static_cast<std::int64_t>(c) == position ? 1.0 : 0.0;
+        CHECK(std::abs(dot - unit) < 0.5);
+      }
+    }
+  };
+  // Quadratic on [0, 1/2, 1]: the block of [0, 1/2) is functions 0 to 2 (function 3 past it), the
+  // block of [1/2, 1) functions 1 to 3 (function 0 before it, a negative position).
+  const bs::BsplineSpace<double> open = space_of<double>({Dir{clamped(2, {0.5}), 2}});
+  check_block(open.spaces()[0], 0.0, 0.5);
+  check_block(open.spaces()[0], 0.5, 1.0);
+  // Periodic cubic on the knots i / 8: the block of the last interval numbers its functions past
+  // `num_basis`, so some of its functions have a negative unwrapped position.
+  const bs::BsplineSpace<double> closed = space_of<double>({periodic_dir()});
+  check_block(closed.spaces()[0], 0.0, 0.125);
+  check_block(closed.spaces()[0], 0.875, 1.0);
+}
+
+TEST_CASE_TEMPLATE("QuasiInterpolation: periodic spaces are reproduced", T, float, double) {
+  // Oracle: the invariant Q B = B. The Greville abscissae of a periodic space, wrapped into the
+  // domain, are not in the order of the functions, and the functions of a block near the domain's
+  // end are numbered past `num_basis`. Bug caught: function j given another function's abscissa
+  // (the coefficients returned cyclically shifted, an error of order 1; the previous release did
+  // this for the uniform cubics of 6 and 12 intervals), and a block row looked up without the
+  // wrap.
+  SUBCASE("uniform, maximum regularity: degree 3 with 4 to 16 intervals, 2 and 4 with 5 to 12") {
+    for (const int p : {2, 3, 4}) {
+      const int lo = p == 3 ? 4 : 5;
+      const int hi = p == 3 ? 16 : 12;
+      for (int n = lo; n <= hi; ++n) {
+        INFO("degree " << p << ", " << n << " intervals");
+        const std::vector<double> knots = bs::uniform_periodic_knots<double>(n, p, p - 1, 0.0, 1.0);
+        check_qi_reproduces<T>({Dir{knots, p, true}}, 1, static_cast<unsigned>(200 + 20 * p + n));
+      }
+    }
+  }
+  SUBCASE("non-uniform cubic and quartic, the ghost knots the periodic images of the domain's") {
+    // Cubic: breaks 0, 0.1, 0.35, 0.5, 0.8, 1, three knots past each end.
+    const std::vector<double> cubic = {-0.65, -0.5, -0.2, 0.0, 0.1,  0.35,
+                                       0.5,   0.8,  1.0,  1.1, 1.35, 1.5};
+    check_qi_reproduces<T>({Dir{cubic, 3, true}}, 1, 118);
+    // Quartic: breaks 0, 1/8, 1/4, 3/8, 1/2, 1 (dyadic), four knots past each end. Function 2's
+    // abscissa wraps to the last interval, whose block numbers it past `num_basis`.
+    const std::vector<double> quartic = {-0.875, -0.75, -0.625, -0.5,  0.0,  0.125, 0.25,
+                                         0.375,  0.5,   1.0,    1.125, 1.25, 1.375, 1.5};
+    check_qi_reproduces<T>({Dir{quartic, 4, true}}, 1, 122);
+  }
+  SUBCASE("uniform quadratic, C0 (each knot twice), and a shifted domain") {
+    check_qi_reproduces<T>({Dir{bs::uniform_periodic_knots<double>(5, 2, 0, 0.0, 1.0), 2, true}}, 1,
+                           119);
+    check_qi_reproduces<T>({Dir{bs::uniform_periodic_knots<double>(6, 3, 2, -0.75, 2.25), 3, true}},
+                           2, 120);
+  }
+  SUBCASE("non-uniform quartic whose sorted abscissae miss the functions' supports") {
+    // Breaks 0, 1/16, 5/32, 7/32, 1/4, 1/2, 21/32, 23/32, 1 (dyadic), four knots past each end.
+    // Bug caught: the abscissae read from the wrapped and sorted array instead of per function.
+    const std::vector<double> br = {0.0, 0.0625,  0.15625, 0.21875, 0.25,
+                                    0.5, 0.65625, 0.71875, 1.0};
+    std::vector<double> knots;
+    for (std::size_t i = br.size() - 5; i + 1 < br.size(); ++i) {
+      knots.push_back(br[i] - 1.0);
+    }
+    knots.insert(knots.end(), br.begin(), br.end());
+    for (std::size_t i = 1; i <= 4; ++i) {
+      knots.push_back(br[i] + 1.0);
+    }
+    check_qi_reproduces<T>({Dir{knots, 4, true}}, 1, 125);
+  }
+  SUBCASE("discontinuous (C-1) periodic spaces, degrees 1 to 3") {
+    // Every knot repeated degree + 1 times: each function lives on one interval, and the abscissa
+    // of the one ending at the domain's end wraps to the domain's start.
+    for (const int p : {1, 2, 3}) {
+      for (const int n : {2, 3, 7, 11}) {
+        INFO("degree " << p << ", " << n << " intervals");
+        check_qi_reproduces<T>(
+            {Dir{bs::uniform_periodic_knots<double>(n, p, -1, 0.0, 1.0), p, true}}, 1,
+            static_cast<unsigned>(300 + 20 * p + n));
+      }
+    }
+    // Cubic, 3 intervals, on [0.7, 1.7] and [0.9, 1.9]: the abscissa of function 0, the mean of
+    // three copies of the start, rounds below it (0.7 in `double`, 0.9 in `float`) and wraps to the
+    // last interval, so only the cyclic right neighbour holds the function. Bug caught: the right
+    // neighbour not wrapped past the last interval (a refusal of a valid space).
+    for (const double start : {0.7, 0.9}) {
+      INFO("cubic on [" << start << ", " << start + 1.0 << "]");
+      check_qi_reproduces<T>(
+          {Dir{bs::uniform_periodic_knots<double>(3, 3, -1, start, start + 1.0), 3, true}}, 1, 127);
+    }
+  }
+  SUBCASE("quadratic whose knots past the domain are not the images of its own") {
+    // Domain [1/8, 15/16], ghost knots -3/4, -1/2 and 5/4, 7/4: function 0's wrapped abscissa lies
+    // in an interval that, like both its neighbours, is outside its support. Bug caught: only the
+    // neighbours searched (a refusal of a valid space), or an interval outside the support used.
+    const std::vector<double> knots = {-0.75, -0.5,   0.125,  0.125,  0.25, 0.75,
+                                       0.75,  0.8125, 0.8125, 0.9375, 1.25, 1.75};
+    check_qi_reproduces<T>({Dir{knots, 2, true}}, 1, 128);
+  }
+  SUBCASE("2D, a periodic direction of 6 intervals by a clamped one") {
+    check_qi_reproduces<T>(
+        {Dir{bs::uniform_periodic_knots<double>(6, 3, 2, 0.0, 1.0), 3, true}, cubic_dir()}, 1, 121);
+  }
 }
 
 TEST_CASE_TEMPLATE(

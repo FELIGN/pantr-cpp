@@ -32,6 +32,11 @@
   the build finds is this release's wheel (see the distributed guide on build isolation).
 
 ### Rejected where it used to be accepted
+- **`quasi_interpolate_bspline` on a space with a function that has no knot interval of the
+  domain in its support** (an interior knot repeated more than `degree + 1` times, or a function
+  lying wholly before or after the domain) raises `ValueError` naming the function; the previous
+  release built a functional for it on an interval outside its support and returned an
+  unrelated coefficient, which does not change the spline on the domain, or raised `IndexError`.
 - **`Bezier.multiply` and `Bspline.multiply` of finite control points whose product overflows**
   raise `OverflowError`; the previous release returned `inf` control points with NumPy's
   "overflow encountered in multiply" `RuntimeWarning`. With two or more parametric directions the
@@ -1357,6 +1362,18 @@
   the end of the curve, and one at or past the end beside an empty span used that span, returning
   a control point; each now uses the nearest non-empty span, and a NaN parameter gives NaN.
   Inherited from the previous release.
+- **`quasi_interpolate_bspline` reproduces every spline of the space** (#9). Two families of spaces
+  returned coefficients wrong by an error of order 1, mostly with no exception (some raised
+  `IndexError`): a knot of multiplicity `degree + 1`, where a function bounded by the knot could be
+  sampled on an interval outside its support; and periodic spaces, where function `j` was given the
+  `j`-th entry of the wrapped and sorted Greville abscissae, another function's (the uniform
+  periodic cubics of 6 and 12 intervals among them). Each function is now sampled on an interval
+  of its own support: the one holding its own abscissa, or the nearest one of the support where
+  the abscissa misses it. The sample points of periodic spaces change where the sorted order
+  differed from the functions' own (every default, maximum-regularity space of degree 2 or more),
+  so the quasi-interpolant of a function outside the space differs there by the approximation
+  error; non-periodic spaces keep theirs, except where they had the defect. Inherited from the
+  previous release.
 - **`create_uniform_periodic_knots` (and the periodic `create_uniform_space`) returns a periodic
   knot vector for every continuity.** For `1 <= continuity <= degree - 2` it extended the repeated
   interior knots past both ends by distinct, evenly spaced knots, so `K[i + n m] = K[i] + L` (`n`

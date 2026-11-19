@@ -1004,6 +1004,21 @@ _QI_CASES: dict[str, Callable[[], tuple[BsplineSpace, tuple[int, ...]]]] = {
     ),
 }
 
+# The spaces of the bug report on which the quasi-interpolant returned wrong coefficients.
+_REPORTED_QI_CASES: dict[str, Callable[[], BsplineSpace]] = {
+    "cubic, knot 1/2 four times": lambda: _space_from_knots(
+        (_knots(3, [0.25, 0.5, 0.5, 0.5, 0.5, 0.75]), 3)
+    ),
+    "periodic cubic, 6 intervals": lambda: create_uniform_space(3, 6, periodic=True),
+    "periodic cubic, 12 intervals": lambda: create_uniform_space(3, 12, periodic=True),
+}
+
+# Every uniform periodic space of maximum regularity of degree 3 with 4 to 16 intervals, and of
+# degrees 2 and 4 with 5 to 12.
+_PERIODIC_SWEEP: list[tuple[int, int]] = [(3, n) for n in range(4, 17)] + [
+    (p, n) for p in (2, 4) for n in range(5, 13)
+]
+
 
 class TestQuasiInterpolateOracles:
     """Oracles for :func:`quasi_interpolate_bspline`."""
@@ -1086,6 +1101,126 @@ class TestQuasiInterpolateOracles:
         a = quasi_interpolate_bspline(lambda pts: column(pts)[:, 0], space)
         b = quasi_interpolate_bspline(column, space)
         np.testing.assert_array_equal(np.asarray(a.control_points), np.asarray(b.control_points))
+
+    def test_quasi_interpolant_reproduces_a_periodic_cubic_with_six_intervals(self) -> None:
+        """Oracle: the invariant ``Q B = B`` on ``create_uniform_space(3, 6, periodic=True)``.
+
+        Bug caught: the coefficients returned cyclically shifted, an error of order 1 (the
+        previous release did this).
+        """
+        space = create_uniform_space(3, 6, periodic=True)
+        ctrl = _dyadic_ctrl((6, 1), seed=1)
+        spline = quasi_interpolate_bspline(_exact_sampler(space, ctrl), space)
+        got = np.asarray(spline.control_points)
+        assert float(np.max(np.abs(got - ctrl))) <= _qi_bound(space, float(np.max(np.abs(ctrl))))
+
+    @pytest.mark.parametrize(("degree", "intervals"), _PERIODIC_SWEEP)
+    def test_quasi_interpolant_reproduces_uniform_periodic_spaces(
+        self, degree: int, intervals: int
+    ) -> None:
+        """Oracle: the invariant ``Q B = B`` on ``create_uniform_space(degree, n, periodic=True)``.
+
+        Bug caught: a function given another function's Greville abscissa (read from the wrapped
+        and sorted array), or its block row looked up without the wrap past ``num_basis``: the
+        coefficients come back shifted, an error of order 1 (the previous release did this for the
+        cubics of 6 and 12 intervals).
+        """
+        space = create_uniform_space(degree, intervals, periodic=True)
+        ctrl = _dyadic_ctrl((int(space.num_basis[0]), 1), seed=10 * degree + intervals)
+        spline = quasi_interpolate_bspline(_exact_sampler(space, ctrl), space)
+        got = np.asarray(spline.control_points)
+        assert float(np.max(np.abs(got - ctrl))) <= _qi_bound(space, float(np.max(np.abs(ctrl))))
+
+    def test_quasi_interpolant_reproduces_a_non_uniform_periodic_quartic(self) -> None:
+        """Oracle: ``Q B = B`` on a periodic quartic with breaks 0, 1/8, 1/4, 3/8, 1/2, 1.
+
+        The ghost knots are the periodic images of the domain's. Function 2's abscissa wraps to
+        the last interval, whose block numbers it past ``num_basis``. Bug caught: the block row
+        looked up without the wrap (an index error, or another function's row).
+        """
+        breaks = [0.0, 0.125, 0.25, 0.375, 0.5, 1.0]
+        knots = [x - 1.0 for x in breaks[1:5]] + breaks + [x + 1.0 for x in breaks[1:5]]
+        space = BsplineSpace([BsplineSpace1D(np.array(knots), 4, periodic=True)])
+        ctrl = _dyadic_ctrl((int(space.num_basis[0]), 1), seed=4)
+        spline = quasi_interpolate_bspline(_exact_sampler(space, ctrl), space)
+        got = np.asarray(spline.control_points)
+        assert float(np.max(np.abs(got - ctrl))) <= _qi_bound(space, float(np.max(np.abs(ctrl))))
+
+    @pytest.mark.parametrize("seed", range(3, 14))
+    def test_quasi_interpolant_reproduces_a_spline_with_a_discontinuity(self, seed: int) -> None:
+        """Oracle: the invariant ``Q B = B`` on a cubic with the interior knot 1/2 four times.
+
+        The Greville abscissa of the function that ends at the knot is the knot itself. Bug
+        caught: the interval to its right taken for that function, outside its support, and the
+        weight row of another function read in its place (an error of order 1; the previous
+        release did this).
+        """
+        space = _space_from_knots((_knots(3, [0.25, 0.5, 0.5, 0.5, 0.5, 0.75]), 3))
+        ctrl = _dyadic_ctrl((int(space.num_basis[0]), 1), seed=seed)
+        spline = quasi_interpolate_bspline(_exact_sampler(space, ctrl), space)
+        got = np.asarray(spline.control_points)
+        assert float(np.max(np.abs(got - ctrl))) <= _qi_bound(space, float(np.max(np.abs(ctrl))))
+
+    @pytest.mark.parametrize("name", list(_REPORTED_QI_CASES))
+    def test_the_reported_spaces_are_reproduced(self, name: str) -> None:
+        """Oracle: ``Q B = B`` on the spaces of the bug report, its control points (seed 3).
+
+        The report sampled ``B`` in floating point; here the samples are exact, so the bound is the
+        derived one. Bug caught: the two wrong answers of the report coming back.
+        """
+        space = _REPORTED_QI_CASES[name]()
+        ctrl = _dyadic_ctrl((int(np.prod(space.num_basis)), 1), seed=3)
+        spline = quasi_interpolate_bspline(_exact_sampler(space, ctrl), space)
+        got = np.asarray(spline.control_points)
+        assert float(np.max(np.abs(got - ctrl))) <= _qi_bound(space, float(np.max(np.abs(ctrl))))
+
+    @pytest.mark.parametrize(
+        ("knots", "degree", "periodic", "function"),
+        [
+            # Quadratic with the interior knot 1/2 four times: function 3 is identically zero.
+            (_knots(2, [0.5, 0.5, 0.5, 0.5]), 2, False, 3),
+            # Periodic cubic on [0, 1] whose knots before the domain leave function 1 wholly
+            # before it: refused after the cyclic search.
+            (
+                np.array([-1.0, -0.5, -0.25, 0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0, 1.25, 1.5, 2.0]),
+                3,
+                True,
+                1,
+            ),
+        ],
+    )
+    def test_a_function_with_no_support_in_the_domain_is_refused(
+        self, knots: npt.NDArray[Any], degree: int, periodic: bool, function: int
+    ) -> None:
+        """Oracle: the documented ``ValueError`` naming the function, raised before any sampling.
+
+        Bug caught: a functional built on an interval outside the function's support (an unrelated
+        coefficient) or an ``IndexError``, as the previous release did.
+        """
+        space = BsplineSpace([BsplineSpace1D(knots, degree, periodic=periodic)])
+
+        def never_sampled(pts: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
+            raise AssertionError("the function was sampled before the refusal")
+
+        with pytest.raises(ValueError, match=rf"Basis function {function} has no knot interval"):
+            quasi_interpolate_bspline(never_sampled, space)
+
+    def test_quasi_interpolant_reproduces_a_periodic_space_with_non_image_ghost_knots(
+        self,
+    ) -> None:
+        """Oracle: ``Q B = B`` on a periodic quadratic whose knots past the domain are arbitrary.
+
+        Domain ``[1/8, 15/16]``; the ghost knots ``-3/4, -1/2`` and ``5/4, 7/4`` are not the
+        periodic images of the domain's, so function 0's wrapped abscissa lies in an interval that,
+        like both its neighbours, is outside its support. Bug caught: only the neighbours searched
+        and the space refused, or an interval outside the support used.
+        """
+        knots = [-0.75, -0.5, 0.125, 0.125, 0.25, 0.75, 0.75, 0.8125, 0.8125, 0.9375, 1.25, 1.75]
+        space = BsplineSpace([BsplineSpace1D(np.array(knots), 2, periodic=True)])
+        ctrl = _dyadic_ctrl((int(space.num_basis[0]), 1), seed=3)
+        spline = quasi_interpolate_bspline(_exact_sampler(space, ctrl), space)
+        got = np.asarray(spline.control_points)
+        assert float(np.max(np.abs(got - ctrl))) <= _qi_bound(space, float(np.max(np.abs(ctrl))))
 
 
 # ---------------------------------------------------------------------------
@@ -1283,50 +1418,6 @@ class TestInputLayouts:
         ctrl = np.asarray(spline.control_points)
         assert ctrl.dtype == np.float64
         np.testing.assert_allclose(ctrl[:, 0], np.arange(5.0), rtol=0.0, atol=1e-14)
-
-
-class TestKnownDefects:
-    """Defects found while writing the oracles above, pinned as expected failures.
-
-    Both are in the algorithm and are shared with the previous release (probed against it).
-    """
-
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "Q B != B for some periodic spaces (cubic with 6 or 12 intervals; 5, 7, 8, 9, 10 "
-            "pass): the abscissa of function j is read from the wrapped and sorted Greville array "
-            "and the block row is taken in the unwrapped numbering (the previous release does the "
-            "same)"
-        ),
-    )
-    def test_quasi_interpolant_reproduces_a_periodic_cubic_with_six_intervals(self) -> None:
-        """Oracle: the invariant ``Q B = B`` on ``create_uniform_space(3, 6, periodic=True)``.
-
-        The coefficients come back cyclically shifted, an error of order 1.
-        """
-        space = create_uniform_space(3, 6, periodic=True)
-        ctrl = _dyadic_ctrl((6, 1), seed=1)
-        spline = quasi_interpolate_bspline(_exact_sampler(space, ctrl), space)
-        got = np.asarray(spline.control_points)
-        assert float(np.max(np.abs(got - ctrl))) <= _qi_bound(space, float(np.max(np.abs(ctrl))))
-
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "Q B != B for a knot of multiplicity degree + 1: the Greville abscissa of the function "
-            "that ends at the knot picks the interval to its right, outside the function's "
-            "support, and the block row is indexed from the end (the previous release does the "
-            "same)"
-        ),
-    )
-    def test_quasi_interpolant_reproduces_a_spline_with_a_discontinuity(self) -> None:
-        """Oracle: the invariant ``Q B = B`` on a cubic with the interior knot 1/2 four times."""
-        space = _space_from_knots((_knots(3, [0.25, 0.5, 0.5, 0.5, 0.5, 0.75]), 3))
-        ctrl = _dyadic_ctrl((int(space.num_basis[0]), 1), seed=3)
-        spline = quasi_interpolate_bspline(_exact_sampler(space, ctrl), space)
-        got = np.asarray(spline.control_points)
-        assert float(np.max(np.abs(got - ctrl))) <= _qi_bound(space, float(np.max(np.abs(ctrl))))
 
 
 def test_fit_with_no_node_in_a_direction_raises() -> None:
