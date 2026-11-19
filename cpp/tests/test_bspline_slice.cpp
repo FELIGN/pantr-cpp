@@ -41,6 +41,8 @@ using bspline_test::make_spline;
 using bspline_test::message_of;
 using bspline_test::periodic_knots;
 using bspline_test::same_space;
+using bspline_test::sp;
+using bspline_test::values;
 using oracle::Rational;
 
 namespace {
@@ -362,6 +364,56 @@ TEST_CASE_TEMPLATE(
       const T* cp = crv.control_points().data() + c.end_function * cols;
       for (std::size_t i = 0; i < 2; ++i) {
         const T want = rational ? cp[i] / cp[2] : cp[i];
+        CHECK(by_boundary.data()[i] == want);
+        CHECK(by_slice.data()[i] == want);
+      }
+    }
+  }
+}
+
+TEST_CASE("boundary: the end of an unsnapped space beside a sub-tolerance knot gap") {
+  // Built without snapping, a knot `2.2e-15` from the end stays apart from it, closer than the
+  // space's tolerance. The end still takes the last span of non-zero length, and no knot of that
+  // span equals the end, so the corner cutting runs every round. Oracle, analytic: the one
+  // function equal to 1 at the end from the left is the one whose knots `knots[i + 1 ..
+  // i + degree + 1]` all equal the end, and every corner-cutting weight is `(u - l) / (u - l)`,
+  // exactly 1, so the result is its control point bit for bit. Double only: in float the gap
+  // rounds away.
+  constexpr double gap = 2.2e-15;
+  struct Case {
+    std::vector<double> knots;
+    std::size_t end_function;
+  };
+  const std::vector<Case> cases = {
+      // An empty last span, beside a span shorter than the tolerance.
+      {{0, 0, 1, 2 - gap, 2, 2, 3}, 3},
+      // A last span shorter than the tolerance.
+      {{0, 0, 1, 1 + gap, 2}, 2},
+  };
+  for (const Case& c : cases) {
+    const bs::BsplineSpace1D<double> space(sp(c.knots), 1, false, false);
+    REQUIRE(c.knots[c.end_function + 1] == space.domain().second);
+    REQUIRE(space.domain().second - c.knots[c.end_function] < space.tolerance());
+    for (const bool rational : {false, true}) {
+      CAPTURE(c.end_function);
+      CAPTURE(rational);
+      const std::size_t n = static_cast<std::size_t>(space.num_basis());
+      const std::size_t cols = 2 + (rational ? 1 : 0);
+      std::vector<double> flat = values(n * cols, 23U);
+      if (rational) {
+        for (std::size_t i = 0; i < n; ++i) {
+          flat[i * cols + 2] = 1.5 + flat[i * cols + 2] / 2.0;
+        }
+      }
+      const bs::Bspline<double> crv(
+          bs::BsplineSpace<double>(std::vector<bs::BsplineSpace1D<double>>{space}), sp(flat),
+          rational);
+      const double end = space.domain().second;
+      const pantr::NdArray<double> by_boundary = bs::boundary_point<double>(crv, 0, 1);
+      const pantr::NdArray<double> by_slice = bs::slice_point<double>(crv, 0, end);
+      const double* cp = flat.data() + c.end_function * cols;
+      for (std::size_t i = 0; i < 2; ++i) {
+        const double want = rational ? cp[i] / cp[2] : cp[i];
         CHECK(by_boundary.data()[i] == want);
         CHECK(by_slice.data()[i] == want);
       }

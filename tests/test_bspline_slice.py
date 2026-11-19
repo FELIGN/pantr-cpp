@@ -293,7 +293,29 @@ class TestSliceEndBesideEmptySpans:
     )
     def test_slice_and_boundary_match_evaluate(self, knots: list[float], degree: int) -> None:
         """The slice and the boundary at the domain end equal ``evaluate`` there."""
-        sp0 = BsplineSpace1D(np.asarray(knots, dtype=np.float64), degree)
+        self._check_end(BsplineSpace1D(np.asarray(knots, dtype=np.float64), degree))
+
+    @pytest.mark.parametrize(
+        "knots",
+        [
+            # An empty last span, beside a span shorter than the tolerance.
+            [0, 0, 1, 2 - 2.2e-15, 2, 2, 3],
+            # A last span shorter than the tolerance.
+            [0, 0, 1, 1 + 2.2e-15, 2],
+        ],
+    )
+    def test_unsnapped_sub_tolerance_gap_matches_evaluate(self, knots: list[float]) -> None:
+        """Without snapping, a knot within the tolerance of the end does not count as the end."""
+        sp0 = BsplineSpace1D(np.asarray(knots, dtype=np.float64), 1, snap_knots=False)
+        np.testing.assert_array_equal(sp0.knots, np.asarray(knots, dtype=np.float64))
+        self._check_end(sp0)
+
+    def _check_end(self, sp0: BsplineSpace1D) -> None:
+        """Compare the slice and the boundary at the end of ``sp0`` with ``evaluate``.
+
+        Args:
+            sp0 (BsplineSpace1D): The direction sliced, first of a surface and alone in a curve.
+        """
         srf = Bspline(
             BsplineSpace([sp0, BsplineSpace1D(self._OTHER, 2)]),
             np.random.default_rng(0).standard_normal((sp0.num_basis, 5, 2)),
