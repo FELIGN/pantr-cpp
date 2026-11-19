@@ -10,6 +10,7 @@
 #include "pantr/bezier/detail/along_axis.hpp"
 #include "pantr/bezier/detail/net_ops.hpp"
 #include "pantr/bspline/bspline.hpp"
+#include "pantr/bspline/detail/basis_kernels.hpp"
 #include "pantr/bspline/detail/refine_common.hpp"
 #include "pantr/bspline/knots.hpp"
 #include "pantr/bspline/space.hpp"
@@ -35,7 +36,8 @@ namespace detail {
 /// The knot span a parameter value falls in, and the value used for it.
 ///
 /// Attributes:
-///     k (std::size_t): The span, `knots[k] <= u < knots[k + 1]` (the last span at the right end).
+///     k (std::size_t): The span, `knots[k] <= u < knots[k + 1]` (at the right end, the last span
+///         of non-zero length, `knots[k] < u == knots[k + 1]`).
 ///     u (double): The parameter: the value, or the domain end it was within tolerance of.
 struct SliceSpan {
   std::size_t k;
@@ -43,7 +45,8 @@ struct SliceSpan {
 };
 
 /// Find the span of a parameter value (Piegl and Tiller convention): a value within `tol` of an end
-/// of the domain is taken as that end, any other by binary search over the knot vector.
+/// of the domain is taken as that end, any other by binary search over the knot vector. The end of
+/// the domain takes the last span of non-zero length, as `span_and_first` does.
 ///
 /// Args:
 ///     knots (std::span<const T>): The knot vector.
@@ -70,7 +73,11 @@ template <StorageFloat T>
     return {last_index_of_first_domain_class<T>(knots, degree, tol), u_left};
   }
   if (value >= u_right - tol) {
-    return {n_basis - 1, u_right};
+    // The last span of non-zero length, as evaluation takes it (#29). Span `n_basis - 1` is empty
+    // when `knots[n_basis - 1] == knots[n_basis]`; once `degree + 2` or more knots equal the end,
+    // the multiplicity there reaches `degree` and selects the first function of that span's
+    // window, whose support is empty.
+    return {span_and_first<T, T>(knots, degree, knots[n_basis]).knot_id, u_right};
   }
   const auto above = std::upper_bound(knots.begin(), knots.end(), value, [](double v, T knot) {
     return v < static_cast<double>(knot);
