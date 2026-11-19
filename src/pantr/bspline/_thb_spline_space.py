@@ -892,6 +892,20 @@ class THBSplineSpace:
         on the cell.  Mirrors the ``(basis, first_basis)`` two-return of
         :meth:`~pantr.bspline.BsplineSpace.tabulate_basis`.
 
+        Every point of the closed cell, its bounds included, gets the cell's own
+        polynomial pieces where the 1D B-spline search would leave the cell's
+        functions none: at a bound that is a knot of multiplicity ``degree + 1`` of
+        the level tabulated (every new breakpoint of a space refined with
+        ``regularity=-1``), the values are the limit from inside the cell, so they sum
+        to one at the upper bound as inside.  The cell's span is found from its
+        integer index, so this holds where the grid's bound and the knot differ by
+        rounding.  At an upper bound on a knot of lower multiplicity the values are
+        the cell's limits as well, but the derivatives
+        (:meth:`tabulate_basis_derivatives`) of an order above the continuity there
+        are those of the piece to the right of the bound.  Where the space is
+        discontinuous, a bound shared by two cells has a value per cell, and each cell
+        returns its own.
+
         Args:
             cid (int): Active cell flat id in ``[0, grid.num_cells)``.
             pts (npt.ArrayLike): Parametric points of shape ``(..., dim)`` lying in
@@ -934,6 +948,7 @@ class THBSplineSpace:
         B-spline derivatives; truncated functions apply their stored coefficients to
         the B-spline derivatives at their representation level.  The returned columns
         are ordered as ``dofs`` (the sorted global dofs, equal to :meth:`active_basis`).
+        At a cell's bounds the derivatives are taken as :meth:`tabulate_basis` states.
 
         Args:
             cid (int): Active cell flat id in ``[0, grid.num_cells)``.

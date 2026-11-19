@@ -8,6 +8,7 @@
 /// (HB).
 #pragma once
 
+#include "pantr/bspline/detail/basis_kernels.hpp"
 #include "pantr/bspline/detail/support_1d.hpp"
 #include "pantr/bspline/space.hpp"
 #include "pantr/config.hpp"
@@ -31,6 +32,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <memory>
 #include <optional>
 #include <span>
@@ -323,6 +325,17 @@ class THBSplineSpace {
   /// order. The 1D values are computed in `double` whatever the root's storage type `T`, on the
   /// level spaces' knots in `T`.
   ///
+  /// Every point of the closed cell, its bounds included, gets the cell's own polynomial pieces
+  /// where the 1D search would leave the cell's functions none: at a bound that is a knot of
+  /// multiplicity `degree + 1` of the level tabulated (every new breakpoint of a space refined
+  /// with regularity -1), the values are the limit from inside the cell, so they sum to one at the
+  /// upper bound as inside. The cell's span is found from its integer index, so this holds where
+  /// the grid's bound and the knot differ by rounding. At an upper bound on a knot of lower
+  /// multiplicity the values are the cell's limits as well, but the derivatives of an order above
+  /// the continuity there are those of the piece to the right of the bound. Where the space is
+  /// discontinuous, a bound shared by two cells has a value per cell, and each cell returns its
+  /// own.
+  ///
   /// No dimension limit applies (the Python implementation refused more than 24 directions, a
   /// limit of its einsum subscripts).
   ///
@@ -361,7 +374,7 @@ class THBSplineSpace {
                         "; got " + py_repr(std::span<const std::size_t>(got)) + ".");
     }
     std::copy(cell.dofs.begin(), cell.dofs.end(), out_dofs.begin());
-    evaluate(cell, pts, orders, out_basis);
+    evaluate(cid, cell, pts, orders, out_basis);
   }
 
   /// Evaluate the active functions on cell `cid` at `pts` (all orders zero; see the `out_basis`
@@ -710,32 +723,90 @@ class THBSplineSpace {
     return s + "]";
   }
 
+  // The first and last knot interval of level `level` along an axis of subdivision factor
+  // `factor` that the cell of index `index` at level `cell_level` covers: its ancestor's at a
+  // coarser level, its descendants' at a finer one. The level spaces have one knot interval per
+  // grid cell along each axis (`build_level_spaces` refuses otherwise), so these are the grid's
+  // own indices; `factor ** |level - cell_level|` fits, the grid having both levels.
+  static std::pair<std::int64_t, std::int64_t> cell_intervals(std::int64_t cell_level,
+                                                              std::int64_t index,
+                                                              std::int64_t level,
+                                                              std::int64_t factor) {
+    std::int64_t scale = 1;
+    for (std::int64_t e = std::abs(level - cell_level); e > 0; --e) {
+      scale *= factor;
+    }
+    if (level <= cell_level) {
+      return {index / scale, index / scale};
+    }
+    return {index * scale, (index + 1) * scale - 1};
+  }
+
   // Tabulate the 1D basis (order 0) or its `order`-th derivative of one level and direction at
-  // the points' coordinates along that direction.
+  // the points' coordinates along that direction, on the cell covering the knot intervals
+  // `intervals` (first, last) of that level.
   //
   // The points were checked against the cell, which lies inside the domain up to the membership
   // slack, so the 1D kernel is run without its own domain check; a point within the slack of an
   // end is evaluated on the nearest in-domain span. An order above the degree is zero: the kernel
   // is asked for `degree + 1`, whose slice is exactly zero, rather than for an order that sizes
   // an array by the caller's number.
+  //
+  // The 1D search is right-continuous at a knot, so a point at the cell's upper bound lands in the
+  // span after the cell's, and a point within the slack outside either bound (or past a bound
+  // that differs from its knot by rounding) in a span outside the cell. Such a point's first
+  // function index lies outside the cell's range `[first_basis[intervals.first],
+  // first_basis[intervals.second]]`; it is compared with the bound of that range it passed, all
+  // in integers. Where the two are more than `degree` apart, the spans share no function: the
+  // knot between them has multiplicity `degree + 1`, every function of the cell would come out
+  // zero although its limit from inside the cell is not, and the point is evaluated again on the
+  // cell's span. Otherwise the point is left as the search placed it: a cell function the
+  // neighbouring span lacks vanishes at the shared knot from inside as well, so the values are
+  // the cell's limits, and the derivatives of an order above the continuity there are the
+  // neighbouring piece's. A point the search places inside the cell's range is never touched.
   void tabulate_1d(std::int64_t level, std::size_t k, std::int64_t order,
-                   mdview<const double, 2> pts, detail::Basis1D& out) const {
-    const auto& sp1d = rep_->level_spaces[static_cast<std::size_t>(level)].spaces()[k];
+                   mdview<const double, 2> pts, std::pair<std::int64_t, std::int64_t> intervals,
+                   detail::Basis1D& out) const {
+    const auto lv = static_cast<std::size_t>(level);
+    const auto& sp1d = rep_->level_spaces[lv].spaces()[k];
     const std::size_t n = pts.extent(0);
-    const auto width = static_cast<std::size_t>(sp1d.degree()) + 1;
+    const int degree = sp1d.degree();
+    const auto width = static_cast<std::size_t>(degree) + 1;
     std::vector<double> coord(n);
     for (std::size_t i = 0; i < n; ++i) {
       coord[i] = pts(i, k);
     }
     out.first.assign(n, 0);
-    out.degree = sp1d.degree();
+    out.degree = degree;
     const std::span<const double> coords(coord);
+    const std::span<const T> knots = sp1d.knots();
+    const std::vector<std::int64_t>& first_basis = rep_->support[lv][k].first_basis;
+    const std::int64_t first_lo = first_basis[static_cast<std::size_t>(intervals.first)];
+    const std::int64_t first_hi = first_basis[static_cast<std::size_t>(intervals.second)];
+    // The first function of the cell's span point `i` is evaluated again on, or -1 to keep the
+    // search's.
+    const auto own_first = [&](std::size_t i) -> std::int64_t {
+      const std::int64_t found = out.first[i];
+      const std::int64_t own = std::clamp(found, first_lo, first_hi);
+      return std::abs(found - own) > degree ? own : -1;
+    };
     if (order == 0) {
       out.data.assign(n * width, 0.0);
       out.stride = width;
       out.offset = 0;
       sp1d.template tabulate_basis<double>(coords, mdview<double, 2>(out.data.data(), n, width),
                                            std::span<std::int64_t>(out.first), false);
+      std::vector<T> left(width);
+      std::vector<T> right(width);
+      for (std::size_t i = 0; i < n; ++i) {
+        const std::int64_t own = own_first(i);
+        if (own >= 0) {
+          out.first[i] = own;
+          bspline::detail::basis_funcs_point<T, double>(
+              knots.data(), degree, static_cast<std::size_t>(own + degree), coord[i],
+              out.data.data() + i * width, left.data(), right.data());
+        }
+      }
       return;
     }
     const int n_deriv = static_cast<int>((std::min)(order, static_cast<std::int64_t>(width)));
@@ -743,9 +814,19 @@ class THBSplineSpace {
     out.data.assign(n * rows * width, 0.0);
     out.stride = rows * width;
     out.offset = static_cast<std::size_t>(n_deriv) * width;
-    const bool complete = sp1d.template tabulate_basis_derivatives<double>(
+    bool complete = sp1d.template tabulate_basis_derivatives<double>(
         coords, n_deriv, mdview<double, 3>(out.data.data(), n, rows, width),
         std::span<std::int64_t>(out.first), false);
+    bspline::detail::DerivScratch<T> scratch(degree, n_deriv);
+    for (std::size_t i = 0; i < n && complete; ++i) {
+      const std::int64_t own = own_first(i);
+      if (own >= 0) {
+        out.first[i] = own;
+        complete = bspline::detail::basis_derivs_point<T, double>(
+            knots.data(), degree, n_deriv, static_cast<std::size_t>(own + degree), coord[i],
+            out.data.data() + i * rows * width, scratch);
+      }
+    }
     if (!complete) {
       throw state_error("the 1D derivative recurrence met a zero divisor at level " +
                         std::to_string(level) + ", axis " + std::to_string(k) +
@@ -753,11 +834,15 @@ class THBSplineSpace {
     }
   }
 
-  // Evaluate every function of `cell` at every point. The 1D tabulations are made once per
-  // (level, direction) the functions use, as the orders are fixed for the call.
-  void evaluate(const CellContributions& cell, mdview<const double, 2> pts,
+  // Evaluate every function of `cell`, the contributions of cell `cid`, at every point. The 1D
+  // tabulations are made once per (level, direction) the functions use, as the orders are fixed
+  // for the call, each on the knot intervals the cell covers at that level.
+  void evaluate(std::int64_t cid, const CellContributions& cell, mdview<const double, 2> pts,
                 std::span<const std::int64_t> orders, mdview<double, 2> out) const {
     const std::size_t d = dim();
+    const std::int64_t cell_level = rep_->hier.cell_level(cid);
+    const std::vector<std::int64_t> midx = rep_->hier.cell_multi_index(cid);
+    const std::span<const std::int64_t> factor = rep_->hier.factor();
     const std::size_t levels = rep_->level_spaces.size();
     std::vector<unsigned char> needed(levels, 0);
     std::size_t work_size = 0;
@@ -779,7 +864,9 @@ class THBSplineSpace {
     for (std::size_t l = 0; l < levels; ++l) {
       if (needed[l] != 0) {
         for (std::size_t k = 0; k < d; ++k) {
-          tabulate_1d(static_cast<std::int64_t>(l), k, orders[k], pts, tables[l * d + k]);
+          const auto level = static_cast<std::int64_t>(l);
+          tabulate_1d(level, k, orders[k], pts,
+                      cell_intervals(cell_level, midx[k], level, factor[k]), tables[l * d + k]);
         }
       }
     }
