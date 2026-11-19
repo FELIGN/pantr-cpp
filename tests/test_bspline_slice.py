@@ -272,11 +272,13 @@ class TestSlicePeriodic:
 
 
 class TestSliceEndBesideEmptySpans:
-    """Slice and boundary at the domain end when ``degree + 2`` or more equal knots end there.
+    """Slice and boundary at the domain end beside empty or sub-tolerance last spans.
 
-    The last in-domain spans are then empty and the function that row ``n - degree - 1`` of the
-    control points carries has empty support; the slice must take the last non-empty span, as
-    ``evaluate`` does. Oracle: ``evaluate`` at the same points, which takes that span.
+    With ``degree + 2`` or more equal knots ending there, the last in-domain spans are empty and the
+    function that row ``n - degree - 1`` of the control points carries has empty support; in a
+    space built without snapping, a knot closer to the end than the tolerance stays apart from it.
+    Either way the slice must take the last non-empty span with no knot counted as a copy of the
+    end, as ``evaluate`` does. Oracle: ``evaluate`` at the same points, which takes that span.
     """
 
     # The direction left alone: a clamped quadratic.
@@ -296,18 +298,23 @@ class TestSliceEndBesideEmptySpans:
         self._check_end(BsplineSpace1D(np.asarray(knots, dtype=np.float64), degree))
 
     @pytest.mark.parametrize(
-        "knots",
+        ("knots", "degree", "near"),
         [
             # An empty last span, beside a span shorter than the tolerance.
-            [0, 0, 1, 2 - 2.2e-15, 2, 2, 3],
+            ([0, 0, 1, 2 - 2.2e-15, 2, 2, 3], 1, 3),
+            ([0, 0, 0, 1, 2 - 2.2e-15, 2, 2, 2, 3], 2, 4),
             # A last span shorter than the tolerance.
-            [0, 0, 1, 1 + 2.2e-15, 2],
+            ([0, 0, 1, 1 + 2.2e-15, 2], 1, 2),
         ],
     )
-    def test_unsnapped_sub_tolerance_gap_matches_evaluate(self, knots: list[float]) -> None:
+    def test_unsnapped_sub_tolerance_gap_matches_evaluate(
+        self, knots: list[float], degree: int, near: int
+    ) -> None:
         """Without snapping, a knot within the tolerance of the end does not count as the end."""
-        sp0 = BsplineSpace1D(np.asarray(knots, dtype=np.float64), 1, snap_knots=False)
+        sp0 = BsplineSpace1D(np.asarray(knots, dtype=np.float64), degree, snap_knots=False)
         np.testing.assert_array_equal(sp0.knots, np.asarray(knots, dtype=np.float64))
+        gap = float(sp0.domain[1]) - knots[near]
+        assert 0.0 < gap < sp0.tolerance
         self._check_end(sp0)
 
     def _check_end(self, sp0: BsplineSpace1D) -> None:

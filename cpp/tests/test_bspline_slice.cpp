@@ -373,28 +373,35 @@ TEST_CASE_TEMPLATE(
 
 TEST_CASE("boundary: the end of an unsnapped space beside a sub-tolerance knot gap") {
   // Built without snapping, a knot `2.2e-15` from the end stays apart from it, closer than the
-  // space's tolerance. The end still takes the last span of non-zero length, and no knot of that
-  // span equals the end, so the corner cutting runs every round. Oracle, analytic: the one
-  // function equal to 1 at the end from the left is the one whose knots `knots[i + 1 ..
-  // i + degree + 1]` all equal the end, and every corner-cutting weight is `(u - l) / (u - l)`,
-  // exactly 1, so the result is its control point bit for bit. Double only: in float the gap
-  // rounds away.
+  // space's tolerance. The end still takes the last span of non-zero length, `k`, and no knot at
+  // or left of `k` equals the end, so the corner cutting runs every round. Oracle, analytic: the
+  // one function equal to 1 at the end from the left is `k`'s, since `knots[k] < u` and
+  // `knots[k + 1 .. k + degree]` all equal the end `u`. Those are the right knots of every
+  // corner-cutting weight, so each weight is `(u - l) / (u - l)`, exactly 1, and the result is
+  // that function's control point bit for bit. Double only: a gap this small rounds away in float.
   constexpr double gap = 2.2e-15;
   struct Case {
     std::vector<double> knots;
+    int degree;
     std::size_t end_function;
   };
   const std::vector<Case> cases = {
       // An empty last span, beside a span shorter than the tolerance.
-      {{0, 0, 1, 2 - gap, 2, 2, 3}, 3},
+      {{0, 0, 1, 2 - gap, 2, 2, 3}, 1, 3},
+      {{0, 0, 0, 1, 2 - gap, 2, 2, 2, 3}, 2, 4},
       // A last span shorter than the tolerance.
-      {{0, 0, 1, 1 + gap, 2}, 2},
+      {{0, 0, 1, 1 + gap, 2}, 1, 2},
   };
   for (const Case& c : cases) {
-    const bs::BsplineSpace1D<double> space(sp(c.knots), 1, false, false);
-    REQUIRE(c.knots[c.end_function + 1] == space.domain().second);
-    REQUIRE(space.domain().second - c.knots[c.end_function] < space.tolerance());
+    const bs::BsplineSpace1D<double> space(sp(c.knots), c.degree, false, false);
+    const double end = space.domain().second;
+    for (std::size_t j = 1; j <= static_cast<std::size_t>(c.degree); ++j) {
+      REQUIRE(c.knots[c.end_function + j] == end);
+    }
+    REQUIRE(c.knots[c.end_function] < end);
+    REQUIRE(end - c.knots[c.end_function] < space.tolerance());
     for (const bool rational : {false, true}) {
+      CAPTURE(c.degree);
       CAPTURE(c.end_function);
       CAPTURE(rational);
       const std::size_t n = static_cast<std::size_t>(space.num_basis());
@@ -408,7 +415,6 @@ TEST_CASE("boundary: the end of an unsnapped space beside a sub-tolerance knot g
       const bs::Bspline<double> crv(
           bs::BsplineSpace<double>(std::vector<bs::BsplineSpace1D<double>>{space}), sp(flat),
           rational);
-      const double end = space.domain().second;
       const pantr::NdArray<double> by_boundary = bs::boundary_point<double>(crv, 0, 1);
       const pantr::NdArray<double> by_slice = bs::slice_point<double>(crv, 0, end);
       const double* cp = flat.data() + c.end_function * cols;
