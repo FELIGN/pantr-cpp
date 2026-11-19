@@ -902,7 +902,8 @@ class THBSplineSpace:
         rounding.  At an upper bound on a knot of lower multiplicity the values are
         the cell's limits as well, but the derivatives
         (:meth:`tabulate_basis_derivatives`) of an order above the continuity there
-        are those of the piece to the right of the bound.  Where the space is
+        are those of the piece to the right of the bound; at a lower bound that
+        rounding puts below such a knot, those of the piece to its left.  Where the space is
         discontinuous, a bound shared by two cells has a value per cell, and each cell
         returns its own.
 
@@ -948,7 +949,8 @@ class THBSplineSpace:
         B-spline derivatives; truncated functions apply their stored coefficients to
         the B-spline derivatives at their representation level.  The returned columns
         are ordered as ``dofs`` (the sorted global dofs, equal to :meth:`active_basis`).
-        At a cell's bounds the derivatives are taken as :meth:`tabulate_basis` states.
+        At a cell's bounds the derivatives follow the rule :meth:`tabulate_basis`
+        states for them.
 
         Args:
             cid (int): Active cell flat id in ``[0, grid.num_cells)``.

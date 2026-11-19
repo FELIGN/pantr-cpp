@@ -332,7 +332,8 @@ class THBSplineSpace {
   /// to one at the upper bound as inside. The cell's span is found from its integer index, so this
   /// holds where the grid's bound and the knot differ by rounding. At an upper bound on a knot of
   /// lower multiplicity the values are the cell's limits as well, but the derivatives of an order
-  /// above the continuity there are those of the piece to the right of the bound. Where the space
+  /// above the continuity there are those of the piece to the right of the bound; at a lower bound
+  /// that rounding puts below such a knot, they are those of the piece to its left. Where the space
   /// is discontinuous, a bound shared by two cells has a value per cell, and each cell returns its
   /// own.
   ///
@@ -761,9 +762,9 @@ class THBSplineSpace {
   // knot between them has multiplicity `degree + 1`, every function of the cell would come out
   // zero although its limit from inside the cell is not, and the point is evaluated again on the
   // cell's span. Otherwise the point is left as the search placed it: a cell function the
-  // neighbouring span lacks vanishes at the shared knot from inside as well, so the values are
+  // neighboring span lacks vanishes at the shared knot from inside as well, so the values are
   // the cell's limits, and the derivatives of an order above the continuity there are the
-  // neighbouring piece's. A point the search places inside the cell's range is never touched.
+  // neighboring piece's. A point the search places inside the cell's range is never touched.
   void tabulate_1d(std::int64_t level, std::size_t k, std::int64_t order,
                    mdview<const double, 2> pts, std::pair<std::int64_t, std::int64_t> intervals,
                    detail::Basis1D& out) const {
