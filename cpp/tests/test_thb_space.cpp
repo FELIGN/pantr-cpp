@@ -666,10 +666,13 @@ I64 count_bounds_past_full_knots(const THBSplineSpace<T>& space) {
     const bs::BsplineSpace<T> level_space = space.level_space(level);
     const auto [knots, mult] = level_space.spaces()[0].unique_knots_and_multiplicity(true);
     const auto [lo, hi] = space.grid().cell_bounds(cid);
-    if (mult[at + 1] == full && hi[0] > static_cast<double>(knots[at + 1])) {
+    // The domain's end knots have full multiplicity too, but the search keeps a point past them
+    // on the end span, so only interior knots count.
+    const bool interior_hi = at + 2 < knots.size();
+    if (interior_hi && mult[at + 1] == full && hi[0] > static_cast<double>(knots[at + 1])) {
       ++count;
     }
-    if (mult[at] == full && lo[0] < static_cast<double>(knots[at])) {
+    if (at > 0 && mult[at] == full && lo[0] < static_cast<double>(knots[at])) {
       ++count;
     }
   }
@@ -678,12 +681,12 @@ I64 count_bounds_past_full_knots(const THBSplineSpace<T>& space) {
 
 }  // namespace
 
-// Regression (present in the previous release as well): on a root of regularity -1 (a knot of full
-// multiplicity at every breakpoint) refined once, the basis tabulated at a cell's upper bound `hi`
-// summed to 0 for the cells ending on a knot of multiplicity degree + 1: the 1D search, right-
-// continuous at a knot, took the span to the right of the cell, whose functions are not the
-// cell's. A point the search places in a span sharing no function with the cell's is now
-// evaluated on the cell's span (the limit from inside).
+// Regression (present in the previous release as well): on a space of regularity -1 (a knot of full
+// multiplicity at every breakpoint inserted by refinement) refined once, the basis tabulated at a
+// cell's upper bound `hi` summed to 0 for the cells ending on a knot of multiplicity degree + 1:
+// the 1D search, right- continuous at a knot, took the span to the right of the cell, whose
+// functions are not the cell's. A point the search places in a span sharing no function with the
+// cell's is now evaluated on the cell's span (the limit from inside).
 TEST_CASE("inherited: regularity -1 basis vanishes at a cell's upper edge") {
   // Degree 2 on four equal spans, regularity -1, the two left root cells refined: cells 0 and 1
   // are the level-0 cells (indices 2 and 3), cells 2 to 5 the level-1 cells (indices 0 to 3). The
@@ -721,7 +724,7 @@ TEST_CASE("THBSplineSpace: regularity -1 derivatives at a cell's upper edge are 
 }
 
 TEST_CASE("THBSplineSpace: regularity -1 basis sums to one at every upper edge in 2D") {
-  // A 2D root of regularity -1 in both directions with the lower-left 2 x 2 root cells refined:
+  // A 2D space of regularity -1 in both directions with the lower-left 2 x 2 root cells refined:
   // at every cell, the upper edge in each direction (at the other's midpoint) and the upper corner.
   const THBSplineSpace<double> space =
       make_space(Setup{{k2, k2}, {2, 2}, {2, 2}, {-1, -1}, {{0, {0, 0}, {2, 2}}}, true});

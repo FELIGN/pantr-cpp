@@ -895,7 +895,7 @@ class THBSplineSpace:
         Every point of the closed cell, its bounds included, gets the cell's own
         polynomial pieces where the 1D B-spline search would leave the cell's
         functions none: at a bound that is a knot of multiplicity ``degree + 1`` of
-        the level tabulated (every new breakpoint of a space refined with
+        the level a function is evaluated at (every new breakpoint of a space refined with
         ``regularity=-1``), the values are the limit from inside the cell, so they sum
         to one at the upper bound as inside.  The cell's span is found from its
         integer index, so this holds where the grid's bound and the knot differ by

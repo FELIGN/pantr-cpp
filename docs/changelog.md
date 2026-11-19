@@ -1379,7 +1379,7 @@
   is right-continuous at a knot, so at such a cell's upper bound it took the span to the right of
   the cell, where every function of the cell vanishes: the values, and the derivatives, were all
   zero. Where the grid's cell bound and the level's knot differ by rounding (a subdivision factor
-  other than 2, a root whose knots are not dyadic refined more than once, a `float32` root) the
+  that is not a power of 2, a root whose knots are not dyadic refined more than once, a `float32` root) the
   same happened at a bound past its knot, lower bounds included. The cell's span at each level is
   now found from the cell's integer index, and a point the search places in a span sharing no
   function with it is evaluated on the cell's span: the limit from inside the cell. At a bound on

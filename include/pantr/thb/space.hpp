@@ -327,13 +327,13 @@ class THBSplineSpace {
   ///
   /// Every point of the closed cell, its bounds included, gets the cell's own polynomial pieces
   /// where the 1D search would leave the cell's functions none: at a bound that is a knot of
-  /// multiplicity `degree + 1` of the level tabulated (every new breakpoint of a space refined
-  /// with regularity -1), the values are the limit from inside the cell, so they sum to one at the
-  /// upper bound as inside. The cell's span is found from its integer index, so this holds where
-  /// the grid's bound and the knot differ by rounding. At an upper bound on a knot of lower
-  /// multiplicity the values are the cell's limits as well, but the derivatives of an order above
-  /// the continuity there are those of the piece to the right of the bound. Where the space is
-  /// discontinuous, a bound shared by two cells has a value per cell, and each cell returns its
+  /// multiplicity `degree + 1` of the level a function is evaluated at (every new breakpoint of a
+  /// space refined with regularity -1), the values are the limit from inside the cell, so they sum
+  /// to one at the upper bound as inside. The cell's span is found from its integer index, so this
+  /// holds where the grid's bound and the knot differ by rounding. At an upper bound on a knot of
+  /// lower multiplicity the values are the cell's limits as well, but the derivatives of an order
+  /// above the continuity there are those of the piece to the right of the bound. Where the space
+  /// is discontinuous, a bound shared by two cells has a value per cell, and each cell returns its
   /// own.
   ///
   /// No dimension limit applies (the Python implementation refused more than 24 directions, a
@@ -783,8 +783,8 @@ class THBSplineSpace {
     const std::vector<std::int64_t>& first_basis = rep_->support[lv][k].first_basis;
     const std::int64_t first_lo = first_basis[static_cast<std::size_t>(intervals.first)];
     const std::int64_t first_hi = first_basis[static_cast<std::size_t>(intervals.second)];
-    // The first function of the cell's span point `i` is evaluated again on, or -1 to keep the
-    // search's.
+    // For point `i`, the first function of the cell's span to evaluate it again on, or -1 to keep
+    // the search's span.
     const auto own_first = [&](std::size_t i) -> std::int64_t {
       const std::int64_t found = out.first[i];
       const std::int64_t own = std::clamp(found, first_lo, first_hi);
@@ -796,11 +796,14 @@ class THBSplineSpace {
       out.offset = 0;
       sp1d.template tabulate_basis<double>(coords, mdview<double, 2>(out.data.data(), n, width),
                                            std::span<std::int64_t>(out.first), false);
-      std::vector<T> left(width);
-      std::vector<T> right(width);
+      // The scratch is allocated at the first point evaluated again, which most calls never meet.
+      std::vector<T> left;
+      std::vector<T> right;
       for (std::size_t i = 0; i < n; ++i) {
         const std::int64_t own = own_first(i);
         if (own >= 0) {
+          left.resize(width);
+          right.resize(width);
           out.first[i] = own;
           bspline::detail::basis_funcs_point<T, double>(
               knots.data(), degree, static_cast<std::size_t>(own + degree), coord[i],
@@ -817,14 +820,17 @@ class THBSplineSpace {
     bool complete = sp1d.template tabulate_basis_derivatives<double>(
         coords, n_deriv, mdview<double, 3>(out.data.data(), n, rows, width),
         std::span<std::int64_t>(out.first), false);
-    bspline::detail::DerivScratch<T> scratch(degree, n_deriv);
+    std::optional<bspline::detail::DerivScratch<T>> scratch;
     for (std::size_t i = 0; i < n && complete; ++i) {
       const std::int64_t own = own_first(i);
       if (own >= 0) {
+        if (!scratch.has_value()) {
+          scratch.emplace(degree, n_deriv);
+        }
         out.first[i] = own;
         complete = bspline::detail::basis_derivs_point<T, double>(
             knots.data(), degree, n_deriv, static_cast<std::size_t>(own + degree), coord[i],
-            out.data.data() + i * rows * width, scratch);
+            out.data.data() + i * rows * width, *scratch);
       }
     }
     if (!complete) {
