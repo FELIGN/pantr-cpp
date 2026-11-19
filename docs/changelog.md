@@ -1374,6 +1374,20 @@
   so the quasi-interpolant of a function outside the space differs there by the approximation
   error; non-periodic spaces keep theirs, except where they had the defect. Inherited from the
   previous release.
+- **`THBSplineSpace.tabulate_basis` sums to one at the bounds of a cell on a knot of multiplicity
+  `degree + 1`** (#8), every new breakpoint of a space refined with `regularity=-1`. The 1D search
+  is right-continuous at a knot, so at such a cell's upper bound it took the span to the right of
+  the cell, where every function of the cell vanishes: the values, and the derivatives, were all
+  zero. Where the grid's cell bound and the level's knot differ by rounding (a subdivision factor
+  that is not a power of 2, a root whose knots are not dyadic refined more than once, a `float32`
+  root) the same happened at a bound past its knot, lower bounds included. The cell's span at each
+  level is now found from the cell's integer index, and a point the search places in a span
+  sharing no function with it is evaluated on the cell's span: the limit from inside the cell. At
+  a bound on a knot of lower multiplicity nothing changes: the values are the cell's limits
+  already, and the derivatives of an order above the continuity there are those of the piece the
+  search places the point in (to the right of an upper bound, and to the left of a lower bound
+  that rounding puts below its knot). Points the search places inside the cell are untouched.
+  Inherited from the previous release.
 - **`create_uniform_periodic_knots` (and the periodic `create_uniform_space`) returns a periodic
   knot vector for every continuity.** For `1 <= continuity <= degree - 2` it extended the repeated
   interior knots past both ends by distinct, evenly spaced knots, so `K[i + n m] = K[i] + L` (`n`
