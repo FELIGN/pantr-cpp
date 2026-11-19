@@ -765,6 +765,46 @@ TEST_CASE("THBSplineSpace: regularity -1 basis sums to one at every edge of a fl
   check_unity_at_every_edge_1d(space);
 }
 
+TEST_CASE(
+    "THBSplineSpace: regularity -1 values at the edges of a cell below a finer "
+    "representation are the limits from inside") {
+  // Two levels of refinement on the left: the level-0 and the level-1 cells 2 and 3 are not
+  // refined to level 2, but functions active on them are truncated against level 2 and evaluated
+  // there, where the cell covers several knot intervals. At an upper bound on a knot of
+  // multiplicity degree + 1 the search takes the level-2 span after the cell, where those
+  // functions vanish; the point must be taken back into the cell. Each value at a bound is
+  // compared with the value a step h = 1e-10 inside: the function is one polynomial piece on the
+  // cell, so the two differ by at most h |f'|. On a level-2 span (width w = 1/16) at most
+  // p + 1 = 3 quadratic B-splines are non-zero, each with |B'| <= 2 p / w = 64, and a truncated
+  // function weighs them by coefficients in [0, 1], so h |f'| <= 1.9e-8; 1e-6 is that with an
+  // admitted margin.
+  const THBSplineSpace<double> space =
+      make_space(Setup{{k2}, {2}, {2}, {-1}, {{0, {0}, {2}}, {1, {0}, {2}}}, true});
+  bool finer = false;
+  for (I64 cid = 0; cid < space.grid().num_cells(); ++cid) {
+    for (const I64 dof : space.active_basis(cid)) {
+      const pantr::thb::TruncatedFunction* f = space.truncated(dof);
+      finer = finer || (f != nullptr && f->rep_level > space.grid().cell_level(cid));
+    }
+  }
+  REQUIRE(finer);
+  const double h = 1e-10;
+  for (I64 cid = 0; cid < space.grid().num_cells(); ++cid) {
+    CAPTURE(cid);
+    const auto [lo, hi] = space.grid().cell_bounds(cid);
+    for (const auto& [edge, inside] : {std::pair{lo[0], lo[0] + h}, std::pair{hi[0], hi[0] - h}}) {
+      CAPTURE(edge);
+      const pantr::thb::TabulatedBasis at = tabulate(space, cid, {edge}, {0});
+      const pantr::thb::TabulatedBasis in = tabulate(space, cid, {inside}, {0});
+      for (std::size_t j = 0; j < at.dofs.size(); ++j) {
+        CAPTURE(j);
+        CHECK(std::abs(at.values.data()[j] - in.values.data()[j]) <= 1e-6);
+      }
+    }
+  }
+  check_unity_at_every_edge_1d(space);
+}
+
 /// Derivatives against central finite differences of the values.
 ///
 /// On a cell every function is a polynomial of degree at most `p` in each variable, so a central
