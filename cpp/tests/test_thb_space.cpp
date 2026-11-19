@@ -684,7 +684,7 @@ I64 count_bounds_past_full_knots(const THBSplineSpace<T>& space) {
 // Regression (present in the previous release as well): on a space of regularity -1 (a knot of full
 // multiplicity at every breakpoint inserted by refinement) refined once, the basis tabulated at a
 // cell's upper bound `hi` summed to 0 for the cells ending on a knot of multiplicity degree + 1:
-// the 1D search, right- continuous at a knot, took the span to the right of the cell, whose
+// the 1D search, right-continuous at a knot, took the span to the right of the cell, whose
 // functions are not the cell's. A point the search places in a span sharing no function with the
 // cell's is now evaluated on the cell's span (the limit from inside).
 TEST_CASE("inherited: regularity -1 basis vanishes at a cell's upper edge") {
@@ -742,11 +742,27 @@ TEST_CASE("THBSplineSpace: regularity -1 basis sums to one at every upper edge i
 // The three cases below have cell bounds that differ from their knots by rounding: the grid forms
 // a bound as `root_lo + i * size` (and the upper one as `lo + size`), the level spaces their knots
 // by subdividing each span of the level above. The cell's span is found from its integer index, so
-// a bound past its knot is evaluated on the cell's span like a bound equal to it.
+// a bound past its knot is evaluated on the cell's span like a bound equal to it. Their setups are
+// shared with the derivative cases further down.
+
+/// Degree 2, regularity -1, a subdivision factor of 3 (a third of a span is not a binary fraction).
+Setup factor_3_setup() { return Setup{{k2}, {2}, {3}, {-1}, {{0, {2}, {4}}}, true}; }
+
+/// Degree 2, regularity -1, unequal root spans refined twice (the second level's cells start at a
+/// non-dyadic point).
+Setup non_dyadic_twice_setup() {
+  return Setup{{k2n}, {2}, {2}, {-1}, {{0, {0}, {4}}, {1, {2}, {7}}}, true};
+}
+
+/// Degree 2, regularity -1, a float root: the level spaces' knots are rounded to float while the
+/// grid forms its bounds in double, so a bound differs from its knot by float round-off.
+Setup float_root_setup() {
+  return Setup{
+      {{0.0, 0.0, 0.0, 0.1, 0.2, 0.3, 1.0, 1.0, 1.0}}, {2}, {2}, {-1}, {{0, {1}, {4}}}, true};
+}
 
 TEST_CASE("THBSplineSpace: regularity -1 basis sums to one at every edge with a factor of 3") {
-  const THBSplineSpace<double> space =
-      make_space(Setup{{k2}, {2}, {3}, {-1}, {{0, {2}, {4}}}, true});
+  const THBSplineSpace<double> space = make_space(factor_3_setup());
   REQUIRE(count_bounds_past_full_knots(space) > 0);
   check_unity_at_every_edge_1d(space);
 }
@@ -754,16 +770,13 @@ TEST_CASE("THBSplineSpace: regularity -1 basis sums to one at every edge with a 
 TEST_CASE(
     "THBSplineSpace: regularity -1 basis sums to one at every edge of a non-dyadic root "
     "refined twice") {
-  const THBSplineSpace<double> space =
-      make_space(Setup{{k2n}, {2}, {2}, {-1}, {{0, {0}, {4}}, {1, {2}, {7}}}, true});
+  const THBSplineSpace<double> space = make_space(non_dyadic_twice_setup());
   REQUIRE(count_bounds_past_full_knots(space) > 0);
   check_unity_at_every_edge_1d(space);
 }
 
 TEST_CASE("THBSplineSpace: regularity -1 basis sums to one at every edge of a float root") {
-  const std::vector<double> knots = {0.0, 0.0, 0.0, 0.1, 0.2, 0.3, 1.0, 1.0, 1.0};
-  const THBSplineSpace<float> space =
-      make_space<float>(Setup{{knots}, {2}, {2}, {-1}, {{0, {1}, {4}}}, true});
+  const THBSplineSpace<float> space = make_space<float>(float_root_setup());
   REQUIRE(count_bounds_past_full_knots(space) > 0);
   check_unity_at_every_edge_1d(space);
 }
@@ -808,6 +821,360 @@ TEST_CASE(
   check_unity_at_every_edge_1d(space);
 }
 
+// ---- A bound is the cell's limit, order by order ---------------------------------------------
+
+/// The rounding unit of one value of the space, `build_slack * value_error_units * eps`: the
+/// `delta` of `check_derivatives`, whose comment derives it. The `eps` is the storage type's, as in
+/// `unity_bound`: the recurrences hold their knot differences, values and coefficients in the
+/// root's type (`bspline::detail::basis_derivs_point`), so a float root's derivatives carry float
+/// round-off, which is the whole of the difference for a double root.
+template <class T>
+double value_delta(const THBSplineSpace<T>& space) {
+  return build_slack * value_error_units(space) * storage_eps(space);
+}
+
+/// How the upper bound of a cell stands along one axis, at the cell's own level.
+struct UpperBound {
+  bool at_domain_end;  // the last knot span: the search keeps a point there on the cell's span
+  bool full_knot;      // an interior knot of multiplicity `degree + 1`: the search leaves the cell
+  /// Every derivative order at the bound is the cell's own: the search keeps the cell's span at the
+  /// domain end, and the point is taken back to it at a knot of full multiplicity.
+  [[nodiscard]] bool is_cells() const { return at_domain_end || full_knot; }
+};
+
+/// At a knot of lower multiplicity the search keeps the span to the right of the cell, so the
+/// orders above the continuity there are that piece's (pinned in its own test below), and a grid
+/// bound that differs from its knot by rounding moves the lower orders by the gap times the next
+/// derivative: no bound of this file covers that, so such a bound is not compared order by order.
+template <class T>
+UpperBound upper_bound_of(const THBSplineSpace<T>& space, I64 cid, std::size_t axis) {
+  const auto at = static_cast<std::size_t>(space.grid().cell_multi_index(cid)[axis]);
+  const auto [knots, mult] = space.level_space(space.grid().cell_level(cid))
+                                 .spaces()[axis]
+                                 .unique_knots_and_multiplicity(true);
+  const bool at_end = at + 2 >= knots.size();
+  const I64 full = static_cast<I64>(space.degrees()[axis]) + 1;
+  return UpperBound{at_end, !at_end && mult[at + 1] == full};
+}
+
+/// Check that the order-`order` derivative of every function of cell `cid` of a 1D space at `x` is
+/// that of the cell's own polynomial piece, `x` being a bound of the cell.
+///
+/// Oracle: on a cell every function is a polynomial of degree at most `p`, so the derivatives at
+/// the cell's midpoint `c`, which the 1D search places without doubt, fix it:
+/// `f^(o)(x) = sum_{k=o}^{p} f^(k)(c) (x - c)^(k-o) / (k-o)!` exactly. Rounding: a derivative `a`
+/// carries `delta (1 + |a|)`, the heuristic of `check_derivatives`, so the reference carries that
+/// of each `f^(k)(c)` times its weight and the value under test its own.
+template <class T>
+void check_limit_from_inside(const THBSplineSpace<T>& space, I64 cid, double x, I64 order) {
+  const double delta = value_delta(space);
+  const auto [lo, hi] = space.grid().cell_bounds(cid);
+  const double c = 0.5 * (lo[0] + hi[0]);
+  const std::size_t n_fun = space.num_active_on(cid);
+  std::vector<double> reference(n_fun, 0.0);
+  std::vector<double> bound(n_fun, 0.0);
+  double weight = 1.0;
+  for (I64 k = order; k <= space.degrees()[0]; ++k) {
+    weight *= k > order ? (x - c) / static_cast<double>(k - order) : 1.0;
+    const pantr::thb::TabulatedBasis mid = tabulate(space, cid, {c}, {k});
+    for (std::size_t j = 0; j < n_fun; ++j) {
+      const double a = mid.values.data()[j];
+      reference[j] += a * weight;
+      bound[j] += delta * (1.0 + std::abs(a)) * std::abs(weight);
+    }
+  }
+  const pantr::thb::TabulatedBasis at = tabulate(space, cid, {x}, {order});
+  for (std::size_t j = 0; j < n_fun; ++j) {
+    CAPTURE(cid);
+    CAPTURE(x);
+    CAPTURE(order);
+    CAPTURE(j);
+    const double got = at.values.data()[j];
+    CAPTURE(got);
+    CAPTURE(reference[j]);
+    CHECK(std::abs(got - reference[j]) <= bound[j] + delta * (1.0 + std::abs(got)));
+  }
+}
+
+/// Check every derivative order up to the degree at the bounds of every cell of a 1D space: the
+/// lower bound always, the upper bound where `UpperBound::is_cells`. Returns how many upper bounds
+/// on an interior knot of full multiplicity it compared, which a test requires to be positive.
+template <class T>
+I64 check_edge_derivatives_1d(const THBSplineSpace<T>& space) {
+  I64 on_full_knots = 0;
+  for (I64 cid = 0; cid < space.grid().num_cells(); ++cid) {
+    const auto [lo, hi] = space.grid().cell_bounds(cid);
+    const UpperBound upper = upper_bound_of(space, cid, 0);
+    for (I64 order = 0; order <= space.degrees()[0]; ++order) {
+      check_limit_from_inside(space, cid, lo[0], order);
+      if (upper.is_cells()) {
+        check_limit_from_inside(space, cid, hi[0], order);
+      }
+    }
+    on_full_knots += upper.full_knot ? 1 : 0;
+  }
+  return on_full_knots;
+}
+
+TEST_CASE("THBSplineSpace: regularity -1 derivatives at every edge are the cell's, factor of 3") {
+  const THBSplineSpace<double> space = make_space(factor_3_setup());
+  REQUIRE(count_bounds_past_full_knots(space) > 0);
+  CHECK(check_edge_derivatives_1d(space) > 0);
+}
+
+TEST_CASE(
+    "THBSplineSpace: regularity -1 derivatives at every edge are the cell's, non-dyadic root "
+    "refined twice") {
+  const THBSplineSpace<double> space = make_space(non_dyadic_twice_setup());
+  REQUIRE(count_bounds_past_full_knots(space) > 0);
+  CHECK(check_edge_derivatives_1d(space) > 0);
+}
+
+TEST_CASE("THBSplineSpace: regularity -1 derivatives at every edge are the cell's, float root") {
+  const THBSplineSpace<float> space = make_space<float>(float_root_setup());
+  REQUIRE(count_bounds_past_full_knots(space) > 0);
+  CHECK(check_edge_derivatives_1d(space) > 0);
+}
+
+/// Check the mixed partial `d^2 / dx dy` of every function of every cell of a 2D space at the
+/// cell's upper corner, where the upper bound along each axis is an interior knot of full
+/// multiplicity: the corner where the search leaves the cell in both directions, each taken back
+/// separately. Returns how many cells that is, which a test requires to be positive.
+///
+/// Oracle: `check_limit_from_inside`'s, in two variables: the function is a polynomial of degree at
+/// most `p_k` in direction `k` on the cell, so `d^{1,1} f(x, y) = sum_{a >= 1, b >= 1}
+/// f^(a,b)(c) (x - c_0)^(a-1) (y - c_1)^(b-1) / ((a-1)! (b-1)!)`, from the derivatives at the
+/// midpoint `c`. Rounding as there, with the weight of each term the product of its two factors.
+template <class T>
+I64 check_mixed_partial_at_upper_corners_2d(const THBSplineSpace<T>& space) {
+  const double delta = value_delta(space);
+  const auto p0 = static_cast<std::size_t>(space.degrees()[0]);
+  const auto p1 = static_cast<std::size_t>(space.degrees()[1]);
+  I64 corners = 0;
+  for (I64 cid = 0; cid < space.grid().num_cells(); ++cid) {
+    if (!upper_bound_of(space, cid, 0).full_knot || !upper_bound_of(space, cid, 1).full_knot) {
+      continue;
+    }
+    ++corners;
+    CAPTURE(cid);
+    const auto [lo, hi] = space.grid().cell_bounds(cid);
+    const double c0 = 0.5 * (lo[0] + hi[0]);
+    const double c1 = 0.5 * (lo[1] + hi[1]);
+    std::vector<double> wx(p0 + 1, 1.0);  // wx[a] = (hi[0] - c0)^(a-1) / (a-1)!
+    std::vector<double> wy(p1 + 1, 1.0);
+    for (std::size_t a = 2; a <= p0; ++a) {
+      wx[a] = wx[a - 1] * (hi[0] - c0) / static_cast<double>(a - 1);
+    }
+    for (std::size_t b = 2; b <= p1; ++b) {
+      wy[b] = wy[b - 1] * (hi[1] - c1) / static_cast<double>(b - 1);
+    }
+    const std::size_t n_fun = space.num_active_on(cid);
+    std::vector<double> reference(n_fun, 0.0);
+    std::vector<double> bound(n_fun, 0.0);
+    for (std::size_t a = 1; a <= p0; ++a) {
+      for (std::size_t b = 1; b <= p1; ++b) {
+        const pantr::thb::TabulatedBasis mid =
+            tabulate(space, cid, {c0, c1}, {static_cast<I64>(a), static_cast<I64>(b)});
+        for (std::size_t j = 0; j < n_fun; ++j) {
+          const double v = mid.values.data()[j];
+          reference[j] += v * wx[a] * wy[b];
+          bound[j] += delta * (1.0 + std::abs(v)) * std::abs(wx[a] * wy[b]);
+        }
+      }
+    }
+    const pantr::thb::TabulatedBasis at = tabulate(space, cid, {hi[0], hi[1]}, {1, 1});
+    for (std::size_t j = 0; j < n_fun; ++j) {
+      const double got = at.values.data()[j];
+      CAPTURE(j);
+      CAPTURE(got);
+      CAPTURE(reference[j]);
+      CHECK(std::abs(got - reference[j]) <= bound[j] + delta * (1.0 + std::abs(got)));
+    }
+  }
+  return corners;
+}
+
+TEST_CASE("THBSplineSpace: regularity -1 mixed partial at an upper corner is the cell's") {
+  // The 2D space of the unity test above. Before the fix the mixed partial at a corner where both
+  // bounds are knots of full multiplicity was zero.
+  const THBSplineSpace<double> space =
+      make_space(Setup{{k2, k2}, {2, 2}, {2, 2}, {-1, -1}, {{0, {0, 0}, {2, 2}}}, true});
+  CHECK(check_mixed_partial_at_upper_corners_2d(space) > 0);
+}
+
+/// The cells of the finest level of `space` whose upper bound is 0.5, a dyadic point of every
+/// setup of the test below.
+template <class T>
+std::vector<I64> finest_cells_ending_at_half(const THBSplineSpace<T>& space) {
+  std::vector<I64> cells;
+  for (I64 cid = 0; cid < space.grid().num_cells(); ++cid) {
+    if (space.grid().cell_level(cid) == space.num_levels() - 1 &&
+        std::abs(space.grid().cell_bounds(cid).second[0] - 0.5) <= eps) {
+      cells.push_back(cid);
+    }
+  }
+  return cells;
+}
+
+/// Count the pairs of a cell and an untruncated function of a level coarser than the cell, active
+/// on it, whose level has an interior knot of multiplicity `degree + 1` at the cell's upper bound:
+/// the pairs for which `tabulate_1d` meets a coarser level whose search leaves the cell's span. The
+/// bounds and knots of the spaces that use it are dyadic, so equal up to `eps`.
+template <class T>
+I64 count_coarser_full_knot_bounds(const THBSplineSpace<T>& space) {
+  I64 count = 0;
+  const auto full = static_cast<I64>(space.degrees()[0]) + 1;
+  for (I64 cid = 0; cid < space.grid().num_cells(); ++cid) {
+    const I64 cell_level = space.grid().cell_level(cid);
+    const double hi = space.grid().cell_bounds(cid).second[0];
+    const pantr::thb::CellContributions cell = space.contributions(cid);
+    for (std::size_t j = 0; j < cell.size(); ++j) {
+      if (cell.levels[j] >= cell_level || space.truncated(cell.dofs[j]) != nullptr) {
+        continue;
+      }
+      const auto [knots, mult] =
+          space.level_space(cell.levels[j]).spaces()[0].unique_knots_and_multiplicity(true);
+      for (std::size_t i = 1; i + 1 < knots.size(); ++i) {
+        count += (mult[i] == full && std::abs(static_cast<double>(knots[i]) - hi) <= eps) ? 1 : 0;
+      }
+    }
+  }
+  return count;
+}
+
+/// The column of cell `cid`'s tabulation that holds the function of level `level` and index
+/// `index` (1D); the test requires it to exist.
+template <class T>
+std::size_t column_of(const THBSplineSpace<T>& space, I64 cid, I64 level, I64 index) {
+  const pantr::thb::CellContributions cell = space.contributions(cid);
+  for (std::size_t j = 0; j < cell.size(); ++j) {
+    if (cell.levels[j] == level && cell.multi_index(j)[0] == index) {
+      return j;
+    }
+  }
+  return cell.size();
+}
+
+// A root whose knot 0.5 has multiplicity 3 = degree + 1: the root is discontinuous there, and its
+// functions N1 (knots 0, 0, 1/4, 1/2) and N2 (0, 1/4, 1/2, 1/2) end at it from the left. With the
+// root cell [1/4, 1/2] refined, N1 (and N2 in the plain hierarchical basis) is an untruncated
+// function of level 0 active on the level-1 cell [3/8, 1/2], whose upper bound is that knot: a
+// level coarser than the cell, where the search puts 1/2 on the root span [1/2, 3/4], which none of
+// them is supported on, so every derivative would come out zero. The cell's ancestor span is
+// [1/4, 1/2]; the Cox-de Boor recurrence worked by hand on it gives
+//   N1 = 8 (1/2 - x)^2,   N2 = (1/2 - x) (24 x - 4),
+// so at x = 1/2 the orders 0, 1, 2 are N1: 0, 0, 16 and N2: 0, -8, -48. The sum of the truncated
+// basis is 1, so its first derivatives sum to zero there.
+TEST_CASE("THBSplineSpace: a bound on a coarser level's full knot gets the cell's limit") {
+  const std::vector<double> knots = {0.0, 0.0, 0.0, 0.25, 0.5, 0.5, 0.5, 0.75, 1.0, 1.0, 1.0};
+  const auto check = [&](bool truncate, std::vector<Refine> refinements, bool plain_n2) {
+    const THBSplineSpace<double> space =
+        make_space(Setup{{knots}, {2}, {2}, {std::nullopt}, std::move(refinements), truncate});
+    REQUIRE(count_coarser_full_knot_bounds(space) > 0);
+    const std::vector<I64> cells = finest_cells_ending_at_half(space);
+    REQUIRE(cells.size() == 1);
+    const I64 cid = cells[0];
+    const double delta = value_delta(space);
+    const double hi = space.grid().cell_bounds(cid).second[0];
+    // The analytic derivatives of the function of level 0 and index `index` at the bound.
+    const auto expect = [&](I64 index, const std::vector<double>& want) {
+      const std::size_t j = column_of(space, cid, 0, index);
+      REQUIRE(j < space.num_active_on(cid));
+      REQUIRE(space.truncated(space.active_basis(cid)[j]) == nullptr);
+      for (I64 order = 0; order < 3; ++order) {
+        CAPTURE(index);
+        CAPTURE(order);
+        const double got = tabulate(space, cid, {hi}, {order}).values.data()[j];
+        CHECK(std::abs(got - want[static_cast<std::size_t>(order)]) <=
+              delta * (1.0 + std::abs(want[static_cast<std::size_t>(order)])));
+      }
+    };
+    expect(1, {0.0, 0.0, 16.0});
+    if (plain_n2) {
+      expect(2, {0.0, -8.0, -48.0});
+    }
+    if (truncate) {
+      // The partition of unity and its derivative, at the bound and inside the cell, where a wrong
+      // map from the cell to its level-0 span shows as well.
+      const double mid = 0.5 * (space.grid().cell_bounds(cid).first[0] + hi);
+      CHECK(std::abs(basis_sum(space, cid, {hi}) - 1.0) <= unity_bound(space));
+      CHECK(std::abs(basis_sum(space, cid, {mid}) - 1.0) <= unity_bound(space));
+      const pantr::thb::TabulatedBasis slope = tabulate(space, cid, {hi}, {1});
+      double sum = 0.0;
+      double magnitude = 0.0;
+      for (std::size_t j = 0; j < slope.dofs.size(); ++j) {
+        sum += slope.values.data()[j];
+        magnitude += std::abs(slope.values.data()[j]);
+      }
+      CHECK(std::abs(sum) <= delta * (1.0 + magnitude));
+    }
+    CHECK(check_edge_derivatives_1d(space) > 0);
+  };
+  SUBCASE("THB, one level below") { check(true, {{0, {1}, {2}}}, false); }
+  SUBCASE("HB, one level below") { check(false, {{0, {1}, {2}}}, true); }
+  SUBCASE("THB, two levels below") { check(true, {{0, {1}, {2}}, {1, {3}, {4}}}, false); }
+}
+
+// An upper bound on a knot of lower multiplicity than degree + 1 stays where the search puts it,
+// on the span to the right of the cell, so a derivative of an order above the continuity there is
+// that piece's (documented at `THBSplineSpace::tabulate_basis`); a function of the cell the right
+// piece lacks has derivative zero there, as the function itself has to the right of its support.
+// A knot of multiplicity `m` puts the first functions of the two spans `m` apart, and the span is
+// taken back to the cell's only above `degree`: the two cases below are the multiplicities just
+// under it for degree 2, `m = 1` (C^1) and `m = 2` (C^0), so a threshold lowered to `degree` (which
+// fires at `m = 2`) or to 1 (which fires at both) changes the answer.
+TEST_CASE(
+    "THBSplineSpace: a derivative above the continuity at an upper bound is the right piece's") {
+  const auto check = [](const std::vector<double>& knots, I64 cid, I64 order,
+                        const std::vector<double>& want) {
+    const THBSplineSpace<double> space =
+        make_space(Setup{{knots}, {2}, {2}, {std::nullopt}, {}, true});
+    const double hi = space.grid().cell_bounds(cid).second[0];
+    const pantr::thb::TabulatedBasis tab = tabulate(space, cid, {hi}, {order});
+    REQUIRE(tab.dofs.size() == want.size());
+    for (std::size_t j = 0; j < want.size(); ++j) {
+      CAPTURE(j);
+      CHECK(std::abs(tab.values.data()[j] - want[j]) <=
+            value_delta(space) * (1.0 + std::abs(want[j])));
+    }
+  };
+  SUBCASE("a simple knot, C^1: order 2 of cell 0 at 1/4") {
+    // k2 = {0, 0, 0, 1/4, 1/2, ...}: cell 0 holds N0, N1, N2. On the cell (width w = 1/4)
+    // N0 = (1 - x / w)^2 and N2 = (x / w)^2 / 2, so N0'' = 2 / w^2 = 32 and N2'' = 16, and N1 =
+    // 1 - N0 - N2 gives -48: the cell's own piece is (32, -48, 16). On [1/4, 1/2], N0 is absent,
+    // N1 = 8 (1/2 - x)^2 gives 16, and N2 = (1 + 2 s - 2 s^2) / 2 with s = 4 (x - 1/4) gives
+    // -2 / w^2 = -32: the right piece is (0, 16, -32).
+    check(k2, 0, 2, {0.0, 16.0, -32.0});
+  }
+  SUBCASE("a double knot, C^0: orders 0, 1 and 2 of cell 1 at 1/2") {
+    // {0, 0, 0, 1/4, 1/2, 1/2, 3/4, 1, 1, 1}: cell 1 = [1/4, 1/2] holds N1, N2, N3 and its upper
+    // bound is a knot of multiplicity 2, where the values are continuous: N1 = N2 = 0, N3 = 1
+    // (the knot window 1/4, 1/2, 1/2, 3/4 peaks there). Order 1: the right piece of N3 is
+    // 16 (3/4 - x)^2, slope -8, and N1, N2 vanish to the right; the cell's own piece of N3 is
+    // 16 (x - 1/4)^2, slope +8, with N1 and N2 not zero. Order 2: N3'' = 32 on both pieces, and
+    // N1, N2 absent to the right.
+    const std::vector<double> knots = {0.0, 0.0, 0.0, 0.25, 0.5, 0.5, 0.75, 1.0, 1.0, 1.0};
+    check(knots, 1, 0, {0.0, 0.0, 1.0});
+    check(knots, 1, 1, {0.0, 0.0, -8.0});
+    check(knots, 1, 2, {0.0, 0.0, 32.0});
+  }
+}
+
+TEST_CASE("THBSplineSpace: degree 0 basis is the cell's indicator at both bounds of every cell") {
+  // Every knot of a degree-0 space has multiplicity 1 = degree + 1, so every upper bound of a cell
+  // is a knot of full multiplicity: the search takes the span to the right, whose function is not
+  // the cell's, and the basis summed to 0 at the upper bound of every cell short of the domain's
+  // end. Three levels, so cells of every level.
+  const THBSplineSpace<double> space = make_space(Setup{{{0.0, 0.25, 0.5, 0.75, 1.0}},
+                                                        {0},
+                                                        {2},
+                                                        {std::nullopt},
+                                                        {{0, {0}, {2}}, {1, {0}, {2}}},
+                                                        true});
+  REQUIRE(space.grid().num_cells() == 8);
+  check_unity_at_every_edge_1d(space);
+}
+
 /// Derivatives against central finite differences of the values.
 ///
 /// On a cell every function is a polynomial of degree at most `p` in each variable, so a central
@@ -825,7 +1192,7 @@ TEST_CASE(
 template <class T>
 void check_derivatives(const THBSplineSpace<T>& space) {
   const std::size_t d = space.dim();
-  const double delta = build_slack * value_error_units(space) * eps;
+  const double delta = value_delta(space);
   const bool mixed_exact =
       d >= 2 && *std::max_element(space.degrees().begin(), space.degrees().end()) <= 2;
   for (I64 cid = 0; cid < space.grid().num_cells(); ++cid) {
