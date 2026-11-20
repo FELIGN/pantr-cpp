@@ -564,7 +564,11 @@ TEST_CASE_TEMPLATE("create_coons_surface: knots a rounding apart are one knot, t
   const Curves<T> curves = {
       {{line<T>({0, 0, 0}, {0, 2, 0}), line<T>({3, 0, 0}, {3, 2, 0})}, {a, b}}};
   const bs::Bspline<T> s = cad::create_coons_surface<T>(curves);
-  CHECK(s.dim() == 2);
+  REQUIRE(s.dim() == 2);
+  // The two degree-2 curves of 4 functions each, blended with lines of 2: no knot was added.
+  const std::vector<long long> sizes = {static_cast<long long>(s.num_basis(0)),
+                                        static_cast<long long>(s.num_basis(1))};
+  CHECK((sizes == std::vector<long long>{4, 2} || sizes == std::vector<long long>{2, 4}));
 }
 
 TEST_CASE("create_coons_surface: a NaN corner is not refused, as in the reference implementation") {
@@ -1137,5 +1141,9 @@ TEST_CASE_TEMPLATE("create_coons_volume: u edges of knots a rounding apart are o
   faces[2][0] = with_u_knot(faces[2][0], shifted);
   faces[2][1] = with_u_knot(faces[2][1], shifted);
   const bs::Bspline<T> v = cad::create_coons_volume<T>(faces);
-  CHECK(v.dim() == 3);
+  REQUIRE(v.dim() == 3);
+  // One interior u knot shared by every face (3 functions), the bilinear v and w (2 each).
+  CHECK(v.num_basis(0) == 3);
+  CHECK(v.num_basis(1) == 2);
+  CHECK(v.num_basis(2) == 2);
 }

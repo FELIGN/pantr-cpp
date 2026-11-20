@@ -339,6 +339,18 @@ TEST_CASE_TEMPLATE("create_ruled: knots a rounding apart are one knot, in either
   }
 }
 
+TEST_CASE_TEMPLATE("create_ruled: unequal sizes after make_compat are still refused", T, float,
+                   double) {
+  // The count guard stays reachable: a first knot class of `degree + 2` knots is a space whose
+  // first domain class is longer than `degree + 1`, and make_compat matches interior classes only,
+  // so it returns 4 and 5 functions and `create_ruled` refuses rather than read out of bounds.
+  const bs::Bspline<T> a = make_spline<T>({Dir{{0, 0, 0, 0.5, 1, 1, 1}, 2}}, 3, false, 1);
+  const bs::Bspline<T> b = make_spline<T>({Dir{{0, 0, 0, 0, 0.5, 1, 1, 1}, 2}}, 3, false, 2);
+  CHECK(message_of([&] { static_cast<void>(cad::create_ruled<T>(a, b)); })
+            .find("ruled requires B-splines with equal numbers of control points after making "
+                  "them compatible, got 4 and 5.") != std::string::npos);
+}
+
 TEST_CASE_TEMPLATE("make_compat: interior knots within the tolerance of each other are one class",
                    T, float, double) {
   // A seeded property test of 100 pairs of curves (each of degree 2 or 3) whose interior knots are
@@ -386,6 +398,13 @@ TEST_CASE_TEMPLATE("make_compat: interior knots within the tolerance of each oth
         CHECK(std::abs(k0[i] - k1[i]) < tol);
       }
       for (std::size_t s = 0; s < 2; ++s) {
+        // No knot of an input moves: a space merges a class onto its first knot, so a knot
+        // inserted below one the input has would replace it, a change the evaluation at 11
+        // points can miss.
+        const std::vector<double> out_knots = knots_as_double(made[s], 0);
+        for (const double k : knots_as_double(pair[s], 0)) {
+          CHECK(std::find(out_knots.begin(), out_knots.end(), k) != out_knots.end());
+        }
         const std::vector<double> before = evaluate_at(pair[s], us);
         const std::vector<double> after = evaluate_at(made[s], us);
         const double geometry_tol = tier_tolerance(made[s]);
