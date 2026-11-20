@@ -107,19 +107,20 @@ template <StorageFloat T>
 /// term is rational, every term is promoted to rational first (unit weights).
 ///
 /// Args:
-///     terms (const std::vector<bspline::Bspline<T>>&): B-splines that share one space (after
-///         `make_compat`); the first decides the space of the result.
+///     terms (const std::vector<bspline::Bspline<T>>&): B-splines made compatible by
+///         `make_compat`, whose knots agree in number per interior knot class but can differ in
+///         value within one (see `make_compat`); the first decides the space of the result.
 ///     signs (std::span<const int>): The coefficient (+1 or -1) of each term.
 ///
 /// Returns:
 ///     bspline::Bspline<T>: The combination, rational when any term is.
 ///
 /// Raises:
-///     value_error: The terms' control nets have different shapes. After `make_compat` they have
-///         one number of basis functions per direction, which the matching of knot classes at a
-///         tolerance is meant to guarantee, but a knot a rounding away from another can leave
-///         different numbers (the case `create_ruled` refuses too); the reference implementation
-///         raised a NumPy broadcast error there.
+///     value_error: The terms' control nets have different shapes. `make_compat` matches the
+///         interior knot classes only, so an end class holding more knots in one term than in
+///         another (more than `degree + 1`, for example) leaves different numbers (the case
+///         `create_ruled` refuses too); the reference implementation raised a NumPy broadcast
+///         error there.
 template <StorageFloat T>
 [[nodiscard]] bspline::Bspline<T> combine_terms(const std::vector<bspline::Bspline<T>>& terms,
                                                 std::span<const int> signs) {
@@ -669,7 +670,7 @@ void verify_corners_3d(const std::vector<EdgeReadings<T>>& edges, double tier) {
 /// Attributes:
 ///     edge (const EdgeReadings<T>*): The edge, for the labels the mismatch message names.
 ///     a (bspline::Bspline<T>): `face_a`'s reading, made compatible.
-///     b (bspline::Bspline<T>): `face_b`'s reading, same space.
+///     b (bspline::Bspline<T>): `face_b`'s reading, made compatible with `a`.
 ///     rational (bool): Whether the two readings carry a trailing weight column.
 template <StorageFloat T>
 struct ComparedEdge {
@@ -688,11 +689,14 @@ struct ComparedEdge {
 /// model size leaves all six faces interpolated to `2e-15`. That is the classical compatibility
 /// condition for transfinite interpolation, observed here rather than proved.
 ///
-/// Made compatible, the two readings span the same space, where a spline is determined by its
-/// control points; comparing those is therefore an exact comparison of the two curves and needs no
-/// sampling. The tolerance is `verify_corners_2d`'s tier and rule applied to what is graded here,
-/// which is a control-point coefficient rather than a point on the curve: the conservative tier
-/// times the largest absolute coefficient over all twelve compared edges.
+/// Made compatible, the two readings share their interior knot classes, the knot values within
+/// one class aside (see `make_compat`); their end classes are as the faces gave them, and the
+/// shape check below catches a difference there only when it changes the number of control
+/// points. Where the two span one space, a spline is determined by its control points, so
+/// comparing those is a comparison of the two curves and needs no sampling. The tolerance is
+/// `verify_corners_2d`'s tier and rule applied to what is graded here, which is a control-point
+/// coefficient rather than a point on the curve: the conservative tier times the largest absolute
+/// coefficient over all twelve compared edges.
 ///
 /// **Each column group is graded against its own magnitude.** A rational edge is compared as
 /// homogeneous control points, whose coordinate columns carry units of length times weight beside

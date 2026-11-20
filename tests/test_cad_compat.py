@@ -7,7 +7,7 @@ import pytest
 from numpy.testing import assert_allclose
 
 from pantr.bspline import Bspline, BsplineSpace, BsplineSpace1D
-from pantr.cad import create_circle, create_line, make_compat
+from pantr.cad import create_circle, create_line, create_ruled, make_compat
 
 _KNOT_TOL = 1e-14
 
@@ -145,6 +145,26 @@ class TestCompatKnotMerge:
         # 0.5 should appear with multiplicity 2
         count_05 = np.sum(np.abs(knots1 - 0.5) < _KNOT_TOL)
         assert count_05 == 2
+
+    @pytest.mark.parametrize("offset", [0.25, -0.25])
+    def test_knots_within_tolerance_are_one_knot(self, offset: float) -> None:
+        """Test that interior knots a quarter tolerance apart give equal sizes in either order."""
+
+        def curve(interior: float, seed: int) -> Bspline:
+            sp = BsplineSpace1D(np.array([0.0, 0, 0, interior, 1, 1, 1]), 2)
+            rng = np.random.default_rng(seed)
+            return Bspline(BsplineSpace([sp]), rng.uniform(size=(sp.num_basis, 3)))
+
+        a = curve(0.5, 1)
+        tol = a.space.spaces[0].tolerance
+        b = curve(0.5 + offset * tol, 2)
+        assert b.space.spaces[0].knots[3] != 0.5
+        for first, second in ((a, b), (b, a)):
+            r1, r2 = make_compat(first, second)
+            assert r1.space.num_basis[0] == 4
+            assert r2.space.num_basis[0] == 4
+            ruled = create_ruled(first, second)
+            assert ruled.space.num_basis[0] == 4
 
 
 class TestCompatSurface:

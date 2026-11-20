@@ -1,8 +1,8 @@
 """B-spline compatibility: match degrees and knot vectors across objects.
 
 Provides :func:`make_compat`, which takes N B-splines and returns new objects
-that share the same degree along each specified axis, and the same knot vector
-where their breakpoints agree exactly.
+that share the same degree along each specified axis, and the same number of
+knots per interior knot class there.
 This is the prerequisite for operations like ``create_ruled``,
 ``create_coons_surface``, and ``join`` that combine control points from
 different B-splines.
@@ -25,12 +25,16 @@ def make_compat(
     """Make B-splines compatible along specified parametric axes.
 
     Returns new B-splines that share the same polynomial degree along
-    the given axes, and the same knot vector when their breakpoints,
-    after the remapping below, agree exactly. Breakpoints that differ
-    only by rounding (``0.1 * 3`` against ``0.3``) are not unified: the
-    results can then differ in their knot values and in the number of
-    knots. The geometric mapping of each B-spline is preserved up to the
-    rounding of the knot insertion and degree elevation.
+    the given axes and the same number of knots in each interior knot
+    class there. Breakpoints within the first B-spline's knot tolerance
+    of each other (``0.1 * 3`` against ``0.3``) are one class, as a space
+    groups its own knots; the results then have equal numbers of knots
+    there, whose values can differ within the class. Interior
+    breakpoints that agree exactly give identical interior knots. The
+    end classes are not matched: a B-spline whose end class holds more
+    knots than another's keeps its extra basis functions. The geometric
+    mapping of each B-spline is preserved up to the rounding of the
+    knot insertion and degree elevation.
 
     The algorithm proceeds in three stages:
 
@@ -39,7 +43,9 @@ def make_compat(
     2. **Same degree** -- elevate each B-spline to the maximum degree
        per axis.
     3. **Merge knots** -- insert knots so all B-splines share the
-       same interior breakpoints with the maximum multiplicity.
+       same interior knot classes with the maximum multiplicity; a
+       B-spline lacking knots in a class gets them at its own knot
+       there, or at the class's smallest breakpoint where it has none.
 
     Periodic B-splines are converted to open form before processing.
 
@@ -52,8 +58,9 @@ def make_compat(
             of ``int`` selects specific axes.
 
     Returns:
-        list[Bspline]: New B-splines of equal degrees along the specified
-        axes, with identical knot vectors there when the breakpoints agree
+        list[Bspline]: New B-splines of equal degrees and equal numbers
+        of knots per interior knot class along the specified axes, with
+        identical interior knots there when the breakpoints agree
         exactly.
 
     Raises:

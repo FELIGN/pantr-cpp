@@ -57,8 +57,10 @@
 #include <limits>
 #include <numbers>
 #include <optional>
+#include <random>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace bs = pantr::bspline;
@@ -306,30 +308,112 @@ TEST_CASE_TEMPLATE("create_ruled: control points of different widths are refused
   CHECK(message(r3, rat1).find("got 4 and 2 after promotion") != std::string::npos);
 }
 
-TEST_CASE_TEMPLATE("create_ruled: knots a rounding apart leave unequal sizes, which are refused", T,
-                   float, double) {
-  // Inherited from the reference implementation, whose matching of knot classes looks for the
-  // counterpart of a knot only at the first knot not below it: an interior knot a quarter of the
-  // space tolerance above another is a counterpart of it in one space and not in the other, so
-  // `make_compat` inserts a knot in one and none in the other and returns B-splines with 5 and 4
-  // functions (reproduced here, and the reference's ruled surface then failed with a NumPy
-  // broadcast error where this one raises a value_error of its own).
+TEST_CASE_TEMPLATE("create_ruled: knots a rounding apart are one knot, in either order", T, float,
+                   double) {
+  // An interior knot a quarter of the space tolerance above (or below) another is the same knot:
+  // `make_compat` groups the union of the breakpoints into the spaces' own tolerance classes, so
+  // neither input gets an insertion and both keep 4 functions. The reference implementation
+  // matched a knot only against the first knot not below it, inserted a knot in one input and none
+  // in the other, and returned 5 and 4 functions, which `create_ruled` then refused.
   const bs::Bspline<T> a = curve<T>(2, {0.5}, 3, 1);
   const double tol = a.space().spaces()[0].tolerance();
-  const double shifted = static_cast<double>(static_cast<T>(0.5 + 0.25 * tol));
-  REQUIRE(shifted > 0.5);
-  REQUIRE(shifted - 0.5 < tol);
-  const bs::Bspline<T> b = curve<T>(2, {shifted}, 3, 2);
-  const std::array<bs::Bspline<T>, 2> pair = {a, b};
-  const std::vector<bs::Bspline<T>> made =
-      cad::make_compat<T>(std::span<const bs::Bspline<T>>(pair));
-  REQUIRE(made[0].num_basis(0) != made[1].num_basis(0));
+  for (const double sign : {1.0, -1.0}) {
+    CAPTURE(sign);
+    const double shifted = static_cast<double>(static_cast<T>(0.5 + sign * 0.25 * tol));
+    REQUIRE(shifted != 0.5);
+    REQUIRE(std::abs(shifted - 0.5) < tol);
+    const bs::Bspline<T> b = curve<T>(2, {shifted}, 3, 2);
+    for (const auto& [first, second] : {std::pair{&a, &b}, std::pair{&b, &a}}) {
+      const std::array<bs::Bspline<T>, 2> pair = {*first, *second};
+      const std::vector<bs::Bspline<T>> made =
+          cad::make_compat<T>(std::span<const bs::Bspline<T>>(pair));
+      CHECK(made[0].num_basis(0) == 4);
+      CHECK(made[1].num_basis(0) == 4);
+      const bs::Bspline<T> r = cad::create_ruled<T>(*first, *second);
+      CHECK(r.dim() == 2);
+      CHECK(r.num_basis(0) == 4);
+      // The end faces are the inputs, which needed no insertion: their control points, exactly.
+      CHECK(control_points_of(bs::boundary<T>(r, 1, 0)) == control_points_of(*first));
+      CHECK(control_points_of(bs::boundary<T>(r, 1, 1)) == control_points_of(*second));
+    }
+  }
+}
+
+TEST_CASE_TEMPLATE("create_ruled: unequal sizes after make_compat are still refused", T, float,
+                   double) {
+  // The count guard stays reachable: a first knot class of `degree + 2` knots is a space whose
+  // first domain class is longer than `degree + 1`, and make_compat matches interior classes only,
+  // so it returns 4 and 5 functions and `create_ruled` refuses rather than read out of bounds.
+  const bs::Bspline<T> a = make_spline<T>({Dir{{0, 0, 0, 0.5, 1, 1, 1}, 2}}, 3, false, 1);
+  const bs::Bspline<T> b = make_spline<T>({Dir{{0, 0, 0, 0, 0.5, 1, 1, 1}, 2}}, 3, false, 2);
   CHECK(message_of([&] { static_cast<void>(cad::create_ruled<T>(a, b)); })
             .find("ruled requires B-splines with equal numbers of control points after making "
-                  "them compatible, got") != std::string::npos);
-  CHECK(message_of([&] {
-          static_cast<void>(cad::create_ruled<T>(b, a));
-        }).find("equal numbers of control points") != std::string::npos);
+                  "them compatible, got 4 and 5.") != std::string::npos);
+}
+
+TEST_CASE_TEMPLATE("make_compat: interior knots within the tolerance of each other are one class",
+                   T, float, double) {
+  // A seeded property test of 100 pairs of curves (each of degree 2 or 3) whose interior knots are
+  // drawn from base values at least 16 tolerances apart, each perturbed per curve by a uniform
+  // offset in [-tol/4, tol/4] and given a multiplicity from 1 to the degree. Two knots of one base
+  // value are then within tol/2 (plus a rounding to T) of each other, one tolerance class, and
+  // knots of two base values more than 15 tolerances apart, two classes. For both argument orders
+  // the outputs must have equal numbers of functions, knot vectors equal knot for knot within the
+  // tolerance, and the geometry of their inputs. Oracle: the input itself, evaluated on its own
+  // knots at 11 points (a knot insertion and an elevation keep the curve), held to `tier_tolerance`
+  // as the compat tests hold every change of basis.
+  const double tol = curve<T>(2, {}).space().spaces()[0].tolerance();
+  // The base values: three on a decimal grid and a cluster of three at the 16-tolerance spacing.
+  const std::vector<double> base = {0.2, 0.5, 0.5 + 16.0 * tol, 0.5 + 32.0 * tol, 0.75, 0.9};
+  // `mt19937_64`'s sequence is fixed by the standard; the library's distributions are not.
+  std::mt19937_64 rng(13);
+  const auto uniform01 = [&rng] { return static_cast<double>(rng() >> 11) * 0x1.0p-53; };
+  const auto draw_curve = [&](unsigned seed) {
+    const int degree = 2 + static_cast<int>(rng() % 2);
+    std::vector<double> interior;
+    for (const double k : base) {
+      if (rng() % 2 == 0) {
+        continue;
+      }
+      const double value = static_cast<double>(static_cast<T>(k + (uniform01() - 0.5) * 0.5 * tol));
+      const auto mult = 1 + static_cast<std::size_t>(rng() % static_cast<unsigned>(degree));
+      interior.insert(interior.end(), mult, value);
+    }
+    return curve<T>(degree, interior, 3, seed);
+  };
+  const std::vector<double> us = linspace(0.0, 1.0, 11);
+  for (unsigned trial = 0; trial < 100; ++trial) {
+    CAPTURE(trial);
+    const bs::Bspline<T> a = draw_curve(2 * trial + 1);
+    const bs::Bspline<T> b = draw_curve(2 * trial + 2);
+    for (const auto& [first, second] : {std::pair{&a, &b}, std::pair{&b, &a}}) {
+      const std::array<bs::Bspline<T>, 2> pair = {*first, *second};
+      const std::vector<bs::Bspline<T>> made =
+          cad::make_compat<T>(std::span<const bs::Bspline<T>>(pair));
+      REQUIRE(made[0].num_basis(0) == made[1].num_basis(0));
+      const std::vector<double> k0 = knots_as_double(made[0], 0);
+      const std::vector<double> k1 = knots_as_double(made[1], 0);
+      REQUIRE(k0.size() == k1.size());
+      for (std::size_t i = 0; i < k0.size(); ++i) {
+        CHECK(std::abs(k0[i] - k1[i]) < tol);
+      }
+      for (std::size_t s = 0; s < 2; ++s) {
+        // No knot of an input moves: a space merges a class onto its first knot, so a knot
+        // inserted below one the input has would replace it, a change the evaluation at 11
+        // points can miss.
+        const std::vector<double> out_knots = knots_as_double(made[s], 0);
+        for (const double k : knots_as_double(pair[s], 0)) {
+          CHECK(std::find(out_knots.begin(), out_knots.end(), k) != out_knots.end());
+        }
+        const std::vector<double> before = evaluate_at(pair[s], us);
+        const std::vector<double> after = evaluate_at(made[s], us);
+        const double geometry_tol = tier_tolerance(made[s]);
+        for (std::size_t i = 0; i < before.size(); ++i) {
+          CHECK(std::abs(before[i] - after[i]) <= geometry_tol);
+        }
+      }
+    }
+  }
 }
 
 TEST_CASE_TEMPLATE("create_ruled: the dimensions are checked, equal first and then at most two", T,

@@ -149,9 +149,12 @@ template <StorageFloat T>
 /// Both rows are compared in full, not only at the corners of the shared face. Two patches meeting
 /// exactly at both ends of the seam and disagreeing in between produce a result that misses them
 /// along the whole interior of it, so the corners are necessary but not sufficient. By this point
-/// `prepare_for_join` has made the non-join axes compatible, so the two rows span the same space,
-/// where a spline is determined by its control points; comparing those is therefore an exact
-/// comparison of the two boundary patches and needs no sampling.
+/// `prepare_for_join` has made the non-join axes compatible, so the two rows share their interior
+/// knot classes, the knot values within one class aside (see `make_compat`); their end classes are
+/// as the inputs gave them, and the shape check catches a difference there only when it changes
+/// the number of control points. Where the two span one space, a spline is determined by its
+/// control points, so comparing those is a comparison of the two boundary patches and needs no
+/// sampling.
 ///
 /// The tolerance is `verify_corners_2d`'s tier (coons.hpp; its justification lives there and is
 /// not restated) times the largest absolute value over the two rows compared, applied to what is

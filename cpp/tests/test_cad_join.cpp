@@ -561,29 +561,41 @@ TEST_CASE_TEMPLATE("join: control points of different ranks are refused", T, flo
         "shapes after being made compatible, (3,) and (2,).");
 }
 
-TEST_CASE_TEMPLATE("join: knots a rounding apart leave unequal seams, which are refused", T, float,
-                   double) {
-  // Inherited from make_compat (see test_cad_operations.cpp): the transverse knots 0.5 and 0.5 +
-  // a quarter of the space tolerance leave B-splines with unequal numbers of functions.
-  const auto make = [](double interior) {
-    return surface_flat<T>(1, {}, 2, {interior}, std::vector<double>(2 * 4 * 3, 0.0));
+TEST_CASE_TEMPLATE("join: transverse knots a rounding apart are one knot, the seams match", T,
+                   float, double) {
+  // The transverse knots 0.5 and 0.5 + a quarter of the space tolerance are one knot for
+  // make_compat (see test_cad_operations.cpp): the B-splines come out with equal numbers of
+  // functions and the join is built. The reference implementation left them unequal and refused.
+  // Three rows of 4 dyadic control points: `a` spans rows 0 and 1, `b` rows 1 and 2, so the
+  // seam rows agree exactly and are averaged exactly.
+  std::vector<double> rows;
+  for (std::size_t r = 0; r < 3; ++r) {
+    for (std::size_t c = 0; c < 4; ++c) {
+      const double x = static_cast<double>(r);
+      const double y = static_cast<double>(c);
+      rows.insert(rows.end(), {x, y, 0.25 * x * y + 0.125 * y * y});
+    }
+  }
+  const auto make = [&rows](double interior, std::size_t first_row) {
+    const auto start = rows.begin() + static_cast<std::ptrdiff_t>(first_row * 4 * 3);
+    return surface_flat<T>(1, {}, 2, {interior}, std::vector<double>(start, start + 2 * 4 * 3));
   };
-  const bs::Bspline<T> a = make(0.5);
+  const bs::Bspline<T> a = make(0.5, 0);
   const double tol = a.space().spaces()[1].tolerance();
   const double shifted = static_cast<double>(static_cast<T>(0.5 + 0.25 * tol));
   REQUIRE(shifted > 0.5);
-  const bs::Bspline<T> b = make(shifted);
+  const bs::Bspline<T> b = make(shifted, 1);
   const std::array<bs::Bspline<T>, 2> pair = {a, b};
   const std::vector<bs::Bspline<T>> made =
       cad::make_compat<T>(std::span<const bs::Bspline<T>>(pair),
                           std::optional<std::vector<long long>>(std::vector<long long>{1}));
-  REQUIRE(made[0].num_basis(1) != made[1].num_basis(1));
-  const std::string expect =
-      "Shared boundary mismatch on axis 0: the two B-splines have junction faces of "
-      "different shapes after being made compatible, (" +
-      std::to_string(made[0].num_basis(1)) + ", 3) and (" + std::to_string(made[1].num_basis(1)) +
-      ", 3).";
-  CHECK(refusal([&] { static_cast<void>(cad::join<T>(a, b, 0)); }) == expect);
+  CHECK(made[0].num_basis(1) == 4);
+  CHECK(made[1].num_basis(1) == 4);
+  const bs::Bspline<T> j = cad::join<T>(a, b, 0);
+  CHECK(j.num_basis(0) == 3);
+  CHECK(j.num_basis(1) == 4);
+  // The three rows, the seam row once: no insertion was needed, so exactly.
+  CHECK(control_points_of(j) == rows);
 }
 
 TEST_CASE("join: the tier handed to the detail overload is the one used") {
