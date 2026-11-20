@@ -1197,6 +1197,39 @@ TEST_CASE("inherited: split of a float32 spline at a value near a knot") {
   CHECK(points_of(near.second) == points_of(at.second));
 }
 
+TEST_CASE("split: a float32 value that is a domain end is refused as one") {
+  // 1 - 2^-20 - 7e-9 is more than the tolerance 2^-20 inside the end 1 in double, and rounds in
+  // float to 1 - 2^-20, within it: it is the end, by the comparison that decides which knot a value
+  // is, and the split must refuse it as not strictly inside rather than cut an empty part.
+  const bs::Bspline<float> bf = near_knot_curve();
+  const double near_end = 1.0 - 0x1p-20 - 7e-9;
+  REQUIRE(near_end < 1.0 - bf.space().spaces()[0].tolerance());
+  REQUIRE(static_cast<double>(1.0F - static_cast<float>(near_end)) <=
+          bf.space().spaces()[0].tolerance());
+  CHECK_THROWS_WITH_AS(static_cast<void>(bs::split<float>(bf, 0, near_end)),
+                       doctest::Contains("value must be strictly inside the domain"),
+                       pantr::value_error);
+}
+
+TEST_CASE("restrict: a bound within the tolerance of two knots is the nearer one") {
+  // Unsnapped float knots 0.5 and 0.5 + 1.5 tol; the bound 0.5 + 0.9 tol is within the tolerance
+  // of both, nearer the second: the restriction starts there, a clamped start of that knot.
+  const double tol = 0x1p-20;
+  const double second = static_cast<double>(static_cast<float>(0.5 + 1.5 * tol));
+  const std::vector<float> k = {0, 0, 0, 0.5F, static_cast<float>(second), 1, 1, 1};
+  std::vector<bs::BsplineSpace1D<float>> spaces;
+  spaces.emplace_back(sp(k), 2, false, false);
+  const std::vector<float> cp = {1, 2, 3, 4, 5};
+  const bs::Bspline<float> b(bs::BsplineSpace<float>(std::move(spaces)), sp(cp), false);
+  REQUIRE(b.space().spaces()[0].tolerance() == tol);
+  const bs::Bspline<float> r = bs::restrict<float>(
+      b, std::vector<std::optional<bs::Bounds>>{bs::Bounds{0.5 + 0.9 * tol, 0.9}});
+  const std::vector<float> got = knots_of(r, 0);
+  REQUIRE(got.size() >= 3);
+  CHECK(static_cast<double>(got[0]) == second);
+  CHECK(static_cast<double>(got[2]) == second);
+}
+
 // Refining an axis in place of the axis must give, value for value, what refining the axis moved to
 // the front gives (`flatten_along_axis`, `insert_knots_1d`, `unflatten_along_axis`, the route the
 // periodic branch still takes): the same bands, applied in the same order. It is compared on a 3D

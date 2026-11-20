@@ -990,6 +990,31 @@ TEST_CASE("product: a short direction beside a long one leaves no control point 
   }
 }
 
+TEST_CASE("product: a breakpoint above degree + 1 leaves no control point unwritten") {
+  // Oracle: determinism. A degree-1 operand whose interior knot 0.5 repeats 3 = degree + 2 times
+  // gives the degree-2 product a breakpoint of multiplicity 3 + 1 = 4 there, one above the Bezier
+  // value 3, so the Bezier form has a row no element writes. The heap is first filled with NaN in
+  // the sizes the product allocates, so a row left as allocated reads NaN, and two products of the
+  // same operands must agree.
+  const Dir d{{0.0, 0.0, 0.5, 0.5, 0.5, 1.0, 1.0}, 1};
+  const bs::Bspline<double> f = make_spline<double>({d}, 1, false, 3U);
+  const bs::Bspline<double> g = make_spline<double>({d}, 1, false, 4U);
+  {
+    std::vector<std::vector<double>> junk;
+    for (std::size_t n = 1; n <= 256; ++n) {
+      junk.emplace_back(n, std::numeric_limits<double>::quiet_NaN());
+    }
+  }
+  const bs::Bspline<double> h = bs::multiply<double>(f, g);
+  REQUIRE(interior_structure<double>(dir_space<double>(h, 0)).at(0).mult == 4);
+  for (const double v : h.control_points()) {
+    REQUIRE(std::isfinite(v));
+  }
+  const bs::Bspline<double> again = bs::multiply<double>(f, g);
+  CHECK(std::vector<double>(h.control_points().begin(), h.control_points().end()) ==
+        std::vector<double>(again.control_points().begin(), again.control_points().end()));
+}
+
 TEST_CASE("product: each direction groups its knots at its own tolerance") {
   // Oracle: exact-rational values, and tabulated structure. Direction 0 (float, [0, 4e-6]) has
   // three interior knots 0.4e-6 apart, far above its own tolerance (about 4e-12) and below that
