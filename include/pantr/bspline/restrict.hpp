@@ -420,7 +420,8 @@ template <StorageFloat T>
 ///     b (const Bspline<T>&): The B-spline.
 ///     direction (long long): The parametric direction, in `[0, dim)`.
 ///     value (double): The parameter value, strictly inside the domain of that direction (further
-///         than the space's tolerance from both ends).
+///         than the space's tolerance from both ends, and not an end by the comparison
+///         `detail::snap_to_knot` makes).
 ///
 /// Returns:
 ///     std::pair<Bspline<T>, Bspline<T>>: `(left, right)`: the sub-splines on
@@ -444,7 +445,10 @@ template <StorageFloat T>
   const auto a = static_cast<double>(dom_lo);
   const auto e = static_cast<double>(dom_hi);
   const double tol = space.tolerance();
-  if (value <= a + tol || value >= e - tol) {
+  // The value is judged inside the domain as the split will use it: a value that is the end knot
+  // by the snap's comparison is that end, though it be further than `tol` from it in `double`.
+  const double at = detail::snap_to_knot<T>(space.knots(), value, tol);
+  if (at <= a + tol || at >= e - tol) {
     throw value_error("value must be strictly inside the domain (" + py_repr(a) + ", " +
                       py_repr(e) + "), got " + py_repr(value) + ".");
   }
