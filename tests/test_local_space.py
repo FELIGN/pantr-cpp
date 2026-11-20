@@ -336,6 +336,7 @@ def test_build_local_unsnapped_space_window_matches_the_grid() -> None:
     knots = [0, 0, 0, 1, 1 + 1e-12, 2, 3, 4, 1e6, 1e6, 1e6]
     space = BsplineSpace([BsplineSpace1D(knots, 2, False, False)])
     loc = build_local(space, Partition(np.array([0, 1, 1, 1, 1], dtype=np.int32), n_parts=2), 0)
+    assert isinstance(loc.space, BsplineSpace)
     assert loc.space.num_total_intervals == 2
     np.testing.assert_array_equal(loc.local_to_global_cell, [0, 1])
 
