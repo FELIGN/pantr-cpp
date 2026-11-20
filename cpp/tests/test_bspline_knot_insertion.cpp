@@ -1212,8 +1212,9 @@ TEST_CASE("split: a float32 value that is a domain end is refused as one") {
 }
 
 TEST_CASE("restrict: a bound within the tolerance of two knots is the nearer one") {
-  // Unsnapped float knots 0.5 and 0.5 + 1.5 tol; the bound 0.5 + 0.9 tol is within the tolerance
-  // of both, nearer the second: the restriction starts there, a clamped start of that knot.
+  // Float knots 0.5 and 0.5 + 1.5 tol. The bound 0.5 + 0.9 tol rounds to 0.5 + 0.875 tol, within
+  // the tolerance of both and nearer the second; 0.5 + 0.6 tol rounds to 0.5 + 0.625 tol, nearer
+  // the first. Each restriction starts with a clamped copy of the nearer knot.
   const double tol = 0x1p-20;
   const double second = static_cast<double>(static_cast<float>(0.5 + 1.5 * tol));
   const std::vector<float> k = {0, 0, 0, 0.5F, static_cast<float>(second), 1, 1, 1};
@@ -1222,12 +1223,19 @@ TEST_CASE("restrict: a bound within the tolerance of two knots is the nearer one
   const std::vector<float> cp = {1, 2, 3, 4, 5};
   const bs::Bspline<float> b(bs::BsplineSpace<float>(std::move(spaces)), sp(cp), false);
   REQUIRE(b.space().spaces()[0].tolerance() == tol);
-  const bs::Bspline<float> r = bs::restrict<float>(
-      b, std::vector<std::optional<bs::Bounds>>{bs::Bounds{0.5 + 0.9 * tol, 0.9}});
-  const std::vector<float> got = knots_of(r, 0);
-  REQUIRE(got.size() >= 3);
-  CHECK(static_cast<double>(got[0]) == second);
-  CHECK(static_cast<double>(got[2]) == second);
+  for (const auto& [factor, want] : {std::pair{0.9, second}, std::pair{0.6, 0.5}}) {
+    CAPTURE(factor);
+    const double bound = 0.5 + factor * tol;
+    const auto rounded = static_cast<double>(static_cast<float>(bound));
+    REQUIRE(rounded - 0.5 <= tol);
+    REQUIRE(second - rounded <= tol);
+    const bs::Bspline<float> r =
+        bs::restrict<float>(b, std::vector<std::optional<bs::Bounds>>{bs::Bounds{bound, 0.9}});
+    const std::vector<float> got = knots_of(r, 0);
+    REQUIRE(got.size() >= 3);
+    CHECK(static_cast<double>(got[0]) == want);
+    CHECK(static_cast<double>(got[2]) == want);
+  }
 }
 
 // Refining an axis in place of the axis must give, value for value, what refining the axis moved to

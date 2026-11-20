@@ -990,12 +990,13 @@ TEST_CASE("product: a short direction beside a long one leaves no control point 
   }
 }
 
-TEST_CASE("product: a breakpoint above degree + 1 leaves no control point unwritten") {
-  // Oracle: determinism. A degree-1 operand whose interior knot 0.5 repeats 3 = degree + 2 times
-  // gives the degree-2 product a breakpoint of multiplicity 3 + 1 = 4 there, one above the Bezier
-  // value 3, so the Bezier form has a row no element writes. The heap is first filled with NaN in
-  // the sizes the product allocates, so a row left as allocated reads NaN, and two products of the
-  // same operands must agree.
+TEST_CASE("product: a breakpoint above degree + 1 zero-fills the row no element writes") {
+  // Oracle: determinism and the documented zero. A degree-1 operand whose interior knot 0.5
+  // repeats 3 = degree + 2 times gives the degree-2 product a breakpoint of multiplicity
+  // 3 + 1 = 4 there, one above degree + 1 = 3, so the Bezier form has a row no element writes:
+  // row 3, between the three rows of each element. The heap is first filled with NaN in the sizes
+  // the product allocates, so a row left as allocated reads NaN; the row must be zero, and two
+  // products of the same operands must agree.
   const Dir d{{0.0, 0.0, 0.5, 0.5, 0.5, 1.0, 1.0}, 1};
   const bs::Bspline<double> f = make_spline<double>({d}, 1, false, 3U);
   const bs::Bspline<double> g = make_spline<double>({d}, 1, false, 4U);
@@ -1010,6 +1011,8 @@ TEST_CASE("product: a breakpoint above degree + 1 leaves no control point unwrit
   for (const double v : h.control_points()) {
     REQUIRE(std::isfinite(v));
   }
+  REQUIRE(h.control_points().size() == 7);
+  CHECK(h.control_points()[3] == 0.0);
   const bs::Bspline<double> again = bs::multiply<double>(f, g);
   CHECK(std::vector<double>(h.control_points().begin(), h.control_points().end()) ==
         std::vector<double>(again.control_points().begin(), again.control_points().end()));
