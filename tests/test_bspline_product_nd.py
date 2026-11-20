@@ -810,3 +810,27 @@ class TestCrossDirectionTolerance:
         )
         want = np.repeat(short, [3, 0, 2, 2, 2, 3, 0])
         np.testing.assert_array_equal(h.space.spaces[0 if short_first else 1].knots, want)
+
+    def test_float64_short_direction_keeps_its_knots(self) -> None:
+        """The same case in ``float64``, with the short direction 1e-9 times shorter.
+
+        Direction 0 is 4e-15 long with knots 0.4e-15 apart (its tolerance about 7e-30), beside
+        the unit interval (about 1.8e-15). Oracle: ``f g`` pointwise, to the ``float32`` test's
+        bound above restated in units of ``eps`` (``1e-5`` is about 84 ``float32`` eps), and the
+        minimal product knots worked by hand as above.
+        """
+        short = np.array([0, 0, 1.5e-15, 1.9e-15, 2.3e-15, 4e-15, 4e-15])
+        space = BsplineSpace([BsplineSpace1D(short, 1), BsplineSpace1D([0, 0, 1, 1], 1)])
+        rng = np.random.default_rng(0)
+        f = Bspline(space, rng.uniform(1.0, 2.0, (*space.num_basis, 1)))
+        g = Bspline(space, rng.uniform(1.0, 2.0, (*space.num_basis, 1)))
+        pts = np.array([[0.5e-15, 0.3], [2.1e-15, 0.7], [3.5e-15, 0.1]])
+
+        h = f.multiply(g)
+
+        rtol = 1e-5 / float(np.finfo(np.float32).eps) * float(np.finfo(np.float64).eps)
+        np.testing.assert_allclose(
+            h.evaluate(pts), f.evaluate(pts) * g.evaluate(pts), rtol=rtol, atol=0.0
+        )
+        want = np.repeat(short, [3, 0, 2, 2, 2, 3, 0])
+        np.testing.assert_array_equal(h.space.spaces[0].knots, want)
