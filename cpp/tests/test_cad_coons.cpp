@@ -565,10 +565,16 @@ TEST_CASE_TEMPLATE("create_coons_surface: knots a rounding apart are one knot, t
       {{line<T>({0, 0, 0}, {0, 2, 0}), line<T>({3, 0, 0}, {3, 2, 0})}, {a, b}}};
   const bs::Bspline<T> s = cad::create_coons_surface<T>(curves);
   REQUIRE(s.dim() == 2);
-  // The two degree-2 curves of 4 functions each, blended with lines of 2: no knot was added.
-  const std::vector<long long> sizes = {static_cast<long long>(s.num_basis(0)),
-                                        static_cast<long long>(s.num_basis(1))};
-  CHECK((sizes == std::vector<long long>{4, 2} || sizes == std::vector<long long>{2, 4}));
+  // The two degree-2 curves of 4 functions each along u, blended with lines of 2 along v: no knot
+  // was added.
+  CHECK(s.num_basis(0) == 4);
+  CHECK(s.num_basis(1) == 2);
+  // The patch restricts to its four curves, `b` included although the patch carries `a`'s knot.
+  const double geometry_tol = tier_tolerance(s);
+  CHECK(restriction_gap(s, 0, 0.0, curves[0][0]) <= geometry_tol);
+  CHECK(restriction_gap(s, 0, 1.0, curves[0][1]) <= geometry_tol);
+  CHECK(restriction_gap(s, 1, 0.0, a) <= geometry_tol);
+  CHECK(restriction_gap(s, 1, 1.0, b) <= geometry_tol);
 }
 
 TEST_CASE("create_coons_surface: a NaN corner is not refused, as in the reference implementation") {
@@ -1146,4 +1152,35 @@ TEST_CASE_TEMPLATE("create_coons_volume: u edges of knots a rounding apart are o
   CHECK(v.num_basis(0) == 3);
   CHECK(v.num_basis(1) == 2);
   CHECK(v.num_basis(2) == 2);
+  // The volume restricts to its six faces, those carrying the shifted knot included.
+  check_all_faces(v, faces, tier_tolerance(v));
+}
+
+TEST_CASE_TEMPLATE("create_coons_volume: u edges of different control-net sizes are refused", T,
+                   float, double) {
+  // `make_compat` matches interior knot classes only, so a u direction whose first knot class
+  // holds `degree + 2` knots (its first control point repeated) keeps its extra function: the u
+  // edges read from the v faces carry 3 control points and those read from the w faces 2, the
+  // corners agree, and the shape guard of `verify_edges_3d` refuses before anything is built.
+  const auto corners = face_corners(cube(1.0));
+  const auto padded = [](const std::vector<double>& c) {
+    // The (u, w) net of a v face, (2, 2, 3), with its u = 0 row repeated: (3, 2, 3).
+    std::vector<double> flat(c.begin(), c.begin() + 6);
+    flat.insert(flat.end(), c.begin(), c.end());
+    const std::vector<T> ku = bspline_test::cast_all<T>({0.0, 0.0, 0.0, 1.0, 1.0});
+    const std::vector<T> kw = bspline_test::cast_all<T>({0.0, 0.0, 1.0, 1.0});
+    std::vector<bs::BsplineSpace1D<T>> spaces;
+    spaces.emplace_back(std::span<const T>(ku), 1);
+    spaces.emplace_back(std::span<const T>(kw), 1);
+    const std::vector<T> cp = bspline_test::cast_all<T>(flat);
+    return bs::Bspline<T>(bs::BsplineSpace<T>(std::move(spaces)), std::span<const T>(cp), false);
+  };
+  auto faces = bilinear_faces<T>(cube(1.0));
+  faces[1][0] = padded(corners[2]);
+  faces[1][1] = padded(corners[3]);
+  REQUIRE(faces[1][0].num_basis(0) == 3);
+  const std::string message = volume_refusal<T>(faces);
+  CHECK_MESSAGE(has(message, "Edge u_v"), message);
+  CHECK_MESSAGE(has(message, "give control nets of different shapes after being made compatible"),
+                message);
 }
