@@ -1130,14 +1130,12 @@ TEST_CASE("blossom: a parameter at an end beside an empty span takes the last no
   CHECK(std::abs(bs::blossom<double>(sp(kn), 2, ctrl, sp(end), tol)[0] - 4.0) <= r);
 }
 
-// ---- inherited defects, pinned (parity pins)
+// ---- a float32 bound within the tolerance of a knot
 // -----------------------------------------------------
 //
-// The tests below are parity pins. Each states the CORRECT behavior and is marked
-// `doctest::should_fail`, so it is reported as an expected failure while the defect stands and
-// fails the suite loudly the day the defect is fixed (then drop the decorator). The same defect is
-// in the pure-Python implementation this code replaces, and the port keeps its behavior: the
-// project holds such defects for a later review, and none is fixed in the port.
+// The previous release counted such a bound as the knot (a `float` difference) and cut the refined
+// vector as if it were not (a `double` one), and refused with "knots must have at least
+// 2*degree+2 elements". The bound is now snapped onto the knot once, up front.
 
 namespace {
 
@@ -1150,10 +1148,23 @@ bs::Bspline<float> near_knot_curve() {
   return curve<float>(clamped(2, {0.5}, 1.0), 2, {1.0, 2.0, 3.0, 4.0});
 }
 
+/// The knot vector of direction `d`, copied.
+std::vector<float> knots_of(const bs::Bspline<float>& b, std::size_t d) {
+  const bs::BsplineSpace<float> s = b.space();
+  const auto k = s.spaces()[d].knots();
+  return {k.begin(), k.end()};
+}
+
+/// The control points, copied flat.
+std::vector<float> points_of(const bs::Bspline<float>& b) {
+  return {b.control_points().begin(), b.control_points().end()};
+}
+
 }  // namespace
 
 TEST_CASE("restrict and split: the near-knot float32 bound is the knot by one test only") {
-  // The control of the pins below: the mechanism, and that double knots succeed.
+  // The control of the cases below: the two comparisons disagree on the bound, and double knots
+  // succeed.
   const bs::Bspline<float> bf = near_knot_curve();
   CHECK(bf.space().spaces()[0].tolerance() == 0x1p-20);
   CHECK(static_cast<double>(static_cast<float>(kNearKnot) - 0.5F) <=
@@ -1165,19 +1176,25 @@ TEST_CASE("restrict and split: the near-knot float32 bound is the knot by one te
   CHECK_NOTHROW(static_cast<void>(bs::split<double>(bd, 0, kNearKnot)));
 }
 
-TEST_CASE("inherited: restrict with a float32 bound near a knot" * doctest::should_fail()) {
-  // The restriction of a float spline at a bound that the multiplicity count takes for the knot
-  // 0.5 (float difference within the tolerance) and the cut takes for a different value (double
-  // difference beyond it) must succeed, as it does for double. It refuses with "knots must have at
-  // least 2*degree+2 elements".
+TEST_CASE("inherited: restrict with a float32 bound near a knot") {
+  // The restriction at a bound within the tolerance of the knot 0.5 (by the float difference) is
+  // the restriction at the knot: same inputs to the same code, so equal knots and points.
   const bs::Bspline<float> bf = near_knot_curve();
-  CHECK_NOTHROW(static_cast<void>(
-      bs::restrict<float>(bf, std::vector<std::optional<bs::Bounds>>{bs::Bounds{kNearKnot, 0.9}})));
+  using B = std::vector<std::optional<bs::Bounds>>;
+  const bs::Bspline<float> near = bs::restrict<float>(bf, B{bs::Bounds{kNearKnot, 0.9}});
+  const bs::Bspline<float> at = bs::restrict<float>(bf, B{bs::Bounds{0.5, 0.9}});
+  CHECK(knots_of(near, 0) == knots_of(at, 0));
+  CHECK(points_of(near) == points_of(at));
 }
 
-TEST_CASE("inherited: split of a float32 spline at a value near a knot" * doctest::should_fail()) {
+TEST_CASE("inherited: split of a float32 spline at a value near a knot") {
   const bs::Bspline<float> bf = near_knot_curve();
-  CHECK_NOTHROW(static_cast<void>(bs::split<float>(bf, 0, kNearKnot)));
+  const auto near = bs::split<float>(bf, 0, kNearKnot);
+  const auto at = bs::split<float>(bf, 0, 0.5);
+  CHECK(knots_of(near.first, 0) == knots_of(at.first, 0));
+  CHECK(points_of(near.first) == points_of(at.first));
+  CHECK(knots_of(near.second, 0) == knots_of(at.second, 0));
+  CHECK(points_of(near.second) == points_of(at.second));
 }
 
 // Refining an axis in place of the axis must give, value for value, what refining the axis moved to
