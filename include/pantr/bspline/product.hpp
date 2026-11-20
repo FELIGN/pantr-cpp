@@ -25,7 +25,10 @@
 /// `linalg::lstsq_min_norm_banded`, which gives its solution by a banded QR where the
 /// system has certified full column rank). The one-direction and the multi-direction paths of that
 /// implementation differ in one tolerance, the one at which the open product's knots are grouped
-/// before a boundary conversion (`convert_product_boundary`); both are kept.
+/// before a boundary conversion (`convert_product_boundary`); both are kept. Two departures from
+/// it: each direction groups its knots at its own tolerance (that implementation used the largest
+/// of any direction), and a control point of the Bézier form no element writes is zero (it was
+/// left as `numpy.empty` left it).
 #pragma once
 
 #include "pantr/bezier/product.hpp"

@@ -1520,12 +1520,12 @@
   breakpoint of the product of multiplicity above `degree + 1` (from an operand whose interior
   knot repeats more than `degree + 1` times, such as `[0, 0, 0.5, 0.5, 0.5, 1, 1]` at degree 1)
   leaves control points of the product's Bézier form that no element writes. In the previous
-  release the cross-direction grouping of #10 (below) made such breakpoints, in `float32`, in a
+  release the cross-direction grouping of #10 (above) made such breakpoints, in `float32`, in a
   direction a few `1e-6` long beside one of length 1, and the product read them as `numpy.empty`
   left them, so the result could change from call to call on the same input, up to `1e37` or NaN.
-  They are now zero and the result is repeatable. The previous release could also raise `numpy.linalg.LinAlgError` ("SVD did not
-  converge in Linear Least Squares") there; no such input raising it on the new release was
-  found.
+  They are now zero and the result is repeatable. The previous release could also raise
+  `numpy.linalg.LinAlgError` ("SVD did not converge in Linear Least Squares") there; no such
+  input raising it on the new release was found.
 - **`SpanwiseElementExtraction`'s batch applications no longer race on an overlapping `out`.**
   A batch of cells whose operators are all the identity accepted any `out` overlapping the
   operand, and its cells then read entries other cells had written, so the result depended on the
