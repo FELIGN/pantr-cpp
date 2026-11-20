@@ -10,6 +10,7 @@
 #include "pantr/bezier/detail/along_axis.hpp"
 #include "pantr/bezier/detail/net_ops.hpp"
 #include "pantr/bspline/bspline.hpp"
+#include "pantr/bspline/detail/basis_kernels.hpp"
 #include "pantr/bspline/detail/refine_common.hpp"
 #include "pantr/bspline/knots.hpp"
 #include "pantr/bspline/space.hpp"
@@ -35,15 +36,23 @@ namespace detail {
 /// The knot span a parameter value falls in, and the value used for it.
 ///
 /// Attributes:
-///     k (std::size_t): The span, `knots[k] <= u < knots[k + 1]` (the last span at the right end).
+///     k (std::size_t): The span, `knots[k] <= u < knots[k + 1]` (at the right end, the last span
+///         of non-zero length, `knots[k] < u == knots[k + 1]`).
 ///     u (double): The parameter: the value, or the domain end it was within tolerance of.
+///     at_end (bool): Whether `u` is the end of the domain, where no knot at or left of `k`
+///         equals `u`.
 struct SliceSpan {
   std::size_t k;
   double u;
+  bool at_end;
 };
 
 /// Find the span of a parameter value (Piegl and Tiller convention): a value within `tol` of an end
-/// of the domain is taken as that end, any other by binary search over the knot vector.
+/// of the domain is taken as that end, any other by binary search over the knot vector. The end of
+/// the domain takes the last span of non-zero length, as `span_and_first` does, by an exact rule.
+/// The start of the domain is classed with `tol`, and its multiplicity is counted with `tol`: in a
+/// space built without snapping, a knot within `tol` of the start is taken for a copy of it, and
+/// the slice there can be off by order one.
 ///
 /// Args:
 ///     knots (std::span<const T>): The knot vector.
@@ -54,7 +63,7 @@ struct SliceSpan {
 ///     tol (double): Absolute parametric tolerance.
 ///
 /// Returns:
-///     SliceSpan: The span and the parameter.
+///     SliceSpan: The span, the parameter, and whether it is the end of the domain.
 ///
 /// Note:
 ///     Inputs are assumed to be correct (no validation performed).
@@ -67,15 +76,19 @@ template <StorageFloat T>
   if (value <= u_left + tol) {
     // The span starting at the last knot of the first domain knot's class (past `p` when the
     // class continues beyond it, a non-clamped vector with `knots[p] == knots[p + 1]`).
-    return {last_index_of_first_domain_class<T>(knots, degree, tol), u_left};
+    return {last_index_of_first_domain_class<T>(knots, degree, tol), u_left, false};
   }
   if (value >= u_right - tol) {
-    return {n_basis - 1, u_right};
+    // The last span of non-zero length, as evaluation takes it. Span `n_basis - 1` is empty when
+    // `knots[n_basis - 1] == knots[n_basis]`; once `knots[n_basis - degree - 1 .. n_basis]` are
+    // all equal, the first function of that span's window has empty support. The span is chosen
+    // without a tolerance, so `knots[k] < u` and the slice takes no multiplicity there (`at_end`).
+    return {span_and_first<T, T>(knots, degree, knots[n_basis]).knot_id, u_right, true};
   }
   const auto above = std::upper_bound(knots.begin(), knots.end(), value, [](double v, T knot) {
     return v < static_cast<double>(knot);
   });
-  return {static_cast<std::size_t>(above - knots.begin()) - 1, value};
+  return {static_cast<std::size_t>(above - knots.begin()) - 1, value, false};
 }
 
 /// Count the knots, from the one at `k` leftwards and at most `degree + 1` of them, within `tol`
@@ -141,7 +154,12 @@ template <StorageFloat T>
 
   const SliceSpan span = find_slice_span<T>(knots, degree, n_basis, value, tol);
   const std::size_t k = span.k;
-  const std::size_t s = count_slice_multiplicity<T>(knots, k, degree, span.u, tol);
+  // At the end `knots[k] < u` exactly, so no knot at or left of `k` is a copy of `u`. Counting with
+  // `tol` there would take a knot closer to the end than `tol`, which a space built without
+  // snapping can hold, for a copy, and skip the corner cutting it needs. With no multiplicity the
+  // weights below are in [0, 1] and no denominator is zero: `left <= knots[k] < u <= right`.
+  const std::size_t s =
+      span.at_end ? 0 : count_slice_multiplicity<T>(knots, k, degree, span.u, tol);
 
   const bezier::detail::AxisSplit around = bezier::detail::split_around(shape, axis);
   const std::size_t rest = around.outer * around.inner;

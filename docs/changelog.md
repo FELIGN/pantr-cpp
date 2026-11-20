@@ -1388,6 +1388,17 @@
   search places the point in (to the right of an upper bound, and to the left of a lower bound
   that rounding puts below its knot). Points the search places inside the cell are untouched.
   Inherited from the previous release.
+- **`Bspline.slice` and `Bspline.boundary` at the domain end agree with `Bspline.evaluate` when
+  `degree + 2` or more knots up to the end are equal** (#29). For such a knot vector
+  (`[0, 0, 1, 2, 2, 2, 3]` at degree 1) the slice or boundary at the end of the domain, and the end
+  point of a curve, were the control points of a function with empty support, an error of order 1
+  with no exception; `create_coons_surface` and `create_coons_volume`, which read the corners and
+  edges of their inputs this way, inherited it. The end now takes the last span of non-zero
+  length, as evaluation does. Also, in a space built with `snap_knots=False`, a knot closer to the
+  end than the space's tolerance (`[0, 0, 1, 1 + 2.2e-15, 2]` at degree 1) was taken for a copy of
+  the end, an error of order 1 as well; the end now takes no knot for a copy of it. The start of
+  the domain still does, in such a space. A snapped knot vector whose last span is non-empty keeps
+  its slices bit for bit. The first defect is inherited from the previous release.
 - **`create_uniform_periodic_knots` (and the periodic `create_uniform_space`) returns a periodic
   knot vector for every continuity.** For `1 <= continuity <= degree - 2` it extended the repeated
   interior knots past both ends by distinct, evenly spaced knots, so `K[i + n m] = K[i] + L` (`n`

@@ -41,6 +41,8 @@ using bspline_test::make_spline;
 using bspline_test::message_of;
 using bspline_test::periodic_knots;
 using bspline_test::same_space;
+using bspline_test::sp;
+using bspline_test::values;
 using oracle::Rational;
 
 namespace {
@@ -289,6 +291,140 @@ TEST_CASE_TEMPLATE("boundary: the end points of a curve", T, double, float) {
   CHECK(start.data()[1] == cp[1] / cp[2]);
   CHECK(end.data()[0] == cp[last * 3] / cp[last * 3 + 2]);
   CHECK(end.data()[1] == cp[last * 3 + 1] / cp[last * 3 + 2]);
+}
+
+TEST_CASE_TEMPLATE(
+    "boundary: the end beside empty last spans is the last non-empty span's end function", T,
+    double, float) {
+  // With `degree + 2` or more equal knots ending at the domain end `knots[n]`, the last in-domain
+  // spans are empty and the function of row `n - degree - 1` has empty support. Oracle, analytic:
+  // at the end of the last non-empty span exactly one function is non-zero, the one whose knots
+  // `knots[i + 1 .. i + degree + 1]` all equal the end (its value there, taken from the left, is
+  // 1), so the boundary is that function's slab of control points. Every corner-cutting weight is
+  // 1 or the step is skipped: the right knot of each weight equals the end `u`, so
+  // `(u - l) / (u - l)` is exactly 1, and `1 * b + 0 * a` is exact for finite `a`. The slab is
+  // therefore compared bit for bit.
+  struct Case {
+    std::vector<double> knots;
+    int degree;
+    std::size_t end_function;
+  };
+  // The first three have `degree + 2` equal end knots, the fourth `degree + 3`; the last
+  // `degree + 1` before a trailing knot, an empty last span whose end was already right and is
+  // now reached through the corner cutting rather than a copy.
+  const std::vector<Case> cases = {
+      {{0, 1, 1}, 0, 0},
+      {{0, 0, 1, 2, 2, 2, 3}, 1, 2},
+      {{0, 0, 0, 1, 2, 3, 3, 3, 3, 4, 4}, 2, 4},
+      {{0, 0, 1, 2, 2, 2, 2, 3}, 1, 2},
+      {{0, 0, 1, 2, 2, 3}, 1, 2},
+  };
+  for (const Case& c : cases) {
+    for (const bool rational : {false, true}) {
+      // The direction at each position of a surface and of a volume.
+      for (const std::size_t dim : {std::size_t{2}, std::size_t{3}}) {
+        for (std::size_t axis = 0; axis < dim; ++axis) {
+          CAPTURE(c.degree);
+          CAPTURE(rational);
+          CAPTURE(dim);
+          CAPTURE(axis);
+          std::vector<Dir> dirs(dim, Dir{clamped(2, {0.5}), 2});
+          dirs[axis] = Dir{c.knots, c.degree};
+          const bs::Bspline<T> b = make_spline<T>(dirs, 2, rational, 13U);
+          const double end = static_cast<double>(b.space().spaces()[axis].domain().second);
+          const bs::Bspline<T> by_boundary = bs::boundary<T>(b, static_cast<long long>(axis), 1);
+          const bs::Bspline<T> by_slice = bs::slice<T>(b, static_cast<long long>(axis), end);
+          // The slab `end_function` of `axis`, in the order of the remaining directions.
+          const std::span<const T> all = b.control_points();
+          const std::span<const std::size_t> shape = b.shape();
+          std::size_t outer = 1;
+          for (std::size_t d = 0; d < axis; ++d) {
+            outer *= shape[d];
+          }
+          const std::size_t inner = all.size() / (outer * shape[axis]);
+          const std::span<const T> got_b = by_boundary.control_points();
+          const std::span<const T> got_s = by_slice.control_points();
+          REQUIRE(got_b.size() == outer * inner);
+          REQUIRE(got_s.size() == outer * inner);
+          for (std::size_t o = 0; o < outer; ++o) {
+            for (std::size_t i = 0; i < inner; ++i) {
+              const T want = all[(o * shape[axis] + c.end_function) * inner + i];
+              CHECK(got_b[o * inner + i] == want);
+              CHECK(got_s[o * inner + i] == want);
+            }
+          }
+        }
+      }
+      // A curve: the end point is that function's control point, projected when rational.
+      const bs::Bspline<T> crv = make_spline<T>({{c.knots, c.degree}}, 2, rational, 17U);
+      const double end = static_cast<double>(crv.space().spaces()[0].domain().second);
+      const pantr::NdArray<T> by_boundary = bs::boundary_point<T>(crv, 0, 1);
+      const pantr::NdArray<T> by_slice = bs::slice_point<T>(crv, 0, end);
+      const std::size_t cols = crv.cp_size();
+      const T* cp = crv.control_points().data() + c.end_function * cols;
+      for (std::size_t i = 0; i < 2; ++i) {
+        const T want = rational ? cp[i] / cp[2] : cp[i];
+        CHECK(by_boundary.data()[i] == want);
+        CHECK(by_slice.data()[i] == want);
+      }
+    }
+  }
+}
+
+TEST_CASE("boundary: the end of an unsnapped space beside a sub-tolerance knot gap") {
+  // Built without snapping, a knot `2.2e-15` from the end stays apart from it, closer than the
+  // space's tolerance. The end still takes the last span of non-zero length, `k`, and no knot at
+  // or left of `k` equals the end, so the corner cutting runs every round. Oracle, analytic: the
+  // one function equal to 1 at the end from the left is `k`'s, since `knots[k] < u` and
+  // `knots[k + 1 .. k + degree]` all equal the end `u`. Those are the right knots of every
+  // corner-cutting weight, so each weight is `(u - l) / (u - l)`, exactly 1, and the result is
+  // that function's control point bit for bit. Double only: a gap this small rounds away in float.
+  constexpr double gap = 2.2e-15;
+  struct Case {
+    std::vector<double> knots;
+    int degree;
+    std::size_t end_function;
+  };
+  const std::vector<Case> cases = {
+      // An empty last span, beside a span shorter than the tolerance.
+      {{0, 0, 1, 2 - gap, 2, 2, 3}, 1, 3},
+      {{0, 0, 0, 1, 2 - gap, 2, 2, 2, 3}, 2, 4},
+      // A last span shorter than the tolerance.
+      {{0, 0, 1, 1 + gap, 2}, 1, 2},
+  };
+  for (const Case& c : cases) {
+    const bs::BsplineSpace1D<double> space(sp(c.knots), c.degree, false, false);
+    const double end = space.domain().second;
+    for (std::size_t j = 1; j <= static_cast<std::size_t>(c.degree); ++j) {
+      REQUIRE(c.knots[c.end_function + j] == end);
+    }
+    REQUIRE(c.knots[c.end_function] < end);
+    REQUIRE(end - c.knots[c.end_function] < space.tolerance());
+    for (const bool rational : {false, true}) {
+      CAPTURE(c.degree);
+      CAPTURE(c.end_function);
+      CAPTURE(rational);
+      const std::size_t n = static_cast<std::size_t>(space.num_basis());
+      const std::size_t cols = 2 + (rational ? 1 : 0);
+      std::vector<double> flat = values(n * cols, 23U);
+      if (rational) {
+        for (std::size_t i = 0; i < n; ++i) {
+          flat[i * cols + 2] = 1.5 + flat[i * cols + 2] / 2.0;
+        }
+      }
+      const bs::Bspline<double> crv(
+          bs::BsplineSpace<double>(std::vector<bs::BsplineSpace1D<double>>{space}), sp(flat),
+          rational);
+      const pantr::NdArray<double> by_boundary = bs::boundary_point<double>(crv, 0, 1);
+      const pantr::NdArray<double> by_slice = bs::slice_point<double>(crv, 0, end);
+      const double* cp = flat.data() + c.end_function * cols;
+      for (std::size_t i = 0; i < 2; ++i) {
+        const double want = rational ? cp[i] / cp[2] : cp[i];
+        CHECK(by_boundary.data()[i] == want);
+        CHECK(by_slice.data()[i] == want);
+      }
+    }
+  }
 }
 
 TEST_CASE_TEMPLATE("slice: a value inside the tolerance band beyond an end is that end", T, double,

@@ -271,6 +271,83 @@ class TestSlicePeriodic:
         np.testing.assert_allclose(pt_slice, pt_direct, atol=1e-12)
 
 
+class TestSliceEndBesideEmptySpans:
+    """Slice and boundary at the domain end beside empty or sub-tolerance last spans.
+
+    With ``degree + 2`` or more equal knots ending there, the last in-domain spans are empty and the
+    function that row ``n - degree - 1`` of the control points carries has empty support; in a
+    space built without snapping, a knot closer to the end than the tolerance stays apart from it.
+    Either way the slice must take the last non-empty span with no knot counted as a copy of the
+    end, as ``evaluate`` does. Oracle: ``evaluate`` at the same points, which takes that span.
+    """
+
+    # The direction left alone: a clamped quadratic.
+    _OTHER = np.array([0, 0, 0, 1 / 3, 2 / 3, 1, 1, 1], dtype=np.float64)
+    _V = np.linspace(0.0, 1.0, 7)
+
+    @pytest.mark.parametrize(
+        ("knots", "degree"),
+        [
+            ([0, 1, 1], 0),
+            ([0, 0, 1, 2, 2, 2, 3], 1),
+            ([0, 0, 0, 1, 2, 3, 3, 3, 3, 4, 4], 2),
+        ],
+    )
+    def test_slice_and_boundary_match_evaluate(self, knots: list[float], degree: int) -> None:
+        """The slice and the boundary at the domain end equal ``evaluate`` there."""
+        self._check_end(BsplineSpace1D(np.asarray(knots, dtype=np.float64), degree))
+
+    @pytest.mark.parametrize(
+        ("knots", "degree", "near"),
+        [
+            # An empty last span, beside a span shorter than the tolerance.
+            ([0, 0, 1, 2 - 2.2e-15, 2, 2, 3], 1, 3),
+            ([0, 0, 0, 1, 2 - 2.2e-15, 2, 2, 2, 3], 2, 4),
+            # A last span shorter than the tolerance.
+            ([0, 0, 1, 1 + 2.2e-15, 2], 1, 2),
+        ],
+    )
+    def test_unsnapped_sub_tolerance_gap_matches_evaluate(
+        self, knots: list[float], degree: int, near: int
+    ) -> None:
+        """Without snapping, a knot within the tolerance of the end does not count as the end."""
+        sp0 = BsplineSpace1D(np.asarray(knots, dtype=np.float64), degree, snap_knots=False)
+        np.testing.assert_array_equal(sp0.knots, np.asarray(knots, dtype=np.float64))
+        gap = float(sp0.domain[1]) - knots[near]
+        assert 0.0 < gap < sp0.tolerance
+        self._check_end(sp0)
+
+    def _check_end(self, sp0: BsplineSpace1D) -> None:
+        """Compare the slice and the boundary at the end of ``sp0`` with ``evaluate``.
+
+        Args:
+            sp0 (BsplineSpace1D): The direction sliced, first of a surface and alone in a curve.
+        """
+        srf = Bspline(
+            BsplineSpace([sp0, BsplineSpace1D(self._OTHER, 2)]),
+            np.random.default_rng(0).standard_normal((sp0.num_basis, 5, 2)),
+        )
+        end = float(sp0.domain[1])
+        ref = srf.evaluate(np.stack([np.full_like(self._V, end), self._V], axis=1))
+        by_slice = srf.slice(0, end)
+        by_boundary = srf.boundary(0, 1)
+        assert isinstance(by_slice, Bspline)
+        assert isinstance(by_boundary, Bspline)
+        np.testing.assert_allclose(by_slice.evaluate(self._V[:, None]), ref, rtol=0, atol=1e-13)
+        np.testing.assert_allclose(by_boundary.evaluate(self._V[:, None]), ref, rtol=0, atol=1e-13)
+
+        crv = Bspline(
+            BsplineSpace([sp0]), np.random.default_rng(1).standard_normal((sp0.num_basis, 2))
+        )
+        ref_pt = crv.evaluate(np.array([end]))
+        pt_slice = crv.slice(0, end)
+        pt_boundary = crv.boundary(0, 1)
+        assert isinstance(pt_slice, np.ndarray)
+        assert isinstance(pt_boundary, np.ndarray)
+        np.testing.assert_allclose(pt_slice, ref_pt, rtol=0, atol=1e-14)
+        np.testing.assert_allclose(pt_boundary, ref_pt, rtol=0, atol=1e-14)
+
+
 class TestSliceDtype:
     """Test that slice preserves dtype."""
 
