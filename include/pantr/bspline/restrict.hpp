@@ -10,16 +10,15 @@
 /// it makes (a requested bound against a domain endpoint, against an existing knot, against the
 /// refined vector) is the question `knot_tolerance` answers: are these two values the same knot?
 ///
-/// The comparisons do not all form their difference the same way, which is an inherited defect and
-/// not a design. The count of knots already at a boundary (`count_within`) rounds the bound to the
-/// storage type and forms `knot - bound` in it, as NumPy did for a Python float; the snapping to a
-/// domain endpoint and the cut of the sub-vector (`first_not_below`) compare in `double`. For
-/// `float` knots a bound a few units of the format's resolution from a knot can be that knot by
-/// one test and a different one by the other, and the restriction or split then refuses with
-/// "knots must have at least 2*degree+2 elements" where `double` knots succeed. The tests
-/// "inherited: restrict with a float32 bound near a knot" and "inherited: split of a float32
-/// spline at a value near a knot" pin the correct behavior as expected failures; the defect is
-/// held for a later review and is not fixed here.
+/// Whether a bound is an existing knot is decided once, up front (`snap_to_knot`): by the
+/// comparison the count of knots already at a boundary (`count_within`) makes, which rounds the
+/// bound to the storage type and forms `knot - bound` in it, as NumPy did for a Python float. A
+/// bound that is a knot by that test is replaced by the knot, and every later count, insertion and
+/// cut (`first_not_below`, which compares in `double`) uses the replaced value, so they cannot
+/// disagree on it. The previous release classified the bound separately in each: for `float`
+/// knots a bound a few units of the format's resolution from a knot was that knot to the count
+/// and a different value to the cut, and the restriction or split refused with "knots must have
+/// at least 2*degree+2 elements" where `double` knots succeeded.
 ///
 /// Three properties of the shared `tol` are load-bearing.
 ///
@@ -94,6 +93,26 @@ template <StorageFloat T>
   return static_cast<std::size_t>(std::count_if(knots.begin(), knots.end(), [&](T k) {
     return static_cast<double>(std::abs(static_cast<T>(k - v))) <= tol;
   }));
+}
+
+/// The knot that `value` is, by the test `count_within` applies: the stored knot nearest `value`
+/// among those within `tol` of it (the difference formed in the storage type, `value` rounded to
+/// it; the first such knot on a tie), or `value` itself when no knot is.
+template <StorageFloat T>
+[[nodiscard]] double snap_to_knot(std::span<const T> knots, double value, double tol) {
+  const auto v = static_cast<T>(value);
+  double out = value;
+  double nearest = 0.0;
+  bool found = false;
+  for (const T k : knots) {
+    const auto d = static_cast<double>(std::abs(static_cast<T>(k - v)));
+    if (d <= tol && (!found || d < nearest)) {
+      out = static_cast<double>(k);
+      nearest = d;
+      found = true;
+    }
+  }
+  return out;
 }
 
 /// The first index whose knot is not below `key`, the comparison made in `double` (as NumPy's
@@ -249,7 +268,10 @@ template <StorageFloat T>
     c = open.ctrl.template view<2>();
   }
 
-  const std::vector<T> to_insert = compute_boundary_knots_to_insert<T>(k, degree, tol, snapped);
+  // A bound that is a knot becomes that knot, for the count, the insertion and the cut alike.
+  const Bounds at{detail::snap_to_knot<T>(k, snapped.lo, tol),
+                  detail::snap_to_knot<T>(k, snapped.hi, tol)};
+  const std::vector<T> to_insert = compute_boundary_knots_to_insert<T>(k, degree, tol, at);
   KnotsAndCtrl<T> refined{{}, detail::empty_net<T>()};
   if (!to_insert.empty()) {
     refined = insert_knots_1d<T>(k, degree, c, to_insert, tol);
@@ -262,8 +284,8 @@ template <StorageFloat T>
   // Extract [lo, hi]. After insertion lo has multiplicity p + 1 starting at i_start, and hi has
   // multiplicity p + 1 ending at i_end. Both offsets widen the cut away from the interval (see the
   // file note).
-  const std::size_t i_start = detail::first_not_below<T>(refined.knots, snapped.lo - tol);
-  const std::size_t past_end = detail::first_not_below<T>(refined.knots, snapped.hi + tol);
+  const std::size_t i_start = detail::first_not_below<T>(refined.knots, at.lo - tol);
+  const std::size_t past_end = detail::first_not_below<T>(refined.knots, at.hi + tol);
   // `past_end <= size` (a search position), and the rows of a result are `size - p - 1`, so
   // `past_end - 1 - p` cannot exceed them: only an empty or short window is left to refuse.
   if (past_end == 0 || past_end - 1 < i_start + p) {
@@ -356,11 +378,13 @@ template <StorageFloat T>
     detail::check_net_matches("split", ctrl.extent(0), knots.size(), degree);
   }
 
+  // A value that is a knot becomes that knot, for the count, the insertion and the cut alike.
+  const double at = detail::snap_to_knot<T>(k, value, tol);
   // Insert up to multiplicity p + 1 at the split value.
-  const std::size_t m_current = detail::count_within<T>(k, value, tol);
+  const std::size_t m_current = detail::count_within<T>(k, at, tol);
   KnotsAndCtrl<T> refined{{}, detail::empty_net<T>()};
   if (p + 1 > m_current) {
-    const std::vector<T> to_insert(p + 1 - m_current, static_cast<T>(value));
+    const std::vector<T> to_insert(p + 1 - m_current, static_cast<T>(at));
     refined = insert_knots_1d<T>(k, degree, c, to_insert, tol);
   } else {
     refined.knots.assign(k.begin(), k.end());
@@ -369,7 +393,7 @@ template <StorageFloat T>
   }
 
   // The split index: the value now has multiplicity p + 1.
-  const std::size_t i_split = detail::first_not_below<T>(refined.knots, value - tol);
+  const std::size_t i_split = detail::first_not_below<T>(refined.knots, at - tol);
   // The rows of a result are `size - p - 1`, so `i_split + p + 1 <= size` bounds `i_split` by them.
   if (i_split + p + 1 > refined.knots.size()) {
     throw value_error("The split found no index in the refined knot vector.");

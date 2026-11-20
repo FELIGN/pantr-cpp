@@ -1420,6 +1420,15 @@
   `build_local` over such a space, which raised `RuntimeError` ("Grid restriction ... and space
   restriction ... disagree") for those windows, now returns them. Inherited from the previous
   release.
+- **`Bspline.restrict` and `Bspline.split` at a bound within the tolerance of a knot are the call
+  at that knot** (#6). For `float32` knots, a bound a few units of the format's resolution from a
+  knot (`0.5 + 2^-20 + 2e-8` beside the knot `0.5` on `[0, 1]`) was the knot to the count of its
+  multiplicity and a different value to the cut of the knot vector, and both calls raised
+  `ValueError: knots must have at least 2*degree+2 elements`. Such a bound is now replaced by the
+  knot, once, before the count, the insertion and the cut, judged by the comparison the count
+  made. A `float64` bound within the tolerance of a knot, which succeeded, now also gives the
+  result at the knot, where it inserted copies of the bound beside it. Inherited from the previous
+  release.
 - **`create_uniform_periodic_knots` (and the periodic `create_uniform_space`) returns a periodic
   knot vector for every continuity.** For `1 <= continuity <= degree - 2` it extended the repeated
   interior knots past both ends by distinct, evenly spaced knots, so `K[i + n m] = K[i] + L` (`n`
