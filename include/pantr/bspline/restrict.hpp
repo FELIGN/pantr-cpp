@@ -44,9 +44,9 @@
 ///
 /// **Widening cannot over-collect.** `BsplineSpace1D` snaps its knots by the same rule, so two
 /// *distinct* stored knots differ by more than `tol` and a cut widened by `tol` cannot reach the
-/// next one. The one configuration where that is not enough is a bound falling between two
-/// distinct knots less than `2 tol` apart, which requires a mesh already at the format's
-/// resolution floor for its magnitude: the regime `check_snapping_kept_an_interval` reports on.
+/// next one. A bound within `tol` of a knot is that knot (above), so a bound falling between two
+/// distinct knots less than `2 tol` apart becomes the nearer one rather than a third value the
+/// widened cut could over-collect around.
 #pragma once
 
 #include "pantr/bspline/bspline.hpp"

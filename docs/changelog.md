@@ -1427,15 +1427,19 @@
   `ValueError: knots must have at least 2*degree+2 elements`. Such a bound is now replaced by the
   knot, once, before the count, the insertion and the cut, judged by the comparison the count
   made. A `float64` bound within the tolerance of a knot, which succeeded, now also gives the
-  result at the knot, where it inserted copies of the bound beside it. Inherited from the previous
-  release.
+  result at the knot, where it inserted copies of the bound beside it. A `float32` split value
+  that is a domain end by that comparison, though further than the tolerance from it in `double`,
+  is refused as not strictly inside the domain, where it raised the same misleading error.
+  Inherited from the previous release.
 - **`Bspline.multiply` of two or more directions groups each direction's knots at that
   direction's tolerance** (#10). It grouped every direction at the largest tolerance of any
   direction, so knots of a short direction closer than a long direction's tolerance were merged
   into one knot, and the product was not `f g`, an error of order 1 with no exception: a `float32`
   direction `4e-6` long with knots `0.4e-6` apart beside the unit interval, or a `float64` one
-  `4e-15` long. The domain check uses each direction's own tolerance too. Products whose
-  directions share one tolerance are unchanged. Inherited from the previous release.
+  `4e-15` long. The domain check uses each direction's own tolerance too, so operands whose
+  domains in a short direction differ by more than its own tolerance, and were accepted, are now
+  refused ("must share the same parametric domain in direction ..."). Products whose directions
+  share one tolerance are unchanged. Inherited from the previous release.
 - **`create_uniform_periodic_knots` (and the periodic `create_uniform_space`) returns a periodic
   knot vector for every continuity.** For `1 <= continuity <= degree - 2` it extended the repeated
   interior knots past both ends by distinct, evenly spaced knots, so `K[i + n m] = K[i] + L` (`n`
@@ -1512,15 +1516,14 @@
   depended on the values and memory: it partitioned silently, raised an unrelated error, or ended
   the process (a segmentation fault, in scipy with the spectral backend or in pymetis with
   `backend="metis"`, or an abort). All of these raise `ValueError` now (see above).
-- **`Bspline.multiply` no longer returns values that depend on memory it never wrote.** The
-  product groups the knots of every direction at the largest tolerance of any direction, so in a
-  direction much shorter than another (in `float32`, one a few `1e-6` long beside one of length
-  1) knots closer than the other direction's tolerance merge into one breakpoint of multiplicity
-  above `degree + 1`, and the product's Bézier form then has control points that no element
-  writes. The previous release read them as `numpy.empty` left them, so the result could change
-  from call to call on the same input, up to `1e37` or NaN. They are now zero and the result is
-  repeatable. It is still not `f g` on such input, as it was not before: the grouping itself is
-  unchanged. The previous release could also raise `numpy.linalg.LinAlgError` ("SVD did not
+- **`Bspline.multiply` no longer returns values that depend on memory it never wrote.** A
+  breakpoint of the product of multiplicity above `degree + 1` (from an operand whose interior
+  knot repeats more than `degree + 1` times, such as `[0, 0, 0.5, 0.5, 0.5, 1, 1]` at degree 1)
+  leaves control points of the product's Bézier form that no element writes. In the previous
+  release the cross-direction grouping of #10 (below) made such breakpoints, in `float32`, in a
+  direction a few `1e-6` long beside one of length 1, and the product read them as `numpy.empty`
+  left them, so the result could change from call to call on the same input, up to `1e37` or NaN.
+  They are now zero and the result is repeatable. The previous release could also raise `numpy.linalg.LinAlgError` ("SVD did not
   converge in Linear Least Squares") there; no such input raising it on the new release was
   found.
 - **`SpanwiseElementExtraction`'s batch applications no longer race on an overlapping `out`.**
