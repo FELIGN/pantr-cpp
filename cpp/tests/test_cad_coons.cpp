@@ -550,12 +550,12 @@ TEST_CASE_TEMPLATE("create_coons_surface: curves of different ranks are refused"
             "the curves must have one rank (weights included)."));
 }
 
-TEST_CASE_TEMPLATE("create_coons_surface: knots a rounding apart leave unequal sizes, refused", T,
-                   float, double) {
-  // Inherited from make_compat (see test_cad_operations.cpp): an interior knot a quarter of the
-  // space tolerance above another counterpart makes make_compat return B-splines with unequal
-  // numbers of functions, which `create_ruled` refuses (the reference implementation failed with
-  // a NumPy broadcast error at the same step).
+TEST_CASE_TEMPLATE("create_coons_surface: knots a rounding apart are one knot, the patch is built",
+                   T, float, double) {
+  // An interior knot a quarter of the space tolerance above another is the same knot for
+  // make_compat (see test_cad_operations.cpp), so the two opposite curves come out with equal
+  // numbers of functions and the patch is built. The reference implementation left them unequal and
+  // failed with a NumPy broadcast error at the ruled step.
   const bs::Bspline<T> a = curve_of<T>(2, {0.5}, {{0, 0, 0}, {1, 1, 0}, {2, 1, 0}, {3, 0, 0}});
   const double tol = a.space().spaces()[0].tolerance();
   const double shifted = static_cast<double>(static_cast<T>(0.5 + 0.25 * tol));
@@ -563,9 +563,8 @@ TEST_CASE_TEMPLATE("create_coons_surface: knots a rounding apart leave unequal s
   const bs::Bspline<T> b = curve_of<T>(2, {shifted}, {{0, 2, 0}, {1, 3, 0}, {2, 3, 0}, {3, 2, 0}});
   const Curves<T> curves = {
       {{line<T>({0, 0, 0}, {0, 2, 0}), line<T>({3, 0, 0}, {3, 2, 0})}, {a, b}}};
-  CHECK(has(refusal([&] { static_cast<void>(cad::create_coons_surface<T>(curves)); }),
-            "ruled requires B-splines with equal numbers of control points after making them "
-            "compatible, got"));
+  const bs::Bspline<T> s = cad::create_coons_surface<T>(curves);
+  CHECK(s.dim() == 2);
 }
 
 TEST_CASE("create_coons_surface: a NaN corner is not refused, as in the reference implementation") {
@@ -1115,14 +1114,13 @@ TEST_CASE_TEMPLATE("verify_positive_weights: a NaN weight is refused", T, float,
   }
 }
 
-TEST_CASE_TEMPLATE("create_coons_volume: a shared edge of unequal control-net sizes is refused", T,
-                   float, double) {
-  // An interior knot of the u direction a quarter of the space tolerance above another leaves
-  // `make_compat` with unequal numbers of functions (see "knots a rounding apart" above). Here
-  // face_v0 and face_v1 carry the knot at 0.5 and face_w0 and face_w1 the shifted one, so every
-  // pair of opposite faces is compatible and the corners agree, while each u edge is read from a
-  // v face and a w face and comes out with different control-point counts: the shape guard of
-  // `verify_edges_3d` refuses before anything is built from them.
+TEST_CASE_TEMPLATE("create_coons_volume: u edges of knots a rounding apart are one edge", T, float,
+                   double) {
+  // An interior knot of the u direction a quarter of the space tolerance above another is the same
+  // knot for make_compat (see test_cad_operations.cpp). Here face_v0 and face_v1 carry the knot at
+  // 0.5 and face_w0 and face_w1 the shifted one; each u edge is read from a v face and a w face,
+  // and the two readings now have equal control-point counts, so the volume is built. The
+  // reference implementation left them unequal, and `verify_edges_3d` refused.
   const bs::Bspline<T> probe = line<T>({0, 0, 0}, {1, 0, 0});
   const double tol = probe.space().spaces()[0].tolerance();
   const double shifted = static_cast<double>(static_cast<T>(0.5 + 0.25 * tol));
@@ -1138,8 +1136,6 @@ TEST_CASE_TEMPLATE("create_coons_volume: a shared edge of unequal control-net si
   faces[1][1] = with_u_knot(faces[1][1], 0.5);
   faces[2][0] = with_u_knot(faces[2][0], shifted);
   faces[2][1] = with_u_knot(faces[2][1], shifted);
-  const std::string message = volume_refusal<T>(faces);
-  CHECK_MESSAGE(has(message, "Edge u_v"), message);
-  CHECK_MESSAGE(has(message, "give control nets of different shapes after being made compatible"),
-                message);
+  const bs::Bspline<T> v = cad::create_coons_volume<T>(faces);
+  CHECK(v.dim() == 3);
 }

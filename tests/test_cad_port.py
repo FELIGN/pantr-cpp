@@ -248,17 +248,15 @@ class TestRefusalsThatReplaceNumpyErrors:
         with pytest.raises(ValueError):
             create_coons_volume(((flat, faces[0][1]), faces[1], faces[2]))
 
-    def test_knots_one_ulp_apart_leave_unequal_counts_and_ruled_refuses(self) -> None:
-        # inherited from main, not endorsed: make_compat matches each merged knot only against
-        # the next knot not below it, so `0.1 * 3` and `0.3` (one ulp apart) stay two knots and
-        # the results have unequal knot vectors, which create_ruled then refuses with its own
-        # message.
+    def test_knots_one_ulp_apart_are_one_knot_and_ruled_builds(self) -> None:
+        # `0.1 * 3` and `0.3` (one ulp apart) are one knot class for make_compat, so the results
+        # have equal numbers of functions and create_ruled builds the surface (the reference
+        # implementation kept them two knots and refused).
         a = _curve([[0, 0, 0], [1, 0, 0], [2, 1, 0]], knots=[0, 0, 0.1 * 3, 1, 1])
         b = _curve([[0, 1, 0], [1, 1, 0], [2, 2, 0]], knots=[0, 0, 0.3, 1, 1])
         ca, cb = make_compat(a, b)
-        assert ca.space.num_basis != cb.space.num_basis
-        with pytest.raises(ValueError, match="equal numbers of control points"):
-            create_ruled(a, b)
+        assert ca.space.num_basis == cb.space.num_basis
+        assert create_ruled(a, b).space.num_basis[0] == ca.space.num_basis[0]
 
 
 class TestMixedPrecision:

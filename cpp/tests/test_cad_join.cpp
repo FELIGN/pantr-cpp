@@ -561,10 +561,11 @@ TEST_CASE_TEMPLATE("join: control points of different ranks are refused", T, flo
         "shapes after being made compatible, (3,) and (2,).");
 }
 
-TEST_CASE_TEMPLATE("join: knots a rounding apart leave unequal seams, which are refused", T, float,
-                   double) {
-  // Inherited from make_compat (see test_cad_operations.cpp): the transverse knots 0.5 and 0.5 +
-  // a quarter of the space tolerance leave B-splines with unequal numbers of functions.
+TEST_CASE_TEMPLATE("join: transverse knots a rounding apart are one knot, the seams match", T,
+                   float, double) {
+  // The transverse knots 0.5 and 0.5 + a quarter of the space tolerance are one knot for
+  // make_compat (see test_cad_operations.cpp): the B-splines come out with equal numbers of
+  // functions and the join is built. The reference implementation left them unequal and refused.
   const auto make = [](double interior) {
     return surface_flat<T>(1, {}, 2, {interior}, std::vector<double>(2 * 4 * 3, 0.0));
   };
@@ -577,13 +578,10 @@ TEST_CASE_TEMPLATE("join: knots a rounding apart leave unequal seams, which are 
   const std::vector<bs::Bspline<T>> made =
       cad::make_compat<T>(std::span<const bs::Bspline<T>>(pair),
                           std::optional<std::vector<long long>>(std::vector<long long>{1}));
-  REQUIRE(made[0].num_basis(1) != made[1].num_basis(1));
-  const std::string expect =
-      "Shared boundary mismatch on axis 0: the two B-splines have junction faces of "
-      "different shapes after being made compatible, (" +
-      std::to_string(made[0].num_basis(1)) + ", 3) and (" + std::to_string(made[1].num_basis(1)) +
-      ", 3).";
-  CHECK(refusal([&] { static_cast<void>(cad::join<T>(a, b, 0)); }) == expect);
+  CHECK(made[0].num_basis(1) == 4);
+  CHECK(made[1].num_basis(1) == 4);
+  const bs::Bspline<T> j = cad::join<T>(a, b, 0);
+  CHECK(j.num_basis(1) == 4);
 }
 
 TEST_CASE("join: the tier handed to the detail overload is the one used") {
