@@ -1,9 +1,10 @@
 /// @file compat.hpp
-/// @brief `make_compat`: B-splines with one degree and one knot vector per axis.
+/// @brief `make_compat`: B-splines with one degree and one knot structure per axis.
 ///
 /// The prerequisite of the operations that combine the control points of several B-splines
 /// (`create_ruled`, the Coons patches, `join`): `make_compat` returns new B-splines that share
-/// their degree and knot vector along the chosen axes and represent the same geometry.
+/// their degree and their number of knots per knot class along the chosen axes, and represent the
+/// same geometry.
 #pragma once
 
 #include "pantr/bspline/bspline.hpp"
@@ -335,7 +336,8 @@ void merge_knots(std::vector<bspline::Bspline<T>>& results, const std::vector<st
 
 /// Make B-splines compatible along the chosen parametric axes.
 ///
-/// Returns new B-splines that share the same degree and knot vector along the axes and represent
+/// Returns new B-splines that share the same degree and number of knots per knot class along the
+/// axes (the knot vector itself where the breakpoints agree exactly; see stage 3) and represent
 /// the same geometry. Three stages, each over the selected axes in the order given:
 ///
 ///  1. Same domain: every knot vector is remapped affinely onto the envelope

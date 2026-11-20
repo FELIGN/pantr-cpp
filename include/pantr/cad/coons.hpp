@@ -107,19 +107,19 @@ template <StorageFloat T>
 /// term is rational, every term is promoted to rational first (unit weights).
 ///
 /// Args:
-///     terms (const std::vector<bspline::Bspline<T>>&): B-splines that share one space (after
-///         `make_compat`); the first decides the space of the result.
+///     terms (const std::vector<bspline::Bspline<T>>&): B-splines made compatible by
+///         `make_compat`, whose knots agree in number per knot class but can differ in value
+///         within one (see `make_compat`); the first decides the space of the result.
 ///     signs (std::span<const int>): The coefficient (+1 or -1) of each term.
 ///
 /// Returns:
 ///     bspline::Bspline<T>: The combination, rational when any term is.
 ///
 /// Raises:
-///     value_error: The terms' control nets have different shapes. After `make_compat` they have
-///         one number of basis functions per direction, which the matching of knot classes at a
-///         tolerance is meant to guarantee, but a knot a rounding away from another can leave
-///         different numbers (the case `create_ruled` refuses too); the reference implementation
-///         raised a NumPy broadcast error there.
+///     value_error: The terms' control nets have different shapes. `make_compat` matches the
+///         interior knot classes only, so a direction whose end class holds more than `degree + 1`
+///         knots in one term and not in another leaves different numbers (the case `create_ruled`
+///         refuses too); the reference implementation raised a NumPy broadcast error there.
 template <StorageFloat T>
 [[nodiscard]] bspline::Bspline<T> combine_terms(const std::vector<bspline::Bspline<T>>& terms,
                                                 std::span<const int> signs) {
