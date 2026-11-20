@@ -1429,6 +1429,13 @@
   made. A `float64` bound within the tolerance of a knot, which succeeded, now also gives the
   result at the knot, where it inserted copies of the bound beside it. Inherited from the previous
   release.
+- **`Bspline.multiply` of two or more directions groups each direction's knots at that
+  direction's tolerance** (#10). It grouped every direction at the largest tolerance of any
+  direction, so knots of a short direction closer than a long direction's tolerance were merged
+  into one knot, and the product was not `f g`, an error of order 1 with no exception: a `float32`
+  direction `4e-6` long with knots `0.4e-6` apart beside the unit interval, or a `float64` one
+  `4e-15` long. The domain check uses each direction's own tolerance too. Products whose
+  directions share one tolerance are unchanged. Inherited from the previous release.
 - **`create_uniform_periodic_knots` (and the periodic `create_uniform_space`) returns a periodic
   knot vector for every continuity.** For `1 <= continuity <= degree - 2` it extended the repeated
   interior knots past both ends by distinct, evenly spaced knots, so `K[i + n m] = K[i] + L` (`n`
