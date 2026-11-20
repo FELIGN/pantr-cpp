@@ -420,8 +420,8 @@ template <StorageFloat T>
 ///     b (const Bspline<T>&): The B-spline.
 ///     direction (long long): The parametric direction, in `[0, dim)`.
 ///     value (double): The parameter value, strictly inside the domain of that direction (further
-///         than the space's tolerance from both ends, and not an end by the comparison
-///         `detail::snap_to_knot` makes).
+///         than the space's tolerance from both ends). A value within the tolerance of a knot by
+///         the comparison `detail::snap_to_knot` makes is that knot, which must be inside too.
 ///
 /// Returns:
 ///     std::pair<Bspline<T>, Bspline<T>>: `(left, right)`: the sub-splines on
@@ -445,18 +445,24 @@ template <StorageFloat T>
   const auto a = static_cast<double>(dom_lo);
   const auto e = static_cast<double>(dom_hi);
   const double tol = space.tolerance();
-  // The value is judged inside the domain as the split will use it: a value that is the end knot
-  // by the snap's comparison is that end, though it be further than `tol` from it in `double`.
+  const auto refuse = [&] {
+    return value_error("value must be strictly inside the domain (" + py_repr(a) + ", " +
+                       py_repr(e) + "), got " + py_repr(value) + ".");
+  };
+  if (value <= a + tol || value >= e - tol) {
+    throw refuse();
+  }
+  // The value is also judged as the split will use it: one that is an end knot by the snap's
+  // comparison is that end, though it be further than `tol` from it in `double`.
   const double at = detail::snap_to_knot<T>(space.knots(), value, tol);
   if (at <= a + tol || at >= e - tol) {
-    throw value_error("value must be strictly inside the domain (" + py_repr(a) + ", " +
-                      py_repr(e) + "), got " + py_repr(value) + ".");
+    throw refuse();
   }
 
   const std::vector<BsplineSpace1D<T>>& spaces = whole.spaces();
   const NdArray<T> flat = bezier::detail::flatten_along_axis<T>(b.control_points(), b.shape(), d);
   auto parts = split_1d<T>(space.knots(), space.degree(), flat.template view<2>(), space.periodic(),
-                           tol, value);
+                           tol, at);
 
   const std::vector<std::size_t> shape(b.shape().begin(), b.shape().end());
   const auto build = [&](KnotsAndCtrl<T>& part) {
