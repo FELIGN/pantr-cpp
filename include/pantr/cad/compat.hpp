@@ -1,5 +1,5 @@
 /// @file compat.hpp
-/// @brief `make_compat`: B-splines with one degree and one knot structure per axis.
+/// @brief `make_compat`: B-splines with one degree and one interior knot structure per axis.
 ///
 /// The prerequisite of the operations that combine the control points of several B-splines
 /// (`create_ruled`, the Coons patches, `join`): `make_compat` returns new B-splines that share
@@ -338,8 +338,9 @@ void merge_knots(std::vector<bspline::Bspline<T>>& results, const std::vector<st
 ///
 /// Returns new B-splines that share the same degree and number of knots per interior knot class
 /// along the axes and represent the same geometry. The end classes are not matched: an input whose
-/// end class holds more knots than another's (more than `degree + 1`, or knots outside the domain)
-/// keeps its extra functions. Three stages, each over the selected axes in the order given:
+/// end class holds more knots than another's (more than `degree + 1`), or that has knots outside
+/// the domain, keeps its extra functions. Three stages, each over the selected axes in the order
+/// given:
 ///
 ///  1. Same domain: every knot vector is remapped affinely onto the envelope
 ///     `[min(starts), max(ends)]` (a reparametrization; the control points are unchanged).
@@ -366,8 +367,8 @@ void merge_knots(std::vector<bspline::Bspline<T>>& results, const std::vector<st
 ///         means every axis. An empty list returns the B-splines unchanged.
 ///
 /// Returns:
-///     std::vector<bspline::Bspline<T>>: One B-spline per input, in order, sharing the knot
-///     structure along the axes (an input that needed no change shares its representation).
+///     std::vector<bspline::Bspline<T>>: One B-spline per input, in order, sharing the interior
+///     knot structure along the axes (an input that needed no change shares its representation).
 ///
 /// Raises:
 ///     value_error: The parametric dimensions differ ("All B-splines must have the same

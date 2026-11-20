@@ -108,8 +108,8 @@ template <StorageFloat T>
 ///
 /// Args:
 ///     terms (const std::vector<bspline::Bspline<T>>&): B-splines made compatible by
-///         `make_compat`, whose knots agree in number per knot class but can differ in value
-///         within one (see `make_compat`); the first decides the space of the result.
+///         `make_compat`, whose knots agree in number per interior knot class but can differ in
+///         value within one (see `make_compat`); the first decides the space of the result.
 ///     signs (std::span<const int>): The coefficient (+1 or -1) of each term.
 ///
 /// Returns:
@@ -689,12 +689,14 @@ struct ComparedEdge {
 /// model size leaves all six faces interpolated to `2e-15`. That is the classical compatibility
 /// condition for transfinite interpolation, observed here rather than proved.
 ///
-/// Made compatible, the two readings span the same space up to the values of knots within one knot
-/// class (see `make_compat`), where a spline is determined by its control points; comparing those
-/// is therefore a comparison of the two curves (exact where the knots agree) and needs no
-/// sampling. The tolerance is `verify_corners_2d`'s tier and rule applied to what is graded here,
-/// which is a control-point coefficient rather than a point on the curve: the conservative tier
-/// times the largest absolute coefficient over all twelve compared edges.
+/// Made compatible, the two readings share their interior knot classes, the knot values within
+/// one class aside (see `make_compat`); their end classes are as the faces gave them, and the
+/// shape check below catches a difference there only when it changes the number of control
+/// points. Where the two span one space, a spline is determined by its control points, so
+/// comparing those is a comparison of the two curves and needs no sampling. The tolerance is
+/// `verify_corners_2d`'s tier and rule applied to what is graded here, which is a control-point
+/// coefficient rather than a point on the curve: the conservative tier times the largest absolute
+/// coefficient over all twelve compared edges.
 ///
 /// **Each column group is graded against its own magnitude.** A rational edge is compared as
 /// homogeneous control points, whose coordinate columns carry units of length times weight beside
