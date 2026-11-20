@@ -347,9 +347,11 @@ void merge_knots(std::vector<bspline::Bspline<T>>& results, const std::vector<st
 ///     B-spline's space tolerance rounded to the storage type; a multiplicity at a class counts all
 ///     of a B-spline's knots in it, and a knot inserted at a class takes the B-spline's own
 ///     smallest knot there, or the class's smallest breakpoint where it has none, so that no
-///     B-spline's own knot moves. The outputs then agree in their number of knots per class, but
-///     not necessarily in their values: the knots of one class lie within it, whose consecutive
-///     breakpoints are at most the tolerance apart.
+///     B-spline's own knot moves (for a B-spline whose own tolerance is the first's; one with a
+///     larger tolerance can merge an inserted knot into a class of its own). The outputs then
+///     agree in their number of knots per class, but not necessarily in their values: those differ
+///     by less than the tolerance, or by more where breakpoints each within the tolerance of the
+///     next chain into one class.
 ///
 /// A periodic direction (on a selected axis) is first converted to open form, which opens every
 /// direction of that B-spline. Fewer than two B-splines are returned unchanged, before any check.

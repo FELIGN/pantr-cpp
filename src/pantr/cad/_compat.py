@@ -25,12 +25,14 @@ def make_compat(
     """Make B-splines compatible along specified parametric axes.
 
     Returns new B-splines that share the same polynomial degree along
-    the given axes, and the same knot vector when their breakpoints,
-    after the remapping below, agree exactly. Breakpoints that differ
-    only by rounding (``0.1 * 3`` against ``0.3``) are not unified: the
-    results can then differ in their knot values and in the number of
-    knots. The geometric mapping of each B-spline is preserved up to the
-    rounding of the knot insertion and degree elevation.
+    the given axes and the same number of knots in each knot class
+    there. Breakpoints within the first B-spline's knot tolerance of each
+    other (``0.1 * 3`` against ``0.3``) are one class, as a space groups
+    its own knots; the results then have equal numbers of knots, whose
+    values can differ within the class. Breakpoints that agree exactly
+    give identical knot vectors. The geometric mapping of each B-spline
+    is preserved up to the rounding of the knot insertion and degree
+    elevation.
 
     The algorithm proceeds in three stages:
 
@@ -39,7 +41,9 @@ def make_compat(
     2. **Same degree** -- elevate each B-spline to the maximum degree
        per axis.
     3. **Merge knots** -- insert knots so all B-splines share the
-       same interior breakpoints with the maximum multiplicity.
+       same interior knot classes with the maximum multiplicity; a
+       B-spline lacking knots in a class gets them at its own knot
+       there, or at the class's smallest breakpoint where it has none.
 
     Periodic B-splines are converted to open form before processing.
 
@@ -52,9 +56,9 @@ def make_compat(
             of ``int`` selects specific axes.
 
     Returns:
-        list[Bspline]: New B-splines of equal degrees along the specified
-        axes, with identical knot vectors there when the breakpoints agree
-        exactly.
+        list[Bspline]: New B-splines of equal degrees and equal numbers
+        of knots per knot class along the specified axes, with identical
+        knot vectors there when the breakpoints agree exactly.
 
     Raises:
         ValueError: If B-splines have different parametric dimensions.
