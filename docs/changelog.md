@@ -1424,7 +1424,9 @@
   at that knot** (#6). For `float32` knots, a bound a few units of the format's resolution from a
   knot (`0.5 + 2^-20 + 2e-8` beside the knot `0.5` on `[0, 1]`) was the knot to the count of its
   multiplicity and a different value to the cut of the knot vector, and both calls raised
-  `ValueError: knots must have at least 2*degree+2 elements`. Such a bound is now replaced by the
+  `ValueError: knots must have at least 2*degree+2 elements`; a bound closer to the knot
+  (`0.5 - 2^-20`, for one) returned, with no error, a knot vector whose end was not clamped
+  (`[0.4999990463256836, 0.4999990463256836, 0.5, 0.9, 0.9, 0.9]`). Such a bound is now replaced by the
   knot, once, before the count, the insertion and the cut, judged by the comparison the count
   made. A `float64` bound within the tolerance of a knot, which succeeded, now also gives the
   result at the knot, where it inserted copies of the bound beside it. A `float32` split value
