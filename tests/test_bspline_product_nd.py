@@ -755,16 +755,12 @@ class TestValidationErrors:
 
 
 class TestCrossDirectionTolerance:
-    """Knots grouped at another direction's tolerance (inherited from the previous release)."""
+    """Each direction groups its knots at its own tolerance, not at another direction's.
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=AssertionError,
-        reason="The product groups each direction's knots at the largest tolerance of any "
-        "direction, so knots closer than another direction's tolerance merge into one class, "
-        "here of multiplicity above degree + 1, and the product is not f g. The previous "
-        "release does the same.",
-    )
+    The previous release grouped every direction at the largest tolerance of any, which merged
+    knots of a short direction closer than a long direction's tolerance into one class.
+    """
+
     def test_short_direction_beside_a_long_one(self) -> None:
         """A product of ``float32`` operands, one direction 4e-6 long, evaluates to ``f g``.
 
@@ -786,3 +782,31 @@ class TestCrossDirectionTolerance:
         np.testing.assert_allclose(
             h.evaluate(pts), f.evaluate(pts) * g.evaluate(pts), rtol=1e-5, atol=0.0
         )
+
+    @pytest.mark.parametrize("short_first", [True, False])
+    def test_short_direction_keeps_its_knots(self, short_first: bool) -> None:
+        """The short direction keeps its three knots, in either order of the directions.
+
+        Oracle: ``f g`` evaluated pointwise (to a few ``float32`` ulps, as above), and the
+        minimal product knots worked by hand: each simple knot of the degree-1 operands is a
+        knot of multiplicity ``max(1 + 1, 1 + 1) = 2`` of the degree-2 product.
+        """
+        dt = np.float32
+        short = np.array([0, 0, 1.5e-6, 1.9e-6, 2.3e-6, 4e-6, 4e-6], dtype=dt)
+        s_short = BsplineSpace1D(short, 1)
+        s_unit = BsplineSpace1D(np.array([0, 0, 1, 1], dtype=dt), 1)
+        pts = np.array([[0.5e-6, 0.3], [2.1e-6, 0.7], [3.5e-6, 0.1]], dtype=dt)
+        if not short_first:
+            pts = np.ascontiguousarray(pts[:, ::-1])
+        space = BsplineSpace([s_short, s_unit] if short_first else [s_unit, s_short])
+        rng = np.random.default_rng(0)
+        f = Bspline(space, rng.uniform(1.0, 2.0, (*space.num_basis, 1)).astype(dt))
+        g = Bspline(space, rng.uniform(1.0, 2.0, (*space.num_basis, 1)).astype(dt))
+
+        h = f.multiply(g)
+
+        np.testing.assert_allclose(
+            h.evaluate(pts), f.evaluate(pts) * g.evaluate(pts), rtol=1e-5, atol=0.0
+        )
+        want = np.repeat(short, [3, 0, 2, 2, 2, 3, 0])
+        np.testing.assert_array_equal(h.space.spaces[0 if short_first else 1].knots, want)

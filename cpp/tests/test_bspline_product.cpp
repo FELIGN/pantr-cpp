@@ -966,14 +966,14 @@ TEST_CASE_TEMPLATE("product: knots closer than the tolerance are one breakpoint"
   }
 }
 
-TEST_CASE("product: a breakpoint above degree + 1 leaves no control point unwritten") {
-  // Oracle: determinism. The product groups knots at the largest tolerance of any direction, so
-  // direction 0's three knots 0.4e-6 apart, in float on [0, 4e-6], fall into one class under
-  // direction 1's tolerance (about 1e-6 on [0, 1]): multiplicity 3 for degree 1, and 3 + 1 = 4 in
-  // the degree-2 product, whose Bezier form then has a row no element writes. That the values are
-  // then not f g is inherited from the previous release and not pinned here; what is pinned is
-  // that the result depends on the operands only. The heap is first filled with NaN in the sizes
-  // the product allocates, so a row left as allocated reads NaN.
+TEST_CASE("product: a short direction beside a long one leaves no control point unwritten") {
+  // Oracle: determinism. Direction 0's three knots 0.4e-6 apart, in float on [0, 4e-6], are
+  // closer than direction 1's tolerance (about 1e-6 on [0, 1]). The previous release grouped every
+  // direction's knots at that largest tolerance, which merged them into one class of multiplicity
+  // 3 + 1 = 4 in the degree-2 product, whose Bezier form then had a row no element wrote; each
+  // direction is now grouped at its own tolerance (the next test checks the values). What is
+  // pinned here is that the result depends on the operands only. The heap is first filled with
+  // NaN in the sizes the product allocates, so a row left as allocated reads NaN.
   const Dir d0{{0.0, 0.0, 1.5e-6, 1.9e-6, 2.3e-6, 4e-6, 4e-6}, 1};
   const Dir d1{{0.0, 0.0, 1.0, 1.0}, 1};
   const bs::Bspline<float> f = make_spline<float>({d0, d1}, 1, false, 3U);
@@ -987,6 +987,31 @@ TEST_CASE("product: a breakpoint above degree + 1 leaves no control point unwrit
   const bs::Bspline<float> h = bs::multiply<float>(f, g);
   for (const float v : h.control_points()) {
     REQUIRE(std::isfinite(v));
+  }
+}
+
+TEST_CASE("product: each direction groups its knots at its own tolerance") {
+  // Oracle: exact-rational values, and tabulated structure. Direction 0 (float, [0, 4e-6]) has
+  // three interior knots 0.4e-6 apart, far above its own tolerance (about 4e-12) and below that
+  // of the unit direction (about 1e-6). Grouped at its own tolerance, each simple knot of the
+  // degree-1 operands is a breakpoint of multiplicity max(1 + 1, 1 + 1) = 2 in the degree-2
+  // product. Both orders of the directions.
+  const Dir short_dir{{0.0, 0.0, 1.5e-6, 1.9e-6, 2.3e-6, 4e-6, 4e-6}, 1};
+  const Dir unit_dir{{0.0, 0.0, 1.0, 1.0}, 1};
+  std::vector<Break> want;
+  for (const double k : {1.5e-6, 1.9e-6, 2.3e-6}) {
+    want.push_back({static_cast<double>(static_cast<float>(k)), 2});
+  }
+  for (const std::size_t at : {std::size_t{0}, std::size_t{1}}) {
+    CAPTURE(at);
+    const std::vector<Dir> dirs =
+        at == 0 ? std::vector<Dir>{short_dir, unit_dir} : std::vector<Dir>{unit_dir, short_dir};
+    const bs::Bspline<float> f = make_spline<float>(dirs, 1, false, 3U);
+    const bs::Bspline<float> g = make_spline<float>(dirs, 1, false, 4U);
+    const bs::Bspline<float> h = bs::multiply<float>(f, g);
+    expect_structure(interior_structure<float>(dir_space<float>(h, at)), want,
+                     dir_space<float>(f, at).tolerance());
+    expect_product_values<float>(f, g, h, Route::projected);
   }
 }
 
