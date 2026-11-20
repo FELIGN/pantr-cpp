@@ -1080,7 +1080,9 @@ class BsplineSpace1D:
         The windowed knot vector is a pure slice of this space's knots (never
         re-clamped), chosen so the windowed basis functions are exactly the global
         basis functions supported on the windowed intervals; they therefore equal
-        the global basis pointwise over those intervals.
+        the global basis pointwise over those intervals. The window shares this
+        space's :attr:`tolerance`, so two knots that are one knot here are one knot
+        in the window, and it has ``interval_hi - interval_lo`` intervals.
 
         Args:
             interval_lo (int): First interval (knot span) of the window, inclusive.

@@ -1411,6 +1411,15 @@
   not matched (an end class holding more knots in one input keeps its extra basis functions).
   Inputs whose breakpoints are equal or farther apart than the tolerance give the same result as
   before. Inherited from the previous release.
+- **`BsplineSpace1D.restrict` gives a window with the parent's tolerance** (#5). The window took
+  a tolerance derived from its slice of knots, which is smaller when the parent's is set by a knot
+  outside the slice: in a space built with `snap_knots=False`, two knots that are one knot of the
+  parent (`1` and `1 + 1e-12` beside a far knot `1e6`) were two in the window, which then had more
+  intervals than requested and a different continuity there, with no error. The window now shares
+  the parent's `tolerance`. A snapped space keeps its windows' knots, maps and interval counts.
+  `build_local` over such a space, which raised `RuntimeError` ("Grid restriction ... and space
+  restriction ... disagree") for those windows, now returns them. Inherited from the previous
+  release.
 - **`create_uniform_periodic_knots` (and the periodic `create_uniform_space`) returns a periodic
   knot vector for every continuity.** For `1 <= continuity <= degree - 2` it extended the repeated
   interior knots past both ends by distinct, evenly spaced knots, so `K[i + n m] = K[i] + L` (`n`
