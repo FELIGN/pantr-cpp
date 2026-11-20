@@ -1407,9 +1407,10 @@
   `create_coons_volume` and `join` then refused them. The union is now grouped into classes the way
   a space groups its own knots, and an input lacking knots at a class gets them at its own knot
   there, or at the class's smallest one where it has none. The outputs have the same number of
-  knots per class, whose values can differ within the class. Inputs whose breakpoints are equal or
-  farther apart than the tolerance give the same result as before. Inherited from the previous
-  release.
+  knots per interior class, whose values can differ within the class; the end classes are still
+  not matched (an end class holding more knots in one input keeps its extra basis functions).
+  Inputs whose breakpoints are equal or farther apart than the tolerance give the same result as
+  before. Inherited from the previous release.
 - **`create_uniform_periodic_knots` (and the periodic `create_uniform_space`) returns a periodic
   knot vector for every continuity.** For `1 <= continuity <= degree - 2` it extended the repeated
   interior knots past both ends by distinct, evenly spaced knots, so `K[i + n m] = K[i] + L` (`n`

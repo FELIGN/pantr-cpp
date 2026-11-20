@@ -25,12 +25,15 @@ def make_compat(
     """Make B-splines compatible along specified parametric axes.
 
     Returns new B-splines that share the same polynomial degree along
-    the given axes and the same number of knots in each knot class
-    there. Breakpoints within the first B-spline's knot tolerance of each
-    other (``0.1 * 3`` against ``0.3``) are one class, as a space groups
-    its own knots; the results then have equal numbers of knots, whose
-    values can differ within the class. Breakpoints that agree exactly
-    give identical knot vectors. The geometric mapping of each B-spline
+    the given axes and the same number of knots in each interior knot
+    class there. Breakpoints within the first B-spline's knot tolerance
+    of each other (``0.1 * 3`` against ``0.3``) are one class, as a space
+    groups its own knots; the results then have equal numbers of knots
+    there, whose values can differ within the class. Interior
+    breakpoints that agree exactly give identical interior knots. The
+    end classes are not matched: a B-spline whose end class holds more
+    knots than another's keeps its extra basis functions. The geometric
+    mapping of each B-spline
     is preserved up to the rounding of the knot insertion and degree
     elevation.
 
@@ -57,8 +60,9 @@ def make_compat(
 
     Returns:
         list[Bspline]: New B-splines of equal degrees and equal numbers
-        of knots per knot class along the specified axes, with identical
-        knot vectors there when the breakpoints agree exactly.
+        of knots per interior knot class along the specified axes, with
+        identical interior knots there when the breakpoints agree
+        exactly.
 
     Raises:
         ValueError: If B-splines have different parametric dimensions.

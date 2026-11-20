@@ -117,9 +117,10 @@ template <StorageFloat T>
 ///
 /// Raises:
 ///     value_error: The terms' control nets have different shapes. `make_compat` matches the
-///         interior knot classes only, so a direction whose end class holds more than `degree + 1`
-///         knots in one term and not in another leaves different numbers (the case `create_ruled`
-///         refuses too); the reference implementation raised a NumPy broadcast error there.
+///         interior knot classes only, so an end class holding more knots in one term than in
+///         another (more than `degree + 1`, for example) leaves different numbers (the case
+///         `create_ruled` refuses too); the reference implementation raised a NumPy broadcast
+///         error there.
 template <StorageFloat T>
 [[nodiscard]] bspline::Bspline<T> combine_terms(const std::vector<bspline::Bspline<T>>& terms,
                                                 std::span<const int> signs) {
@@ -669,7 +670,7 @@ void verify_corners_3d(const std::vector<EdgeReadings<T>>& edges, double tier) {
 /// Attributes:
 ///     edge (const EdgeReadings<T>*): The edge, for the labels the mismatch message names.
 ///     a (bspline::Bspline<T>): `face_a`'s reading, made compatible.
-///     b (bspline::Bspline<T>): `face_b`'s reading, same space.
+///     b (bspline::Bspline<T>): `face_b`'s reading, made compatible with `a`.
 ///     rational (bool): Whether the two readings carry a trailing weight column.
 template <StorageFloat T>
 struct ComparedEdge {
@@ -688,8 +689,9 @@ struct ComparedEdge {
 /// model size leaves all six faces interpolated to `2e-15`. That is the classical compatibility
 /// condition for transfinite interpolation, observed here rather than proved.
 ///
-/// Made compatible, the two readings span the same space, where a spline is determined by its
-/// control points; comparing those is therefore an exact comparison of the two curves and needs no
+/// Made compatible, the two readings span the same space up to the values of knots within one knot
+/// class (see `make_compat`), where a spline is determined by its control points; comparing those
+/// is therefore a comparison of the two curves (exact where the knots agree) and needs no
 /// sampling. The tolerance is `verify_corners_2d`'s tier and rule applied to what is graded here,
 /// which is a control-point coefficient rather than a point on the curve: the conservative tier
 /// times the largest absolute coefficient over all twelve compared edges.

@@ -3,8 +3,8 @@
 ///
 /// The prerequisite of the operations that combine the control points of several B-splines
 /// (`create_ruled`, the Coons patches, `join`): `make_compat` returns new B-splines that share
-/// their degree and their number of knots per knot class along the chosen axes, and represent the
-/// same geometry.
+/// their degree and their number of knots per interior knot class along the chosen axes, and
+/// represent the same geometry.
 #pragma once
 
 #include "pantr/bspline/bspline.hpp"
@@ -276,7 +276,7 @@ template <StorageFloat T>
   return to_insert;
 }
 
-/// Insert knots so every B-spline shares one knot vector per axis.
+/// Insert knots so every B-spline has the same number of knots per interior knot class per axis.
 ///
 /// The tolerance along an axis is the **first** B-spline's space tolerance there (read after the
 /// two earlier stages), rounded to the storage type, applied to every B-spline's classes and to the
@@ -336,9 +336,10 @@ void merge_knots(std::vector<bspline::Bspline<T>>& results, const std::vector<st
 
 /// Make B-splines compatible along the chosen parametric axes.
 ///
-/// Returns new B-splines that share the same degree and number of knots per knot class along the
-/// axes (the knot vector itself where the breakpoints agree exactly; see stage 3) and represent
-/// the same geometry. Three stages, each over the selected axes in the order given:
+/// Returns new B-splines that share the same degree and number of knots per interior knot class
+/// along the axes and represent the same geometry. The end classes are not matched: an input whose
+/// end class holds more knots than another's (more than `degree + 1`, or knots outside the domain)
+/// keeps its extra functions. Three stages, each over the selected axes in the order given:
 ///
 ///  1. Same domain: every knot vector is remapped affinely onto the envelope
 ///     `[min(starts), max(ends)]` (a reparametrization; the control points are unchanged).
