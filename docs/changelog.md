@@ -1399,6 +1399,17 @@
   the end, an error of order 1 as well; the end now takes no knot for a copy of it. The start of
   the domain still does, in such a space. A snapped knot vector whose last span is non-empty keeps
   its slices bit for bit. The first defect is inherited from the previous release.
+- **`make_compat` gives B-splines whose interior knots differ by less than the tolerance the same
+  number of knots** (#13). It matched each breakpoint of the union of the inputs only against the
+  first knot of an input not below it, so for knots `0.5` and `0.5 + tol / 4` it inserted a knot
+  in the input holding the lower one and none in the other, and returned B-splines with different
+  numbers of control points with no error; `create_ruled`, `create_coons_surface`,
+  `create_coons_volume` and `join` then refused them. The union is now grouped into classes the way
+  a space groups its own knots, and an input lacking knots at a class gets them at its own knot
+  there, or at the class's smallest one where it has none. The outputs have the same number of
+  knots per class, whose values can differ within the class. Inputs whose breakpoints are equal or
+  farther apart than the tolerance give the same result as before. Inherited from the previous
+  release.
 - **`create_uniform_periodic_knots` (and the periodic `create_uniform_space`) returns a periodic
   knot vector for every continuity.** For `1 <= continuity <= degree - 2` it extended the repeated
   interior knots past both ends by distinct, evenly spaced knots, so `K[i + n m] = K[i] + L` (`n`
