@@ -10,18 +10,31 @@
 /// it makes (a requested bound against a domain endpoint, against an existing knot, against the
 /// refined vector) is the question `knot_tolerance` answers: are these two values the same knot?
 ///
-/// Whether a bound is an existing knot is decided once, up front (`snap_to_knot`), after the
-/// comparison with the domain ends (`validate_restrict_bounds`, in `double`): by the
-/// comparison the count of knots already at a boundary (`count_within`) makes, which rounds the
-/// bound to the storage type and forms `knot - bound` in it, as NumPy did for a Python float. A
-/// bound that is a knot by that test is replaced by the knot, and every later count, insertion and
-/// cut (`first_not_below`, which compares in `double`) uses the replaced value, so they cannot
-/// disagree on it. The previous release classified the bound separately in each: for `float`
-/// knots a bound a few units of the format's resolution from a knot was that knot to the count
-/// and a different value to the cut, and the restriction or split refused with "knots must have
-/// at least 2*degree+2 elements" where `double` knots succeeded.
+/// The one rule: which knots are at a bound. `tol` decides which value the bound *is*, once, up
+/// front: a bound within `tol` of a domain end is that end (`validate_restrict_bounds`, in
+/// `double`); otherwise a bound within `tol` of a knot is the nearest such knot (`snap_to_knot`,
+/// which rounds the bound to the storage type and forms `knot - bound` in it, as NumPy did for a
+/// Python float); otherwise it is the bound rounded to the storage type. After that a knot is at
+/// the bound when it is **bitwise equal** to that value, and nothing else is: the count of the
+/// copies already there, the insertion's multiplicity check (run with a zero tolerance) and the cut
+/// of the refined vector (`lower_bound` and `upper_bound` on the value, in the storage type) all
+/// use that identity. The inserted copies carry the value itself, so every piece has exactly
+/// `degree + 1` equal knots at each end and the domain the bound was taken as.
 ///
-/// Three properties of the shared `tol` are load-bearing.
+/// The previous release classified the knots beside the bound twice, the count by `|knot - bound|
+/// <= tol` in the storage type and the cut by a `double` `lower_bound` on `bound -+ tol`, and where
+/// the two disagreed the result had one knot too many and was not clamped (over-collection), or
+/// lost the knots of the bound and had a wrong domain or refused with "knots must have at least
+/// 2*degree+2 elements" (under-collection).
+///
+/// A space built with `snap_knots = false` may hold a knot distinct from the bound but within `tol`
+/// of it. Identity leaves it a knot of its own; where a cut would place it inside a piece, beside
+/// that piece's clamped end, the piece's end class under `tol` would have more than `degree + 1`
+/// members, which a space refuses at its last knot, so the call refuses, naming the bound and that
+/// knot (`check_piece_end`). An end the cut leaves as the space had it (an open domain end that is
+/// not cut) is not checked: it is the space's own.
+///
+/// Two properties of the shared `tol` are load-bearing.
 ///
 /// **The scale does not move between the stages.** `tol` is derived from the input knot vector,
 /// then applied to the *refined* one after boundary insertion. Knot insertion never changes the
@@ -33,31 +46,10 @@
 /// `max(|knots[0]|, |knots[-1]|)`. Each of the three terms of the scale only decreases, and the
 /// inherited tolerance is then conservative rather than tight, the safe direction for a merge test.
 ///
-/// **The extraction offsets widen, and that direction is deliberate.** The sub-vector is cut at
-/// the first knot not below `a_new - tol` and one before the first knot not below `b_new + tol`:
-/// both move the cut *away* from the
-/// interval, so a boundary knot can never be dropped by a coordinate landing a rounding short of
-/// its own value. At a domain based at `1e6` one ulp of the bound is about `1.2e-10`, so a fixed
-/// absolute `1e-12` would be absorbed entirely by `b_new + tol == b_new` and the cut would fall
-/// before the first copy of `b_new`, silently truncating the last `degree + 1` knots. A tolerance
-/// of `8 eps scale` is at least four ulp of any coordinate in the vector, so the offset always
-/// changes the value it is added to and the cut always lands past the whole boundary group.
-///
-/// **Widening cannot over-collect.** `BsplineSpace1D` snaps its knots by the same rule, so two
-/// *distinct* stored knots differ by more than `tol` and a cut widened by `tol` cannot reach the
-/// next one. A bound within `tol` of a knot is that knot (above), so a bound falling between two
-/// distinct knots less than `2 tol` apart becomes the nearer one rather than a third value the
-/// widened cut could over-collect around. Three exceptions predate the snap and are not fixed.
-/// (1) A space built with `snap_knots = false` need not hold distinct knots more than `tol` apart.
-/// (2) The left key `at - tol` is rounded in `double`: where `tol` is not a multiple of the ulp of
-/// `at`, a bound just over `tol` above a distinct knot gives a key that rounds onto that knot, and
-/// the cut collects it, so the result is not clamped at that bound (in `double`, knots `[0, 0, 0,
-/// 0.3, 0.8, 0.8, 0.8]` at degree 2 and a bound `0.3 + 26 ulp(0.3)`). (3) For `float` knots the
-/// snap's test rounds a bound that is not a knot to `float` and the cut does not: a bound within
-/// `tol` of a knot in `double` whose rounding lies further than `tol` from it is not snapped, its
-/// copies are inserted at the rounded value, and the cut still collects the knot, so the result is
-/// not clamped at that bound either (`float` knots `[0, 0, 0, 0.5, s, s, s]` at degree 2, `s =
-/// 1.2375f`, and a bound `0.5 + tol`; it needs `tol` not a multiple of the knot's ulp).
+/// **A bound inside the domain stays inside it once rounded.** The insertion checks its values
+/// against the domain with a zero tolerance. A bound within `tol` of an end is that end, exactly;
+/// any other bound is more than `tol` inside, and rounding it to the storage type moves it by at
+/// most half an ulp of a coordinate in the vector, less than the `8 eps scale` of `tol`.
 #pragma once
 
 #include "pantr/bspline/bspline.hpp"
@@ -96,19 +88,9 @@ struct Bounds {
 
 namespace detail {
 
-/// Count the knots within `tol` of `value`, the difference formed in the storage type with `value`
-/// rounded to it (as NumPy forms `knots - value` for a Python float).
-template <StorageFloat T>
-[[nodiscard]] std::size_t count_within(std::span<const T> knots, double value, double tol) {
-  const auto v = static_cast<T>(value);
-  return static_cast<std::size_t>(std::count_if(knots.begin(), knots.end(), [&](T k) {
-    return static_cast<double>(std::abs(static_cast<T>(k - v))) <= tol;
-  }));
-}
-
-/// The knot that `value` is, by the test `count_within` applies: the stored knot nearest `value`
-/// among those within `tol` of it (the difference formed in the storage type, `value` rounded to
-/// it; the first such knot on a tie), or `value` itself when no knot is.
+/// The knot that `value` is: the stored knot nearest `value` among those within `tol` of it (the
+/// difference formed in the storage type with `value` rounded to it, as NumPy forms `knots - value`
+/// for a Python float; the first such knot on a tie), or `value` itself when no knot is.
 template <StorageFloat T>
 [[nodiscard]] double snap_to_knot(std::span<const T> knots, double value, double tol) {
   const auto v = static_cast<T>(value);
@@ -126,13 +108,48 @@ template <StorageFloat T>
   return out;
 }
 
-/// The first index whose knot is not below `key`, the comparison made in `double` (as NumPy's
-/// `searchsorted` makes it for a Python-float key).
+/// The value a bound is, by the file's one rule: the domain end `end` when `value` is within `tol`
+/// of it (in `double`, as `validate_restrict_bounds` compares), else the knot `snap_to_knot` takes
+/// it as, else `value` rounded to the storage type.
 template <StorageFloat T>
-[[nodiscard]] std::size_t first_not_below(std::span<const T> knots, double key) {
-  const auto it = std::lower_bound(knots.begin(), knots.end(), key,
-                                   [](T k, double v) { return static_cast<double>(k) < v; });
-  return static_cast<std::size_t>(it - knots.begin());
+[[nodiscard]] T bound_value(std::span<const T> knots, T end, double value, double tol) {
+  if (std::abs(value - static_cast<double>(end)) <= tol) {
+    return end;
+  }
+  return static_cast<T>(snap_to_knot<T>(knots, value, tol));
+}
+
+/// The index range of the knots bitwise equal to `value`, in a non-decreasing vector.
+template <StorageFloat T>
+[[nodiscard]] std::pair<std::size_t, std::size_t> equal_knots(std::span<const T> knots, T value) {
+  const auto [lo, hi] = std::equal_range(knots.begin(), knots.end(), value);
+  return {static_cast<std::size_t>(lo - knots.begin()),
+          static_cast<std::size_t>(hi - knots.begin())};
+}
+
+/// Refuse a piece whose end `end` has a distinct knot within `tol` of it inside the piece.
+///
+/// Only a space built with `snap_knots = false` holds such a knot. The piece's end class under
+/// `tol` would have more than `degree + 1` members, which a space refuses at its last knot.
+///
+/// Args:
+///     piece (std::span<const T>): The piece's knots, clamped at `end`.
+///     end (T): The value at the end checked, `piece.front()` or `piece.back()`.
+///     bound (double): The bound as requested, for the message.
+///     tol (double): Absolute parametric tolerance.
+///
+/// Raises:
+///     value_error: A knot of `piece` other than `end` is within `tol` of it.
+template <StorageFloat T>
+void check_piece_end(std::span<const T> piece, T end, double bound, double tol) {
+  for (const T k : piece) {
+    if (k != end && static_cast<double>(std::abs(static_cast<T>(k - end))) <= tol) {
+      throw value_error("The bound " + py_repr(bound) + " is within the tolerance " + py_repr(tol) +
+                        " of the distinct knot " + py_repr(static_cast<double>(k)) +
+                        ", which a piece cut there would hold beside its clamped end; build the "
+                        "space with snap_knots=True.");
+    }
+  }
 }
 
 }  // namespace detail
@@ -152,8 +169,8 @@ template <StorageFloat T>
 ///     Bounds: The snapped bounds.
 ///
 /// Raises:
-///     value_error: `degree < 0` or fewer than `2 * degree + 2` knots; `lo >= hi`; or a bound
-///         outside the domain by more than `tol`.
+///     value_error: `degree < 0` or fewer than `2 * degree + 2` knots; a NaN bound; `lo >= hi`; or
+///         a bound outside the domain by more than `tol`.
 template <StorageFloat T>
 [[nodiscard]] Bounds validate_restrict_bounds(std::span<const T> knots, int degree, double tol,
                                               Bounds bounds) {
@@ -164,6 +181,13 @@ template <StorageFloat T>
   double a_new = bounds.lo;
   double b_new = bounds.hi;
 
+  // A NaN fails every comparison below, and no knot equals it, so it is refused here.
+  for (const auto& [name, v] : {std::pair{"Lower", a_new}, std::pair{"Upper", b_new}}) {
+    if (std::isnan(v)) {
+      throw value_error(std::string(name) + " bound (" + py_repr(v) + ") is outside the domain [" +
+                        py_repr(a) + ", " + py_repr(b) + "].");
+    }
+  }
   if (a_new >= b_new) {
     throw value_error("Lower bound (" + py_repr(a_new) +
                       ") must be strictly less than upper bound (" + py_repr(b_new) + ").");
@@ -187,15 +211,17 @@ template <StorageFloat T>
 
 /// Compute the knots to insert at the restriction boundaries.
 ///
-/// For each boundary, enough copies to reach multiplicity `degree + 1`; none when the boundary
-/// coincides with an already-open domain endpoint.
+/// Each bound is first taken as the value it is (the file's one rule): a domain end within `tol`
+/// of it, else the nearest knot within `tol` (`detail::snap_to_knot`), else itself rounded to the
+/// storage type. Then enough copies of that value to make `degree + 1` knots bitwise equal to it;
+/// none when the boundary is a domain end already open (`degree + 1` equal knots).
 ///
 /// Args:
 ///     knots (std::span<const T>): The knot vector (non-periodic or open-compatible).
 ///     degree (int): Degree.
-///     tol (double): Absolute parametric tolerance: it decides which existing knots already *are*
-///         the boundary, and so how many copies the boundary is short of.
-///     bounds (Bounds): The (snapped) bounds of the restricted domain.
+///     tol (double): Absolute parametric tolerance: it decides which value each bound is, and with
+///         it which existing knots are already copies of the boundary.
+///     bounds (Bounds): The bounds of the restricted domain (snapped or not).
 ///
 /// Returns:
 ///     std::vector<T>: The knot values to insert (possibly empty).
@@ -208,32 +234,28 @@ template <StorageFloat T>
                                                               double tol, Bounds bounds) {
   detail::check_domain_indexable(knots.size(), degree);
   const auto p = static_cast<std::size_t>(degree);
-  const auto a = static_cast<double>(knots[p]);
-  const auto b = static_cast<double>(knots[knots.size() - p - 1]);
+  const T a = knots[p];
+  const T b = knots[knots.size() - p - 1];
 
-  const bool left_at_domain = std::abs(bounds.lo - a) <= tol;
-  const bool right_at_domain = std::abs(bounds.hi - b) <= tol;
-  const bool left_open =
-      std::abs(static_cast<double>(knots[0]) - static_cast<double>(knots[p])) <= tol;
-  const bool right_open = std::abs(static_cast<double>(knots[knots.size() - p - 1]) -
-                                   static_cast<double>(knots.back())) <= tol;
+  const bool left_at_domain = std::abs(bounds.lo - static_cast<double>(a)) <= tol;
+  const bool right_at_domain = std::abs(bounds.hi - static_cast<double>(b)) <= tol;
+  const bool left_open = knots[0] == a;
+  const bool right_open = knots.back() == b;
 
   if (left_at_domain && right_at_domain && left_open && right_open) {
     throw value_error("Bounds match the full domain and the direction is already open.");
   }
 
+  const T lo = detail::bound_value<T>(knots, a, bounds.lo, tol);
+  const T hi = detail::bound_value<T>(knots, b, bounds.hi, tol);
   std::vector<T> out;
   if (!(left_at_domain && left_open)) {
-    const std::size_t m_left = detail::count_within<T>(knots, bounds.lo, tol);
-    if (p + 1 > m_left) {
-      out.insert(out.end(), p + 1 - m_left, static_cast<T>(bounds.lo));
-    }
+    const auto [first, past] = detail::equal_knots<T>(knots, lo);
+    out.insert(out.end(), p + 1 - std::min(p + 1, past - first), lo);
   }
   if (!(right_at_domain && right_open)) {
-    const std::size_t m_right = detail::count_within<T>(knots, bounds.hi, tol);
-    if (p + 1 > m_right) {
-      out.insert(out.end(), p + 1 - m_right, static_cast<T>(bounds.hi));
-    }
+    const auto [first, past] = detail::equal_knots<T>(knots, hi);
+    out.insert(out.end(), p + 1 - std::min(p + 1, past - first), hi);
   }
   return out;
 }
@@ -257,7 +279,8 @@ template <StorageFloat T>
 ///
 /// Raises:
 ///     value_error: As `validate_restrict_bounds`, `compute_boundary_knots_to_insert` and
-///         `insert_knots_1d`; or the cut found no complete sub-vector.
+///         `insert_knots_1d`; the cut found no complete sub-vector; or a cut end would hold a
+///         distinct knot within `tol` of it ("The bound ... is within the tolerance").
 template <StorageFloat T>
 [[nodiscard]] KnotsAndCtrl<T> restrict_1d(std::span<const T> knots, int degree,
                                           mdview<const T, 2> ctrl, bool periodic, double tol,
@@ -279,30 +302,42 @@ template <StorageFloat T>
     c = open.ctrl.template view<2>();
   }
 
-  // A bound that is a knot becomes that knot, for the count, the insertion and the cut alike.
-  const Bounds at{detail::snap_to_knot<T>(k, snapped.lo, tol),
-                  detail::snap_to_knot<T>(k, snapped.hi, tol)};
-  const std::vector<T> to_insert = compute_boundary_knots_to_insert<T>(k, degree, tol, at);
+  // Each bound becomes the value it is (the file's one rule); from here a knot is at a bound when
+  // it equals that value, for the count, the insertion and the cut alike.
+  const T a = k[p];
+  const T b = k[k.size() - p - 1];
+  const T lo = detail::bound_value<T>(k, a, snapped.lo, tol);
+  const T hi = detail::bound_value<T>(k, b, snapped.hi, tol);
+  const std::vector<T> to_insert = compute_boundary_knots_to_insert<T>(k, degree, tol, snapped);
   KnotsAndCtrl<T> refined{{}, detail::empty_net<T>()};
   if (!to_insert.empty()) {
-    refined = insert_knots_1d<T>(k, degree, c, to_insert, tol);
+    // A zero tolerance: the multiplicity check counts copies of a value, as the rule does, not
+    // classes under `tol` that an unsnapped neighbour of the bound would join.
+    refined = insert_knots_1d<T>(k, degree, c, to_insert, 0.0);
   } else {
     refined.knots.assign(k.begin(), k.end());
     refined.ctrl = NdArray<T>({c.extent(0), cols}, for_overwrite);
     std::copy(c.data_handle(), c.data_handle() + c.extent(0) * cols, refined.ctrl.data());
   }
 
-  // Extract [lo, hi]. After insertion lo has multiplicity p + 1 starting at i_start, and hi has
-  // multiplicity p + 1 ending at i_end. Both offsets widen the cut away from the interval (see the
-  // file note).
-  const std::size_t i_start = detail::first_not_below<T>(refined.knots, at.lo - tol);
-  const std::size_t past_end = detail::first_not_below<T>(refined.knots, at.hi + tol);
+  // Extract [lo, hi]: from the first copy of lo to the last copy of hi, each p + 1 copies now.
+  const std::span<const T> rk = refined.knots;
+  const std::size_t i_start = detail::equal_knots<T>(rk, lo).first;
+  const std::size_t past_end = detail::equal_knots<T>(rk, hi).second;
   // `past_end <= size` (a search position), and the rows of a result are `size - p - 1`, so
   // `past_end - 1 - p` cannot exceed them: only an empty or short window is left to refuse.
   if (past_end == 0 || past_end - 1 < i_start + p) {
     throw value_error("The restriction found no complete sub-vector of the refined knot vector.");
   }
   const std::size_t i_end = past_end - 1;
+  const std::span<const T> piece = rk.subspan(i_start, past_end - i_start);
+  // An end the space already had (an open domain end) is its own; a cut end is checked.
+  if (!(lo == a && k[0] == a)) {
+    detail::check_piece_end<T>(piece, lo, bounds.lo, tol);
+  }
+  if (!(hi == b && k.back() == b)) {
+    detail::check_piece_end<T>(piece, hi, bounds.hi, tol);
+  }
   KnotsAndCtrl<T> out{
       std::vector<T>(refined.knots.begin() + static_cast<std::ptrdiff_t>(i_start),
                      refined.knots.begin() + static_cast<std::ptrdiff_t>(i_end) + 1),
@@ -372,7 +407,9 @@ template <StorageFloat T>
 ///     control points.
 ///
 /// Raises:
-///     value_error: As `insert_knots_1d` and `to_open_1d`; or the cut found no split index.
+///     value_error: As `insert_knots_1d` and `to_open_1d`; the cut found no split index; or a half
+///         would hold a distinct knot within `tol` of `value` ("The bound ... is within the
+///         tolerance").
 template <StorageFloat T>
 [[nodiscard]] std::pair<KnotsAndCtrl<T>, KnotsAndCtrl<T>> split_1d(std::span<const T> knots,
                                                                    int degree,
@@ -393,26 +430,30 @@ template <StorageFloat T>
     detail::check_net_matches("split", ctrl.extent(0), knots.size(), degree);
   }
 
-  // A value that is a knot becomes that knot, for the count, the insertion and the cut alike.
-  const double at = detail::snap_to_knot<T>(k, value, tol);
-  // Insert up to multiplicity p + 1 at the split value.
-  const std::size_t m_current = detail::count_within<T>(k, at, tol);
+  // The value becomes the knot it is, or itself rounded (the file's one rule); from here a knot is
+  // at the split when it equals that value, for the count, the insertion and the cut alike.
+  const auto at = static_cast<T>(detail::snap_to_knot<T>(k, value, tol));
+  const auto [first, past] = detail::equal_knots<T>(k, at);
   KnotsAndCtrl<T> refined{{}, detail::empty_net<T>()};
-  if (p + 1 > m_current) {
-    const std::vector<T> to_insert(p + 1 - m_current, static_cast<T>(at));
-    refined = insert_knots_1d<T>(k, degree, c, to_insert, tol);
+  if (p + 1 > past - first) {
+    const std::vector<T> to_insert(p + 1 - (past - first), at);
+    // A zero tolerance, as in `restrict_1d`: copies of the value, not classes under `tol`.
+    refined = insert_knots_1d<T>(k, degree, c, to_insert, 0.0);
   } else {
     refined.knots.assign(k.begin(), k.end());
     refined.ctrl = NdArray<T>({c.extent(0), cols}, for_overwrite);
     std::copy(c.data_handle(), c.data_handle() + c.extent(0) * cols, refined.ctrl.data());
   }
 
-  // The split index: the value now has multiplicity p + 1.
-  const std::size_t i_split = detail::first_not_below<T>(refined.knots, at - tol);
+  // The split index: the first of the p + 1 copies of the value.
+  const std::span<const T> rk = refined.knots;
+  const std::size_t i_split = detail::equal_knots<T>(rk, at).first;
   // The rows of a result are `size - p - 1`, so `i_split + p + 1 <= size` bounds `i_split` by them.
   if (i_split + p + 1 > refined.knots.size()) {
     throw value_error("The split found no index in the refined knot vector.");
   }
+  detail::check_piece_end<T>(rk.first(i_split + p + 1), at, value, tol);
+  detail::check_piece_end<T>(rk.subspan(i_split), at, value, tol);
   const std::size_t rows = refined.ctrl.shape()[0];
 
   std::pair<KnotsAndCtrl<T>, KnotsAndCtrl<T>> out{
@@ -464,7 +505,8 @@ template <StorageFloat T>
     return value_error("value must be strictly inside the domain (" + py_repr(a) + ", " +
                        py_repr(e) + "), got " + py_repr(value) + why + ".");
   };
-  if (value <= a + tol || value >= e - tol) {
+  // A NaN fails both comparisons, and no knot equals it, so it is refused by name.
+  if (std::isnan(value) || value <= a + tol || value >= e - tol) {
     throw refuse("");
   }
   // The value is also judged as the split will use it: one that is an end knot by the snap's

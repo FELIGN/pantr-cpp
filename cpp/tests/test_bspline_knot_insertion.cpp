@@ -1413,3 +1413,19 @@ TEST_CASE("restrict and split: under-collection, a float count that rounds a kno
   check_clamped_on(bs::restrict<float>(short_b, BoundsList{bs::Bounds{0x1p-20, 1.0}}), 0x1p-20,
                    1.0);
 }
+
+TEST_CASE("restrict and split: a NaN bound is refused, not cut as if every knot were at it") {
+  // No knot equals a NaN and every comparison with one is false, so a search for the knots at it
+  // has no meaning: it is refused before any count or cut.
+  const bs::Bspline<double> b = squares_curve<double>({0, 0, 0, 0.5, 1, 1, 1}, 2, true);
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  CHECK_THROWS_WITH_AS(static_cast<void>(bs::restrict<double>(b, BoundsList{bs::Bounds{nan, 0.7}})),
+                       doctest::Contains("Lower bound (nan) is outside the domain"),
+                       pantr::value_error);
+  CHECK_THROWS_WITH_AS(static_cast<void>(bs::restrict<double>(b, BoundsList{bs::Bounds{0.2, nan}})),
+                       doctest::Contains("Upper bound (nan) is outside the domain"),
+                       pantr::value_error);
+  CHECK_THROWS_WITH_AS(static_cast<void>(bs::split<double>(b, 0, nan)),
+                       doctest::Contains("value must be strictly inside the domain"),
+                       pantr::value_error);
+}

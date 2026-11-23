@@ -1042,6 +1042,9 @@ class Bspline:
             ValueError: If all directions are ``None`` or match the full domain.
             ValueError: If any bound lies outside its direction's domain.
             ValueError: If ``lower >= upper`` in any direction.
+            ValueError: If the space was built with ``snap_knots=False`` and a knot distinct
+                from a bound, within ``tolerance`` of it, would lie inside the result beside its
+                clamped end.
         """
         if self.dim == 1:
             bounds_per_dim: list[tuple[float, float] | None] = [
@@ -1088,6 +1091,9 @@ class Bspline:
         Raises:
             ValueError: If ``direction`` is out of range ``[0, dim)``.
             ValueError: If ``value`` is not strictly inside the domain.
+            ValueError: If the space was built with ``snap_knots=False`` and a knot distinct
+                from ``value``, within ``tolerance`` of it, would lie inside a half beside its
+                clamped end.
 
         Example:
             >>> import numpy as np

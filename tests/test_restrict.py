@@ -357,6 +357,14 @@ class TestBoundKnotsByOneRule:
         )
         _assert_clamped_on(short.restrict((2.0**-20, 1.0)), 2.0**-20, 1.0)
 
+    def test_nan_bound_is_refused(self) -> None:
+        """No knot equals a NaN, so it is refused rather than cut as if every knot were at it."""
+        b = _make_squares([0, 0, 0, 0.5, 1, 1, 1], 2, np.float64, True)
+        with pytest.raises(ValueError, match="outside the domain"):
+            b.restrict((0.2, np.nan))
+        with pytest.raises(ValueError, match="strictly inside the domain"):
+            b.split(0, np.nan)
+
 
 class TestBoundKnotsProperty:
     """Bounds a few ulps either side of the tolerance from a knot give clamped pieces, or refuse.
