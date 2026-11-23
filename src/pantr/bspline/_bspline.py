@@ -1035,7 +1035,10 @@ class Bspline:
                 that actually restrict the domain.
 
         Returns:
-            Bspline: New B-spline defined on the restricted domain.
+            Bspline: New B-spline defined on the restricted domain. Each restricted
+            direction's space keeps the parent direction's ``tolerance`` (as
+            :meth:`BsplineSpace1D.restrict` does), so knots that are one knot of the
+            parent stay one knot of the result.
 
         Raises:
             ValueError: If the sequence length does not match ``dim`` (multi-dim).
@@ -1085,8 +1088,8 @@ class Bspline:
             tuple[Bspline, Bspline]: A pair ``(left, right)`` of B-splines.
             The left sub-spline has domain ``[domain_start, value]`` and
             the right has domain ``[value, domain_end]`` in the split
-            direction, ``value`` as taken onto a knot. Other directions are
-            unchanged.
+            direction, ``value`` as taken onto a knot, and both keep the parent
+            direction's ``tolerance``. Other directions are unchanged.
 
         Raises:
             ValueError: If ``direction`` is out of range ``[0, dim)``.

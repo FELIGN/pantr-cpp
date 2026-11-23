@@ -360,7 +360,8 @@ template <StorageFloat T>
 ///
 /// Returns:
 ///     Bspline<T>: The B-spline on the restricted domain; each restricted direction is a
-///     non-periodic space whose knots are not snapped.
+///     non-periodic space whose knots are not snapped and whose tolerance is the parent
+///     direction's.
 ///
 /// Raises:
 ///     value_error: `bounds.size() != dim` ("bounds sequence length ..."); no direction has bounds;
@@ -383,7 +384,10 @@ template <StorageFloat T>
           mdview<const T, 2> flat) -> std::pair<BsplineSpace1D<T>, NdArray<T>> {
         KnotsAndCtrl<T> r = restrict_1d<T>(space.knots(), space.degree(), flat, space.periodic(),
                                            space.tolerance(), *bounds[d]);
-        return {BsplineSpace1D<T>(std::span<const T>(r.knots), space.degree(), false, false),
+        // The parent's tolerance, as `BsplineSpace1D::restrict` keeps it: one derived from the
+        // piece's knots can be smaller and split a class of an unsnapped parent into two knots.
+        return {BsplineSpace1D<T>::from_state(std::span<const T>(r.knots), space.degree(), false,
+                                              space.tolerance()),
                 std::move(r.ctrl)};
       });
 }
@@ -481,8 +485,9 @@ template <StorageFloat T>
 ///
 /// Returns:
 ///     std::pair<Bspline<T>, Bspline<T>>: `(left, right)`: the sub-splines on
-///     `[domain_start, value]` and `[value, domain_end]` in the split direction; other directions
-///     are unchanged.
+///     `[domain_start, value]` and `[value, domain_end]` in the split direction, each a
+///     non-periodic space with unsnapped knots and the parent direction's tolerance; other
+///     directions are unchanged.
 ///
 /// Raises:
 ///     value_error: `direction` is outside `[0, dim)`; `value` is not strictly inside the domain;
@@ -525,7 +530,9 @@ template <StorageFloat T>
   const std::vector<std::size_t> shape(b.shape().begin(), b.shape().end());
   const auto build = [&](KnotsAndCtrl<T>& part) {
     std::vector<BsplineSpace1D<T>> s = spaces;
-    s[d] = BsplineSpace1D<T>(std::span<const T>(part.knots), space.degree(), false, false);
+    // The parent's tolerance, as in `restrict`.
+    s[d] = BsplineSpace1D<T>::from_state(std::span<const T>(part.knots), space.degree(), false,
+                                         space.tolerance());
     NdArray<T> ctrl =
         bezier::detail::unflatten_along_axis<T>(part.ctrl.template view<2>(), shape, d);
     return Bspline<T>(BsplineSpace<T>(std::move(s)), std::move(ctrl), b.rational());

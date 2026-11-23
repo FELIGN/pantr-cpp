@@ -1353,6 +1353,12 @@
   clamped end, the call now raises `ValueError` naming the bound and the knot; restricting so
   that it falls outside the piece succeeds. The C++ `pantr::bspline::restrict` and `split` are
   the same.
+- **The spaces of `Bspline.restrict` and of both halves of `Bspline.split` keep the parent
+  direction's `tolerance`**, as `BsplineSpace1D.restrict` does. They were built with a tolerance
+  derived from their own knots, which can be smaller, so on a space built with
+  `snap_knots=False` two knots that are one knot of the parent became two knots of the result,
+  with one more interval and a different continuity there (the values were right). The C++
+  `pantr::bspline::restrict` and `split` are the same.
 - **`DistributedSpace` refuses a B-spline space with a function of empty support on every rank,
   including one that owns no cell.** The space's supports were checked only while building the
   local space, which a rank without cells skips: that rank constructed while the others raised
