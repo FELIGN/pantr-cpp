@@ -490,6 +490,44 @@ class TestBoundKnotsProperty:
                             self._check_piece(piece, cut, at_start, parent, tol)
 
 
+class TestPiecesKeepTheParentTolerance:
+    """The spaces of ``restrict`` and ``split`` carry the parent direction's tolerance.
+
+    They used to be built with a tolerance derived from their own knots. With the far knot
+    ``1e6`` setting the parent's, the window ``[0, 2]`` derived a smaller one, and ``1`` and
+    ``1 + 1e-12``, one knot of the unsnapped parent, became two knots of the result, as
+    ``BsplineSpace1D.restrict`` no longer does.
+    """
+
+    _KNOTS = (0, 0, 0, 1, 1 + 1e-12, 2, 3, 4, 1e6, 1e6, 1e6)
+    _TOL = 1.7763568394002505e-09
+
+    def test_reproduction(self) -> None:
+        """The issue's reproduction: 2 intervals and the parent's tolerance, exactly."""
+        spl = _make_squares(self._KNOTS, 2, np.float64, False)
+        sp = spl.space.spaces[0]
+        assert sp.tolerance == self._TOL
+        assert sp.restrict(0, 2)[0].num_intervals == 2
+        r = spl.restrict((0.0, 2.0)).space.spaces[0]
+        assert (r.num_intervals, r.tolerance) == (2, self._TOL)
+        left, right = spl.split(0, 2.0)
+        lsp = left.space.spaces[0]
+        assert (lsp.num_intervals, lsp.tolerance) == (2, self._TOL)
+        assert right.space.spaces[0].tolerance == self._TOL
+
+    def test_a_direction_not_cut_keeps_its_space(self) -> None:
+        """Direction 1 keeps its own tolerance when direction 0 is cut."""
+        s0 = BsplineSpace1D(np.array(self._KNOTS), 2, False, False)
+        s1 = BsplineSpace1D(np.array([0, 0, 0.5, 3, 3.0]), 1, False, False)
+        space = BsplineSpace([s0, s1])
+        spl = Bspline(space, np.ones((space.num_total_basis, 1)))
+        r = spl.restrict([(0.0, 2.0), None])
+        assert r.space.spaces[0].tolerance == s0.tolerance
+        assert r.space.spaces[1].tolerance == s1.tolerance
+        for half in spl.split(0, 2.0):
+            assert half.space.spaces[1].tolerance == s1.tolerance
+
+
 # ---------------------------------------------------------------------------
 # Bspline.restrict — error cases
 # ---------------------------------------------------------------------------

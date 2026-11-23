@@ -1429,3 +1429,46 @@ TEST_CASE("restrict and split: a NaN bound is refused, not cut as if every knot 
                        doctest::Contains("value must be strictly inside the domain"),
                        pantr::value_error);
 }
+
+// ---- the pieces of restrict and split keep the parent's tolerance
+// -----------------------------------------------------------------
+//
+// The result's space used to be built with a tolerance derived from its own knots. Where the far
+// knot `1e6` set the parent's, the window [0, 2] derived a smaller one, and `1` and `1 + 1e-12`,
+// one knot of the unsnapped parent, became two knots of the result. `BsplineSpace1D::restrict`
+// keeps the parent's tolerance, and so must these.
+
+TEST_CASE("restrict and split: the pieces keep the parent direction's tolerance") {
+  const bs::Bspline<double> b =
+      squares_curve<double>({0, 0, 0, 1, 1 + 1e-12, 2, 3, 4, 1e6, 1e6, 1e6}, 2, false);
+  const double tol = b.space().spaces()[0].tolerance();
+  REQUIRE(tol == 1.7763568394002505e-09);
+  const bs::Bspline<double> r = bs::restrict<double>(b, BoundsList{bs::Bounds{0.0, 2.0}});
+  CHECK(r.space().spaces()[0].tolerance() == tol);
+  CHECK(r.space().spaces()[0].num_intervals() == 2);
+  const auto [left, right] = bs::split<double>(b, 0, 2.0);
+  CHECK(left.space().spaces()[0].tolerance() == tol);
+  CHECK(left.space().spaces()[0].num_intervals() == 2);
+  CHECK(right.space().spaces()[0].tolerance() == tol);
+}
+
+TEST_CASE("restrict and split: a direction not cut keeps its space") {
+  // Direction 1 has its own tolerance; the pieces cut along direction 0 keep it unchanged.
+  const std::vector<double> k0 = {0, 0, 0, 1, 1 + 1e-12, 2, 3, 4, 1e6, 1e6, 1e6};
+  const std::vector<double> k1 = {0, 0, 0.5, 3, 3};
+  std::vector<bs::BsplineSpace1D<double>> spaces;
+  spaces.emplace_back(sp(k0), 2, false, false);
+  spaces.emplace_back(sp(k1), 1, false, false);
+  const auto n = static_cast<std::size_t>(spaces[0].num_basis() * spaces[1].num_basis());
+  const std::vector<double> cp(n, 1.0);
+  const bs::Bspline<double> b(bs::BsplineSpace<double>(std::move(spaces)), sp(cp), false);
+  const double tol0 = b.space().spaces()[0].tolerance();
+  const double tol1 = b.space().spaces()[1].tolerance();
+  const bs::Bspline<double> r =
+      bs::restrict<double>(b, BoundsList{bs::Bounds{0.0, 2.0}, std::nullopt});
+  CHECK(r.space().spaces()[0].tolerance() == tol0);
+  CHECK(r.space().spaces()[1].tolerance() == tol1);
+  const auto [left, right] = bs::split<double>(b, 0, 2.0);
+  CHECK(left.space().spaces()[1].tolerance() == tol1);
+  CHECK(right.space().spaces()[1].tolerance() == tol1);
+}
