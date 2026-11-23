@@ -104,6 +104,9 @@ def create_distributed_space(  # noqa: PLR0913 -- public factory mirrors the par
             f"global_space must be a BsplineSpace or THBSplineSpace; "
             f"got {type(global_space).__name__!r}."
         )
+    # Before the broadcast, so an invalid space raises the same RuntimeError on every rank even
+    # where computing the partition would fail on rank 0 (fewer cells than ranks, for one), which
+    # would give rank 0 that error and every other rank a ValueError.
     _check_global_space(global_space)
     n_parts = int(comm.size)
 

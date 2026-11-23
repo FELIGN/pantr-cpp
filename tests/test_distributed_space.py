@@ -262,6 +262,20 @@ def test_create_distributed_space_raises_runtime_error_on_every_rank(method: str
         assert comm.gathers == 0
 
 
+def test_create_distributed_space_raises_runtime_error_where_the_partition_would_fail() -> None:
+    # Two cells for three ranks: rank 0 could not compute the partition, so a check made only after
+    # the broadcast would raise that ValueError on rank 0 and another ValueError on the others.
+    space = BsplineSpace(
+        [BsplineSpace1D(np.array([0.0, 0.0, 0.0, 0.5, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0]), 2)]
+    )
+    hub = _GatherHub()
+    for rank in range(3):
+        comm = _FakeComm(rank, 3, hub)
+        with pytest.raises(RuntimeError, match=r"empty support detected at indices \[3\]"):
+            create_distributed_space(space, comm)
+        assert comm.gathers == 0
+
+
 def test_compute_halo_of_no_cell_still_checks_the_supports() -> None:
     # `DistributedSpace` relies on this on a rank that owns no cell: an early return on an empty
     # request would let that rank accept an invalid space and hang the next collective (#30).
