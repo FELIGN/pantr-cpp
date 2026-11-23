@@ -132,6 +132,7 @@ def test_invalid_space_is_refused_on_every_rank_including_one_without_cells() ->
     outcomes = comm.allgather(outcome)
     for rank, got in enumerate(outcomes):
         assert got.startswith("RuntimeError: B-spline function(s) with empty support"), (rank, got)
+    assert len(set(outcomes)) == 1, outcomes  # the same exception, message included, on every rank
 
 
 def test_valid_space_with_a_rank_without_cells_quasi_interpolates() -> None:
