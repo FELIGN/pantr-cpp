@@ -1345,8 +1345,8 @@
   `RuntimeError`, then waited forever in the next collective (a distributed quasi-interpolation's
   gather, for instance). Every rank now raises the same `RuntimeError` at construction, with no
   communication. `pantr.mpi.create_distributed_space` raises it on every rank before the partition
-  is sent. The C++ `pantr::mpi::DistributedSpace` constructor had the same gap and raises
-  `state_error` on every rank. Inherited from the previous release.
+  is sent. Inherited from the previous release. The C++ `pantr::mpi::DistributedSpace`
+  constructor, new in this release, raises `state_error` on every rank in the same case.
 - **B-spline basis derivatives from degree 21 on are correct at every order.** The row of order
   `k` was scaled by `degree! / (degree - k)!` formed as a 64-bit integer, which wraps once it
   passes `2^63`: from degree 21 (orders 19 to 21; at degree 25 orders 16 to 25) those rows were
