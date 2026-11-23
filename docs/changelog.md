@@ -769,9 +769,10 @@
     2*degree+2 elements" or returned a B-spline restricted to another domain), a `Decimal` or any
     object with `__float__` is accepted, a string is a `TypeError` ("expected a real number, got
     str"), and `split(0, 10**400)` raises `OverflowError` (it raised `ValueError`). For a
-    `float32` B-spline, `restrict` compares an `np.float64` bound in `float32`, as a Python float
-    was (the previous release compared it in `float64`); `split` compares its value with the
-    domain ends in `float64`, as before. Both take a bound within the tolerance of a knot, by the
+    `float32` B-spline, `restrict` counts the knots already at an `np.float64` bound in
+    `float32`, as it did for a Python float (the previous release compared it in `float64`), and
+    compares the bound with the domain ends, and the keys that place the cut with the knots, in
+    `float64`; `split` compares its value with the domain ends in `float64`, as before. Both take a bound within the tolerance of a knot, by the
     storage-type comparison, as that knot (see the `Fixed` entry for #6).
   - `remove_knots`' `tol` is read as a Python float: `np.float16`, `Decimal`, `Fraction` and
     objects with `__float__` are accepted (the previous release refused them); on NumPy 2.4 and
