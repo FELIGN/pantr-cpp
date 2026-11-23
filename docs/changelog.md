@@ -770,8 +770,9 @@
     object with `__float__` is accepted, a string is a `TypeError` ("expected a real number, got
     str"), and `split(0, 10**400)` raises `OverflowError` (it raised `ValueError`). For a
     `float32` B-spline, `restrict` compares an `np.float64` bound in `float32`, as a Python float
-    was (the previous release compared it in `float64`); `split` compares its value in `float64`,
-    as before.
+    was (the previous release compared it in `float64`); `split` compares its value with the
+    domain ends in `float64`, as before. Both take a bound within the tolerance of a knot, by the
+    storage-type comparison, as that knot (see the `Fixed` entry for #6).
   - `remove_knots`' `tol` is read as a Python float: `np.float16`, `Decimal`, `Fraction` and
     objects with `__float__` are accepted (the previous release refused them); on NumPy 2.4 and
     later a one-element array is a `TypeError` (it was accepted), while earlier NumPy versions
@@ -1425,9 +1426,8 @@
   knot (`0.5 + 2^-20 + 2e-8` beside the knot `0.5` on `[0, 1]`) was the knot to the count of its
   multiplicity and a different value to the cut of the knot vector, and both calls raised
   `ValueError: knots must have at least 2*degree+2 elements`; a bound closer to the knot
-  (`0.5 - 2^-20`, for one) returned, with no error, a knot vector whose end was not clamped
-  (`[0.4999990463256836, 0.4999990463256836, 0.5, 0.9, 0.9, 0.9]`). Such a bound is now replaced by the
-  knot, once, before the count, the insertion and the cut, judged by the comparison the count
+  (`0.5 - 2^-20`, for one) returned, with no error, a knot vector whose start was not clamped
+  (two copies of the bound, then the knot `0.5`, then the end `0.9` three times). Such a bound is now replaced by the knot, once, before the count, the insertion and the cut, judged by the comparison the count
   made. A `float64` bound within the tolerance of a knot, which succeeded, now also gives the
   result at the knot, where it inserted copies of the bound beside it. A `float32` split value
   that is a domain end by that comparison, though further than the tolerance from it in `double`,
