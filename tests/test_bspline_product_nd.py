@@ -783,6 +783,26 @@ class TestCrossDirectionTolerance:
             h.evaluate(pts), f.evaluate(pts) * g.evaluate(pts), rtol=1e-5, atol=0.0
         )
 
+    def test_short_direction_domains_compare_at_their_own_tolerance(self) -> None:
+        """Domains differing in the short direction by less than the unit one's tolerance differ.
+
+        Direction 0 ends at ``4e-6`` in ``f`` and ``4.5e-6`` in ``g``: ``5e-7`` apart, far above
+        that direction's tolerances (about ``4e-12``) and below direction 1's (about ``1e-6``),
+        so the operands do not share a domain. The previous release compared every direction at
+        the largest tolerance and accepted them.
+        """
+        dt = np.float32
+        s1 = BsplineSpace1D(np.array([0, 0, 1, 1], dtype=dt), 1)
+        spaces = [
+            BsplineSpace([BsplineSpace1D(np.array([0, 0, end, end], dtype=dt), 1), s1])
+            for end in (4e-6, 4.5e-6)
+        ]
+        assert s1.tolerance > 5e-7
+        f, g = (Bspline(s, np.ones((*s.num_basis, 1), dtype=dt)) for s in spaces)
+
+        with pytest.raises(ValueError, match="same parametric domain in direction 0"):
+            f.multiply(g)
+
     @pytest.mark.parametrize("short_first", [True, False])
     def test_short_direction_keeps_its_knots(self, short_first: bool) -> None:
         """The short direction keeps its three knots, in either order of the directions.
