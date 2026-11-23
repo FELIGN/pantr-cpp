@@ -106,7 +106,8 @@ def create_distributed_space(  # noqa: PLR0913 -- public factory mirrors the par
         )
     # Before the broadcast, so an invalid space raises the same RuntimeError on every rank even
     # where computing the partition would fail on rank 0 (fewer cells than ranks, for one), which
-    # would give rank 0 that error and every other rank a ValueError.
+    # would give rank 0 the partitioner's own error and every other rank a ValueError naming
+    # rank 0's failure.
     _check_global_space(global_space)
     n_parts = int(comm.size)
 
