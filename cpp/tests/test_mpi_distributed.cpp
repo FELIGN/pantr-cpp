@@ -1423,6 +1423,22 @@ TEST_CASE("mpi distributed space refuses a size, a cell count, a rank and a peri
                      "periodic B-spline spaces are not supported.", value_error);
 }
 
+TEST_CASE("mpi distributed space refuses a function of empty support on a rank that owns no cell") {
+  // Knots the 1D space accepts, with a multiplicity of four at degree 2: the function whose knots
+  // `t_3 .. t_6` are all 0.5 has a zero-width support, so the space is invalid. Every cell goes to
+  // rank 0; rank 1 owns none and builds no local space, and still has to refuse the space, or it
+  // would go on into the next collective alone.
+  const bs::BsplineSpace<double> space(
+      {bs::BsplineSpace1D<double>(std::vector<double>{0, 0, 0, 0.5, 0.5, 0.5, 0.5, 1, 1, 1}, 2)});
+  const gr::Partition part(Owners(2, 0), 2);
+  using Ds = mp::DistributedSpace<bs::BsplineSpace<double>>;
+  const std::string what =
+      "B-spline function(s) with empty support detected at indices [3]. This indicates an invalid "
+      "B-spline space.";
+  THB_THROWS_WITH_AS(Ds(space, part, 0, 2), what, pantr::state_error);
+  THB_THROWS_WITH_AS(Ds(space, part, 1, 2), what, pantr::state_error);
+}
+
 TEST_CASE("mpi distribute takes the rank and size from the communicator") {
   const bs::BsplineSpace<double> space = make_space<double>(tensor_cases()[2]);
   const gr::Partition part = rcb_of(space, 2);

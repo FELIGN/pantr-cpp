@@ -214,6 +214,51 @@ def test_empty_rank_has_no_local() -> None:
 # --------------------------------------------------------------------------- #
 
 
+def _space_with_interior_knot(mult: int) -> BsplineSpace:
+    """Return a 2D space whose knot 0.9 in direction 0 (degree 2) has multiplicity ``mult``.
+
+    At ``mult = 4`` (degree + 2) the function whose knots all sit at 0.9 has an empty support,
+    so the space is invalid; at ``mult = 1`` it is valid. The space of issue #30.
+    """
+    interior = [x for i in range(1, 10) for x in [i / 10] * (mult if i == 9 else 1)]
+    return BsplineSpace(
+        [
+            BsplineSpace1D(np.array([0.0] * 3 + interior + [1.0] * 3), 2),
+            BsplineSpace1D(np.array([0.0, 0.0, 0.25, 0.5, 0.75, 1.0, 1.0]), 1),
+        ]
+    )
+
+
+def test_empty_support_space_raises_on_a_rank_that_owns_no_cell() -> None:
+    # Rank 0 owns every cell and rank 1 none: rank 1 builds no local space, and must still refuse
+    # the invalid space, or it goes on alone into the next collective and waits there forever.
+    space = _space_with_interior_knot(4)
+    part = Partition(np.zeros(space.num_total_intervals, dtype=np.int32), 2)
+    for rank in range(2):
+        with pytest.raises(RuntimeError, match=r"empty support detected at indices \[11\]"):
+            DistributedSpace(space, part, _FakeComm(rank, 2))
+
+
+def test_valid_space_still_builds_on_a_rank_that_owns_no_cell() -> None:
+    # The control: the same empty rank with the knot at multiplicity 1.
+    space = _space_with_interior_knot(1)
+    part = Partition(np.zeros(space.num_total_intervals, dtype=np.int32), 2)
+    assert DistributedSpace(space, part, _FakeComm(0, 2)).owns_cells
+    assert not DistributedSpace(space, part, _FakeComm(1, 2)).owns_cells
+
+
+@pytest.mark.parametrize("method", ["grid", "graph"])
+def test_create_distributed_space_raises_runtime_error_on_every_rank(method: str) -> None:
+    # The docstring's promise for an invalid space: every rank raises the same RuntimeError, with
+    # no rank left waiting in the partition broadcast. Rank 0 runs first, as `_GatherHub` needs.
+    space = _space_with_interior_knot(4)
+    hub = _GatherHub()
+    for rank in range(3):
+        comm = _FakeComm(rank, 3, hub)
+        with pytest.raises(RuntimeError, match=r"empty support detected at indices \[11\]"):
+            create_distributed_space(space, comm, method=method)
+
+
 def test_comm_size_mismatch_raises() -> None:
     space, part = _tp_space_and_partition(4)
     with pytest.raises(ValueError, match="must equal partition.n_parts"):
