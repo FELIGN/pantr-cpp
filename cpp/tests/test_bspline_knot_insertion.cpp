@@ -1181,20 +1181,20 @@ TEST_CASE("inherited: restrict with a float32 bound near a knot") {
   // the restriction at the knot: same inputs to the same code, so equal knots and points.
   const bs::Bspline<float> bf = near_knot_curve();
   using B = std::vector<std::optional<bs::Bounds>>;
-  const bs::Bspline<float> near = bs::restrict<float>(bf, B{bs::Bounds{kNearKnot, 0.9}});
+  const bs::Bspline<float> by_bound = bs::restrict<float>(bf, B{bs::Bounds{kNearKnot, 0.9}});
   const bs::Bspline<float> at = bs::restrict<float>(bf, B{bs::Bounds{0.5, 0.9}});
-  CHECK(knots_of(near, 0) == knots_of(at, 0));
-  CHECK(points_of(near) == points_of(at));
+  CHECK(knots_of(by_bound, 0) == knots_of(at, 0));
+  CHECK(points_of(by_bound) == points_of(at));
 }
 
 TEST_CASE("inherited: split of a float32 spline at a value near a knot") {
   const bs::Bspline<float> bf = near_knot_curve();
-  const auto near = bs::split<float>(bf, 0, kNearKnot);
+  const auto by_bound = bs::split<float>(bf, 0, kNearKnot);
   const auto at = bs::split<float>(bf, 0, 0.5);
-  CHECK(knots_of(near.first, 0) == knots_of(at.first, 0));
-  CHECK(points_of(near.first) == points_of(at.first));
-  CHECK(knots_of(near.second, 0) == knots_of(at.second, 0));
-  CHECK(points_of(near.second) == points_of(at.second));
+  CHECK(knots_of(by_bound.first, 0) == knots_of(at.first, 0));
+  CHECK(points_of(by_bound.first) == points_of(at.first));
+  CHECK(knots_of(by_bound.second, 0) == knots_of(at.second, 0));
+  CHECK(points_of(by_bound.second) == points_of(at.second));
 }
 
 TEST_CASE("split: a float32 value that is a domain end is refused as one") {
