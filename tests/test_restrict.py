@@ -248,6 +248,240 @@ class TestFloat32BoundNearAKnot:
             assert np.count_nonzero(knots == knots[-1]) == 3
 
 
+_EPS64 = float(np.finfo(np.float64).eps)
+_UNSNAPPED_NEIGHBOUR = "is within the tolerance"
+
+
+def _make_squares(knots: npt.ArrayLike, degree: int, dtype: type, snap: bool) -> Bspline:
+    """Build a 1D B-spline with control points ``i^2 + 1``.
+
+    Args:
+        knots (npt.ArrayLike): The knot vector.
+        degree (int): The degree.
+        dtype (type): The storage type.
+        snap (bool): Whether the space snaps its knots.
+
+    Returns:
+        Bspline: The curve.
+    """
+    sp = BsplineSpace1D(np.asarray(knots, dtype=dtype), degree, False, snap)
+    n = sp.num_basis
+    cp: npt.NDArray[np.floating] = (np.arange(n, dtype=dtype) ** 2 + 1).reshape(n, 1)
+    return Bspline(BsplineSpace([sp]), cp)
+
+
+def _assert_clamped_on(b: Bspline, lo: float, hi: float) -> None:
+    """Assert exactly ``degree + 1`` bitwise-equal knots at each end and the domain ``[lo, hi]``.
+
+    Args:
+        b (Bspline): The 1D B-spline.
+        lo (float): The expected domain start.
+        hi (float): The expected domain end.
+    """
+    sp = b.space.spaces[0]
+    knots = sp.knots
+    p = sp.degree
+    assert np.count_nonzero(knots == knots[0]) == p + 1, knots
+    assert np.count_nonzero(knots == knots[-1]) == p + 1, knots
+    assert np.all(knots[: p + 1] == knots[0])
+    assert np.all(knots[-p - 1 :] == knots[-1])
+    assert float(knots[0]) == lo
+    assert float(knots[-1]) == hi
+
+
+class TestBoundKnotsByOneRule:
+    """The knots at a restriction or split bound are decided once, for the count and the cut alike.
+
+    The four cases are the issue's reproduction verbatim. The count of the bound's multiplicity
+    and the cut of the refined knot vector used to classify the knots beside the bound by two
+    rules, and where they disagreed the result was not clamped at the bound (over-collection) or
+    had a wrong domain (under-collection), silently. A split, or a restriction, whose piece would
+    hold a distinct knot of an unsnapped space within the tolerance of the bound refuses, naming
+    the bound.
+    """
+
+    @pytest.mark.parametrize("k", [26, 27])
+    def test_over_collection_left_key_rounds_onto_a_knot(self, k: int) -> None:
+        """Case (1): ``fl(at - tol) == 0.3`` at 26 ulp, which the count does not take as 0.3."""
+        b = _make_squares([0, 0, 0, 0.3, 0.8, 0.8, 0.8], 2, np.float64, True)
+        at = 0.3 + k * float(np.spacing(0.3))
+        _assert_clamped_on(b.restrict((at, 0.8)), at, 0.8)
+        left, right = b.split(0, at)
+        _assert_clamped_on(left, 0.0, at)
+        _assert_clamped_on(right, at, 0.8)
+
+    @pytest.mark.parametrize("factor", [1, 2])
+    def test_over_collection_float32_bound_near_a_knot_in_double(self, factor: int) -> None:
+        """Case (2): within ``tol`` of 0.5 in ``double``, not after rounding to ``float32``."""
+        s = np.float32(1.2375)
+        b = _make_squares(np.array([0, 0, 0, 0.5, s, s, s], dtype=np.float32), 2, np.float32, True)
+        tol = b.space.spaces[0].tolerance
+        bound = 0.5 + factor * tol
+        at = float(np.float32(bound))
+        _assert_clamped_on(b.restrict((bound, float(s))), at, float(s))
+        left, right = b.split(0, bound)
+        _assert_clamped_on(left, 0.0, at)
+        _assert_clamped_on(right, at, float(s))
+
+    @pytest.mark.parametrize("m", [32, 34])
+    def test_under_collection_unsnapped_knot_tol_above_the_bound(self, m: int) -> None:
+        """Case (3): a knot exactly ``tol`` above the bound 2 was counted and then cut away."""
+        knots = [0, 0, 0, 1.0, 2.0, 2.0 + m * _EPS64, 4.0, 4.0, 4.0]
+        b = _make_squares(knots, 2, np.float64, False)
+        _assert_clamped_on(b.restrict((0.0, 2.0)), 0.0, 2.0)
+
+    def test_under_collection_unsnapped_split_refuses_naming_the_bound(self) -> None:
+        """Case (3) split: the right half would hold ``2 + 32 eps`` beside its clamped start."""
+        knots = [0, 0, 0, 1.0, 2.0, 2.0 + 32 * _EPS64, 4.0, 4.0, 4.0]
+        b = _make_squares(knots, 2, np.float64, False)
+        with pytest.raises(ValueError, match=r"The bound 2\.0 is within the tolerance"):
+            b.split(0, 2.0)
+        with pytest.raises(ValueError, match=r"The bound 2\.0 is within the tolerance"):
+            b.restrict((2.0, 4.0))
+
+    def test_under_collection_float32_count_rounds_a_knot_onto_the_bound(self) -> None:
+        """Case (4): the count rounds ``2^-19 + 2^-43`` to ``2^-19 <= tol`` in ``float32``."""
+        k3 = -(2.0**-20 + 2.0**-43)
+        b = _make_squares(
+            np.array([-1, -1, -1, k3, 2.0**-20, 0.5, 0.75, 1, 1, 1], dtype=np.float32),
+            2,
+            np.float32,
+            False,
+        )
+        _assert_clamped_on(b.restrict((2.0**-20, 1.0)), 2.0**-20, 1.0)
+        with pytest.raises(ValueError, match=r"The bound 9\.5367431640625e-07 is within"):
+            b.split(0, 2.0**-20)
+        # Without the knots 0.5 and 0.75 the previous release refused with the knot-count error.
+        short = _make_squares(
+            np.array([-1, -1, -1, k3, 2.0**-20, 1, 1, 1], dtype=np.float32), 2, np.float32, False
+        )
+        _assert_clamped_on(short.restrict((2.0**-20, 1.0)), 2.0**-20, 1.0)
+
+
+class TestBoundKnotsProperty:
+    """Bounds a few ulps either side of the tolerance from a knot give clamped pieces, or refuse.
+
+    Random open knot vectors on a span ``L`` drawn so that ``tol / ulp`` is generally not an
+    integer, which is where the old left key ``at - tol`` rounded onto a knot. Unsnapped vectors
+    carry one interior knot doubled by a neighbour within the tolerance, which is where the old
+    count included a knot the cut dropped. Every restriction and split at the bound
+    ``t + k ulp(t)``, for ``k`` around ``tol / ulp(t)``, must give pieces clamped on a domain whose
+    cut end is the bound rounded to the storage type or a knot within the tolerance of it, or,
+    only for an unsnapped vector, refuse naming the bound.
+    """
+
+    _SEEDS = range(8)
+
+    @staticmethod
+    def _within(knots: npt.NDArray[np.floating], value: float, tol: float) -> npt.NDArray[np.bool_]:
+        """Return which knots are within ``tol`` of ``value``, the difference in the storage type.
+
+        Args:
+            knots (npt.NDArray[np.floating]): The knots.
+            value (float): The value, rounded to the knots' type.
+            tol (float): The tolerance.
+
+        Returns:
+            npt.NDArray[np.bool_]: One flag per knot.
+        """
+        diff = np.abs(knots - knots.dtype.type(value))
+        return np.asarray(diff.astype(np.float64) <= tol, dtype=np.bool_)
+
+    def _vector(
+        self, rng: np.random.Generator, degree: int, dtype: type, snap: bool
+    ) -> tuple[Bspline, float]:
+        """Draw a curve and the interior knot the bounds are placed around.
+
+        Args:
+            rng (np.random.Generator): The generator.
+            degree (int): The degree.
+            dtype (type): The storage type.
+            snap (bool): Whether the space snaps its knots.
+
+        Returns:
+            tuple[Bspline, float]: The curve and the knot.
+        """
+        span = float(rng.uniform(0.5, 4.0))
+        tol_est = 8.0 * float(np.finfo(dtype).eps) * span
+        while True:
+            interior = np.sort(rng.uniform(0.1 * span, 0.9 * span, size=int(rng.integers(2, 5))))
+            interior = interior.astype(dtype).astype(np.float64)
+            if np.all(np.diff(interior) > 16.0 * tol_est):
+                break
+        target = float(interior[int(rng.integers(0, interior.size))])
+        if not snap:
+            neighbour = float(dtype(target + rng.uniform(0.3, 1.0) * tol_est * rng.choice([-1, 1])))
+            interior = np.sort(np.append(interior, neighbour))
+        knots = np.concatenate([[0.0] * (degree + 1), interior, [span] * (degree + 1)])
+        return _make_squares(knots.astype(dtype), degree, dtype, snap), target
+
+    def _check_piece(
+        self,
+        piece: Bspline,
+        cut: float,
+        at_start: bool,
+        parent: npt.NDArray[np.floating],
+        tol: float,
+    ) -> None:
+        """Assert a piece is clamped and its cut end is the bound rounded, or a knot near it.
+
+        Args:
+            piece (Bspline): The piece.
+            cut (float): The requested bound.
+            at_start (bool): Whether the cut is the piece's start (else its end).
+            parent (npt.NDArray[np.floating]): The parent's knots.
+            tol (float): The parent's tolerance.
+        """
+        sp = piece.space.spaces[0]
+        knots = sp.knots
+        p = sp.degree
+        assert np.count_nonzero(knots == knots[0]) == p + 1, knots
+        assert np.count_nonzero(knots == knots[-1]) == p + 1, knots
+        end = float(knots[0] if at_start else knots[-1])
+        if end == float(knots.dtype.type(cut)):
+            return
+        near = parent[self._within(parent, cut, tol)]
+        assert bool(np.any(near.astype(np.float64) == end)), (end, cut, near)
+
+    @pytest.mark.parametrize("degree", [1, 2, 3])
+    @pytest.mark.parametrize("snap", [True, False])
+    @pytest.mark.parametrize("dtype", [np.float64, np.float32])
+    def test_bounds_around_the_tolerance(self, dtype: type, snap: bool, degree: int) -> None:
+        """Every bound in the window gives clamped pieces, or refuses only when unsnapped."""
+        for seed in self._SEEDS:
+            rng = np.random.default_rng(1000 * seed + 10 * degree + int(snap))
+            b, target = self._vector(rng, degree, dtype, snap)
+            sp = b.space.spaces[0]
+            parent = sp.knots
+            tol = float(sp.tolerance)
+            lo, hi = float(parent[0]), float(parent[-1])
+            ulp = float(np.spacing(dtype(target)))
+            m = int(tol // ulp)
+            # Half steps give bounds a storage type does not hold, which round onto the grid.
+            whole = sorted({0, 1, m - 1, m, m + 1, m + 2, 2 * m, 2 * m + 1})
+            for k in [s + h for s in whole for h in (0.0, 0.5)]:
+                for sign in (-1, 1):
+                    cut = target + sign * k * ulp
+                    for kind, starts in (
+                        ("lo", (True,)),
+                        ("hi", (False,)),
+                        ("split", (False, True)),
+                    ):
+                        try:
+                            if kind == "lo":
+                                pieces = [b.restrict((cut, hi))]
+                            elif kind == "hi":
+                                pieces = [b.restrict((lo, cut))]
+                            else:
+                                pieces = list(b.split(0, cut))
+                        except ValueError as err:
+                            assert not snap, (seed, k, sign, err)
+                            assert _UNSNAPPED_NEIGHBOUR in str(err), err
+                            continue
+                        for piece, at_start in zip(pieces, starts, strict=True):
+                            self._check_piece(piece, cut, at_start, parent, tol)
+
+
 # ---------------------------------------------------------------------------
 # Bspline.restrict — error cases
 # ---------------------------------------------------------------------------
