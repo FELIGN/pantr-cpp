@@ -19,6 +19,7 @@ from pantr.bspline import (
     THBSpline,
     THBSplineSpace,
     build_local,
+    compute_halo,
     coupling_graph,
     create_thb_space,
     create_uniform_space,
@@ -249,14 +250,23 @@ def test_valid_space_still_builds_on_a_rank_that_owns_no_cell() -> None:
 
 @pytest.mark.parametrize("method", ["grid", "graph"])
 def test_create_distributed_space_raises_runtime_error_on_every_rank(method: str) -> None:
-    # The docstring's promise for an invalid space: every rank raises the same RuntimeError, with
-    # no rank left waiting in the partition broadcast. Rank 0 runs first, as `_GatherHub` needs.
+    # The docstring's promise for an invalid space: every rank raises the same RuntimeError before
+    # the partition broadcast, so no rank gathers at all (the partitioners give every rank cells
+    # here, so the raise alone would also come from the constructor after the broadcast).
     space = _space_with_interior_knot(4)
     hub = _GatherHub()
     for rank in range(3):
         comm = _FakeComm(rank, 3, hub)
         with pytest.raises(RuntimeError, match=r"empty support detected at indices \[11\]"):
             create_distributed_space(space, comm, method=method)
+        assert comm.gathers == 0
+
+
+def test_compute_halo_of_no_cell_still_checks_the_supports() -> None:
+    # `DistributedSpace` relies on this on a rank that owns no cell: an early return on an empty
+    # request would let that rank accept an invalid space and hang the next collective (#30).
+    with pytest.raises(RuntimeError, match=r"empty support detected at indices \[11\]"):
+        compute_halo(_space_with_interior_knot(4), np.empty(0, dtype=np.int64))
 
 
 def test_comm_size_mismatch_raises() -> None:

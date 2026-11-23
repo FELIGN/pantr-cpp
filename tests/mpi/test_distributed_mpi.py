@@ -120,13 +120,15 @@ def test_invalid_space_is_refused_on_every_rank_including_one_without_cells() ->
     a collective every rank reaches whatever happened.
     """
     comm = MPI.COMM_WORLD
+    if comm.size < 2:
+        pytest.skip("needs a rank that owns no cell: run under mpiexec -n 2 or more")
     space = _space_with_interior_knot(4)
     part = Partition(np.zeros(space.num_total_intervals, dtype=np.int32), comm.size)
     try:
         DistributedSpace(space, part, comm)
         outcome = "constructed"
-    except RuntimeError as e:
-        outcome = f"RuntimeError: {e}"
+    except Exception as e:  # any exception must still reach the gather below
+        outcome = f"{type(e).__name__}: {e}"
     outcomes = comm.allgather(outcome)
     for rank, got in enumerate(outcomes):
         assert got.startswith("RuntimeError: B-spline function(s) with empty support"), (rank, got)

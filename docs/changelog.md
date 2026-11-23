@@ -1344,8 +1344,9 @@
   local space, which a rank without cells skips: that rank constructed while the others raised
   `RuntimeError`, then waited forever in the next collective (a distributed quasi-interpolation's
   gather, for instance). Every rank now raises the same `RuntimeError` at construction, with no
-  communication. `create_distributed_space` raises it on every rank before the partition is sent.
-  The C++ `pantr::mpi::DistributedSpace` had the same gap and raises `state_error` on every rank.
+  communication. `pantr.mpi.create_distributed_space` raises it on every rank before the partition
+  is sent. The C++ `pantr::mpi::DistributedSpace` constructor had the same gap and raises
+  `state_error` on every rank. Inherited from the previous release.
 - **B-spline basis derivatives from degree 21 on are correct at every order.** The row of order
   `k` was scaled by `degree! / (degree - k)!` formed as a 64-bit integer, which wraps once it
   passes `2^63`: from degree 21 (orders 19 to 21; at degree 25 orders 16 to 25) those rows were
