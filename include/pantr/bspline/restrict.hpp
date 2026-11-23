@@ -46,7 +46,12 @@
 /// *distinct* stored knots differ by more than `tol` and a cut widened by `tol` cannot reach the
 /// next one. A bound within `tol` of a knot is that knot (above), so a bound falling between two
 /// distinct knots less than `2 tol` apart becomes the nearer one rather than a third value the
-/// widened cut could over-collect around.
+/// widened cut could over-collect around. Two exceptions are inherited and not fixed. A space built
+/// with `snap_knots = false` need not hold distinct knots more than `tol` apart. And the left key
+/// `at - tol` is rounded in `double`: where `tol` is not a multiple of the ulp of `at`, a bound
+/// just over `tol` above a distinct knot gives a key that rounds onto that knot, and the cut
+/// collects it, so the result is not clamped at that bound (in `double`, knots `[0, 0, 0, 0.3, 0.8,
+/// 0.8, 0.8]` at degree 2 and a bound `0.3 + 26 ulp(0.3)`).
 #pragma once
 
 #include "pantr/bspline/bspline.hpp"
@@ -303,6 +308,9 @@ template <StorageFloat T>
 
 /// Restrict a B-spline to a sub-region of its parametric domain.
 ///
+/// A bound within the space's tolerance of a domain end is that end; otherwise one within it of a
+/// knot, by the comparison `detail::snap_to_knot` makes, is that knot.
+///
 /// Args:
 ///     b (const Bspline<T>&): The B-spline.
 ///     bounds (std::span<const std::optional<Bounds>>): For each direction its new bounds, `dim`
@@ -445,18 +453,18 @@ template <StorageFloat T>
   const auto a = static_cast<double>(dom_lo);
   const auto e = static_cast<double>(dom_hi);
   const double tol = space.tolerance();
-  const auto refuse = [&] {
+  const auto refuse = [&](const std::string& why) {
     return value_error("value must be strictly inside the domain (" + py_repr(a) + ", " +
-                       py_repr(e) + "), got " + py_repr(value) + ".");
+                       py_repr(e) + "), got " + py_repr(value) + why + ".");
   };
   if (value <= a + tol || value >= e - tol) {
-    throw refuse();
+    throw refuse("");
   }
   // The value is also judged as the split will use it: one that is an end knot by the snap's
   // comparison is that end, though it be further than `tol` from it in `double`.
   const double at = detail::snap_to_knot<T>(space.knots(), value, tol);
   if (at <= a + tol || at >= e - tol) {
-    throw refuse();
+    throw refuse(", which is the knot " + py_repr(at) + " within the tolerance " + py_repr(tol));
   }
 
   const std::vector<BsplineSpace1D<T>>& spaces = whole.spaces();

@@ -1209,12 +1209,17 @@ TEST_CASE("split: a float32 value that is a domain end is refused as one") {
   CHECK_THROWS_WITH_AS(static_cast<void>(bs::split<float>(bf, 0, near_end)),
                        doctest::Contains("value must be strictly inside the domain"),
                        pantr::value_error);
+  // The message names the end the value was taken as, since the value itself is inside.
+  CHECK_THROWS_WITH_AS(static_cast<void>(bs::split<float>(bf, 0, near_end)),
+                       doctest::Contains("which is the knot 1.0 within the tolerance"),
+                       pantr::value_error);
 }
 
 TEST_CASE("restrict: a bound within the tolerance of two knots is the nearer one") {
   // Float knots 0.5 and 0.5 + 1.5 tol. The bound 0.5 + 0.9 tol rounds to 0.5 + 0.875 tol, within
   // the tolerance of both and nearer the second; 0.5 + 0.6 tol rounds to 0.5 + 0.625 tol, nearer
-  // the first. Each restriction starts with a clamped copy of the nearer knot.
+  // the first. 0.5 + 0.75 tol is exact in float and equally far from both (12 ulp): a tie, which
+  // goes to the first knot. Each restriction starts with a clamped copy of the knot chosen.
   const double tol = 0x1p-20;
   const double second = static_cast<double>(static_cast<float>(0.5 + 1.5 * tol));
   const std::vector<float> k = {0, 0, 0, 0.5F, static_cast<float>(second), 1, 1, 1};
@@ -1223,7 +1228,9 @@ TEST_CASE("restrict: a bound within the tolerance of two knots is the nearer one
   const std::vector<float> cp = {1, 2, 3, 4, 5};
   const bs::Bspline<float> b(bs::BsplineSpace<float>(std::move(spaces)), sp(cp), false);
   REQUIRE(b.space().spaces()[0].tolerance() == tol);
-  for (const auto& [factor, want] : {std::pair{0.9, second}, std::pair{0.6, 0.5}}) {
+  REQUIRE(second - 0.5 == 1.5 * tol);
+  for (const auto& [factor, want] :
+       {std::pair{0.9, second}, std::pair{0.6, 0.5}, std::pair{0.75, 0.5}}) {
     CAPTURE(factor);
     const double bound = 0.5 + factor * tol;
     const auto rounded = static_cast<double>(static_cast<float>(bound));
