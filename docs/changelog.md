@@ -1341,18 +1341,23 @@
 
 ### Fixed
 - **`Bspline.restrict` and `Bspline.split` decide the knots at a bound by one rule**, so every
-  piece has `degree + 1` equal knots at each end and the domain asked for. The bound is taken as a
+  end they cut has `degree + 1` equal knots and the value asked for. The bound is taken as a
   domain end or a knot within the space's tolerance of it, else as itself rounded to the storage
   type, and from there only knots equal to that value are at the bound. The previous release
   counted the bound's multiplicity and cut the knot vector by two different tests, and where they
-  disagreed the result kept one knot too many and was not clamped at the bound (a bound 26 ulp
-  above a knot in `float64`, or within the tolerance of a knot in `float64` but not once rounded
+  disagreed the result kept one knot too many and was not clamped at the bound (a bound just over
+  the tolerance above a knot, or within the tolerance of a knot in `float64` but not once rounded
   to `float32`), or lost the knots at the bound and had a wrong domain, or refused with "knots
   must have at least 2*degree+2 elements" (a space built with `snap_knots=False` holding a knot
   within the tolerance of the bound). Where such a knot would end up inside a piece beside its
   clamped end, the call now raises `ValueError` naming the bound and the knot; restricting so
-  that it falls outside the piece succeeds. The C++ `pantr::bspline::restrict` and `split` are
-  the same.
+  that it falls outside the piece succeeds. Two bounds within the tolerance of each other now
+  raise `ValueError` ("... enclose no interval"): the result keeps the space's tolerance (below),
+  under which the window has no interval. A space built with `snap_knots=False` that holds an
+  interior knot `degree + 1` times and a distinct knot within the tolerance of it is now
+  restricted and split away from that knot; the previous release refused any restriction or split
+  of it ("would exceed the maximum multiplicity"). The C++ `pantr::bspline::restrict` and `split`
+  are the same.
 - **The spaces of `Bspline.restrict` and of both halves of `Bspline.split` keep the parent
   direction's `tolerance`**, as `BsplineSpace1D.restrict` does. They were built with a tolerance
   derived from their own knots, which can be smaller, so on a space built with

@@ -1045,6 +1045,8 @@ class Bspline:
             ValueError: If all directions are ``None`` or match the full domain.
             ValueError: If any bound lies outside its direction's domain.
             ValueError: If ``lower >= upper`` in any direction.
+            ValueError: If ``lower`` and ``upper``, taken as knots, are within ``tolerance``
+                of each other.
             ValueError: If the space was built with ``snap_knots=False`` and a knot distinct
                 from a bound, within ``tolerance`` of it, would lie inside the result beside its
                 clamped end.

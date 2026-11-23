@@ -357,6 +357,38 @@ class TestBoundKnotsByOneRule:
         )
         _assert_clamped_on(short.restrict((2.0**-20, 1.0)), 2.0**-20, 1.0)
 
+    def test_under_collection_split_control_beyond_the_tolerance(self) -> None:
+        """Case (3) control: ``34 eps`` is beyond ``tol``, and both halves are clamped."""
+        knots = [0, 0, 0, 1.0, 2.0, 2.0 + 34 * _EPS64, 4.0, 4.0, 4.0]
+        left, right = _make_squares(knots, 2, np.float64, False).split(0, 2.0)
+        _assert_clamped_on(left, 0.0, 2.0)
+        _assert_clamped_on(right, 2.0, 4.0)
+
+    def test_unsnapped_knot_below_the_upper_bound_refuses(self) -> None:
+        """The upper end: ``2 - 32 eps`` would sit inside the piece beside its clamped end 2."""
+        knots = [0, 0, 0, 1.0, 2.0 - 32 * _EPS64, 2.0, 4.0, 4.0, 4.0]
+        b = _make_squares(knots, 2, np.float64, False)
+        with pytest.raises(ValueError, match=r"The bound 2\.0 is within the tolerance"):
+            b.restrict((0.5, 2.0))
+        _assert_clamped_on(b.restrict((2.0, 4.0)), 2.0, 4.0)
+
+    def test_an_open_domain_end_the_cut_keeps_is_not_checked(self) -> None:
+        """An unsnapped start class ``0, 0, 0, 8 eps`` is the space's own, and is kept."""
+        knots = [0, 0, 0, 8 * _EPS64, 1.0, 2.0, 2.0, 2.0]
+        b = _make_squares(knots, 2, np.float64, False)
+        assert b.space.spaces[0].tolerance >= 8 * _EPS64
+        r = b.restrict((0.0, 1.5))
+        np.testing.assert_array_equal(r.space.spaces[0].knots[:4], knots[:4])
+
+    def test_bounds_within_the_tolerance_of_each_other_are_refused(self) -> None:
+        """A window narrower than the tolerance has no interval under the tolerance it keeps."""
+        b = _make_squares([0, 0, 0, 0.5, 1, 1, 1], 2, np.float64, True)
+        tol = b.space.spaces[0].tolerance
+        with pytest.raises(ValueError, match="enclose no interval"):
+            b.restrict((0.3, 0.3 + 0.5 * tol))
+        r = b.restrict((0.3, 0.3 + 2 * tol))
+        _assert_clamped_on(r, 0.3, 0.3 + 2 * tol)
+
     def test_nan_bound_is_refused(self) -> None:
         """No knot equals a NaN, so it is refused rather than cut as if every knot were at it."""
         b = _make_squares([0, 0, 0, 0.5, 1, 1, 1], 2, np.float64, True)
@@ -395,6 +427,26 @@ class TestBoundKnotsProperty:
         diff = np.abs(knots - knots.dtype.type(value))
         return np.asarray(diff.astype(np.float64) <= tol, dtype=np.bool_)
 
+    def _expected(self, parent: npt.NDArray[np.floating], cut: float, tol: float) -> float:
+        """Return the value a bound is.
+
+        The nearest knot within ``tol`` (the first on a tie), else the bound rounded to the
+        storage type. The bounds of this test are interior, far from the domain ends.
+
+        Args:
+            parent (npt.NDArray[np.floating]): The parent's knots.
+            cut (float): The bound.
+            tol (float): The parent's tolerance.
+
+        Returns:
+            float: The value.
+        """
+        diff = np.abs(parent - parent.dtype.type(cut)).astype(np.float64)
+        close = np.flatnonzero(diff <= tol)
+        if close.size == 0:
+            return float(parent.dtype.type(cut))
+        return float(parent[close[int(np.argmin(diff[close]))]])
+
     def _vector(
         self, rng: np.random.Generator, degree: int, dtype: type, snap: bool
     ) -> tuple[Bspline, float]:
@@ -410,9 +462,14 @@ class TestBoundKnotsProperty:
             tuple[Bspline, float]: The curve and the knot.
         """
         span = float(rng.uniform(0.5, 4.0))
-        tol_est = 8.0 * float(np.finfo(dtype).eps) * span
+        # A domain away from the origin too, where the tolerance scales with |knot| not the span.
+        start = float(rng.choice([0.0, -3.0, 100.0]))
+        scale = max(span, abs(start), abs(start + span))
+        tol_est = 8.0 * float(np.finfo(dtype).eps) * scale
         while True:
-            interior = np.sort(rng.uniform(0.1 * span, 0.9 * span, size=int(rng.integers(2, 5))))
+            interior = start + np.sort(
+                rng.uniform(0.1 * span, 0.9 * span, size=int(rng.integers(2, 5)))
+            )
             interior = interior.astype(dtype).astype(np.float64)
             if np.all(np.diff(interior) > 16.0 * tol_est):
                 break
@@ -420,7 +477,7 @@ class TestBoundKnotsProperty:
         if not snap:
             neighbour = float(dtype(target + rng.uniform(0.3, 1.0) * tol_est * rng.choice([-1, 1])))
             interior = np.sort(np.append(interior, neighbour))
-        knots = np.concatenate([[0.0] * (degree + 1), interior, [span] * (degree + 1)])
+        knots = np.concatenate([[start] * (degree + 1), interior, [start + span] * (degree + 1)])
         return _make_squares(knots.astype(dtype), degree, dtype, snap), target
 
     def _check_piece(
@@ -431,7 +488,7 @@ class TestBoundKnotsProperty:
         parent: npt.NDArray[np.floating],
         tol: float,
     ) -> None:
-        """Assert a piece is clamped and its cut end is the bound rounded, or a knot near it.
+        """Assert a piece is clamped and its cut end is the value the bound is.
 
         Args:
             piece (Bspline): The piece.
@@ -446,10 +503,10 @@ class TestBoundKnotsProperty:
         assert np.count_nonzero(knots == knots[0]) == p + 1, knots
         assert np.count_nonzero(knots == knots[-1]) == p + 1, knots
         end = float(knots[0] if at_start else knots[-1])
-        if end == float(knots.dtype.type(cut)):
-            return
-        near = parent[self._within(parent, cut, tol)]
-        assert bool(np.any(near.astype(np.float64) == end)), (end, cut, near)
+        assert end == self._expected(parent, cut, tol), (end, cut)
+        # The converse of the refusal: a returned piece holds no distinct knot within tol of the
+        # cut end, so its end class under the tolerance it keeps is exactly the p + 1 copies.
+        assert int(np.count_nonzero(self._within(knots, end, tol))) == p + 1, (knots, end)
 
     @pytest.mark.parametrize("degree", [1, 2, 3])
     @pytest.mark.parametrize("snap", [True, False])
@@ -485,6 +542,10 @@ class TestBoundKnotsProperty:
                         except ValueError as err:
                             assert not snap, (seed, k, sign, err)
                             assert _UNSNAPPED_NEIGHBOUR in str(err), err
+                            # The premise: a knot distinct from the bound's value, within tol.
+                            value = self._expected(parent, cut, tol)
+                            others = parent[parent.astype(np.float64) != value]
+                            assert bool(np.any(self._within(others, value, tol))), (cut, value)
                             continue
                         for piece, at_start in zip(pieces, starts, strict=True):
                             self._check_piece(piece, cut, at_start, parent, tol)
@@ -500,6 +561,7 @@ class TestPiecesKeepTheParentTolerance:
     """
 
     _KNOTS = (0, 0, 0, 1, 1 + 1e-12, 2, 3, 4, 1e6, 1e6, 1e6)
+    # The parent's tolerance, 8 eps max(span, |k0|, |k_last|) = 8 eps 1e6, as the issue prints it.
     _TOL = 1.7763568394002505e-09
 
     def test_reproduction(self) -> None:
@@ -637,12 +699,11 @@ class TestBsplineRestrictScaleCovariance:
     def test_restriction_keeps_the_whole_boundary_group(self, lam: float) -> None:
         """The extraction must not truncate the clamped end at any coordinate magnitude.
 
-        ``searchsorted(refined_knots, b_new + tol)`` is what cuts the sub-vector, and
-        with the previous fixed ``1e-12`` the offset was absorbed by ``b_new`` itself
-        once one ulp of the coordinate exceeded it (at ``lam = 1e6`` an ulp is about
-        ``1.2e-10``), so the cut fell before the first copy of ``b_new`` and the last
-        ``degree + 1`` knots were dropped. A tolerance of ``8 * eps * scale`` is at
-        least four ulp of any coordinate present, so the offset always bites.
+        A cut offset by a fixed absolute ``1e-12`` was once absorbed by ``b_new`` itself
+        once one ulp of the coordinate exceeded it, so the cut fell before the first copy
+        of ``b_new`` and the last ``degree + 1`` knots were dropped. The cut is now by
+        identity with the bound's value, so the whole clamped group is kept at any
+        magnitude.
         """
         f = self._shifted(0.0, lam)
         degree = f.degree[0]
