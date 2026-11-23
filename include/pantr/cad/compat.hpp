@@ -1,9 +1,10 @@
 /// @file compat.hpp
-/// @brief `make_compat`: B-splines with one degree and one knot vector per axis.
+/// @brief `make_compat`: B-splines with one degree and one interior knot structure per axis.
 ///
 /// The prerequisite of the operations that combine the control points of several B-splines
 /// (`create_ruled`, the Coons patches, `join`): `make_compat` returns new B-splines that share
-/// their degree and knot vector along the chosen axes and represent the same geometry.
+/// their degree and their number of knots per interior knot class along the chosen axes, and
+/// represent the same geometry.
 #pragma once
 
 #include "pantr/bspline/bspline.hpp"
@@ -19,7 +20,6 @@
 #include "pantr/core/scalar.hpp"
 
 #include <algorithm>
-#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -73,41 +73,6 @@ template <StorageFloat T>
     out.multiplicities.push_back(classes.multiplicities[i]);
   }
   return out;
-}
-
-/// Look up the multiplicity of each merged breakpoint within a single space.
-///
-/// For each entry of `merged`, the entry of `points` that `numpy.searchsorted` finds (the first
-/// not below it) is taken as its counterpart when it lies within `tol`; its multiplicity is the
-/// answer, and a breakpoint absent from the space has multiplicity 0. Both sequences are sorted in
-/// ascending order.
-///
-/// Args:
-///     merged (const std::vector<double>&): The union of the interior breakpoints, ascending.
-///     points (const std::vector<double>&): Interior breakpoints of one space, ascending.
-///     multiplicities (const std::vector<std::int64_t>&): Their multiplicities.
-///     tol (double): Tolerance for coincidence.
-///
-/// Returns:
-///     std::vector<std::int64_t>: One multiplicity per entry of `merged`.
-///
-/// Note:
-///     Inputs are assumed to be correct (no validation performed).
-[[nodiscard]] inline std::vector<std::int64_t> lookup_multiplicities(
-    const std::vector<double>& merged, const std::vector<double>& points,
-    const std::vector<std::int64_t>& multiplicities, double tol) {
-  std::vector<std::int64_t> result(merged.size(), 0);
-  if (points.empty() || merged.empty()) {
-    return result;
-  }
-  for (std::size_t i = 0; i < merged.size(); ++i) {
-    const auto first_not_below = std::lower_bound(points.begin(), points.end(), merged[i]);
-    const auto index = static_cast<std::size_t>(first_not_below - points.begin());
-    if (index < points.size() && std::abs(points[index] - merged[i]) <= tol) {
-      result[i] = multiplicities[index];
-    }
-  }
-  return result;
 }
 
 /// Remap one axis of a B-spline to a new domain (a reparametrization only).
@@ -226,55 +191,96 @@ void same_degree(std::vector<bspline::Bspline<T>>& results, const std::vector<st
   }
 }
 
-/// Merge the interior breakpoints of N spaces, returning per-space deficits.
+/// Merge the interior breakpoints of N spaces into tolerance classes, returning the knots each
+/// space lacks.
+///
+/// The exact union of every space's breakpoints is grouped with the classifier the spaces group
+/// their own knots with (`bspline::unique_knots_and_multiplicity` in `T` at `tol`), so breakpoints
+/// of different spaces within `tol` of each other are one class. A space's multiplicity at a class
+/// is the total multiplicity of its own breakpoints in the class, the target is the largest over
+/// the spaces, and a space below it lacks the difference. A lacking knot takes the space's own
+/// smallest breakpoint in the class where it has one, so that the space does not move its own knot
+/// (a space merges each of its classes onto the class's first knot, which would shift a knot it
+/// already has), and the class's smallest breakpoint where it has none.
 ///
 /// Args:
 ///     points (const std::vector<std::vector<double>>&): The interior breakpoints per B-spline,
-///         ascending.
+///         ascending, each a value of `T`.
 ///     multiplicities (const std::vector<std::vector<std::int64_t>>&): Their multiplicities.
-///     tol (double): Tolerance for coincidence.
+///     tol (double): Absolute tolerance for grouping, already rounded to `T`.
 ///
 /// Returns:
-///     std::pair<std::vector<double>, std::vector<std::vector<std::int64_t>>>: The sorted exact
-///     union of every space's breakpoints, and for each space how many knots it lacks at each
-///     union breakpoint to reach the largest multiplicity there (empty when no space has an
-///     interior breakpoint).
-[[nodiscard]] inline std::pair<std::vector<double>, std::vector<std::vector<std::int64_t>>>
-merge_breakpoints(const std::vector<std::vector<double>>& points,
-                  const std::vector<std::vector<std::int64_t>>& multiplicities, double tol) {
-  std::vector<double> merged;
+///     std::vector<std::vector<double>>: For each space, the knots to insert, ascending (empty when
+///     it lacks none).
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed).
+template <StorageFloat T>
+[[nodiscard]] std::vector<std::vector<double>> merge_breakpoints(
+    const std::vector<std::vector<double>>& points,
+    const std::vector<std::vector<std::int64_t>>& multiplicities, double tol) {
+  std::vector<T> merged;
   for (const auto& p : points) {
-    merged.insert(merged.end(), p.begin(), p.end());
+    for (const double v : p) {
+      merged.push_back(static_cast<T>(v));
+    }
   }
+  std::vector<std::vector<double>> to_insert(points.size());
   if (merged.empty()) {
-    return {{}, std::vector<std::vector<std::int64_t>>(points.size())};
+    return to_insert;
   }
   std::sort(merged.begin(), merged.end());
   merged.erase(std::unique(merged.begin(), merged.end()), merged.end());
 
-  // The target multiplicity is the largest over the spaces.
-  std::vector<std::int64_t> target(merged.size(), 0);
-  std::vector<std::vector<std::int64_t>> per_space;
-  per_space.reserve(points.size());
+  // The union holds distinct values, so a class's multiplicity is its number of union entries:
+  // entry `i` belongs to class `class_of[i]`.
+  const bspline::KnotClasses<T> classes =
+      bspline::unique_knots_and_multiplicity<T>(std::span<const T>(merged), 0, tol, false);
+  std::vector<std::size_t> class_of;
+  class_of.reserve(merged.size());
+  for (std::size_t c = 0; c < classes.knots.size(); ++c) {
+    class_of.insert(class_of.end(), static_cast<std::size_t>(classes.multiplicities[c]), c);
+  }
+
+  // Every breakpoint of a space is an entry of the union, found exactly; a space's breakpoints
+  // ascend, so the first one met in a class is its smallest there.
+  const std::size_t num_classes = classes.knots.size();
+  std::vector<std::int64_t> target(num_classes, 0);
+  std::vector<std::vector<std::int64_t>> owned(points.size(),
+                                               std::vector<std::int64_t>(num_classes, 0));
+  std::vector<std::vector<double>> value(points.size());
   for (std::size_t s = 0; s < points.size(); ++s) {
-    per_space.push_back(lookup_multiplicities(merged, points[s], multiplicities[s], tol));
-    for (std::size_t i = 0; i < merged.size(); ++i) {
-      target[i] = (std::max)(target[i], per_space.back()[i]);
+    for (const T k : classes.knots) {
+      value[s].push_back(static_cast<double>(k));
+    }
+    for (std::size_t j = 0; j < points[s].size(); ++j) {
+      const auto entry = static_cast<std::size_t>(
+          std::lower_bound(merged.begin(), merged.end(), static_cast<T>(points[s][j])) -
+          merged.begin());
+      const std::size_t c = class_of[entry];
+      if (owned[s][c] == 0) {
+        value[s][c] = points[s][j];
+      }
+      owned[s][c] += multiplicities[s][j];
+    }
+    for (std::size_t c = 0; c < num_classes; ++c) {
+      target[c] = (std::max)(target[c], owned[s][c]);
     }
   }
-  std::vector<std::vector<std::int64_t>> deficits = std::move(per_space);
-  for (auto& d : deficits) {
-    for (std::size_t i = 0; i < d.size(); ++i) {
-      d[i] = target[i] - d[i];
+  for (std::size_t s = 0; s < points.size(); ++s) {
+    for (std::size_t c = 0; c < num_classes; ++c) {
+      to_insert[s].insert(to_insert[s].end(), static_cast<std::size_t>(target[c] - owned[s][c]),
+                          value[s][c]);
     }
   }
-  return {std::move(merged), std::move(deficits)};
+  return to_insert;
 }
 
-/// Insert knots so every B-spline shares one knot vector per axis.
+/// Insert knots so every B-spline has the same number of knots per interior knot class per axis.
 ///
 /// The tolerance along an axis is the **first** B-spline's space tolerance there (read after the
-/// two earlier stages), applied to every B-spline's classes after rounding to its storage type.
+/// two earlier stages), rounded to the storage type, applied to every B-spline's classes and to the
+/// classes of their union (`merge_breakpoints`, which also says where a lacking knot goes).
 ///
 /// Args:
 ///     results (std::vector<bspline::Bspline<T>>&): The B-splines, of one domain and degree per
@@ -297,15 +303,13 @@ void merge_knots(std::vector<bspline::Bspline<T>>& results, const std::vector<st
       points.push_back(std::move(ip.points));
       multiplicities.push_back(std::move(ip.multiplicities));
     }
-    const auto& [merged, deficits] = merge_breakpoints(points, multiplicities, tol);
-    if (merged.empty()) {
-      continue;
-    }
+    const double tol_typed = static_cast<double>(static_cast<T>(tol));
+    const std::vector<std::vector<double>> lacking =
+        merge_breakpoints<T>(points, multiplicities, tol_typed);
     for (std::size_t i = 0; i < results.size(); ++i) {
       std::vector<T> to_insert;
-      for (std::size_t j = 0; j < merged.size(); ++j) {
-        to_insert.insert(to_insert.end(), static_cast<std::size_t>(deficits[i][j]),
-                         bspline::detail::convert_value<T>(merged[j]));
+      for (const double k : lacking[i]) {
+        to_insert.push_back(bspline::detail::convert_value<T>(k));
       }
       if (to_insert.empty()) {
         continue;
@@ -332,16 +336,26 @@ void merge_knots(std::vector<bspline::Bspline<T>>& results, const std::vector<st
 
 /// Make B-splines compatible along the chosen parametric axes.
 ///
-/// Returns new B-splines that share the same degree and knot vector along the axes and represent
-/// the same geometry. Three stages, each over the selected axes in the order given:
+/// Returns new B-splines that share the same degree and number of knots per interior knot class
+/// along the axes and represent the same geometry. The end classes are not matched: an input whose
+/// end class holds more knots than another's (more than `degree + 1`), or that has knots outside
+/// the domain, keeps its extra functions. Three stages, each over the selected axes in the order
+/// given:
 ///
 ///  1. Same domain: every knot vector is remapped affinely onto the envelope
 ///     `[min(starts), max(ends)]` (a reparametrization; the control points are unchanged).
 ///  2. Same degree: every B-spline is elevated to the largest degree.
-///  3. Merge knots: knots are inserted so every B-spline has the same interior breakpoints at the
-///     largest multiplicity any of them has. The breakpoints are the knot classes at the first
-///     B-spline's space tolerance (rounded to each B-spline's storage type); the inserted values
-///     are the exact sorted union of the breakpoints.
+///  3. Merge knots: knots are inserted so every B-spline has the same interior knot classes at the
+///     largest multiplicity any of them has. The classes are those of the union of every
+///     B-spline's interior breakpoints, grouped as a space groups its own knots, at the first
+///     B-spline's space tolerance rounded to the storage type; a multiplicity at a class counts all
+///     of a B-spline's knots in it, and a knot inserted at a class takes the B-spline's own
+///     smallest knot there, or the class's smallest breakpoint where it has none, so that no
+///     B-spline's own knot moves (for a B-spline whose own tolerance is the first's; one with a
+///     larger tolerance can merge an inserted knot into a class of its own). The outputs then
+///     agree in their number of knots per class, but not necessarily in their values: those differ
+///     by less than the tolerance, or by more where breakpoints each within the tolerance of the
+///     next chain into one class.
 ///
 /// A periodic direction (on a selected axis) is first converted to open form, which opens every
 /// direction of that B-spline. Fewer than two B-splines are returned unchanged, before any check.
@@ -353,8 +367,8 @@ void merge_knots(std::vector<bspline::Bspline<T>>& results, const std::vector<st
 ///         means every axis. An empty list returns the B-splines unchanged.
 ///
 /// Returns:
-///     std::vector<bspline::Bspline<T>>: One B-spline per input, in order, sharing the knot
-///     structure along the axes (an input that needed no change shares its representation).
+///     std::vector<bspline::Bspline<T>>: One B-spline per input, in order, sharing the interior
+///     knot structure along the axes (an input that needed no change shares its representation).
 ///
 /// Raises:
 ///     value_error: The parametric dimensions differ ("All B-splines must have the same

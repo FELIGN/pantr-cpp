@@ -232,10 +232,12 @@ template <StorageFloat T>
                       std::to_string(width) + " and " + std::to_string(width2) +
                       " after promotion (only a second B-spline of width 1 is broadcast).");
   }
-  // After `make_compat` the two have one number of basis functions per direction, which the
-  // matching of knot classes at a tolerance is meant to guarantee; the stacking below reads one
-  // point of the second per point of the first, so a difference would read out of bounds, and the
-  // NumPy implementation raised (a broadcast error) there.
+  // After `make_compat` the two have one number of knots per interior knot class, but the end
+  // classes are not matched (one holding more than `degree + 1` knots, for example), so the
+  // numbers of basis functions can still differ; the stacking below reads one point of the second
+  // per point of the first, so a difference would read out of bounds, and the NumPy
+  // implementation raised (a broadcast error) there. The result takes the first's knots, which
+  // can differ in value from the second's within a knot class (see `make_compat`).
   const std::size_t points = b1.size() / width;
   if (b2.size() / width2 != points) {
     throw value_error(
