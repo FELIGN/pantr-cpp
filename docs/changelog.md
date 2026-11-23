@@ -772,8 +772,9 @@
     `float32` B-spline, `restrict` counts the knots already at an `np.float64` bound in
     `float32`, as it did for a Python float (the previous release compared it in `float64`), and
     compares the bound with the domain ends, and the keys that place the cut with the knots, in
-    `float64`; `split` compares its value with the domain ends in `float64`, as before. Both take a bound within the tolerance of a knot, by the
-    storage-type comparison, as that knot (see the `Fixed` entry for #6).
+    `float64`; `split` compares its value with the domain ends in `float64`, as before. Both take
+    a bound within the tolerance of a knot, by the storage-type comparison, as that knot (see the
+    `Fixed` entry for #6); the count and the cut can still disagree on a bound (#38, open).
   - `remove_knots`' `tol` is read as a Python float: `np.float16`, `Decimal`, `Fraction` and
     objects with `__float__` are accepted (the previous release refused them); on NumPy 2.4 and
     later a one-element array is a `TypeError` (it was accepted), while earlier NumPy versions
@@ -1349,9 +1350,10 @@
   communication. `pantr.mpi.create_distributed_space` raises it on every rank before the partition
   is sent. Inherited from the previous release. The C++ `pantr::mpi::DistributedSpace`
   constructor, new in this release, raises `state_error` on every rank in the same case, and
-  `pantr::mpi::create_distributed_space`, also new, checks the space before the partition is sent,
-  so a partitioner that fails on the invalid space no longer gives rank 0 its own error and the
-  other ranks `value_error` "rank 0 could not compute the partition".
+  `pantr::mpi::create_distributed_space`, also new, checks the space (empty support, periodic
+  direction) on every rank before the partitioner runs, so every rank raises the space's own error
+  rather than rank 0 the partitioner's and the others `value_error` "rank 0 could not compute the
+  partition".
 - **B-spline basis derivatives from degree 21 on are correct at every order.** The row of order
   `k` was scaled by `degree! / (degree - k)!` formed as a 64-bit integer, which wraps once it
   passes `2^63`: from degree 21 (orders 19 to 21; at degree 25 orders 16 to 25) those rows were

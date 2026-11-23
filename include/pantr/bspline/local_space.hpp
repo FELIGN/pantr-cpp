@@ -189,8 +189,7 @@ void walk_box(std::span<const std::int64_t> span, std::span<const std::int64_t> 
 ///
 /// Returns:
 ///     std::vector<std::int64_t>: The halo cell ids, ascending; empty when `owned_cells` is. An
-///         empty request still validates `space`, which `pantr.mpi` relies on to refuse an
-///         invalid space on a rank that owns no cell.
+///         empty request still validates `space`.
 ///
 /// Raises:
 ///     value_error: A direction is periodic.
@@ -496,8 +495,9 @@ inline void check_rank_in_partition(const grid::Partition& partition, std::int64
 /// Raises:
 ///     value_error: A direction is periodic; `rank` is out of range; `partition` has another cell
 ///         count than the space; `rank` owns no cell.
-///     state_error: The restricted directions and the window's bounding box disagree on the cell
-///         count (an invariant of `BsplineSpace1D::restrict`).
+///     state_error: A function has an empty support (an invalid space); or the restricted
+///         directions and the window's bounding box disagree on the cell count (an invariant of
+///         `BsplineSpace1D::restrict`).
 template <StorageFloat T>
 [[nodiscard]] LocalSpace<BsplineSpace<T>> build_local(const BsplineSpace<T>& space,
                                                       const grid::Partition& partition,
