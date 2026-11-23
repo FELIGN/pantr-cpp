@@ -1347,7 +1347,10 @@
   gather, for instance). Every rank now raises the same `RuntimeError` at construction, with no
   communication. `pantr.mpi.create_distributed_space` raises it on every rank before the partition
   is sent. Inherited from the previous release. The C++ `pantr::mpi::DistributedSpace`
-  constructor, new in this release, raises `state_error` on every rank in the same case.
+  constructor, new in this release, raises `state_error` on every rank in the same case, and
+  `pantr::mpi::create_distributed_space`, also new, checks the space before the partition is sent,
+  so a partitioner that fails on the invalid space no longer gives rank 0 its own error and the
+  other ranks `value_error` "rank 0 could not compute the partition".
 - **B-spline basis derivatives from degree 21 on are correct at every order.** The row of order
   `k` was scaled by `degree! / (degree - k)!` formed as a 64-bit integer, which wraps once it
   passes `2^63`: from degree 21 (orders 19 to 21; at degree 25 orders 16 to 25) those rows were
