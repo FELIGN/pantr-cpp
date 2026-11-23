@@ -251,20 +251,22 @@ class DistributedSpace:
 
 
 def _check_global_space(space: BsplineSpace | THBSplineSpace) -> None:
-    """Refuse a global space that :func:`~pantr.bspline.build_local` would refuse, on any rank.
+    """Refuse a periodic B-spline space, or one with a function of empty support, on any rank.
 
     A rank that owns no cell never calls ``build_local``, so without this it would accept a
     space the other ranks refuse and then wait alone in the next collective. The check is
     ``build_local``'s own, reached through :func:`~pantr.bspline.compute_halo`, which validates
     the space's supports before answering the empty request; it needs no communication, as
     every rank holds the same space. A :class:`~pantr.bspline.THBSplineSpace` refuses an empty
-    support at its own construction.
+    support at its own construction; whether it is stale (its grid refined after construction)
+    is not checked here.
 
     Args:
         space (BsplineSpace | THBSplineSpace): The global space.
 
     Raises:
-        ValueError: If ``space`` is a periodic :class:`~pantr.bspline.BsplineSpace`.
+        ValueError: If ``space`` is a periodic :class:`~pantr.bspline.BsplineSpace`, or one
+            with no direction.
         RuntimeError: If a function of ``space`` has an empty support (an invalid space).
     """
     if isinstance(space, BsplineSpace):
