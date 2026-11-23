@@ -178,14 +178,16 @@ class DistributedSpace {
   /// Raises:
   ///     value_error: A periodic B-spline space; `size != partition.n_parts()`; another cell count;
   ///         a rank outside `[0, size)`.
+  ///     state_error: A B-spline function of empty support (an invalid space), on every rank,
+  ///         including one that owns no cell.
   DistributedSpace(Space global_space, grid::Partition partition, int rank, int size)
       : global_(std::move(global_space)), partition_(std::move(partition)), rank_(rank) {
     if constexpr (requires { global_.spaces(); }) {
-      for (const auto& s : global_.spaces()) {
-        if (s.periodic()) {
-          throw value_error("periodic B-spline spaces are not supported.");
-        }
-      }
+      // The checks `bspline::build_local` runs on the global space (periodic, empty support), run
+      // here on every rank: one that owns no cell builds no local space, and accepting what the
+      // others refuse would send it alone into the next collective. A THB space refuses an empty
+      // support at its own construction.
+      static_cast<void>(bspline::detail::local_space_axes(global_));
     }
     if (size != partition_.n_parts()) {
       throw value_error("comm.size (" + std::to_string(size) + ") must equal partition.n_parts (" +

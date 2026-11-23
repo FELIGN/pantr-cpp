@@ -19,6 +19,7 @@ import pytest
 from pantr.bspline import (
     Bspline,
     BsplineSpace,
+    BsplineSpace1D,
     THBSpline,
     build_local,
     create_greville_lattice,
@@ -30,7 +31,7 @@ from pantr.bspline import (
     quasi_interpolate_bspline,
     quasi_interpolate_thb_spline,
 )
-from pantr.grid import partition_grid, tensor_product_grid
+from pantr.grid import Partition, partition_grid, tensor_product_grid
 from pantr.mpi import (
     DistributedSpace,
     create_distributed_function,
@@ -93,6 +94,61 @@ def test_create_distributed_space_matches_explicit_across_ranks() -> None:
     )
     all_dofs = np.concatenate(comm.allgather(owned))
     np.testing.assert_array_equal(np.sort(all_dofs), np.arange(space.num_total_basis))
+
+
+def _space_with_interior_knot(mult: int) -> BsplineSpace:
+    """Return a 2D space whose knot 0.9 in direction 0 (degree 2) has multiplicity ``mult``.
+
+    At ``mult = 4`` (degree + 2) a function has an empty support and the space is invalid;
+    at ``mult = 1`` it is valid. The reproduction of issue #30.
+    """
+    interior = [x for i in range(1, 10) for x in [i / 10] * (mult if i == 9 else 1)]
+    return BsplineSpace(
+        [
+            BsplineSpace1D(np.array([0.0] * 3 + interior + [1.0] * 3), 2),
+            BsplineSpace1D(np.array([0.0, 0.0, 0.25, 0.5, 0.75, 1.0, 1.0]), 1),
+        ]
+    )
+
+
+def test_invalid_space_is_refused_on_every_rank_including_one_without_cells() -> None:
+    """Every rank refuses an invalid space, so none goes on alone into a collective.
+
+    Rank 0 owns every cell and the other ranks none. A rank that constructed would wait forever
+    in the next collective (here a quasi-interpolation's gather) for ranks that already raised,
+    so this test never enters one after construction: it gathers each rank's outcome instead,
+    a collective every rank reaches whatever happened.
+    """
+    comm = MPI.COMM_WORLD
+    if comm.size < 2:
+        pytest.skip("needs a rank that owns no cell: run under mpiexec -n 2 or more")
+    space = _space_with_interior_knot(4)
+    part = Partition(np.zeros(space.num_total_intervals, dtype=np.int32), comm.size)
+    try:
+        DistributedSpace(space, part, comm)
+        outcome = "constructed"
+    except Exception as e:  # any exception must still reach the gather below
+        outcome = f"{type(e).__name__}: {e}"
+    outcomes = comm.allgather(outcome)
+    for rank, got in enumerate(outcomes):
+        assert got.startswith("RuntimeError: B-spline function(s) with empty support"), (rank, got)
+    assert len(set(outcomes)) == 1, outcomes  # the same exception, message included, on every rank
+
+
+def test_valid_space_with_a_rank_without_cells_quasi_interpolates() -> None:
+    """The control of the test above: the same empty ranks, a valid space, a full collective."""
+    comm = MPI.COMM_WORLD
+    space = _space_with_interior_knot(1)
+    part = Partition(np.zeros(space.num_total_intervals, dtype=np.int32), comm.size)
+    ds = DistributedSpace(space, part, comm)
+    assert ds.owns_cells == (comm.rank == 0)
+    func = lambda p: p[:, 0] * p[:, 1]  # noqa: E731
+    dfn = quasi_interpolate_bspline_distributed(func, ds)
+    serial = quasi_interpolate_bspline(func, space)
+    # The tolerance the other distributed-versus-serial quasi-interpolation tests assert.
+    np.testing.assert_allclose(
+        dfn.global_function.control_points, serial.control_points, atol=1e-10
+    )
 
 
 def test_create_distributed_function_reproduces_serial_field() -> None:

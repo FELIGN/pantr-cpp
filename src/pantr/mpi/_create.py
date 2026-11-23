@@ -14,7 +14,7 @@ from .._ext import ext
 from ..bspline import BsplineSpace, THBSplineSpace, coupling_graph, partition_graph
 from ..grid import Partition, partition_grid, tensor_product_grid
 from ._comm import as_communicator
-from ._distributed_space import DistributedSpace
+from ._distributed_space import DistributedSpace, _check_global_space
 from ._thread_policy import _ensure_default_thread_policy
 
 if TYPE_CHECKING:
@@ -46,8 +46,10 @@ def create_distributed_space(  # noqa: PLR0913 -- public factory mirrors the par
     ``comm.allgather``, in which the other ranks send nothing), so every rank holds the
     same one even where a floating-point partitioner would round differently on another
     rank's machine. With one rank nothing is sent. The arguments are checked on every rank
-    before the collective; if computing the partition raises on rank 0, rank 0 raises that
-    exception and every other rank raises :class:`ValueError`.
+    before the collective, the global space's validity included, so an invalid space (one
+    with a function of empty support) raises the same :class:`RuntimeError` on every rank.
+    If computing the partition raises on rank 0, rank 0 raises that exception and every
+    other rank raises :class:`ValueError`.
 
     The explicit three-step flow remains available for full control; this factory just
     removes the boilerplate for the common case.
@@ -82,6 +84,8 @@ def create_distributed_space(  # noqa: PLR0913 -- public factory mirrors the par
             invalid for the chosen method; or if the derived partition is incompatible
             with ``comm`` (e.g. ``comm.size`` mismatch), as raised downstream; on a rank
             other than 0, if rank 0 could not compute the partition.
+        RuntimeError: If a function of ``global_space`` has an empty support (an invalid
+            space), on every rank, before the collective.
 
     Example:
         Needs a live MPI communicator and several ranks, so it is not run as a doctest.
@@ -100,6 +104,11 @@ def create_distributed_space(  # noqa: PLR0913 -- public factory mirrors the par
             f"global_space must be a BsplineSpace or THBSplineSpace; "
             f"got {type(global_space).__name__!r}."
         )
+    # Before the broadcast, so an invalid space raises the same RuntimeError on every rank even
+    # where computing the partition would fail on rank 0 (fewer cells than ranks, for one), which
+    # would give rank 0 the partitioner's own error and every other rank a ValueError naming
+    # rank 0's failure.
+    _check_global_space(global_space)
     n_parts = int(comm.size)
 
     def compute() -> Any:  # noqa: ANN401 -- the compiled Partition
