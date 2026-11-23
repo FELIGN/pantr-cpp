@@ -104,7 +104,8 @@ struct [[nodiscard]] BasisDerivatives {
 ///
 /// The tolerance (`tolerance()`) is an absolute parametric length, `8 eps * max(span, |knots[0]|,
 /// |knots[-1]|)` of the knots as given: two knots closer than it are one knot, a point within it
-/// of an end is in the domain, two intervals differing by less are the same length.
+/// of an end is in the domain, two intervals differing by less are the same length. A window from
+/// `restrict` and a space from `from_state` carry the tolerance they are given instead.
 ///
 /// Attributes:
 ///     rep_ (std::shared_ptr<const detail::BsplineSpace1DRep<T>>): The shared representation.

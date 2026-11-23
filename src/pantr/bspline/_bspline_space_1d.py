@@ -400,7 +400,9 @@ class BsplineSpace1D:
         (``max(span, |knots[0]|, |knots[-1]|)``) and doubled for one extra rounding
         upstream. Two knots closer than this are the same knot, a point within this
         of an end is inside the domain, and two knot intervals differing by less
-        than this are the same length.
+        than this are the same length. A window from :meth:`restrict`, and a space
+        restored from its pickled state, carries the tolerance of the space it came
+        from instead.
 
         Being an absolute parametric length, it is *not* the factor to scale a
         physical coordinate or a spline coefficient by; take the dimensionless

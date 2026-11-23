@@ -1021,7 +1021,9 @@ class Bspline:
         ``degree + 1``, then extracting the relevant knot sub-vector and control
         points.  Skips insertion when a bound already coincides with a clamped
         domain endpoint.  Periodic directions are automatically converted to
-        open form before restricting.
+        open form before restricting.  A bound within the space's ``tolerance``
+        of a knot (the difference formed in the storage dtype) is taken as that
+        knot.
 
         Args:
             bounds (tuple[float, float] | Sequence[tuple[float, float] | None]):
@@ -1065,19 +1067,23 @@ class Bspline:
         Inserts knots at ``value`` until the multiplicity reaches
         ``degree + 1``, then extracts the left and right sub-splines.
         Periodic directions are automatically converted to open form before
-        splitting.
+        splitting.  A ``value`` within the space's ``tolerance`` of a knot (the
+        difference formed in the storage dtype) is taken as that knot.
 
         Args:
             direction (int): Parametric direction along which to split.
                 Must be in ``[0, dim)``.
             value (float): Parameter value at which to split.  Must lie
-                strictly inside the domain of the specified direction.
+                strictly inside the domain of the specified direction (further
+                than its ``tolerance`` from both ends), both as given and as
+                taken onto a knot.
 
         Returns:
             tuple[Bspline, Bspline]: A pair ``(left, right)`` of B-splines.
             The left sub-spline has domain ``[domain_start, value]`` and
             the right has domain ``[value, domain_end]`` in the split
-            direction. Other directions are unchanged.
+            direction, ``value`` as taken onto a knot. Other directions are
+            unchanged.
 
         Raises:
             ValueError: If ``direction`` is out of range ``[0, dim)``.
