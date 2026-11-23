@@ -10,7 +10,8 @@
 /// it makes (a requested bound against a domain endpoint, against an existing knot, against the
 /// refined vector) is the question `knot_tolerance` answers: are these two values the same knot?
 ///
-/// Whether a bound is an existing knot is decided once, up front (`snap_to_knot`): by the
+/// Whether a bound is an existing knot is decided once, up front (`snap_to_knot`), after the
+/// comparison with the domain ends (`validate_restrict_bounds`, in `double`): by the
 /// comparison the count of knots already at a boundary (`count_within`) makes, which rounds the
 /// bound to the storage type and forms `knot - bound` in it, as NumPy did for a Python float. A
 /// bound that is a knot by that test is replaced by the knot, and every later count, insertion and
@@ -46,12 +47,17 @@
 /// *distinct* stored knots differ by more than `tol` and a cut widened by `tol` cannot reach the
 /// next one. A bound within `tol` of a knot is that knot (above), so a bound falling between two
 /// distinct knots less than `2 tol` apart becomes the nearer one rather than a third value the
-/// widened cut could over-collect around. Two exceptions predate the snap and are not fixed. A
-/// space built with `snap_knots = false` need not hold distinct knots more than `tol` apart. And
-/// the left key `at - tol` is rounded in `double`: where `tol` is not a multiple of the ulp of
+/// widened cut could over-collect around. Three exceptions predate the snap and are not fixed.
+/// (1) A space built with `snap_knots = false` need not hold distinct knots more than `tol` apart.
+/// (2) The left key `at - tol` is rounded in `double`: where `tol` is not a multiple of the ulp of
 /// `at`, a bound just over `tol` above a distinct knot gives a key that rounds onto that knot, and
 /// the cut collects it, so the result is not clamped at that bound (in `double`, knots `[0, 0, 0,
-/// 0.3, 0.8, 0.8, 0.8]` at degree 2 and a bound `0.3 + 26 ulp(0.3)`).
+/// 0.3, 0.8, 0.8, 0.8]` at degree 2 and a bound `0.3 + 26 ulp(0.3)`). (3) For `float` knots the
+/// snap's test rounds a bound that is not a knot to `float` and the cut does not: a bound within
+/// `tol` of a knot in `double` whose rounding lies further than `tol` from it is not snapped, its
+/// copies are inserted at the rounded value, and the cut still collects the knot, so the result is
+/// not clamped at that bound either (`float` knots `[0, 0, 0, 0.5, s, s, s]` at degree 2, `s =
+/// 1.2375f`, and a bound `0.5 + tol`; it needs `tol` not a multiple of the knot's ulp).
 #pragma once
 
 #include "pantr/bspline/bspline.hpp"
