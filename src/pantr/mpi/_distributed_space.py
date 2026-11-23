@@ -17,7 +17,14 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from ..bspline import Bspline, BsplineSpace, THBSpline, THBSplineSpace, build_local
+from ..bspline import (
+    Bspline,
+    BsplineSpace,
+    THBSpline,
+    THBSplineSpace,
+    build_local,
+    compute_halo,
+)
 from ._thread_policy import _ensure_default_thread_policy
 
 if TYPE_CHECKING:
@@ -81,6 +88,8 @@ class DistributedSpace:
                 if ``partition`` does not match the global space's cell count; or if
                 ``comm.rank`` is outside ``[0, comm.size)`` (delegated to
                 :meth:`~pantr.grid.Partition.owned_cells`).
+            RuntimeError: If a function of ``global_space`` has an empty support (an invalid
+                space). Raised on every rank, including one that owns no cells.
 
         Note:
             Unlike :func:`~pantr.bspline.build_local`, construction succeeds when this rank
@@ -93,10 +102,7 @@ class DistributedSpace:
             thread per rank. See :func:`pantr.mpi.configure_threads`.
         """
         _ensure_default_thread_policy()
-        if isinstance(global_space, BsplineSpace) and any(
-            sp.periodic for sp in global_space.spaces
-        ):
-            raise ValueError("periodic B-spline spaces are not supported.")
+        _check_global_space(global_space)
         size = int(comm.size)  # int() guards against mpi4py returning numpy.intp
         if size != partition.n_parts:
             raise ValueError(
@@ -242,6 +248,27 @@ class DistributedSpace:
         if isinstance(local.space, THBSplineSpace):
             return THBSpline(local.space, local_cp)
         return Bspline(local.space, local_cp)
+
+
+def _check_global_space(space: BsplineSpace | THBSplineSpace) -> None:
+    """Refuse a global space that :func:`~pantr.bspline.build_local` would refuse, on any rank.
+
+    A rank that owns no cell never calls ``build_local``, so without this it would accept a
+    space the other ranks refuse and then wait alone in the next collective. The check is
+    ``build_local``'s own, reached through :func:`~pantr.bspline.compute_halo`, which validates
+    the space's supports before answering the empty request; it needs no communication, as
+    every rank holds the same space. A :class:`~pantr.bspline.THBSplineSpace` refuses an empty
+    support at its own construction.
+
+    Args:
+        space (BsplineSpace | THBSplineSpace): The global space.
+
+    Raises:
+        ValueError: If ``space`` is a periodic :class:`~pantr.bspline.BsplineSpace`.
+        RuntimeError: If a function of ``space`` has an empty support (an invalid space).
+    """
+    if isinstance(space, BsplineSpace):
+        compute_halo(space, np.empty(0, dtype=np.int64))
 
 
 def _global_cell_count(space: BsplineSpace | THBSplineSpace) -> int:
