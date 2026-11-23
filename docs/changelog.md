@@ -1427,8 +1427,9 @@
   multiplicity and a different value to the cut of the knot vector, and both calls raised
   `ValueError: knots must have at least 2*degree+2 elements`; a bound closer to the knot
   (`0.5 - 2^-20`, for one) returned, with no error, a knot vector whose start was not clamped
-  (two copies of the bound, then the knot `0.5`, then the end `0.9` three times). Such a bound is now replaced by the knot, once, before the count, the insertion and the cut, judged by the comparison the count
-  made. A `float64` bound within the tolerance of a knot, which succeeded, now also gives the
+  (for `restrict((0.5 - 2^-20, 0.9))`: two copies of the bound, then the knot `0.5`, then the upper
+  bound `0.9` three times). Such a bound is now replaced by the knot, once, before the count, the
+  insertion and the cut, judged by the comparison the count made. A `float64` bound within the tolerance of a knot, which succeeded, now also gives the
   result at the knot, where it inserted copies of the bound beside it. A `float32` split value
   that is a domain end by that comparison, though further than the tolerance from it in `double`,
   is refused as not strictly inside the domain, where it raised the same misleading error.

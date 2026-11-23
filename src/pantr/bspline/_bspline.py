@@ -1021,9 +1021,9 @@ class Bspline:
         ``degree + 1``, then extracting the relevant knot sub-vector and control
         points.  Skips insertion when a bound already coincides with a clamped
         domain endpoint.  Periodic directions are automatically converted to
-        open form before restricting.  A bound within the space's ``tolerance``
-        of a knot (the difference formed in the storage dtype) is taken as that
-        knot.
+        open form before restricting.  A bound in the domain (compared with its
+        ends in ``float64``) and within the space's ``tolerance`` of a knot (the
+        difference formed in the storage dtype) is taken as that knot.
 
         Args:
             bounds (tuple[float, float] | Sequence[tuple[float, float] | None]):

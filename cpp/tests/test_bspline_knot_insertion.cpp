@@ -1211,11 +1211,10 @@ TEST_CASE("split: a float32 value that is a domain end is refused as one") {
                        pantr::value_error);
   // The message names the end the value was taken as, since the value itself is inside.
   CHECK_THROWS_WITH_AS(static_cast<void>(bs::split<float>(bf, 0, near_end)),
-                       doctest::Contains("which is the knot 1.0 within the tolerance"),
-                       pantr::value_error);
+                       doctest::Contains("of the end knot 1.0."), pantr::value_error);
 }
 
-TEST_CASE("restrict: a bound within the tolerance of two knots is the nearer one") {
+TEST_CASE("restrict: a bound within the tolerance of two knots is the nearer, the first on a tie") {
   // Float knots 0.5 and 0.5 + 1.5 tol. The bound 0.5 + 0.9 tol rounds to 0.5 + 0.875 tol, within
   // the tolerance of both and nearer the second; 0.5 + 0.6 tol rounds to 0.5 + 0.625 tol, nearer
   // the first. 0.5 + 0.75 tol is exact in float and equally far from both (12 ulp): a tie, which
