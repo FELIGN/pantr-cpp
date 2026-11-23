@@ -755,16 +755,12 @@ class TestValidationErrors:
 
 
 class TestCrossDirectionTolerance:
-    """Knots grouped at another direction's tolerance (inherited from the previous release)."""
+    """Each direction groups its knots at its own tolerance, not at another direction's.
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=AssertionError,
-        reason="The product groups each direction's knots at the largest tolerance of any "
-        "direction, so knots closer than another direction's tolerance merge into one class, "
-        "here of multiplicity above degree + 1, and the product is not f g. The previous "
-        "release does the same.",
-    )
+    The previous release grouped every direction at the largest tolerance of any, which merged
+    knots of a short direction closer than a long direction's tolerance into one class.
+    """
+
     def test_short_direction_beside_a_long_one(self) -> None:
         """A product of ``float32`` operands, one direction 4e-6 long, evaluates to ``f g``.
 
@@ -786,3 +782,80 @@ class TestCrossDirectionTolerance:
         np.testing.assert_allclose(
             h.evaluate(pts), f.evaluate(pts) * g.evaluate(pts), rtol=1e-5, atol=0.0
         )
+
+    @pytest.mark.parametrize("short_first", [True, False])
+    def test_short_direction_domains_compare_at_their_own_tolerance(
+        self, short_first: bool
+    ) -> None:
+        """Domains differing in the short direction by less than the unit one's tolerance differ.
+
+        The short direction ends at ``4e-6`` in ``f`` and ``4.5e-6`` in ``g``: ``5e-7`` apart, far
+        above that direction's tolerances (about ``4e-12``) and below the unit direction's (about
+        ``1e-6``), so the operands do not share a domain, in either order of the directions. The
+        previous release compared every direction at the largest tolerance and accepted them.
+        """
+        dt = np.float32
+        s_unit = BsplineSpace1D(np.array([0, 0, 1, 1], dtype=dt), 1)
+        spaces = []
+        for end in (4e-6, 4.5e-6):
+            s_short = BsplineSpace1D(np.array([0, 0, end, end], dtype=dt), 1)
+            spaces.append(BsplineSpace([s_short, s_unit] if short_first else [s_unit, s_short]))
+        assert s_unit.tolerance > 5e-7
+        f, g = (Bspline(s, np.ones((*s.num_basis, 1), dtype=dt)) for s in spaces)
+
+        with pytest.raises(
+            ValueError, match=f"same parametric domain in direction {0 if short_first else 1}"
+        ):
+            f.multiply(g)
+
+    @pytest.mark.parametrize("short_first", [True, False])
+    def test_short_direction_keeps_its_knots(self, short_first: bool) -> None:
+        """The short direction keeps its three knots, in either order of the directions.
+
+        Oracle: ``f g`` evaluated pointwise (to a few ``float32`` ulps, as above), and the
+        minimal product knots worked by hand: each simple knot of the degree-1 operands is a
+        knot of multiplicity ``max(1 + 1, 1 + 1) = 2`` of the degree-2 product.
+        """
+        dt = np.float32
+        short = np.array([0, 0, 1.5e-6, 1.9e-6, 2.3e-6, 4e-6, 4e-6], dtype=dt)
+        s_short = BsplineSpace1D(short, 1)
+        s_unit = BsplineSpace1D(np.array([0, 0, 1, 1], dtype=dt), 1)
+        pts = np.array([[0.5e-6, 0.3], [2.1e-6, 0.7], [3.5e-6, 0.1]], dtype=dt)
+        if not short_first:
+            pts = np.ascontiguousarray(pts[:, ::-1])
+        space = BsplineSpace([s_short, s_unit] if short_first else [s_unit, s_short])
+        rng = np.random.default_rng(0)
+        f = Bspline(space, rng.uniform(1.0, 2.0, (*space.num_basis, 1)).astype(dt))
+        g = Bspline(space, rng.uniform(1.0, 2.0, (*space.num_basis, 1)).astype(dt))
+
+        h = f.multiply(g)
+
+        np.testing.assert_allclose(
+            h.evaluate(pts), f.evaluate(pts) * g.evaluate(pts), rtol=1e-5, atol=0.0
+        )
+        want = np.repeat(short, [3, 0, 2, 2, 2, 3, 0])
+        np.testing.assert_array_equal(h.space.spaces[0 if short_first else 1].knots, want)
+
+    def test_float64_short_direction_keeps_its_knots(self) -> None:
+        """The same case in ``float64``, with the short direction 1e-9 times shorter.
+
+        Direction 0 is 4e-15 long with knots 0.4e-15 apart (its tolerance about 7e-30), beside
+        the unit interval (about 1.8e-15). Oracle: ``f g`` pointwise, to the ``float32`` test's
+        bound above restated in units of ``eps`` (``1e-5`` is about 84 ``float32`` eps), and the
+        minimal product knots worked by hand as above.
+        """
+        short = np.array([0, 0, 1.5e-15, 1.9e-15, 2.3e-15, 4e-15, 4e-15])
+        space = BsplineSpace([BsplineSpace1D(short, 1), BsplineSpace1D([0, 0, 1, 1], 1)])
+        rng = np.random.default_rng(0)
+        f = Bspline(space, rng.uniform(1.0, 2.0, (*space.num_basis, 1)))
+        g = Bspline(space, rng.uniform(1.0, 2.0, (*space.num_basis, 1)))
+        pts = np.array([[0.5e-15, 0.3], [2.1e-15, 0.7], [3.5e-15, 0.1]])
+
+        h = f.multiply(g)
+
+        rtol = 1e-5 / float(np.finfo(np.float32).eps) * float(np.finfo(np.float64).eps)
+        np.testing.assert_allclose(
+            h.evaluate(pts), f.evaluate(pts) * g.evaluate(pts), rtol=rtol, atol=0.0
+        )
+        want = np.repeat(short, [3, 0, 2, 2, 2, 3, 0])
+        np.testing.assert_array_equal(h.space.spaces[0].knots, want)

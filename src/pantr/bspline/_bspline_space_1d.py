@@ -400,7 +400,9 @@ class BsplineSpace1D:
         (``max(span, |knots[0]|, |knots[-1]|)``) and doubled for one extra rounding
         upstream. Two knots closer than this are the same knot, a point within this
         of an end is inside the domain, and two knot intervals differing by less
-        than this are the same length.
+        than this are the same length. A window from :meth:`restrict` and a space
+        restored from its pickled state carry the tolerance of the space they came
+        from instead.
 
         Being an absolute parametric length, it is *not* the factor to scale a
         physical coordinate or a spline coefficient by; take the dimensionless
@@ -1080,7 +1082,9 @@ class BsplineSpace1D:
         The windowed knot vector is a pure slice of this space's knots (never
         re-clamped), chosen so the windowed basis functions are exactly the global
         basis functions supported on the windowed intervals; they therefore equal
-        the global basis pointwise over those intervals.
+        the global basis pointwise over those intervals. The window shares this
+        space's :attr:`tolerance`, so two knots that are one knot here are one knot
+        in the window, and it has ``interval_hi - interval_lo`` intervals.
 
         Args:
             interval_lo (int): First interval (knot span) of the window, inclusive.

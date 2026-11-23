@@ -326,6 +326,21 @@ def test_build_local_includes_halo_cells() -> None:
     )
 
 
+def test_build_local_unsnapped_space_window_matches_the_grid() -> None:
+    """A window of an unsnapped space counts its cells at the global space's tolerance.
+
+    Knots ``1`` and ``1 + 1e-12`` are one knot at the global tolerance (set by the far knot
+    ``1e6``); a window that rederived its tolerance from its slice split them, and its cell count
+    then disagreed with the grid's, which raised. Oracle: the grid's own two-cell window.
+    """
+    knots = [0, 0, 0, 1, 1 + 1e-12, 2, 3, 4, 1e6, 1e6, 1e6]
+    space = BsplineSpace([BsplineSpace1D(knots, 2, False, False)])
+    loc = build_local(space, Partition(np.array([0, 1, 1, 1, 1], dtype=np.int32), n_parts=2), 0)
+    assert isinstance(loc.space, BsplineSpace)
+    assert loc.space.num_total_intervals == 2
+    np.testing.assert_array_equal(loc.local_to_global_cell, [0, 1])
+
+
 def test_build_local_periodic_rejected() -> None:
     from pantr.bspline import create_uniform_periodic_knots  # noqa: PLC0415
 

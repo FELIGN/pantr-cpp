@@ -2103,6 +2103,23 @@ class TestBsplineSpace1DRestrict:
         wspace, _ = _open_uniform_1d(2, 5).restrict(1, 4)
         np.testing.assert_allclose(wspace.domain, (1.0, 4.0))
 
+    def test_unsnapped_window_keeps_the_parent_tolerance(self) -> None:
+        """An unsnapped parent's window counts its intervals at the parent's tolerance.
+
+        Knots ``1`` and ``1 + 1e-12`` are one knot at the parent's tolerance (``8 eps 1e6``, set
+        by the far knot ``1e6``) and two at one derived from the slice alone (``8 eps 4``), so a
+        window that rederives its tolerance has three intervals for a range of two. Oracle: the
+        parent's own interval count over the range, and its tolerance copied.
+        """
+        knots = [0, 0, 0, 1, 1 + 1e-12, 2, 3, 4, 1e6, 1e6, 1e6]
+        space = BsplineSpace1D(knots, 2, False, False)
+        assert space.num_intervals == 5
+        window, dof = space.restrict(0, 2)
+        assert window.tolerance == space.tolerance
+        assert window.num_intervals == 2
+        np.testing.assert_array_equal(window.knots, knots[:8])
+        np.testing.assert_array_equal(dof, np.arange(5))
+
     def test_periodic_rejected(self) -> None:
         knots = create_uniform_periodic_knots(num_intervals=4, degree=2)
         space = BsplineSpace1D(knots, 2, periodic=True)

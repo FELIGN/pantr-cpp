@@ -104,7 +104,9 @@ struct [[nodiscard]] BasisDerivatives {
 ///
 /// The tolerance (`tolerance()`) is an absolute parametric length, `8 eps * max(span, |knots[0]|,
 /// |knots[-1]|)` of the knots as given: two knots closer than it are one knot, a point within it
-/// of an end is in the domain, two intervals differing by less are the same length.
+/// of an end is in the domain, two intervals differing by less are the same length. A window from
+/// `BsplineSpace1D::restrict` carries its parent's tolerance instead, and a space from
+/// `from_state` the stored one.
 ///
 /// Attributes:
 ///     rep_ (std::shared_ptr<const detail::BsplineSpace1DRep<T>>): The shared representation.
@@ -381,7 +383,9 @@ class BsplineSpace1D {
 
   /// The windowed sub-space over the intervals `[lo, hi)`: a slice of this space's knots (never
   /// re-clamped, not snapped again) whose basis functions are exactly this space's functions
-  /// supported on those intervals, and the global index of each.
+  /// supported on those intervals, and the global index of each. The window shares this space's
+  /// tolerance (`tolerance()`), so two knots that are one knot here are one knot in the window,
+  /// and the window has `hi - lo` intervals.
   ///
   /// Args:
   ///     lo (long long): First interval, inclusive.
@@ -418,8 +422,11 @@ class BsplineSpace1D {
     const std::int64_t j_hi = first[1] + degree();
     const auto begin = static_cast<std::size_t>(j_lo);
     const auto end = static_cast<std::size_t>(j_hi + degree() + 2);
-    BsplineSpace1D windowed(std::span<const T>(rep_->knots).subspan(begin, end - begin), degree(),
-                            false, false);
+    // The window keeps this space's tolerance: one derived from the slice alone can be smaller
+    // and split a class of this (unsnapped) space into two knots.
+    const double tol = tolerance();
+    BsplineSpace1D windowed(build(std::span<const T>(rep_->knots).subspan(begin, end - begin),
+                                  degree(), false, false, &tol));
     std::vector<std::int64_t> map(static_cast<std::size_t>(j_hi - j_lo + 1));
     for (std::size_t i = 0; i < map.size(); ++i) {
       map[i] = j_lo + static_cast<std::int64_t>(i);

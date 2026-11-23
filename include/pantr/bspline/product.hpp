@@ -25,7 +25,10 @@
 /// `linalg::lstsq_min_norm_banded`, which gives its solution by a banded QR where the
 /// system has certified full column rank). The one-direction and the multi-direction paths of that
 /// implementation differ in one tolerance, the one at which the open product's knots are grouped
-/// before a boundary conversion (`convert_product_boundary`); both are kept.
+/// before a boundary conversion (`convert_product_boundary`); both are kept. Two departures from
+/// it: each direction groups its knots at its own tolerance (that implementation used the largest
+/// of any direction), and a control point of the Bézier form no element writes is zero (it was
+/// left as `numpy.empty` left it).
 #pragma once
 
 #include "pantr/bezier/product.hpp"
@@ -486,10 +489,6 @@ template <StorageFloat T>
   const std::vector<BsplineSpace1D<T>>& sf = space_f.spaces();
   const std::vector<BsplineSpace1D<T>>& sg = space_g.spaces();
   const std::size_t dim = sf.size();
-  double tol = 0.0;
-  for (std::size_t d = 0; d < dim; ++d) {
-    tol = (std::max)({tol, sf[d].tolerance(), sg[d].tolerance()});
-  }
 
   std::vector<ProductMesh<T>> meshes;
   std::vector<std::vector<std::int64_t>> bez_h(dim);
@@ -502,7 +501,10 @@ template <StorageFloat T>
   bool any_f = false;
   bool any_g = false;
   for (std::size_t d = 0; d < dim; ++d) {
-    meshes.push_back(product_mesh<T>(sf[d], sg[d], tol));
+    // Each direction groups its knots at its own tolerance: another direction's can be larger
+    // than the distance between two of its distinct knots.
+    meshes.push_back(
+        product_mesh<T>(sf[d], sg[d], (std::max)(sf[d].tolerance(), sg[d].tolerance())));
     const ProductMesh<T>& m = meshes.back();
     const std::int64_t p = sf[d].degree();
     const std::int64_t q = sg[d].degree();
@@ -535,8 +537,8 @@ template <StorageFloat T>
     shape_h[d] = off_h[d].back() + static_cast<std::size_t>(deg_h[d]) + 1;
     n_elem[d] = meshes[d].breakpoints.size() + 1;
   }
-  // Zero-initialized: a breakpoint class above `deg_h + 1` (knots of one direction grouped at a
-  // larger tolerance of another) puts a gap between two elements that no element writes.
+  // Zero-initialized: a breakpoint class above `deg_h + 1` puts a gap between two elements that
+  // no element writes.
   NdArray<T> ctrl_h(shape_h);
   std::vector<std::size_t> pf(dim + 1, cp);
   std::vector<std::size_t> pg(dim + 1, cp);
@@ -688,9 +690,9 @@ template <StorageFloat T>
 ///
 /// Raises:
 ///     value_error: The operands differ in parametric dimension or in rank, or their parametric
-///         domains differ in some direction by more than the larger tolerance of their open forms.
-///         The messages are the previous release's (its one-direction and multi-direction paths
-///         worded them differently).
+///         domains differ in some direction by more than the larger tolerance of their open forms
+///         in that direction. The messages are the previous release's (its one-direction and
+///         multi-direction paths worded them differently).
 template <StorageFloat T>
 [[nodiscard]] Bspline<T> multiply(const Bspline<T>& f, const Bspline<T>& g) {
   using detail::ProductBoundary;
@@ -732,11 +734,8 @@ template <StorageFloat T>
   const BsplineSpace<T> open_g = go.space();
   const std::vector<BsplineSpace1D<T>>& of = open_f.spaces();
   const std::vector<BsplineSpace1D<T>>& og = open_g.spaces();
-  double tol = 0.0;
   for (std::size_t d = 0; d < dim; ++d) {
-    tol = (std::max)({tol, of[d].tolerance(), og[d].tolerance()});
-  }
-  for (std::size_t d = 0; d < dim; ++d) {
+    const double tol = (std::max)(of[d].tolerance(), og[d].tolerance());
     const auto [fa, fb] = of[d].domain();
     const auto [ga, gb] = og[d].domain();
     const bool differ = std::abs(static_cast<double>(fa) - static_cast<double>(ga)) > tol ||

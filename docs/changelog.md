@@ -770,8 +770,9 @@
     object with `__float__` is accepted, a string is a `TypeError` ("expected a real number, got
     str"), and `split(0, 10**400)` raises `OverflowError` (it raised `ValueError`). For a
     `float32` B-spline, `restrict` compares an `np.float64` bound in `float32`, as a Python float
-    was (the previous release compared it in `float64`); `split` compares its value in `float64`,
-    as before.
+    was (the previous release compared it in `float64`); `split` compares its value with the
+    domain ends in `float64`, as before. Both take a bound within the tolerance of a knot, by the
+    storage-type comparison, as that knot (see the `Fixed` entry for #6).
   - `remove_knots`' `tol` is read as a Python float: `np.float16`, `Decimal`, `Fraction` and
     objects with `__float__` are accepted (the previous release refused them); on NumPy 2.4 and
     later a one-element array is a `TypeError` (it was accepted), while earlier NumPy versions
@@ -1411,6 +1412,37 @@
   not matched (an end class holding more knots in one input keeps its extra basis functions).
   Inputs whose breakpoints are equal or farther apart than the tolerance give the same result as
   before. Inherited from the previous release.
+- **`BsplineSpace1D.restrict` gives a window with the parent's tolerance** (#5). The window took
+  a tolerance derived from its slice of knots, which is smaller when the parent's is set by a knot
+  outside the slice: in a space built with `snap_knots=False`, two knots that are one knot of the
+  parent (`1` and `1 + 1e-12` beside a far knot `1e6`) were two in the window, which then had more
+  intervals than requested and a different continuity there, with no error. The window now shares
+  the parent's `tolerance`. A snapped space keeps its windows' knots, maps and interval counts.
+  `build_local` over such a space, which raised `RuntimeError` ("Grid restriction ... and space
+  restriction ... disagree") for those windows, now returns them. Inherited from the previous
+  release.
+- **`Bspline.restrict` and `Bspline.split` at a bound within the tolerance of a knot are the call
+  at that knot** (#6). For `float32` knots, a bound a few units of the format's resolution from a
+  knot (`0.5 + 2^-20 + 2e-8` beside the knot `0.5` on `[0, 1]`) was the knot to the count of its
+  multiplicity and a different value to the cut of the knot vector, and both calls raised
+  `ValueError: knots must have at least 2*degree+2 elements`; a bound closer to the knot
+  (`0.5 - 2^-20`, for one) returned, with no error, a knot vector whose start was not clamped
+  (for `restrict((0.5 - 2^-20, 0.9))`: two copies of the bound, then the knot `0.5`, then the upper
+  bound `0.9` three times). Such a bound is now replaced by the knot, once, before the count, the
+  insertion and the cut, judged by the comparison the count made. A `float64` bound within the tolerance of a knot, which succeeded, now also gives the
+  result at the knot, where it inserted copies of the bound beside it. A `float32` split value
+  that is a domain end by that comparison, though further than the tolerance from it in `double`,
+  is refused as not strictly inside the domain, where it raised the same misleading error.
+  Inherited from the previous release.
+- **`Bspline.multiply` of two or more directions groups each direction's knots at that
+  direction's tolerance** (#10). It grouped every direction at the largest tolerance of any
+  direction, so knots of a short direction closer than a long direction's tolerance were merged
+  into one knot, and the product was not `f g`, an error of order 1 with no exception: a `float32`
+  direction `4e-6` long with knots `0.4e-6` apart beside the unit interval, or a `float64` one
+  `4e-15` long. The domain check uses each direction's own tolerance too, so operands whose
+  domains in a short direction differ by more than its own tolerance, and were accepted, are now
+  refused ("must share the same parametric domain in direction ..."). Products whose directions
+  share one tolerance are unchanged. Inherited from the previous release.
 - **`create_uniform_periodic_knots` (and the periodic `create_uniform_space`) returns a periodic
   knot vector for every continuity.** For `1 <= continuity <= degree - 2` it extended the repeated
   interior knots past both ends by distinct, evenly spaced knots, so `K[i + n m] = K[i] + L` (`n`
@@ -1487,17 +1519,16 @@
   depended on the values and memory: it partitioned silently, raised an unrelated error, or ended
   the process (a segmentation fault, in scipy with the spectral backend or in pymetis with
   `backend="metis"`, or an abort). All of these raise `ValueError` now (see above).
-- **`Bspline.multiply` no longer returns values that depend on memory it never wrote.** The
-  product groups the knots of every direction at the largest tolerance of any direction, so in a
-  direction much shorter than another (in `float32`, one a few `1e-6` long beside one of length
-  1) knots closer than the other direction's tolerance merge into one breakpoint of multiplicity
-  above `degree + 1`, and the product's Bézier form then has control points that no element
-  writes. The previous release read them as `numpy.empty` left them, so the result could change
-  from call to call on the same input, up to `1e37` or NaN. They are now zero and the result is
-  repeatable. It is still not `f g` on such input, as it was not before: the grouping itself is
-  unchanged. The previous release could also raise `numpy.linalg.LinAlgError` ("SVD did not
-  converge in Linear Least Squares") there; no such input raising it on the new release was
-  found.
+- **`Bspline.multiply` no longer returns values that depend on memory it never wrote.** A
+  breakpoint of the product of multiplicity above `degree + 1` (from an operand whose interior
+  knot repeats more than `degree + 1` times, such as `[0, 0, 0.5, 0.5, 0.5, 1, 1]` at degree 1)
+  leaves control points of the product's Bézier form that no element writes. In the previous
+  release the cross-direction grouping of #10 (above) made such breakpoints, in `float32`, in a
+  direction a few `1e-6` long beside one of length 1, and the product read them as `numpy.empty`
+  left them, so the result could change from call to call on the same input, up to `1e37` or NaN.
+  They are now zero and the result is repeatable. The previous release could also raise
+  `numpy.linalg.LinAlgError` ("SVD did not converge in Linear Least Squares") there; no such
+  input raising it on the new release was found.
 - **`SpanwiseElementExtraction`'s batch applications no longer race on an overlapping `out`.**
   A batch of cells whose operators are all the identity accepted any `out` overlapping the
   operand, and its cells then read entries other cells had written, so the result depended on the

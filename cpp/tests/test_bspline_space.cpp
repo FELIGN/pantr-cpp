@@ -429,19 +429,17 @@ TEST_CASE("space1d: restricting to intervals gives the parent's functions on the
   }
 }
 
-// Bug (present in the previous release as well): restrict builds the window from the slice of
-// knots, so its tolerance is derived from the slice's magnitude and not the parent's. A parent
-// built with snap_knots == false that holds knots 1 and 1 + 1e-12 (one knot at the parent's
-// tolerance of 1.8e-9, because of the 1e6 at its far end) gives a window whose tolerance is
-// 7e-15, where they are two knots: three intervals for a range of two. Marked as an expected
-// failure so the suite stays green; when the window takes the parent's tolerance this case fails
-// and must be unmarked.
-TEST_CASE("space1d: restricting an unsnapped space keeps the interval count" *
-          doctest::should_fail()) {
+// The window keeps the parent's tolerance. A parent built with snap_knots == false that holds
+// knots 1 and 1 + 1e-12 (one knot at the parent's tolerance of 1.8e-9, because of the 1e6 at its
+// far end) gives a window over the first two intervals; a tolerance derived from that slice alone
+// (7e-15) would make the pair two knots, three intervals for a range of two (the previous release
+// did so).
+TEST_CASE("space1d: restricting an unsnapped space keeps the interval count") {
   const std::vector<double> knots = {0, 0, 0, 1, 1 + 1e-12, 2, 3, 4, 1e6, 1e6, 1e6};
   const bs::BsplineSpace1D<double> s(sp(knots), 2, false, false);
   REQUIRE(s.num_intervals() == 5);
   const auto [w, map] = s.restrict(0, 2);
+  CHECK(w.tolerance() == s.tolerance());
   CHECK(w.num_intervals() == 2);
 }
 

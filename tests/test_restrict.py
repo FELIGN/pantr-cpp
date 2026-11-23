@@ -183,6 +183,71 @@ class TestBsplineRestrict1D:
         np.testing.assert_allclose(r.evaluate(pts), f.evaluate(pts), atol=1e-5)
 
 
+class TestFloat32BoundNearAKnot:
+    """A ``float32`` bound within the space's tolerance of a knot is that knot.
+
+    The quadratic on ``[0, 1]`` has one interior knot at 0.5 and tolerance ``2^-20`` (``8 eps``
+    of ``float32``, span 1). The bound ``0.5 + 2^-20 + 2e-8`` rounds in ``float32`` to
+    ``0.5 + 2^-20``, within the tolerance of the knot, while in ``double`` it is ``2e-8`` beyond
+    it; the previous release counted it as the knot and cut as if it were not, and raised.
+    """
+
+    _NEAR = 0.5 + 2.0**-20 + 2e-8
+
+    @staticmethod
+    def _curve(dtype: type) -> Bspline:
+        """Build the quadratic with one interior knot at 0.5.
+
+        Args:
+            dtype (type): The storage type.
+
+        Returns:
+            Bspline: The curve.
+        """
+        space = BsplineSpace([BsplineSpace1D(np.array([0, 0, 0, 0.5, 1, 1, 1], dtype=dtype), 2)])
+        return Bspline(space, np.array([[1.0], [2.0], [3.0], [4.0]], dtype=dtype))
+
+    @staticmethod
+    def _assert_same(a: Bspline, b: Bspline) -> None:
+        """Assert two splines have equal knots and control points.
+
+        Args:
+            a (Bspline): One spline.
+            b (Bspline): The other.
+        """
+        np.testing.assert_array_equal(a.space.spaces[0].knots, b.space.spaces[0].knots)
+        np.testing.assert_array_equal(a.control_points, b.control_points)
+
+    @pytest.mark.parametrize("dtype", [np.float64, np.float32])
+    def test_reproduction_does_not_raise(self, dtype: type) -> None:
+        """The issue's reproduction: both calls succeed in both types, and at a clear bound."""
+        curve = self._curve(dtype)
+        for bound in (self._NEAR, 0.501):
+            curve.restrict((bound, 0.9))
+            curve.split(0, bound)
+
+    def test_float32_result_is_the_one_at_the_knot(self) -> None:
+        """Oracle: the same call at the knot itself, same inputs to the same build."""
+        curve = self._curve(np.float32)
+        self._assert_same(curve.restrict((self._NEAR, 0.9)), curve.restrict((0.5, 0.9)))
+        for near_part, knot_part in zip(
+            curve.split(0, self._NEAR), curve.split(0, 0.5), strict=True
+        ):
+            self._assert_same(near_part, knot_part)
+
+    @pytest.mark.parametrize("j", range(-16, 17))
+    def test_bounds_across_the_tolerance_give_clamped_vectors(self, j: int) -> None:
+        """Bounds ``0.5 + j 2^-22`` span the tolerance ``2^-20`` on both sides of the knot."""
+        curve = self._curve(np.float32)
+        bound = 0.5 + j * 2.0**-22
+        results = [curve.restrict((bound, 0.9)), *curve.split(0, bound)]
+        for r in results:
+            knots = r.space.spaces[0].knots
+            assert np.all(np.diff(knots) >= 0)
+            assert np.count_nonzero(knots == knots[0]) == 3
+            assert np.count_nonzero(knots == knots[-1]) == 3
+
+
 # ---------------------------------------------------------------------------
 # Bspline.restrict — error cases
 # ---------------------------------------------------------------------------
