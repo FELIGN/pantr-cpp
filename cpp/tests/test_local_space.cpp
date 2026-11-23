@@ -329,6 +329,23 @@ TEST_CASE("local space kernels: every refusal and its message") {
                      pantr::index_error);
   THB_THROWS_WITH_AS(bs::dof_owner_windowed(s.space, good, bad_lo), dofs.c_str(),
                      pantr::index_error);
+
+  // An empty request is still refused for an invalid space or a short partition: a rank owning
+  // nothing must refuse what the others refuse. The function with knots `t_3 .. t_6` all 0.5 has
+  // an empty support.
+  const bs::BsplineSpace<double> empty_support(
+      {bs::BsplineSpace1D<double>(std::vector<double>{0, 0, 0, 0.5, 0.5, 0.5, 0.5, 1, 1, 1}, 2)});
+  const std::string invalid =
+      "B-spline function(s) with empty support detected at indices [3]. This indicates an invalid "
+      "B-spline space.";
+  const std::vector<std::int32_t> two(2, 0);
+  const std::span<const I64> none;
+  THB_THROWS_WITH_AS(bs::compute_halo(empty_support, none), invalid.c_str(), pantr::state_error);
+  THB_THROWS_WITH_AS(bs::dof_owner(empty_support, two), invalid.c_str(), pantr::state_error);
+  THB_THROWS_WITH_AS(bs::dof_owner_windowed(empty_support, two, none), invalid.c_str(),
+                     pantr::state_error);
+  THB_THROWS_WITH_AS(bs::dof_owner_windowed(s.space, short_owner, none), want.c_str(),
+                     pantr::value_error);
 }
 
 TEST_CASE("local space kernels: one thread and several give identical results") {
