@@ -188,10 +188,13 @@ void walk_box(std::span<const std::int64_t> span, std::span<const std::int64_t> 
 ///     owned_cells (std::span<const std::int64_t>): Flat cell ids; repeats are ignored.
 ///
 /// Returns:
-///     std::vector<std::int64_t>: The halo cell ids, ascending; empty when `owned_cells` is.
+///     std::vector<std::int64_t>: The halo cell ids, ascending; empty when `owned_cells` is. An
+///         empty request still validates `space`, which `pantr.mpi` relies on to refuse an
+///         invalid space on a rank that owns no cell.
 ///
 /// Raises:
 ///     value_error: A direction is periodic.
+///     state_error: A function has an empty support (an invalid space).
 ///     index_error: An owned id is outside `[0, num_total_intervals)`.
 template <StorageFloat T>
 [[nodiscard]] std::vector<std::int64_t> compute_halo(const BsplineSpace<T>& space,
@@ -263,10 +266,12 @@ template <StorageFloat T>
 ///     dofs (std::span<const std::int64_t>): Flat function ids; repeats and any order allowed.
 ///
 /// Returns:
-///     std::vector<std::int32_t>: The owner of each requested function, in request order.
+///     std::vector<std::int32_t>: The owner of each requested function, in request order. An
+///         empty request still validates `space` and the length of `cell_owner`.
 ///
 /// Raises:
 ///     value_error: A direction is periodic, or `cell_owner` has the wrong length.
+///     state_error: A function has an empty support (an invalid space).
 ///     index_error: A function id is outside `[0, num_total_basis)`.
 template <StorageFloat T>
 [[nodiscard]] std::vector<std::int32_t> dof_owner_windowed(const BsplineSpace<T>& space,
@@ -327,6 +332,7 @@ template <StorageFloat T>
 ///
 /// Raises:
 ///     value_error: A direction is periodic, or `cell_owner` has the wrong length.
+///     state_error: A function has an empty support (an invalid space).
 template <StorageFloat T>
 [[nodiscard]] std::vector<std::int32_t> dof_owner(const BsplineSpace<T>& space,
                                                   std::span<const std::int32_t> cell_owner) {

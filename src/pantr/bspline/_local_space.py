@@ -76,10 +76,13 @@ def compute_halo(space: BsplineSpace, owned_cells: npt.ArrayLike) -> npt.NDArray
 
     Returns:
         npt.NDArray[np.int64]: Sorted, read-only flat ids of the halo cells -- those
-        in the support closure but not in ``owned_cells``.
+        in the support closure but not in ``owned_cells``; empty when ``owned_cells``
+        is. An empty request still validates ``space``, which ``pantr.mpi`` relies on
+        to refuse an invalid space on a rank that owns no cell.
 
     Raises:
-        ValueError: If any axis is periodic.
+        ValueError: If any axis is periodic, or ``space`` has no direction.
+        RuntimeError: If a function of ``space`` has an empty support (an invalid space).
         TypeError: If ``owned_cells`` is not integer-valued.
         IndexError: If any owned cell id is out of range ``[0, num_total_intervals)``.
     """
@@ -117,9 +120,9 @@ def dof_owner(space: BsplineSpace, partition: Partition) -> npt.NDArray[np.int32
         ``-1`` for dead DOFs.
 
     Raises:
-        ValueError: If any axis is periodic.
-        ValueError: If ``partition.cell_owner`` length does not match
-            ``space.num_total_intervals``.
+        ValueError: If any axis is periodic, ``space`` has no direction, or
+            ``partition.cell_owner`` length does not match ``space.num_total_intervals``.
+        RuntimeError: If a function of ``space`` has an empty support (an invalid space).
     """
     _reject_periodic(space)
     if space._h is None:
@@ -149,11 +152,13 @@ def dof_owner_windowed(
 
     Returns:
         npt.NDArray[np.int32]: Read-only ``(len(dofs),)`` owner rank per requested DOF;
-        ``-1`` for a DOF whose support holds no active cell.
+        ``-1`` for a DOF whose support holds no active cell. An empty request still
+        validates ``space`` and the length of ``partition.cell_owner``.
 
     Raises:
-        ValueError: If any axis is periodic, or ``partition.cell_owner`` length does not
-            match ``space.num_total_intervals``.
+        ValueError: If any axis is periodic, ``space`` has no direction, or
+            ``partition.cell_owner`` length does not match ``space.num_total_intervals``.
+        RuntimeError: If a function of ``space`` has an empty support (an invalid space).
         TypeError: If ``dofs`` is not integer-valued.
         IndexError: If any DOF id is out of range ``[0, num_total_basis)``.
     """
