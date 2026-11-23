@@ -268,6 +268,8 @@ def test_create_distributed_space_raises_runtime_error_where_the_partition_would
     space = BsplineSpace(
         [BsplineSpace1D(np.array([0.0, 0.0, 0.0, 0.5, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0]), 2)]
     )
+    with pytest.raises(ValueError, match="exceeds the number of active cells"):
+        partition_grid(tensor_product_grid(space), 3)  # the premise
     hub = _GatherHub()
     for rank in range(3):
         comm = _FakeComm(rank, 3, hub)
