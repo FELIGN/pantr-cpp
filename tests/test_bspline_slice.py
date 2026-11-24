@@ -348,6 +348,65 @@ class TestSliceEndBesideEmptySpans:
         np.testing.assert_allclose(pt_boundary, ref_pt, rtol=0, atol=1e-14)
 
 
+class TestSliceStartBesideSubToleranceGap:
+    """Slice and boundary at the domain start of a space built without snapping.
+
+    A knot closer to the start than the tolerance stays apart from it, and ``evaluate`` takes it as
+    a distinct knot: the span at the start is the last knot equal to the start, and only knots equal
+    to it count as copies. The slice must do the same. Oracle: ``evaluate`` at the same points.
+    """
+
+    _OTHER = np.array([0, 0, 0, 1 / 3, 2 / 3, 1, 1, 1], dtype=np.float64)
+    _V = np.linspace(0.0, 1.0, 7)
+
+    @pytest.mark.parametrize(
+        ("knots", "degree", "below"),
+        [
+            # A knot just after the start.
+            ([0, 0, 1e-15, 1, 1], 1, False),
+            ([0, 0, 0, 1e-15, 1, 2, 2, 2], 2, False),
+            # One knot at the start, between a knot just before it and one just after.
+            ([-1, -1e-15, 0, 1e-15, 1, 2, 2, 2], 2, True),
+        ],
+    )
+    def test_slice_and_boundary_match_evaluate(
+        self, knots: list[float], degree: int, below: bool
+    ) -> None:
+        """Without snapping, a knot within the tolerance of the start is not a copy of it."""
+        sp0 = BsplineSpace1D(np.asarray(knots, dtype=np.float64), degree, snap_knots=False)
+        np.testing.assert_array_equal(sp0.knots, np.asarray(knots, dtype=np.float64))
+        start = float(sp0.domain[0])
+        assert start == 0.0
+        after = min(k for k in knots if k > start)
+        assert 0.0 < after - start < sp0.tolerance
+        if below:
+            before = max(k for k in knots if k < start)
+            assert 0.0 < start - before < sp0.tolerance
+
+        srf = Bspline(
+            BsplineSpace([sp0, BsplineSpace1D(self._OTHER, 2)]),
+            np.random.default_rng(0).standard_normal((sp0.num_basis, 5, 2)),
+        )
+        ref = srf.evaluate(np.stack([np.full_like(self._V, start), self._V], axis=1))
+        by_slice = srf.slice(0, start)
+        by_boundary = srf.boundary(0, 0)
+        assert isinstance(by_slice, Bspline)
+        assert isinstance(by_boundary, Bspline)
+        np.testing.assert_allclose(by_slice.evaluate(self._V[:, None]), ref, rtol=0, atol=1e-13)
+        np.testing.assert_allclose(by_boundary.evaluate(self._V[:, None]), ref, rtol=0, atol=1e-13)
+
+        crv = Bspline(
+            BsplineSpace([sp0]), np.random.default_rng(1).standard_normal((sp0.num_basis, 2))
+        )
+        ref_pt = crv.evaluate(np.array([start]))
+        pt_slice = crv.slice(0, start)
+        pt_boundary = crv.boundary(0, 0)
+        assert isinstance(pt_slice, np.ndarray)
+        assert isinstance(pt_boundary, np.ndarray)
+        np.testing.assert_allclose(pt_slice, ref_pt, rtol=0, atol=1e-14)
+        np.testing.assert_allclose(pt_boundary, ref_pt, rtol=0, atol=1e-14)
+
+
 class TestSliceDtype:
     """Test that slice preserves dtype."""
 
