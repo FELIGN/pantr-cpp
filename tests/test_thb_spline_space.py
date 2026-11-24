@@ -23,7 +23,13 @@ from pantr.bspline import (
     create_thb_space,
     create_uniform_space,
 )
-from pantr.grid import HierarchicalGrid, hierarchical_grid, tensor_product_grid, uniform_grid
+from pantr.grid import (
+    HierarchicalGrid,
+    TensorProductGrid,
+    hierarchical_grid,
+    tensor_product_grid,
+    uniform_grid,
+)
 from tests._thb_support import VALUE_ATOL, tensor_product_rows
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -131,6 +137,35 @@ class TestConstruction:
         grid = hierarchical_grid(uniform_grid([[0.0, 2.0]], 4), 2)
         with pytest.raises(ValueError, match="bounds"):
             THBSplineSpace(_root_1d(), grid, truncate=False)
+
+    def test_root_grid_breakpoints_mismatch_raises(self) -> None:
+        # Right cell count and bounds, other interior breakpoints: the cells would come from the
+        # grid and the functions from the knots, and the basis would not sum to one in cell 1.
+        grid = hierarchical_grid(TensorProductGrid([np.array([0.0, 0.1, 0.5, 0.9, 1.0])]), 2)
+        with pytest.raises(
+            ValueError,
+            match=r"grid root breakpoints must match root_space knots: along axis 0, "
+            r"breakpoint 1 is 0\.1 where the knot is 0\.25\.",
+        ):
+            THBSplineSpace(_root_1d(), grid)
+
+    def test_root_grid_of_the_root_knots_is_accepted(self) -> None:
+        # The control of the mismatch above: the same space on a grid of its own breakpoints,
+        # given by hand and by `tensor_product_grid`.
+        by_hand = TensorProductGrid([np.array([0.0, 0.25, 0.5, 0.75, 1.0])])
+        for root_grid in (by_hand, tensor_product_grid(_root_1d())):
+            THBSplineSpace(_root_1d(), hierarchical_grid(root_grid, 2))
+
+    def test_unsnapped_root_within_the_knot_tolerance_is_accepted(self) -> None:
+        # An interior knot a few ulps off the grid's breakpoint is one knot to the space's own
+        # classification (the axis tolerance is 8 eps at unit scale); one far above is refused.
+        eps = float(np.finfo(np.float64).eps)
+        near = _KNOTS_DEG2_4.copy()
+        near[4] = 0.5 + 4 * eps
+        THBSplineSpace(BsplineSpace([BsplineSpace1D(near, 2)]), _grid_1d())
+        near[4] = 0.5 + 1e-6
+        with pytest.raises(ValueError, match=r"along axis 0, breakpoint 2 is 0\.5 where"):
+            THBSplineSpace(BsplineSpace([BsplineSpace1D(near, 2)]), _grid_1d())
 
     def test_regularity_length_mismatch_raises(self) -> None:
         with pytest.raises(ValueError, match="regularity"):
