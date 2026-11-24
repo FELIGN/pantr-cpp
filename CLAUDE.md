@@ -53,7 +53,7 @@ cmake --preset gcc-release && cmake --build --preset gcc-release && ctest --pres
 
 > `tests/mpi/` holds real-MPI smoke tests; they are **skipped** unless `PANTR_RUN_MPI` is set
 > (and run under `mpiexec`). The default `pytest` run collects and skips them. CI runs them in a
-> dedicated `mpi-tests` job (installs OpenMPI, builds `mpi4py` from source, `mpiexec -n {2,3}`).
+> dedicated `mpi` job (installs OpenMPI, builds `mpi4py` from source, `mpiexec -n {2,3}`).
 
 > Coverage is **opt-in**: `pytest.ini`'s `addopts` is only `--strict-config --strict-markers`, so a
 > plain `pytest` run carries no coverage overhead and `--no-cov` is unnecessary. The `coverage.toml`
@@ -85,6 +85,11 @@ The local suite passing is necessary but not sufficient. Known traps:
   (`src/pantr/viz/_scene.py:292`) — they force a render and segfault without a display. Build the
   scene with `Scene.to_plotter()` (`src/pantr/viz/_scene.py:187`) instead. One segfault takes
   down the whole run, coverage included.
+- **The `msvc` job compiles the C++ tests against the Windows SDK headers**, where `near` and `far`
+  are empty macros: a variable of that name compiles locally and fails there (PR #36). `min` and
+  `max` are macros too unless `NOMINMAX` is defined; pantr's own `windows.h` include
+  (`include/pantr/parallel/affinity.hpp`) defines it only around itself, and a consumer may include
+  `windows.h` first without it, so spell `(std::max)(a, b)` in headers.
 - **A missing optional dependency skips tests silently.** If `pyvista` or `mpi4py` is absent
   locally, the tests that need them skip without complaint — install them before trusting a local
   green.

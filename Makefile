@@ -90,9 +90,11 @@ test:
 doctest:
 	pytest --doctest-modules src/pantr
 
-# Generate an XML coverage report
+# Generate an XML coverage report. The data file is coverage's default, `.coverage` in this tree
+# (ignored by git, removed by `clean`): a shared path would merge the data of two trees'
+# runs that overlap.
 coverage:
-	COVERAGE_FILE=/tmp/.coverage pytest -m "not slow" --cov=src/pantr --cov-report=term-missing --cov-report=xml
+	pytest -m "not slow" --cov=src/pantr --cov-report=term-missing --cov-report=xml
 
 # Remove build artifacts
 clean:

@@ -1517,6 +1517,49 @@ TEST_CASE("mpi create_distributed_space at one rank, and when the partitioner fa
   CHECK(outcomes[2] == generic);
 }
 
+TEST_CASE(
+    "mpi create_distributed_space refuses an invalid space on every rank before partitioning") {
+  // Bug caught: the factory checking the space only after the broadcast, so a partitioner that
+  // fails on the invalid space gives rank 0 the partitioner's error and every other rank the
+  // generic "could not compute" one, instead of the same error everywhere.
+  const bs::BsplineSpace<double> empty_support(
+      {bs::BsplineSpace1D<double>(std::vector<double>{0, 0, 0, 0.5, 0.5, 0.5, 0.5, 1, 1, 1}, 2)});
+  const Outcome invalid{"state_error",
+                        "B-spline function(s) with empty support detected at indices [3]. This "
+                        "indicates an invalid B-spline space."};
+  const std::vector<double> knots = bs::uniform_periodic_knots<double>(4, 2, 1, 0.0, 1.0);
+  const bs::BsplineSpace<double> periodic({bs::BsplineSpace1D<double>(knots, 2, true)});
+  const Outcome refused{"value_error", "periodic B-spline spaces are not supported."};
+  struct Row {
+    const char* name;
+    const bs::BsplineSpace<double>* space;
+    Outcome expected;
+  };
+  for (const Row& row :
+       {Row{"empty support", &empty_support, invalid}, Row{"periodic", &periodic, refused}}) {
+    INFO(row.name);
+    for (const int n : kRankCounts) {
+      INFO("ranks " << n);
+      std::atomic<int> calls{0};
+      const std::vector<Outcome> outcomes = mt::run_ranks<Outcome>(n, [&](mt::HubComm comm) {
+        return outcome_of([&] {
+          static_cast<void>(mp::create_distributed_space(
+              *row.space, comm,
+              [&](const bs::BsplineSpace<double>&, std::int64_t) -> gr::Partition {
+                ++calls;
+                throw PartitionerError("the partitioner met an invalid space");
+              }));
+        });
+      });
+      for (std::size_t r = 0; r < outcomes.size(); ++r) {
+        INFO("rank " << r);
+        CHECK(outcomes[r] == row.expected);
+      }
+      CHECK(calls.load() == 0);
+    }
+  }
+}
+
 // ---- partition_from_owner -----------------------------------------------------------------------
 
 TEST_CASE("mpi partition_from_owner assembles the same owner array on every rank") {
