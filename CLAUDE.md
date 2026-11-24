@@ -61,6 +61,18 @@ cmake --preset gcc-release && cmake --build --preset gcc-release && ctest --pres
 > coverage.py does not read that file on its own. The `coverage` make target passes it, and the CI
 > `tests` job runs that target.
 
+> **A test against an older commit** (to see it fail before a fix) runs in a worktree of that
+> commit with its own `make ext`. Do not point another tree's pytest at it: `pytest.ini`'s
+> `pythonpath = src` wins over `PYTHONPATH`, and the conftest refuses an extension older than its
+> headers. Reuse this checkout's fetched dependencies rather than copying `build/_deps` (a copied
+> `*-subbuild` breaks configure): `make ext EXT_CMAKE_ARGS="-DFETCHCONTENT_FULLY_DISCONNECTED=ON
+> -DFETCHCONTENT_SOURCE_DIR_PANTR_<NAME>=<this checkout>/build/_deps/pantr_<name>-src ..."` for
+> each of `boost_config`, `boost_multiprecision`, `eigen`, `mdspan`, `spectra`.
+
+> **A test filter that matches nothing passes.** doctest's `-tc` splits its argument on commas, so
+> a test name containing one selects nothing; `ctest -R` is a case-sensitive regex (`-R thb` skips
+> the `THBSplineSpace:` tests). Check the reported test count, not just the exit status.
+
 ## Local green is not CI green
 
 The local suite passing is necessary but not sufficient. Known traps:
