@@ -266,9 +266,9 @@ template <StorageFloat T>
   // would wrap.
   const std::size_t m_left = past_a - first_a;
   const std::size_t m_right = past_b - first_b;
-  for (const auto& [m, end] : {std::pair{m_left, a}, std::pair{m_right, b}}) {
+  for (const auto& [m, value] : {std::pair{m_left, a}, std::pair{m_right, b}}) {
     if (m > p + 1) {
-      throw value_error("to_open: the domain end " + py_repr(static_cast<double>(end)) + " has " +
+      throw value_error("to_open: the domain end " + py_repr(static_cast<double>(value)) + " has " +
                         std::to_string(m) +
                         " copies, more than degree + 1 = " + std::to_string(p + 1) + ".");
     }
@@ -476,7 +476,8 @@ template <StorageFloat T>
 ///     Bspline<T>: The B-spline with open knot vectors in all directions.
 ///
 /// Raises:
-///     value_error: Every direction is already open and non-periodic.
+///     value_error: Every direction is already open and non-periodic; or as `to_open_1d` for a
+///         converted direction.
 template <StorageFloat T>
 [[nodiscard]] Bspline<T> to_open_bspline(const Bspline<T>& b) {
   const BsplineSpace<T> whole = b.space();

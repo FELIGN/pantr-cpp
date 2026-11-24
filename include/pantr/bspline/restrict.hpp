@@ -271,8 +271,7 @@ template <StorageFloat T>
 ///     value_error: As `validate_restrict_bounds`, `compute_boundary_knots_to_insert` and
 ///         `insert_knots_1d`, and for a periodic direction as `to_open_1d`; the two bounds are
 ///         values within `tol` of each other ("... enclose no interval"); or a cut end would hold a
-///         distinct knot within `tol` of it ("The bound
-///         ... is within the tolerance").
+///         distinct knot within `tol` of it ("The bound ... is within the tolerance").
 template <StorageFloat T>
 [[nodiscard]] KnotsAndCtrl<T> restrict_1d(std::span<const T> knots, int degree,
                                           mdview<const T, 2> ctrl, bool periodic, double tol,

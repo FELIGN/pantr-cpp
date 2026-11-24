@@ -1354,11 +1354,15 @@
   multiplicity". The layout `create_uniform_periodic_knots` and `to_periodic` produce was not
   affected. The copies of an end are now counted wherever they lie, by the rule `restrict` uses for
   a bound (knots equal to it), so a non-periodic space built with `snap_knots=False` with an
-  external knot within the tolerance of an end now opens clamped at that end; it was clamped at
-  the external knot instead. A periodic space built with `snap_knots=False` holding a knot
-  distinct from the seam but within the tolerance of it now raises `ValueError` naming the seam
-  and the knot and suggesting `snap_knots=True`, for every call that opens the direction,
-  `restrict` included whatever the window. The C++ `pantr::bspline::to_open_1d` and the functions
+  external knot within the tolerance of an end, and an other end that is not open, now opens
+  clamped at that end, the domain the space reports; it was clamped at the external knot instead.
+  A periodic space built with `snap_knots=False` holding, inside its domain, a knot distinct from
+  the seam but within the tolerance of it now raises `ValueError` naming the seam and the knot and
+  suggesting `snap_knots=True`, for every call that opens the direction, `restrict` included
+  whatever the window. A domain end with more than `degree + 1` copies, which a space can hold at
+  its start (and a degree-0 periodic one at either end), now raises `ValueError` naming the end
+  and its count; it raised the multiplicity error, or for a periodic direction opened into a space
+  that refused the next knot insertion. The C++ `pantr::bspline::to_open_1d` and the functions
   built on it are the same.
 - **`Bspline.restrict` and `Bspline.split` decide the knots at a bound by one rule**, so every
   end they cut has `degree + 1` equal knots and the value asked for. The bound is taken as a

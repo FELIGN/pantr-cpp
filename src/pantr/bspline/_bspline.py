@@ -1009,7 +1009,10 @@ class Bspline:
             ValueError: If the B-spline is already open in every direction.
             ValueError: If a converted direction's space was built with ``snap_knots=False`` and
                 holds a knot distinct from a domain end (the seam, for a periodic direction),
-                within ``tolerance`` of it, which the result would hold beside its clamped end.
+                within ``tolerance`` of it and inside the domain, which the result would hold
+                beside its clamped end.
+            ValueError: If a converted direction has more than ``degree + 1`` knots equal to a
+                domain end.
         """
         return self._from_result(self._h.to_open())
 
