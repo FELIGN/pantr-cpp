@@ -214,6 +214,7 @@
   function, or knots outside the domain) can keep nets such as `(3, 2)` and `(2, 3)`; the
   previous release paired their points by flat index and returned a B-spline whose second end
   face was not the second input, without an error. Nets of different sizes are refused as before.
+  Inputs whose end knot classes differ while their nets keep one shape are still not detected.
 
 ### Changed
 - **`TensorProductGrid.is_uniform` judges an axis's spacings relative to its scale**: uniform when

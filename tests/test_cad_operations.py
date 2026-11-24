@@ -231,7 +231,9 @@ class TestRuled:
         The oracle is the inputs evaluated directly. The bound is the one the C++ suite derives
         for a ruled B-spline of two degree-1 inputs, ``4 (3 d + 2^d) eps max |cp|`` with ``d = 2``
         (``cpp/tests/test_cad_operations.cpp``, its header), taken over the larger net, whose
-        coordinates reach ``max |cp| + 5``.
+        coordinates reach ``max |cp| + 5``. The result is a volume, but at ``t = 0`` or ``1`` its
+        degree-1 basis in ``t`` is exactly ``(1, 0)`` or ``(0, 1)``, which adds no rounding, so
+        two inexact directions remain and ``d = 2`` holds.
         """
         cp = self._net(3, 2)
         u_knots = [0.0, 0.0, 0.0, 1.0, 1.0]

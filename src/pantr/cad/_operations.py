@@ -82,10 +82,13 @@ def create_ruled(bspline1: Bspline, bspline2: Bspline) -> Bspline:
 
     The control nets of the two inputs must have equal shapes after
     :func:`make_compat`, the last (coordinate) axis of ``control_points``
-    excluded.  It matches interior knot classes only, so inputs
-    whose end knot classes differ (a zero-support end function, or knots
-    outside the domain) can keep nets of different shapes, such as ``(3, 2)``
-    and ``(2, 3)``; those are refused rather than paired point by point.
+    excluded.  :func:`make_compat` matches interior knot classes only, so
+    inputs whose end knot classes differ (a zero-support end function, or
+    knots outside the domain) can keep nets of different shapes, such as
+    ``(3, 2)`` and ``(2, 3)``; those are refused rather than paired point by
+    point.  Inputs whose end knot classes differ while their nets have one
+    shape are not detected: the result takes the first input's knots, so its
+    second end face is not the second input.
 
     Args:
         bspline1: First boundary (curve or surface, dim <= 2).
