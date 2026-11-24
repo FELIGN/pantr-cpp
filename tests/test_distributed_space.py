@@ -315,10 +315,10 @@ def test_create_distributed_space_refuses_a_stale_thb_space_on_every_rank(method
         assert comm.gathers == 0
 
 
-def test_create_distributed_space_graph_leaves_a_non_space_to_the_partitioner() -> None:
+def test_create_distributed_space_graph_leaves_a_non_space_to_coupling_graph() -> None:
     # The graph method checks no type before the staleness check, which must not touch an object
-    # that is neither space: the partitioner's TypeError is what reaches the caller.
-    with pytest.raises(TypeError):
+    # that is neither space: `coupling_graph`'s TypeError is what reaches the caller.
+    with pytest.raises(TypeError, match="coupling_graph expects"):
         create_distributed_space(object(), _FakeComm(0, 1), method="graph")  # type: ignore[arg-type]
 
 

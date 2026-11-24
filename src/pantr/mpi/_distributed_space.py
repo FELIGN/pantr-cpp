@@ -278,7 +278,7 @@ def _check_global_space(space: BsplineSpace | THBSplineSpace) -> None:
     if isinstance(space, BsplineSpace):
         compute_halo(space, np.empty(0, dtype=np.int64))
     # Not a bare `else`: `create_distributed_space(method="graph")` reaches here without a type
-    # check, and an object that is neither space must get the partitioner's `TypeError`.
+    # check, and an object that is neither space must get `coupling_graph`'s `TypeError`.
     elif isinstance(space, THBSplineSpace):
         space._check_not_stale()
 
