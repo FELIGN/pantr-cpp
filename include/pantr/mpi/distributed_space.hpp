@@ -258,6 +258,7 @@ template <Communicator C, class Space>
 ///         those of `broadcast_partition` and of the `DistributedSpace` constructor.
 ///     state_error: A B-spline function of empty support (an invalid space), on every rank before
 ///         the partitioner runs.
+///     Whatever `partitioner` raises, on rank 0.
 template <Communicator C, class Space, class P>
   requires std::same_as<std::invoke_result_t<P&, const Space&, std::int64_t>, grid::Partition>
 [[nodiscard]] DistributedSpace<Space> create_distributed_space(Space global_space, const C& comm,
