@@ -92,9 +92,11 @@ doctest:
 
 # Generate an XML coverage report. The data file is coverage's default, `.coverage` in this tree
 # (ignored by git, removed by `clean`): a shared path would merge the data of two trees'
-# runs that overlap.
+# runs that overlap. coverage.py reads only `.coveragerc`, `setup.cfg`, `tox.ini` and
+# `pyproject.toml` on its own, so `--cov-config` names `coverage.toml`, which holds the
+# threshold and branch measurement.
 coverage:
-	pytest -m "not slow" --cov=src/pantr --cov-report=term-missing --cov-report=xml
+	pytest -m "not slow" --cov=src/pantr --cov-config=coverage.toml --cov-report=term-missing --cov-report=xml
 
 # Remove build artifacts
 clean:

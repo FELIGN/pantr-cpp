@@ -47,8 +47,8 @@ make docs SPHINXOPTS="-W --keep-going -j auto"
 ```
 
 > Coverage is opt-in: a plain `pytest` run carries none. To run the coverage gate
-> locally: `pytest --cov=src/pantr --cov-report=xml`, which
-> applies the `coverage.toml` threshold of 85%.
+> locally: `make coverage`, which passes `--cov-config=coverage.toml` and so
+> applies its threshold of 85% (coverage.py does not read that file on its own).
 
 The optional MPI smoke tests under `tests/mpi/` are skipped unless
 `PANTR_RUN_MPI` is set and run under a launcher:

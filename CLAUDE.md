@@ -57,8 +57,9 @@ cmake --preset gcc-release && cmake --build --preset gcc-release && ctest --pres
 
 > Coverage is **opt-in**: `pytest.ini`'s `addopts` is only `--strict-config --strict-markers`, so a
 > plain `pytest` run carries no coverage overhead and `--no-cov` is unnecessary. The `coverage.toml`
-> threshold (`fail_under = 85`) applies only when `--cov` is passed explicitly, which the `coverage`
-> make target and the CI `tests` job do.
+> threshold (`fail_under = 85`, branch coverage) applies only with `--cov-config=coverage.toml`:
+> coverage.py does not read that file on its own. The `coverage` make target passes it, and the CI
+> `tests` job runs that target.
 
 ## Local green is not CI green
 
