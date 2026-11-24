@@ -285,63 +285,29 @@ def test_short_call_keeps_the_gil(name: str) -> None:
     assert fastest < 0.5 * _SWITCH_INTERVAL, f"{name}: fastest {fastest:.4f} s under contention"
 
 
-@pytest.mark.skipif(
-    "PYTEST_XDIST_WORKER" in os.environ
-    or not hasattr(os, "sched_getaffinity")
-    or len(os.sched_getaffinity(0)) < 2,
-    reason="the call is shorter than the time the spinning thread needs to be scheduled, so it "
-    "takes the released GIL only from a free core; under xdist workers or on one CPU it often has "
-    "none and the release cannot be seen (the serial coverage run has one)",
-)
-def test_pool_call_releases_the_gil() -> None:
-    """A call that reaches the pool releases the GIL, however short.
-
-    A curve of 20 control points evaluated at 8000 points is ``160000`` operations, above the pool's
-    threshold (``parallel_min_ops``, ``2**17``) and far below ``gil_release_min_ops`` (``2**22``),
-    so it releases only because it reaches the pool. A released call hands the GIL to the spinning
-    thread and waits for its switch interval, so the median try lasts about that interval; one that
-    kept it would return in far less. Bug caught: pool calls gated on the non-pool threshold, which
-    made Python threads that each run such calls serialize.
-
-    The hand-over shows only if the spinner is scheduled and takes the GIL within the few hundred
-    microseconds the call lasts, which a shared host does not always allow (issue #18). So each
-    batch also times a control that certainly releases, interleaved with the pantr call, and only
-    a batch whose control hands over decides: the pantr call must hand over in every such batch,
-    and the test skips, with the control's medians, when no batch does.
-    """
-    curve = Bezier(_rng().random((20, 1)))
-    pts = _rng().random(8000)
-    control = _releasing_control(lambda: curve.evaluate(pts))
-    batches = [_interleaved_medians(lambda: curve.evaluate(pts), control) for _ in range(_BATCHES)]
-    counted = [pantr for pantr, ctrl in batches if ctrl >= 0.5 * _SWITCH_INTERVAL]
-    if not counted:
-        controls = ", ".join(f"{ctrl:.4f}" for _, ctrl in batches)
-        pytest.skip(
-            f"the host cannot show a release: the control's median was below half the switch "
-            f"interval ({_SWITCH_INTERVAL} s) in every batch: {controls} s"
-        )
-    kept = [m for m in counted if m < 0.5 * _SWITCH_INTERVAL]
-    assert not kept, (
-        f"medians {', '.join(f'{m:.4f}' for m in kept)} s in batches where the control handed "
-        f"the GIL over (switch interval {_SWITCH_INTERVAL} s): the GIL was kept"
-    )
-
-
+# Batches of the pool-call test, each with its own spinner. Every counted batch must show the
+# hand-over, so a batch more is one more chance of a false failure and one more chance to count a
+# batch at all: three is a heuristic balance between the two, not a derived number.
 _BATCHES = 3
-_CONTROL_MIN_BYTES = 1 << 20
+# The buffer the control's duration is measured on, long enough for the timer to resolve it; the
+# control's own buffer is scaled from it, and never below CPython's ``HASHLIB_GIL_MINSIZE``
+# (2048 bytes, ``Modules/hashlib.h``), under which ``hashlib`` keeps the GIL.
+_CONTROL_PROBE_BYTES = 1 << 20
+_CONTROL_MIN_BYTES = 1 << 12
 
 
 def _releasing_control(call: Callable[[], object]) -> Callable[[], object]:
-    """Return a stdlib call that releases the GIL and runs at least as long as ``call``.
+    """Return a stdlib call that releases the GIL and runs about twice as long as ``call``.
 
-    ``hashlib.sha256`` releases the GIL while it digests a buffer larger than a couple of
-    kilobytes (CPython's ``HASHLIB_GIL_MINSIZE``) and is not pantr, so its hand-over is a property
-    of the host's scheduling alone. The buffer starts at 1 MiB and is scaled by the ratio of the
-    two calls' unloaded durations, with a factor 2 of margin, so the control is not the shorter
-    of the two: a shorter call gives the spinner less time to be scheduled.
+    ``hashlib.sha256`` releases the GIL while it digests a buffer of at least
+    ``HASHLIB_GIL_MINSIZE`` bytes, and is not pantr. Its duration is measured on a 1 MiB probe
+    and its buffer scaled by the ratio of the two calls' unloaded durations, times 2 (a heuristic
+    margin, not derived), so the control is not the shorter of the two, which would give the
+    spinner less time to be scheduled than the pantr call gives it, nor much the longer, which
+    would let it hand over where the pantr call could not.
 
     Args:
-        call (Callable[[], object]): The call the control stands beside.
+        call (Callable[[], object]): The call the control stands beside, already warm.
 
     Returns:
         Callable[[], object]: The control.
@@ -356,9 +322,10 @@ def _releasing_control(call: Callable[[], object]) -> Callable[[], object]:
             durations.append(time.perf_counter() - t0)
         return min(durations)
 
-    probe = bytes(_CONTROL_MIN_BYTES)
+    probe = bytes(_CONTROL_PROBE_BYTES)
     ratio = fastest(call) / fastest(lambda: hashlib.sha256(probe).digest())
-    buffer = bytes(max(_CONTROL_MIN_BYTES, math.ceil(2 * ratio * _CONTROL_MIN_BYTES)))
+    size = max(_CONTROL_MIN_BYTES, math.ceil(2 * ratio * _CONTROL_PROBE_BYTES))
+    buffer = bytes(size)
     return lambda: hashlib.sha256(buffer).digest()
 
 
@@ -368,7 +335,7 @@ def _interleaved_medians(
     """Time ``call`` and ``control`` in turn while another thread spins; return both medians.
 
     Args:
-        call (Callable[[], object]): The call under test.
+        call (Callable[[], object]): The call under test, already warm.
         control (Callable[[], object]): A call that certainly releases the GIL.
 
     Returns:
@@ -398,3 +365,48 @@ def _interleaved_medians(
         sys.setswitchinterval(previous)
     call_median, control_median = (sorted(d)[len(d) // 2] for d in durations)
     return call_median, control_median
+
+
+@pytest.mark.skipif(
+    "PYTEST_XDIST_WORKER" in os.environ
+    or not hasattr(os, "sched_getaffinity")
+    or len(os.sched_getaffinity(0)) < 2,
+    reason="the call is shorter than the time the spinning thread needs to be scheduled, so it "
+    "takes the released GIL only from a free core; under xdist workers or on one CPU it often has "
+    "none and the release cannot be seen (the serial coverage run has one)",
+)
+def test_pool_call_releases_the_gil() -> None:
+    """A call that reaches the pool releases the GIL, however short.
+
+    A curve of 20 control points evaluated at 8000 points is ``160000`` operations, above the pool's
+    threshold (``parallel_min_ops``, ``2**17``) and far below ``gil_release_min_ops`` (``2**22``),
+    so it releases only because it reaches the pool. A released call hands the GIL to the spinning
+    thread and waits for its switch interval, so the median try lasts about that interval; one that
+    kept it would return in far less. Bug caught: pool calls gated on the non-pool threshold, which
+    made Python threads that each run such calls serialize.
+
+    The hand-over shows only if the spinner is scheduled and takes the GIL before the short call
+    returns, which a shared host does not always allow (issue #18). So each
+    batch also times a control that certainly releases, interleaved with the pantr call, and only
+    a batch whose control hands over decides: the pantr call must hand over in every such batch,
+    and the test skips, with the control's medians, when no batch does.
+    """
+    curve = Bezier(_rng().random((20, 1)))
+    pts = _rng().random(8000)
+    curve.evaluate(pts)  # warm
+    control = _releasing_control(lambda: curve.evaluate(pts))
+    batches = [_interleaved_medians(lambda: curve.evaluate(pts), control) for _ in range(_BATCHES)]
+    if all(ctrl < 0.5 * _SWITCH_INTERVAL for _, ctrl in batches):
+        controls = ", ".join(f"{ctrl:.4f}" for _, ctrl in batches)
+        pytest.skip(
+            f"the host cannot show a release: the control's median was below half the switch "
+            f"interval ({_SWITCH_INTERVAL} s) in every batch: {controls} s"
+        )
+    kept = [
+        (p, c) for p, c in batches if c >= 0.5 * _SWITCH_INTERVAL and p < 0.5 * _SWITCH_INTERVAL
+    ]
+    assert not kept, (
+        f"(pantr, control) medians {', '.join(f'({p:.4f}, {c:.4f})' for p, c in kept)} s: the "
+        f"control handed the GIL over (switch interval {_SWITCH_INTERVAL} s) and the pantr call "
+        f"kept it"
+    )
