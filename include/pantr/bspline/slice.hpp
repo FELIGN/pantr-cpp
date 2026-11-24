@@ -12,7 +12,6 @@
 #include "pantr/bspline/bspline.hpp"
 #include "pantr/bspline/detail/basis_kernels.hpp"
 #include "pantr/bspline/detail/refine_common.hpp"
-#include "pantr/bspline/knots.hpp"
 #include "pantr/bspline/space.hpp"
 #include "pantr/bspline/space_1d.hpp"
 #include "pantr/config.hpp"
@@ -65,7 +64,7 @@ struct SliceSpan {
 ///     tol (double): Absolute parametric tolerance.
 ///
 /// Returns:
-///     SliceSpan: The span, the parameter, and whether it is the end of the domain.
+///     SliceSpan: The span, the parameter, and whether it is the start or the end of the domain.
 ///
 /// Note:
 ///     Inputs are assumed to be correct (no validation performed).

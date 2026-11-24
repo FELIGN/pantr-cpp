@@ -1447,7 +1447,9 @@
   of order 1 with no exception. The start now takes the span starting at the last knot equal to
   it, as evaluation does, and counts only knots equal to it as copies; a value within the
   tolerance of the start is still taken as the start. Snapped spaces keep their slices bit for
-  bit. The previous release got this case right.
+  bit. The previous release got a knot after the start right; with a knot before the start as
+  well (`[-1, -1e-15, 0, 1e-15, 1, 2, 2, 2]` at degree 2) it too counted the earlier knot as a copy
+  of the start, so that case is inherited from it.
 - **`make_compat` gives B-splines whose interior knots differ by less than the tolerance the same
   number of knots** (#13). It matched each breakpoint of the union of the inputs only against the
   first knot of an input not below it, so for knots `0.5` and `0.5 + tol / 4` it inserted a knot
