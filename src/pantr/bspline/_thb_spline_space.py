@@ -246,8 +246,14 @@ class THBSplineSpace:
             TypeError: If ``root_space`` is not a :class:`~pantr.bspline.BsplineSpace`
                 or ``grid`` is not a :class:`~pantr.grid.HierarchicalGrid`.
             ValueError: If ``grid`` and ``root_space`` disagree on dimension or on
-                the root knot-span grid, if ``regularity`` has the wrong length, or
-                if any per-direction regularity value is out of range.
+                the root knot-span grid: along each axis the root grid must have one
+                cell per knot span, bounds equal to the space's domain, and interior
+                breakpoints equal to its distinct in-domain knots, the last two each
+                within that axis's knot tolerance
+                (:attr:`~pantr.bspline.BsplineSpace1D.tolerance`). A root grid built
+                with :func:`~pantr.grid.tensor_product_grid` takes its breakpoints from
+                those knots. Also if ``regularity`` has the wrong length, or if any
+                per-direction regularity value is out of range.
             OverflowError: If a two-scale matrix between two levels overflows the
                 knots' dtype (a knot difference within one refinement window beyond
                 that dtype's range, as for float32 knots near ``1e38``).

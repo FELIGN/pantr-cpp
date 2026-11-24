@@ -207,6 +207,15 @@
   are accepted. The previous release used the float values in the spectral backend and rounded
   them in the METIS backend. An object array (of Python ints) now raises `TypeError`, where the
   previous release accepted it.
+- **`THBSplineSpace` whose grid's root breakpoints are not the root space's knots** raises
+  `ValueError` naming the axis and the first differing breakpoint ("grid root breakpoints must
+  match root_space knots: along axis 0, breakpoint 1 is 0.1 where the knot is 0.25."). Each
+  interior breakpoint is held to the root space's distinct in-domain knot along that axis, within
+  that axis's knot tolerance. The previous release checked only the cell counts and the bounds, so
+  a grid with the right number of cells on other breakpoints was accepted, and its cells were given
+  the functions of other knot spans: `tabulate_basis` returned values that do not sum to one,
+  without an error. A root grid built with `tensor_product_grid(root_space)` takes its breakpoints
+  from those knots.
 
 ### Changed
 - **`TensorProductGrid.is_uniform` judges an axis's spacings relative to its scale**: uniform when
@@ -1437,9 +1446,29 @@
   edges of their inputs this way, inherited it. The end now takes the last span of non-zero
   length, as evaluation does. Also, in a space built with `snap_knots=False`, a knot closer to the
   end than the space's tolerance (`[0, 0, 1, 1 + 2.2e-15, 2]` at degree 1) was taken for a copy of
-  the end, an error of order 1 as well; the end now takes no knot for a copy of it. The start of
-  the domain still does, in such a space. A snapped knot vector whose last span is non-empty keeps
-  its slices bit for bit. The first defect is inherited from the previous release.
+  the end, an error of order 1 as well; the end now takes no knot for a copy of it, as evaluation
+  does outside a Bézier-like direction (one Bézier piece: non-periodic, ends open within the
+  tolerance, `degree + 1` functions; `BsplineSpace1D.has_Bezier_like_knots`), whose evaluation
+  takes the Bernstein form and ignores such an offset. A snapped knot vector whose last span is
+  non-empty keeps its slices bit for bit. The first defect is inherited from the previous release.
+- **`Bspline.slice` and `Bspline.boundary` at the domain start agree with `Bspline.evaluate` in a
+  space built with `snap_knots=False`, outside a Bézier-like direction** (#34). A knot closer to
+  the start than the space's tolerance (`[0, 0, 1e-15, 1, 1]` at degree 1) was taken for a copy of
+  the start, so the slice or boundary at the start, and the start point of a curve, read the wrong
+  control points, an error of order 1 with no exception. The start now takes the span starting at
+  the last knot equal to it, as evaluation does, and counts only knots equal to it as copies; a
+  value within the tolerance of the start is still taken as the start. In a Bézier-like direction
+  evaluation takes the Bernstein form, which ignores a knot offset within the tolerance, so the
+  slice there differs from it by an amount that vanishes with the offset, at the start as at
+  interior values; the start of such a direction with a knot offset used to match the Bernstein
+  form, and now moves by that amount. Snapped double spaces keep their slices bit for bit. Snapped
+  float spaces do too, but for one case: a knot before the start whose distance to it is within
+  the tolerance in exact arithmetic but not once rounded to float stays a knot of its own, and the
+  old slice counted it as a copy of the start; the slice now takes it as a knot of its own there,
+  as it does at the end (at an interior value it still counts copies within the tolerance).
+  The previous release got a knot after the start right; with a knot before the start as well
+  (`[-1, -1e-15, 0, 1e-15, 1, 2, 2, 2]` at degree 2) it too counted the earlier knot as a copy of
+  the start, so that case is inherited from it.
 - **`make_compat` gives B-splines whose interior knots differ by less than the tolerance the same
   number of knots** (#13). It matched each breakpoint of the union of the inputs only against the
   first knot of an input not below it, so for knots `0.5` and `0.5 + tol / 4` it inserted a knot
@@ -1605,6 +1634,13 @@
 - **A `BVH` built with a negative `n_cells` and no nodes** returns an empty array from
   `query_aabb`. The previous release read past its empty node arrays and returned a cell id taken
   from that memory.
+- **`DistributedSpace` and `create_distributed_space` refuse a stale `THBSplineSpace` on every
+  rank** (its grid modified after the space was built), a rank that owns no cell included, with the
+  `RuntimeError` the ranks with cells raised before ("THBSplineSpace is stale: ..."), and
+  `create_distributed_space` does so before the partition is sent. The previous release checked
+  staleness only while building a rank's local space, so with a partition that left a rank without
+  cells, that rank constructed while the others raised, and then waited forever in the next
+  collective (#40).
 - **`BsplineSpace1D.tabulate_Lagrange_extraction_operators` of a degree-0 space** returns one 1x1
   identity per interval, for every Lagrange variant, as the Bezier and cardinal extractions of the
   same space already did, and so does `SpanwiseElementExtraction` with the Lagrange target;

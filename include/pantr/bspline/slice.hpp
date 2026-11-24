@@ -12,7 +12,6 @@
 #include "pantr/bspline/bspline.hpp"
 #include "pantr/bspline/detail/basis_kernels.hpp"
 #include "pantr/bspline/detail/refine_common.hpp"
-#include "pantr/bspline/knots.hpp"
 #include "pantr/bspline/space.hpp"
 #include "pantr/bspline/space_1d.hpp"
 #include "pantr/config.hpp"
@@ -39,20 +38,27 @@ namespace detail {
 ///     k (std::size_t): The span, `knots[k] <= u < knots[k + 1]` (at the right end, the last span
 ///         of non-zero length, `knots[k] < u == knots[k + 1]`).
 ///     u (double): The parameter: the value, or the domain end it was within tolerance of.
+///     at_start (bool): Whether `u` is the start of the domain, where `knots[k] == u` exactly and
+///         only the knots equal to `u` are copies of it.
 ///     at_end (bool): Whether `u` is the end of the domain, where no knot at or left of `k`
-///         equals `u`.
+///         equals `u`. At most one of `at_start` and `at_end` holds: a value within `tol` of both
+///         ends is taken as the start.
 struct SliceSpan {
   std::size_t k;
   double u;
+  bool at_start;
   bool at_end;
 };
 
 /// Find the span of a parameter value (Piegl and Tiller convention): a value within `tol` of an end
-/// of the domain is taken as that end, any other by binary search over the knot vector. The end of
-/// the domain takes the last span of non-zero length, as `span_and_first` does, by an exact rule.
-/// The start of the domain is classed with `tol`, and its multiplicity is counted with `tol`: in a
-/// space built without snapping, a knot within `tol` of the start is taken for a copy of it, and
-/// the slice there can be off by order one.
+/// of the domain is taken as that end, any other by binary search over the knot vector. Each end
+/// takes its span by an exact rule, as `span_and_first` does: the start the span starting at the
+/// last knot equal to it, the end the last span of non-zero length. In a space built without
+/// snapping, a knot within `tol` of an end is then a knot of its own, as evaluation takes it
+/// outside a Bézier-like space (one Bézier piece: non-periodic, ends open within `tol`,
+/// `degree + 1` functions; `has_bezier_like_knots`). Evaluation there takes the Bernstein form,
+/// which ignores such an offset, so the slice differs from it by an amount that vanishes with the
+/// offset, as it does at interior values.
 ///
 /// Args:
 ///     knots (std::span<const T>): The knot vector.
@@ -63,7 +69,7 @@ struct SliceSpan {
 ///     tol (double): Absolute parametric tolerance.
 ///
 /// Returns:
-///     SliceSpan: The span, the parameter, and whether it is the end of the domain.
+///     SliceSpan: The span, the parameter, and whether it is the start or the end of the domain.
 ///
 /// Note:
 ///     Inputs are assumed to be correct (no validation performed).
@@ -74,25 +80,32 @@ template <StorageFloat T>
   const double u_left = static_cast<double>(knots[p]);
   const double u_right = static_cast<double>(knots[n_basis]);
   if (value <= u_left + tol) {
-    // The span starting at the last knot of the first domain knot's class (past `p` when the
-    // class continues beyond it, a non-clamped vector with `knots[p] == knots[p + 1]`).
-    return {last_index_of_first_domain_class<T>(knots, degree, tol), u_left, false};
+    // The span starting at the last knot equal to `knots[p]` (past `p` when `knots[p + 1]` equals
+    // it too: a non-clamped vector, or a start knot repeated more than `degree + 1` times), as
+    // evaluation takes it: `knots[k] == u < knots[k + 1]` (in a Bézier-like space evaluation
+    // keeps this window and weighs it by the Bernstein form). `span_and_first` neither clamps nor
+    // walks here: the space has an interval (`check_space_has_an_interval`), so
+    // `knots[p] < knots[n_basis]` and the last knot equal to `knots[p]` is in `[p, n_basis - 1]`.
+    // It is chosen without a tolerance, so a knot within `tol` of the start, which a space built
+    // without snapping can hold, starts a span of its own rather than joining the start
+    // (`at_start`).
+    return {span_and_first<T, T>(knots, degree, knots[p]).knot_id, u_left, true, false};
   }
   if (value >= u_right - tol) {
     // The last span of non-zero length, as evaluation takes it. Span `n_basis - 1` is empty when
     // `knots[n_basis - 1] == knots[n_basis]`; once `knots[n_basis - degree - 1 .. n_basis]` are
     // all equal, the first function of that span's window has empty support. The span is chosen
     // without a tolerance, so `knots[k] < u` and the slice takes no multiplicity there (`at_end`).
-    return {span_and_first<T, T>(knots, degree, knots[n_basis]).knot_id, u_right, true};
+    return {span_and_first<T, T>(knots, degree, knots[n_basis]).knot_id, u_right, false, true};
   }
   const auto above = std::upper_bound(knots.begin(), knots.end(), value, [](double v, T knot) {
     return v < static_cast<double>(knot);
   });
-  return {static_cast<std::size_t>(above - knots.begin()) - 1, value, false};
+  return {static_cast<std::size_t>(above - knots.begin()) - 1, value, false, false};
 }
 
 /// Count the knots, from the one at `k` leftwards and at most `degree + 1` of them, within `tol`
-/// of `u`, stopping at the first that is not.
+/// of `u`, stopping at the first that is not. With `tol == 0` it counts the knots equal to `u`.
 ///
 /// Note:
 ///     Inputs are assumed to be correct (no validation performed).
@@ -154,12 +167,18 @@ template <StorageFloat T>
 
   const SliceSpan span = find_slice_span<T>(knots, degree, n_basis, value, tol);
   const std::size_t k = span.k;
-  // At the end `knots[k] < u` exactly, so no knot at or left of `k` is a copy of `u`. Counting with
-  // `tol` there would take a knot closer to the end than `tol`, which a space built without
-  // snapping can hold, for a copy, and skip the corner cutting it needs. With no multiplicity the
-  // weights below are in [0, 1] and no denominator is zero: `left <= knots[k] < u <= right`.
-  const std::size_t s =
-      span.at_end ? 0 : count_slice_multiplicity<T>(knots, k, degree, span.u, tol);
+  // At an end the copies of `u` are counted exactly. At the end `knots[k] < u`, so no knot at or
+  // left of `k` is a copy of `u`; at the start `knots[k] == u`, and the copies are the knots equal
+  // to it. Counting with `tol` there would take a knot closer to an end than `tol`, which a space
+  // built without snapping can hold, for a copy, and skip corner cutting it needs. The weights
+  // below stay in [0, 1] and no denominator is zero: `left <= u < knots[k + 1] <= right` at the
+  // start, `left <= knots[k] < u <= right` at the end.
+  std::size_t s = 0;
+  if (span.at_start) {
+    s = count_slice_multiplicity<T>(knots, k, degree, span.u, 0.0);
+  } else if (!span.at_end) {
+    s = count_slice_multiplicity<T>(knots, k, degree, span.u, tol);
+  }
 
   const bezier::detail::AxisSplit around = bezier::detail::split_around(shape, axis);
   const std::size_t rest = around.outer * around.inner;
