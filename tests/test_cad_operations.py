@@ -228,10 +228,10 @@ class TestRuled:
     def test_ruled_nets_of_one_shape_keep_both_inputs_as_end_faces(self) -> None:
         """Test that the shape check leaves equal shapes alone: the end faces are the inputs.
 
-        The oracle is the inputs evaluated directly. At ``t = 0`` and ``t = 1`` the linear
-        direction's basis is ``(1, 0)`` or ``(0, 1)`` exactly, so what is left is the rounding of
-        two bilinear evaluations of values up to ``max |cp|``: a few ``eps * max |cp|``; the
-        factor 16 is a heuristic margin over that count.
+        The oracle is the inputs evaluated directly. The bound is the one the C++ suite derives
+        for a ruled B-spline of two degree-1 inputs, ``4 (3 d + 2^d) eps max |cp|`` with ``d = 2``
+        (``cpp/tests/test_cad_operations.cpp``, its header), taken over the larger net, whose
+        coordinates reach ``max |cp| + 5``.
         """
         cp = self._net(3, 2)
         u_knots = [0.0, 0.0, 0.0, 1.0, 1.0]
@@ -240,7 +240,8 @@ class TestRuled:
         r = create_ruled(s1, s2)
         uu, vv = np.meshgrid(np.linspace(0, 1, 7), np.linspace(0, 1, 7), indexing="ij")
         uv = np.column_stack([uu.ravel(), vv.ravel()])
-        atol = 16 * np.finfo(np.float64).eps * (np.abs(cp).max() + 5.0)
+        d = 2
+        atol = 4 * (3 * d + 2**d) * np.finfo(np.float64).eps * (np.abs(cp).max() + 5.0)
         for t, src in ((0.0, s1), (1.0, s2)):
             face = r.evaluate(np.column_stack([uv, np.full(len(uv), t)]))
             assert_allclose(face, src.evaluate(uv), rtol=0, atol=atol)
