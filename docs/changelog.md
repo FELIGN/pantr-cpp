@@ -1437,9 +1437,17 @@
   edges of their inputs this way, inherited it. The end now takes the last span of non-zero
   length, as evaluation does. Also, in a space built with `snap_knots=False`, a knot closer to the
   end than the space's tolerance (`[0, 0, 1, 1 + 2.2e-15, 2]` at degree 1) was taken for a copy of
-  the end, an error of order 1 as well; the end now takes no knot for a copy of it. The start of
-  the domain still does, in such a space. A snapped knot vector whose last span is non-empty keeps
-  its slices bit for bit. The first defect is inherited from the previous release.
+  the end, an error of order 1 as well; the end now takes no knot for a copy of it. A snapped knot
+  vector whose last span is non-empty keeps its slices bit for bit. The first defect is inherited
+  from the previous release.
+- **`Bspline.slice` and `Bspline.boundary` at the domain start agree with `Bspline.evaluate` in a
+  space built with `snap_knots=False`** (#34). A knot closer to the start than the space's
+  tolerance (`[0, 0, 1e-15, 1, 1]` at degree 1) was taken for a copy of the start, so the slice or
+  boundary at the start, and the start point of a curve, read the wrong control points, an error
+  of order 1 with no exception. The start now takes the span starting at the last knot equal to
+  it, as evaluation does, and counts only knots equal to it as copies; a value within the
+  tolerance of the start is still taken as the start. Snapped spaces keep their slices bit for
+  bit. The previous release got this case right.
 - **`make_compat` gives B-splines whose interior knots differ by less than the tolerance the same
   number of knots** (#13). It matched each breakpoint of the union of the inputs only against the
   first knot of an input not below it, so for knots `0.5` and `0.5 + tol / 4` it inserted a knot
