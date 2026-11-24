@@ -441,8 +441,9 @@ TEST_CASE_TEMPLATE("boundary: the start of an unsnapped space beside a sub-toler
   // and the slice is `(P0 + P1) / 2`, exact for the dyadic control points. All are compared bit
   // for bit. Classed with the tolerance, each takes the knot at `gap` for a copy of the start and
   // copies row 1; with the span right but the multiplicity counted with the tolerance, the
-  // `halfway` case takes `-gap` for a copy and copies row 0. The curve is also compared with
-  // `evaluate` at the start, within the file's derived bound.
+  // `halfway` case takes `-gap` for a copy and copies row 0. The slices of a surface are also
+  // compared with the exact evaluation of the surface at the start (`slice_error`), and the curve's
+  // start point with `evaluate`, within the file's derived bound.
   constexpr double gap = 1e-15;
   struct Case {
     std::vector<double> knots;
@@ -536,6 +537,9 @@ TEST_CASE_TEMPLATE("boundary: the start of an unsnapped space beside a sub-toler
                 CHECK(g.control_points()[o * inner + i] ==
                       expected(cp[row0], cp[row0 + inner], c.halfway));
               }
+            }
+            if (dim == 2) {
+              CHECK(slice_error<T>(b, g, axis, start) <= slice_tolerance<T>(b, axis));
             }
           }
         }
