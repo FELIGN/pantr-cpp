@@ -1449,10 +1449,10 @@
   tolerance of the start is still taken as the start. Snapped spaces keep their slices bit for
   bit, but for one float case: a knot before the start whose distance to it is within the
   tolerance in exact arithmetic but not once rounded to float stays a knot of its own, and the old
-  slice counted it as a copy of the start, so it disagreed with evaluation. The previous release
-  got a knot after the start right; with a knot before the start as well
-  (`[-1, -1e-15, 0, 1e-15, 1, 2, 2, 2]` at degree 2) it too counted the earlier knot as a copy of
-  the start, so that case is inherited from it.
+  slice counted it as a copy of the start; the slice now takes it as a knot of its own there too,
+  as it does at every other value. The previous release got a knot after the start right; with a
+  knot before the start as well (`[-1, -1e-15, 0, 1e-15, 1, 2, 2, 2]` at degree 2) it too counted
+  the earlier knot as a copy of the start, so that case is inherited from it.
 - **`make_compat` gives B-splines whose interior knots differ by less than the tolerance the same
   number of knots** (#13). It matched each breakpoint of the union of the inputs only against the
   first knot of an input not below it, so for knots `0.5` and `0.5 + tol / 4` it inserted a knot
