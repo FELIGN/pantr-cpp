@@ -1451,12 +1451,12 @@
   value within the tolerance of the start is still taken as the start. In a Bézier-like direction
   evaluation takes the Bernstein form, which ignores a knot offset within the tolerance, so the
   slice there differs from it by an amount that vanishes with the offset, at the start as at
-  interior values; the start of such a direction used to match the Bernstein form, and now moves
-  by that amount. Snapped
-  double spaces keep their slices bit for bit. Snapped float spaces do too, but for one case: a
-  knot before the start whose distance to it is within the tolerance in exact arithmetic but not
-  once rounded to float stays a knot of its own, and the old slice counted it as a copy of the
-  start; the slice now takes it as a knot of its own there too, as it does at every other value.
+  interior values; the start of such a direction with a knot offset used to match the Bernstein
+  form, and now moves by that amount. Snapped double spaces keep their slices bit for bit. Snapped
+  float spaces do too, but for one case: a knot before the start whose distance to it is within
+  the tolerance in exact arithmetic but not once rounded to float stays a knot of its own, and the
+  old slice counted it as a copy of the start; the slice now takes it as a knot of its own there
+  too, as it does at every other value.
   The previous release got a knot after the start right; with a knot before the start as well
   (`[-1, -1e-15, 0, 1e-15, 1, 2, 2, 2]` at degree 2) it too counted the earlier knot as a copy of
   the start, so that case is inherited from it.
