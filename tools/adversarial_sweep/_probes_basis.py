@@ -822,14 +822,13 @@ def _round_trip_cases(profile: Profile) -> Iterator[Case]:
                 degree,
                 dtype,
             )
-            if degree >= 1:
-                yield _round_trip_case(
-                    "bernstein_lagrange",
-                    _lagrange_to_bernstein_default,
-                    _bernstein_to_lagrange_default,
-                    degree,
-                    dtype,
-                )
+            yield _round_trip_case(
+                "bernstein_lagrange",
+                _lagrange_to_bernstein_default,
+                _bernstein_to_lagrange_default,
+                degree,
+                dtype,
+            )
 
 
 def _out_same_array(expected: npt.NDArray[Any]) -> Invariant:
