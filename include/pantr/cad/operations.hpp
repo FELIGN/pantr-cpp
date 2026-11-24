@@ -188,7 +188,7 @@ inline constexpr double norm_tol = 1e-14;
 /// control-point width 1 (a rank-1, polynomial one) is repeated over the columns of a wider first.
 /// The reverse, and every other mismatch of shape or width, is refused. End knot classes that
 /// differ while the nets have one shape are not detected: the result takes the first input's
-/// knots, so its second end face is not the second input.
+/// knots, so its second end face can differ from the second input.
 ///
 /// Args:
 ///     bspline1 (const bspline::Bspline<T>&): The first boundary (a curve or a surface).

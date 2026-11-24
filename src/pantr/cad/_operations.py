@@ -88,7 +88,7 @@ def create_ruled(bspline1: Bspline, bspline2: Bspline) -> Bspline:
     ``(3, 2)`` and ``(2, 3)``; those are refused rather than paired point by
     point.  Inputs whose end knot classes differ while their nets have one
     shape are not detected: the result takes the first input's knots, so its
-    second end face is not the second input.
+    second end face can differ from the second input.
 
     Args:
         bspline1: First boundary (curve or surface, dim <= 2).
