@@ -160,6 +160,33 @@ class TestRepeatedSeamKnot:
         _check_open_piece(f, left, 0.0, 0.5)
         _check_open_piece(f, right, 0.5, 1.0)
 
+    # ``p1-double`` is left out: converting back refuses a seam with ``degree + 1`` copies.
+    @pytest.mark.parametrize(("cycle", "degree", "copies"), _SEAM_CASES[:3])
+    def test_callers_that_open_the_direction(
+        self, cycle: list[float], degree: int, copies: int
+    ) -> None:
+        """Knot insertion, degree elevation and the same-degree derivative keep the curve.
+
+        Each opens the periodic direction through the same conversion; the first two convert back,
+        so the result is periodic again.
+        """
+        del copies
+        f = _periodic(cycle, degree, snap=False)
+        pts = _interior(0.0, 1.0)
+        for g in (f.insert_knots([0.375]), f.elevate_degree(1)):
+            assert g.space.spaces[0].periodic
+            got = np.asarray(g.evaluate(pts), dtype=np.float64).reshape(-1, 1)
+            np.testing.assert_allclose(got, _reference(f, pts), atol=_ATOL, rtol=0.0)
+        space = f.space.spaces[0]
+        want = bspline_exact.to_float_array(
+            [
+                bspline_exact.derivative([space.knots], [degree], f.control_points, [float(x)], [1])
+                for x in pts
+            ]
+        )
+        got = np.asarray(f.derivative(keep_degree=True).evaluate(pts), dtype=np.float64)
+        np.testing.assert_allclose(got.reshape(-1, 1), want, atol=_ATOL, rtol=0.0)
+
 
 _NEAR_START = [0.0, 1e-15, 0.25, 0.5, 0.75]
 """A cycle whose second knot is within the tolerance of the domain start."""

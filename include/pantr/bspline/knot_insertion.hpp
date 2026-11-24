@@ -204,8 +204,9 @@ void check_piece_end(std::span<const T> piece, T end, std::string_view what, dou
 ///
 /// Counts the copies of the domain start `a = knots[degree]` and end `b = knots[size - degree - 1]`
 /// wherever they lie, a knot being a copy when it is bitwise equal to the end (the rule of
-/// `restrict.hpp`): a periodic vector whose seam knot is repeated holds copies of `a` past index
-/// `degree`, or of `b` before `size - degree - 1`. Inserts `degree + 1 - m` copies of each end, `m`
+/// `restrict.hpp`): a periodic vector whose seam knot is repeated and whose domain starts at its
+/// first copy holds copies of `a` past index `degree`, and a non-periodic one can hold copies of an
+/// end inside the domain beyond an external knot. Inserts `degree + 1 - m` copies of each end, `m`
 /// its count, then trims the ghost (or external) knots, those before the first copy of `a` and
 /// after the last copy of `b`. For a periodic direction the `n_full = size - degree - 1` control
 /// points are first rebuilt by wrapping the stored ones (`full[i] = stored[i mod n_stored]`).
@@ -260,8 +261,9 @@ template <StorageFloat T>
     throw value_error(
         "B-spline is already open (both boundary knots have multiplicity degree + 1).");
   }
-  // A raw knot vector can hold more copies of an end than its degree allows (a space cannot), and
-  // `degree + 1 - m` below would wrap.
+  // A knot vector can hold more copies of an end than its degree allows (a raw one, or a
+  // non-periodic space's at its start, which the space does not check), and `degree + 1 - m` below
+  // would wrap.
   const std::size_t m_left = past_a - first_a;
   const std::size_t m_right = past_b - first_b;
   for (const auto& [m, end] : {std::pair{m_left, a}, std::pair{m_right, b}}) {

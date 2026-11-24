@@ -1603,8 +1603,9 @@ TEST_CASE_TEMPLATE("to_open, restrict and split: a periodic space with a repeate
 }
 
 TEST_CASE("to_open, restrict and split: an unsnapped knot within the tolerance of the seam") {
-  // Each cycle holds a knot distinct from the seam and within the space's tolerance of it (its
-  // span is 1.5 or 1.75, so the tolerance is about 3e-15): next to the start, or next to the end.
+  // Each cycle holds a knot distinct from the seam and within the space's tolerance of it (the
+  // knot vector spans 1.75, so the tolerance is about 3e-15): next to the start, or next to the
+  // end.
   struct NearCase {
     std::vector<double> cycle;
     std::size_t near_index;
@@ -1626,7 +1627,7 @@ TEST_CASE("to_open, restrict and split: an unsnapped knot within the tolerance o
     const auto n_stored = static_cast<std::size_t>(ps.num_basis());
     const std::vector<double> cp = values(n_stored, 5);
     const bs::Bspline<double> b(bs::BsplineSpace<double>({ps}), sp(cp), false);
-    const std::string near = "distinct knot " + pantr::py_repr(ps.knots()[c.near_index]) + ",";
+    const std::string by_seam = "distinct knot " + pantr::py_repr(ps.knots()[c.near_index]) + ",";
     const auto message_of = [&](auto&& call) -> std::string {
       try {
         call();
@@ -1642,7 +1643,7 @@ TEST_CASE("to_open, restrict and split: an unsnapped knot within the tolerance o
           message_of([&] { static_cast<void>(bs::split<double>(b, 0, 0.5)); })}) {
       CAPTURE(m);
       CHECK(m.starts_with(c.message));
-      CHECK(m.find(near) != std::string::npos);
+      CHECK(m.find(by_seam) != std::string::npos);
       CHECK(m.ends_with("build the space with snap_knots=True."));
     }
   }
