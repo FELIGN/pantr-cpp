@@ -1035,13 +1035,21 @@ class Bspline:
                 that actually restrict the domain.
 
         Returns:
-            Bspline: New B-spline defined on the restricted domain.
+            Bspline: New B-spline defined on the restricted domain. Each restricted
+            direction's space keeps the parent direction's ``tolerance`` (as
+            :meth:`BsplineSpace1D.restrict` does), so knots that are one knot of the
+            parent stay one knot of the result.
 
         Raises:
             ValueError: If the sequence length does not match ``dim`` (multi-dim).
             ValueError: If all directions are ``None`` or match the full domain.
             ValueError: If any bound lies outside its direction's domain.
             ValueError: If ``lower >= upper`` in any direction.
+            ValueError: If ``lower`` and ``upper``, taken as knots, are within ``tolerance``
+                of each other.
+            ValueError: If the space was built with ``snap_knots=False`` and a knot distinct
+                from a bound, within ``tolerance`` of it, would lie inside the result beside its
+                clamped end.
         """
         if self.dim == 1:
             bounds_per_dim: list[tuple[float, float] | None] = [
@@ -1082,12 +1090,15 @@ class Bspline:
             tuple[Bspline, Bspline]: A pair ``(left, right)`` of B-splines.
             The left sub-spline has domain ``[domain_start, value]`` and
             the right has domain ``[value, domain_end]`` in the split
-            direction, ``value`` as taken onto a knot. Other directions are
-            unchanged.
+            direction, ``value`` as taken onto a knot, and both keep the parent
+            direction's ``tolerance``. Other directions are unchanged.
 
         Raises:
             ValueError: If ``direction`` is out of range ``[0, dim)``.
             ValueError: If ``value`` is not strictly inside the domain.
+            ValueError: If the space was built with ``snap_knots=False`` and a knot distinct
+                from ``value``, within ``tolerance`` of it, would lie inside a half beside its
+                clamped end.
 
         Example:
             >>> import numpy as np

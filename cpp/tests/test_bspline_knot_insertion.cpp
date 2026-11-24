@@ -1299,3 +1299,215 @@ TEST_CASE_TEMPLATE(
     }
   }
 }
+
+// ---- the knots at a restriction or split bound are decided by one rule
+// ----------------------------------------------------------------------
+//
+// The count of the bound's multiplicity and the cut of the refined vector used to classify the
+// knots beside the bound separately (a storage-type difference against `tol`, a `double`
+// `lower_bound` on `at -+ tol`), and where they disagreed the result was not clamped at the bound
+// or had a wrong domain. The four cases are those of the issue, verbatim; each result must have
+// `degree + 1` bitwise-equal knots at both ends and the requested domain, or refuse where a
+// distinct knot of an unsnapped space within the tolerance of the bound would end up inside it.
+
+namespace {
+
+/// One direction on `knots` at `degree`, snapped or not, control points `i^2 + 1`.
+template <class T>
+bs::Bspline<T> squares_curve(const std::vector<double>& knots, int degree, bool snap) {
+  const std::vector<T> k = cast_all<T>(knots);
+  std::vector<bs::BsplineSpace1D<T>> spaces;
+  spaces.emplace_back(sp(k), degree, false, snap);
+  const auto n = static_cast<std::size_t>(spaces[0].num_basis());
+  std::vector<T> cp(n);
+  for (std::size_t i = 0; i < n; ++i) {
+    cp[i] = static_cast<T>(static_cast<double>(i * i) + 1.0);
+  }
+  return bs::Bspline<T>(bs::BsplineSpace<T>(std::move(spaces)), sp(cp), false);
+}
+
+/// Check the first and the last `degree + 1` knots are bitwise equal, exactly that many, and the
+/// domain is `[lo, hi]` exactly.
+template <class T>
+void check_clamped_on(const bs::Bspline<T>& b, double lo, double hi) {
+  const bs::BsplineSpace<T> s = b.space();
+  const auto k = s.spaces()[0].knots();
+  const auto p = static_cast<std::size_t>(s.spaces()[0].degree());
+  REQUIRE(k.size() >= 2 * p + 2);
+  const std::size_t n = k.size();
+  for (std::size_t i = 0; i <= p; ++i) {
+    CAPTURE(i);
+    CHECK(k[i] == k[0]);
+    CHECK(k[n - 1 - i] == k[n - 1]);
+  }
+  CHECK(k[p + 1] != k[0]);
+  CHECK(k[n - p - 2] != k[n - 1]);
+  CHECK(static_cast<double>(k[0]) == lo);
+  CHECK(static_cast<double>(k[n - 1]) == hi);
+}
+
+using BoundsList = std::vector<std::optional<bs::Bounds>>;
+
+}  // namespace
+
+TEST_CASE("restrict and split: over-collection, a left key that rounds onto a knot (double)") {
+  // fl(at - tol) == 0.3 for at = 0.3 + 26 ulp, which the count does not take as the knot.
+  const bs::Bspline<double> b = squares_curve<double>({0, 0, 0, 0.3, 0.8, 0.8, 0.8}, 2, true);
+  const double ulp = std::nextafter(0.3, 1.0) - 0.3;
+  for (const int k : {26, 27}) {
+    CAPTURE(k);
+    const double at = 0.3 + k * ulp;
+    check_clamped_on(bs::restrict<double>(b, BoundsList{bs::Bounds{at, 0.8}}), at, 0.8);
+    const auto [left, right] = bs::split<double>(b, 0, at);
+    check_clamped_on(left, 0.0, at);
+    check_clamped_on(right, at, 0.8);
+  }
+}
+
+TEST_CASE("restrict and split: over-collection, a float bound within tol of a knot in double") {
+  const auto s = static_cast<double>(1.2375F);
+  const bs::Bspline<float> b = squares_curve<float>({0, 0, 0, 0.5, s, s, s}, 2, true);
+  const double tol = b.space().spaces()[0].tolerance();
+  for (const double f : {1.0, 2.0}) {
+    CAPTURE(f);
+    const double bound = 0.5 + f * tol;
+    const auto at = static_cast<double>(static_cast<float>(bound));
+    check_clamped_on(bs::restrict<float>(b, BoundsList{bs::Bounds{bound, s}}), at, s);
+    const auto [left, right] = bs::split<float>(b, 0, bound);
+    check_clamped_on(left, 0.0, at);
+    check_clamped_on(right, at, s);
+  }
+}
+
+TEST_CASE("restrict and split: under-collection, an unsnapped knot exactly tol above the bound") {
+  const double eps = std::numeric_limits<double>::epsilon();
+  for (const double m : {32.0, 34.0}) {
+    CAPTURE(m);
+    const bs::Bspline<double> b =
+        squares_curve<double>({0, 0, 0, 1.0, 2.0, 2.0 + m * eps, 4.0, 4.0, 4.0}, 2, false);
+    check_clamped_on(bs::restrict<double>(b, BoundsList{bs::Bounds{0.0, 2.0}}), 0.0, 2.0);
+  }
+  // At 32 eps the knot above 2 is within the tolerance of the bound: a piece starting at 2 would
+  // hold it beside its clamped start, and the call refuses, naming the bound.
+  const bs::Bspline<double> b =
+      squares_curve<double>({0, 0, 0, 1.0, 2.0, 2.0 + 32 * eps, 4.0, 4.0, 4.0}, 2, false);
+  CHECK_THROWS_WITH_AS(static_cast<void>(bs::split<double>(b, 0, 2.0)),
+                       doctest::Contains("The bound 2.0 is within the tolerance"),
+                       pantr::value_error);
+  CHECK_THROWS_WITH_AS(static_cast<void>(bs::restrict<double>(b, BoundsList{bs::Bounds{2.0, 4.0}})),
+                       doctest::Contains("The bound 2.0 is within the tolerance"),
+                       pantr::value_error);
+}
+
+TEST_CASE("restrict and split: under-collection, a float count that rounds a knot onto the bound") {
+  const double k3 = -(0x1p-20 + 0x1p-43);
+  const bs::Bspline<float> b =
+      squares_curve<float>({-1, -1, -1, k3, 0x1p-20, 0.5, 0.75, 1, 1, 1}, 2, false);
+  check_clamped_on(bs::restrict<float>(b, BoundsList{bs::Bounds{0x1p-20, 1.0}}), 0x1p-20, 1.0);
+  CHECK_THROWS_WITH_AS(static_cast<void>(bs::split<float>(b, 0, 0x1p-20)),
+                       doctest::Contains("The bound 9.5367431640625e-07 is within the tolerance"),
+                       pantr::value_error);
+  // Without the knots 0.5 and 0.75 the previous release refused with the knot-count error.
+  const bs::Bspline<float> short_b =
+      squares_curve<float>({-1, -1, -1, k3, 0x1p-20, 1, 1, 1}, 2, false);
+  check_clamped_on(bs::restrict<float>(short_b, BoundsList{bs::Bounds{0x1p-20, 1.0}}), 0x1p-20,
+                   1.0);
+}
+
+TEST_CASE("restrict and split: a NaN bound is refused, not cut as if every knot were at it") {
+  // No knot equals a NaN and every comparison with one is false, so a search for the knots at it
+  // has no meaning: it is refused before any count or cut.
+  const bs::Bspline<double> b = squares_curve<double>({0, 0, 0, 0.5, 1, 1, 1}, 2, true);
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  CHECK_THROWS_WITH_AS(static_cast<void>(bs::restrict<double>(b, BoundsList{bs::Bounds{nan, 0.7}})),
+                       doctest::Contains("Lower bound (nan) is outside the domain"),
+                       pantr::value_error);
+  CHECK_THROWS_WITH_AS(static_cast<void>(bs::restrict<double>(b, BoundsList{bs::Bounds{0.2, nan}})),
+                       doctest::Contains("Upper bound (nan) is outside the domain"),
+                       pantr::value_error);
+  CHECK_THROWS_WITH_AS(static_cast<void>(bs::split<double>(b, 0, nan)),
+                       doctest::Contains("value must be strictly inside the domain"),
+                       pantr::value_error);
+}
+
+// ---- the pieces of restrict and split keep the parent's tolerance
+// -----------------------------------------------------------------
+//
+// The result's space used to be built with a tolerance derived from its own knots. Where the far
+// knot `1e6` set the parent's, the window [0, 2] derived a smaller one, and `1` and `1 + 1e-12`,
+// one knot of the unsnapped parent, became two knots of the result. `BsplineSpace1D::restrict`
+// keeps the parent's tolerance, and so must these.
+
+TEST_CASE("restrict and split: the pieces keep the parent direction's tolerance") {
+  const bs::Bspline<double> b =
+      squares_curve<double>({0, 0, 0, 1, 1 + 1e-12, 2, 3, 4, 1e6, 1e6, 1e6}, 2, false);
+  const double tol = b.space().spaces()[0].tolerance();
+  // 8 eps max(span, |k0|, |k_last|) = 8 eps 1e6, as the issue prints it.
+  REQUIRE(tol == 1.7763568394002505e-09);
+  const bs::Bspline<double> r = bs::restrict<double>(b, BoundsList{bs::Bounds{0.0, 2.0}});
+  CHECK(r.space().spaces()[0].tolerance() == tol);
+  CHECK(r.space().spaces()[0].num_intervals() == 2);
+  const auto [left, right] = bs::split<double>(b, 0, 2.0);
+  CHECK(left.space().spaces()[0].tolerance() == tol);
+  CHECK(left.space().spaces()[0].num_intervals() == 2);
+  CHECK(right.space().spaces()[0].tolerance() == tol);
+}
+
+TEST_CASE("restrict and split: a direction not cut keeps its space") {
+  // Direction 1 has its own tolerance; the pieces cut along direction 0 keep it unchanged.
+  const std::vector<double> k0 = {0, 0, 0, 1, 1 + 1e-12, 2, 3, 4, 1e6, 1e6, 1e6};
+  const std::vector<double> k1 = {0, 0, 0.5, 3, 3};
+  std::vector<bs::BsplineSpace1D<double>> spaces;
+  spaces.emplace_back(sp(k0), 2, false, false);
+  spaces.emplace_back(sp(k1), 1, false, false);
+  const auto n = static_cast<std::size_t>(spaces[0].num_basis() * spaces[1].num_basis());
+  const std::vector<double> cp(n, 1.0);
+  const bs::Bspline<double> b(bs::BsplineSpace<double>(std::move(spaces)), sp(cp), false);
+  const double tol0 = b.space().spaces()[0].tolerance();
+  const double tol1 = b.space().spaces()[1].tolerance();
+  const bs::Bspline<double> r =
+      bs::restrict<double>(b, BoundsList{bs::Bounds{0.0, 2.0}, std::nullopt});
+  CHECK(r.space().spaces()[0].tolerance() == tol0);
+  CHECK(r.space().spaces()[1].tolerance() == tol1);
+  const auto [left, right] = bs::split<double>(b, 0, 2.0);
+  CHECK(left.space().spaces()[1].tolerance() == tol1);
+  CHECK(right.space().spaces()[1].tolerance() == tol1);
+}
+
+TEST_CASE("restrict and split: the ends the review pinned, one by one") {
+  const double eps = std::numeric_limits<double>::epsilon();
+  // The upper end of a restriction refuses an unsnapped knot just below it, as the lower end does
+  // one just above.
+  const bs::Bspline<double> below =
+      squares_curve<double>({0, 0, 0, 1.0, 2.0 - 32 * eps, 2.0, 4.0, 4.0, 4.0}, 2, false);
+  CHECK_THROWS_WITH_AS(
+      static_cast<void>(bs::restrict<double>(below, BoundsList{bs::Bounds{0.5, 2.0}})),
+      doctest::Contains("The bound 2.0 is within the tolerance"), pantr::value_error);
+  check_clamped_on(bs::restrict<double>(below, BoundsList{bs::Bounds{2.0, 4.0}}), 2.0, 4.0);
+
+  // An open domain end the cut keeps is the space's own, even with an unsnapped knot in its class.
+  const bs::Bspline<double> start =
+      squares_curve<double>({0, 0, 0, 8 * eps, 1.0, 2.0, 2.0, 2.0}, 2, false);
+  REQUIRE(8 * eps <= start.space().spaces()[0].tolerance());
+  const bs::Bspline<double> kept = bs::restrict<double>(start, BoundsList{bs::Bounds{0.0, 1.5}});
+  const auto kk = kept.space().spaces()[0].knots();
+  CHECK(kk[2] == 0.0);
+  CHECK(kk[3] == 8 * eps);
+
+  // Two bounds within the tolerance of each other enclose no interval.
+  const bs::Bspline<double> b = squares_curve<double>({0, 0, 0, 0.5, 1, 1, 1}, 2, true);
+  const double tol = b.space().spaces()[0].tolerance();
+  CHECK_THROWS_WITH_AS(
+      static_cast<void>(bs::restrict<double>(b, BoundsList{bs::Bounds{0.3, 0.3 + 0.5 * tol}})),
+      doctest::Contains("enclose no interval"), pantr::value_error);
+  check_clamped_on(bs::restrict<double>(b, BoundsList{bs::Bounds{0.3, 0.3 + 2 * tol}}), 0.3,
+                   0.3 + 2 * tol);
+
+  // A direct split_1d at NaN, which no knot equals, refuses rather than cutting at index 0.
+  const std::vector<double> k = {0, 0, 0, 0.5, 1, 1, 1};
+  const std::vector<double> cp = {1, 2, 3, 4};
+  const mdview<const double, 2> ctrl(cp.data(), 4, 1);
+  CHECK_THROWS_WITH_AS(static_cast<void>(bs::split_1d<double>(
+                           sp(k), 2, ctrl, false, tol, std::numeric_limits<double>::quiet_NaN())),
+                       doctest::Contains("NaN"), pantr::value_error);
+}
