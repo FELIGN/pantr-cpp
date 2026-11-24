@@ -78,7 +78,8 @@ class THBSplineSpace {
   ///
   /// Args:
   ///     root (bspline::BsplineSpace<T>): The level-0 tensor-product space.
-  ///     hierarchy (grid::HierarchicalGrid): A grid whose root cells and bounds match `root`.
+  ///     hierarchy (grid::HierarchicalGrid): A grid whose root cells, bounds and breakpoints
+  ///         match `root` (each axis within that axis's knot tolerance).
   ///     truncate (bool): Build the truncated basis (THB) rather than the plain one (HB).
   ///     regularity (std::vector<std::optional<int>>): Per-direction continuity at the knots
   ///         inserted when subdividing, `dim` entries (a scalar is broadcast by the caller); no
@@ -86,10 +87,11 @@ class THBSplineSpace {
   ///
   /// Raises:
   ///     value_error: `hierarchy` and `root` disagree on the dimension, on the root knot-span
-  ///         counts or on the domain; `regularity` has the wrong length or a value out of range;
-  ///         the subdivision merges knots (a level has fewer intervals than the grid has cells);
-  ///         a refinement of a truncated function meets a zero two-scale slice. A periodic root
-  ///         is refused with the `value_error` of `BsplineSpace1D::first_basis_per_interval`.
+  ///         counts, on the domain or on an interior breakpoint; `regularity` has the wrong length
+  ///         or a value out of range; the subdivision merges knots (a level has fewer intervals
+  ///         than the grid has cells); a refinement of a truncated function meets a zero two-scale
+  ///         slice. A periodic root is refused with the `value_error` of
+  ///         `BsplineSpace1D::first_basis_per_interval`.
   ///     state_error: A function of a level space has an empty support (an invalid space).
   ///     std::overflow_error: A two-scale matrix between two levels overflows `T` (see
   ///         `detail::make_two_scale`).
@@ -650,7 +652,7 @@ class THBSplineSpace {
     // above), each axis to its own knot tolerance, the one its classification merges knots by:
     // the cells take their bounds from the grid and their functions from the knots, so a grid on
     // other breakpoints gives a basis that does not sum to one in a cell. `tensor_product_grid`
-    // takes its breakpoints from these classes and is always accepted.
+    // takes its breakpoints from these classes, so its interior breakpoints match exactly.
     for (std::size_t k = 0; k < d; ++k) {
       const std::span<const double> bp = hierarchy.root().breakpoints(k);
       const std::span<const T> knots = root.spaces()[k].unique_knots_and_multiplicity(true).first;

@@ -214,7 +214,8 @@
   that axis's knot tolerance. The previous release checked only the cell counts and the bounds, so
   a grid with the right number of cells on other breakpoints was accepted, and its cells were given
   the functions of other knot spans: `tabulate_basis` returned values that do not sum to one,
-  without an error. A root grid built with `tensor_product_grid(root_space)` is always accepted.
+  without an error. A root grid built with `tensor_product_grid(root_space)` takes its breakpoints
+  from those knots.
 
 ### Changed
 - **`TensorProductGrid.is_uniform` judges an axis's spacings relative to its scale**: uniform when
