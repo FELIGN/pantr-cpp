@@ -1605,6 +1605,12 @@
 - **A `BVH` built with a negative `n_cells` and no nodes** returns an empty array from
   `query_aabb`. The previous release read past its empty node arrays and returned a cell id taken
   from that memory.
+- **`BsplineSpace1D.tabulate_Lagrange_extraction_operators` of a degree-0 space** returns one 1x1
+  identity per interval, for every Lagrange variant, as the Bezier and cardinal extractions of the
+  same space already did; `compute_lagrange_to_bernstein_1d(0)` and
+  `compute_bernstein_to_lagrange_1d(0)` return `[[1.]]`. The previous release refused degree 0 in
+  both Lagrange builders with "Degree must at least 1". A negative degree is refused with "Degree
+  must be non-negative", the message of the other change-of-basis builders.
 
 ## 0.7.0 (2026-08-19)
 
