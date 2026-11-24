@@ -330,8 +330,9 @@ TEST_CASE("local space kernels: every refusal and its message") {
   THB_THROWS_WITH_AS(bs::dof_owner_windowed(s.space, good, bad_lo), dofs.c_str(),
                      pantr::index_error);
 
-  // An empty request to `compute_halo` or `dof_owner_windowed` is still refused for an invalid
-  // space or a short partition: a rank owning nothing must refuse what the others refuse.
+  // An empty request is still refused, by `compute_halo` and `dof_owner_windowed` for an invalid
+  // space and by `dof_owner_windowed` for a short partition: a rank owning nothing must refuse
+  // what the others refuse.
   // `dof_owner`, whose request is always every function, refuses the invalid space too. The
   // function with knots `t_3 .. t_6` all 0.5 has an empty support.
   const bs::BsplineSpace<double> empty_support(
