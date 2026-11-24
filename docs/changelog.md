@@ -1352,8 +1352,8 @@
   constructor, new in this release, raises `state_error` on every rank in the same case, and
   `pantr::mpi::create_distributed_space`, also new, checks the space (empty support, periodic
   direction) on every rank before the partitioner runs, so every rank raises the space's own error
-  rather than rank 0 the partitioner's and the others `value_error` "rank 0 could not compute the
-  partition".
+  where a partitioner that fails on the space gave rank 0 the partitioner's error and the others
+  `value_error` "rank 0 could not compute the partition".
 - **B-spline basis derivatives from degree 21 on are correct at every order.** The row of order
   `k` was scaled by `degree! / (degree - k)!` formed as a 64-bit integer, which wraps once it
   passes `2^63`: from degree 21 (orders 19 to 21; at degree 25 orders 16 to 25) those rows were
