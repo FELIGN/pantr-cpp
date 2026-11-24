@@ -169,13 +169,12 @@ TEST_CASE("SpanwiseElementExtraction: identity structure of the targets") {
   const auto bez = make_extraction<double>({c_minus_1, c_minus_1}, bs::ExtractionTarget::bezier);
   CHECK(bez.is_identity());
   CHECK(bez.num_identity_elements() == 4);
-  // Degree 0: every element of every target is the 1x1 identity; the Lagrange operator of a
-  // degree-0 space cannot be built, as before.
+  // Degree 0: every element of every target is the 1x1 identity, the Lagrange one included (the
+  // degree-0 Lagrange and Bernstein bases are both the constant 1).
   const Dir deg0{{0, 1, 2, 3}, 0, false};
   CHECK(make_extraction<double>({deg0}, bs::ExtractionTarget::bezier).is_identity());
   CHECK(make_extraction<double>({deg0}, bs::ExtractionTarget::cardinal).is_identity());
-  CHECK_THROWS_AS(make_extraction<double>({deg0}, bs::ExtractionTarget::lagrange),
-                  pantr::value_error);
+  CHECK(make_extraction<double>({deg0}, bs::ExtractionTarget::lagrange).is_identity());
   // A smooth space: no Bezier element is an identity; the interior elements of a uniform one are
   // cardinal.
   const Dir smooth{bspline_test::clamped(2, {0.25, 0.5, 0.75}), 2, false};
