@@ -208,6 +208,15 @@ def test_lagrange_structural_identity_degree0_all_identity() -> None:
         assert len(mask) == sp1.num_intervals
 
 
+def test_lagrange_extraction_of_a_degree0_space_is_identity() -> None:
+    """The Lagrange target builds on a degree-0 space, every element the 1x1 identity (#11)."""
+    space = BsplineSpace([BsplineSpace1D([0, 1, 2, 3], 0)])
+    for variant in LagrangeVariant:
+        ext = SpanwiseElementExtraction(space, "lagrange", lagrange_variant=variant)
+        assert ext.is_identity
+        assert ext.num_identity_elements == space.num_total_intervals
+
+
 def test_lagrange_structural_identity_smooth_space_never_identity() -> None:
     """Smooth spaces are never Lagrange-identity regardless of degree or variant."""
     for degree in (1, 2, 3):

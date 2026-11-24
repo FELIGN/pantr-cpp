@@ -286,7 +286,7 @@ TEST_CASE_TEMPLATE(
         LagrangeVariant::chebyshev_1st, LagrangeVariant::gauss_lobatto_legendre,
         LagrangeVariant::chebyshev_2nd};
     for (const LagrangeVariant variant : variants) {
-      CAPTURE(static_cast<int>(variant));
+      CAPTURE(pantr::basis::variant_name(variant));
       NdArray<T> got({n_int, order, order}, pantr::for_overwrite);
       bs::lagrange_extraction_operators<T>(space, variant, got.template view<3>());
       const auto matrix = pantr::change_basis::cached<T>(
@@ -339,7 +339,9 @@ TEST_CASE_TEMPLATE(
                                       LagrangeVariant::chebyshev_2nd};
   for (const Space1& s : spaces_1d()) {
     if (s.degree < 1 || s.degree > 4) {
-      continue;  // degree 0 has no Lagrange basis; degree > 4 only repeats the argument
+      // Degree 0 needs a one-node set, which the Lobatto families lack (its operators are the
+      // identity, checked in the test above); degree > 4 only repeats the argument.
+      continue;
     }
     CAPTURE(s.name);
     const bs::BsplineSpace1D<T> space = make_space<T>(s);

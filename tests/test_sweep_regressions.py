@@ -21,11 +21,9 @@ accessor directly, and the restriction that returned a shorter domain than asked
 consequence, since its ``b_new + tol`` step ceased to be a no-op once ``tol`` carried the
 knot vector's magnitude; and the change of basis that reported numpy's ``LinAlgError`` for a
 legal degree, closed by giving every builder that solves a declared, documented
-``(degree, dtype)`` domain and a ``ValueError`` that names the argument at fault.
-
-Two remain open, both from the August 2026 triage of the full profile: knot-vector
-factories that disagree with their own documentation at zero intervals, and a Lagrange
-extraction that cannot be built on a degree-0 space its two sibling extractions handle.
+``(degree, dtype)`` domain and a ``ValueError`` that names the argument at fault; and the
+Lagrange extraction that could not be built on a degree-0 space its two sibling extractions
+handle, closed by letting the two Lagrange change-of-basis builders accept degree 0.
 
 One test per **root cause**, not per symptom: several of these root causes have many
 triggering combinations, and each test names them in a comment rather than repeating
@@ -817,7 +815,7 @@ def test_restrict_spans_the_requested_window() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Lagrange extraction is the only one of the three that a degree-0 space defeats
+# Lagrange extraction was the only one of the three that a degree-0 space defeated (fixed)
 # ---------------------------------------------------------------------------
 
 

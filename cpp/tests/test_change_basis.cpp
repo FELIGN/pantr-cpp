@@ -154,7 +154,7 @@ TEST_CASE_TEMPLATE("change_basis: the Lagrange matrices of degree 0 are [[1]] fo
        {LagrangeVariant::equispaces, LagrangeVariant::gauss_legendre,
         LagrangeVariant::gauss_lobatto_legendre, LagrangeVariant::chebyshev_1st,
         LagrangeVariant::chebyshev_2nd}) {
-    CAPTURE(static_cast<int>(variant));
+    CAPTURE(pantr::basis::variant_name(variant));
     for (const auto& m :
          {cb::lagrange_to_bernstein<T>(0, variant), cb::bernstein_to_lagrange<T>(0, variant)}) {
       REQUIRE(m.shape().size() == 2);
