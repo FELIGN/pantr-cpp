@@ -207,6 +207,14 @@
   are accepted. The previous release used the float values in the spectral backend and rounded
   them in the METIS backend. An object array (of Python ints) now raises `TypeError`, where the
   previous release accepted it.
+- **`THBSplineSpace` whose grid's root breakpoints are not the root space's knots** raises
+  `ValueError` naming the axis and the first differing breakpoint ("grid root breakpoints must
+  match root_space knots: along axis 0, breakpoint 1 is 0.1 where the knot is 0.25."). Each
+  interior breakpoint is held to the root space's distinct in-domain knot along that axis, within
+  that axis's knot tolerance. The previous release checked only the cell counts and the bounds, so
+  a grid with the right number of cells on other breakpoints was accepted, and its cells were given
+  the functions of other knot spans: `tabulate_basis` returned values that do not sum to one,
+  without an error. A root grid built with `tensor_product_grid(root_space)` is always accepted.
 
 ### Changed
 - **`TensorProductGrid.is_uniform` judges an axis's spacings relative to its scale**: uniform when

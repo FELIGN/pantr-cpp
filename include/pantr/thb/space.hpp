@@ -646,6 +646,24 @@ class THBSplineSpace {
         throw value_error("grid root bounds must match root_space domain.");
       }
     }
+    // The interior breakpoints against the root's in-domain knot classes (the ends are the bounds
+    // above), each axis to its own knot tolerance, the one its classification merges knots by:
+    // the cells take their bounds from the grid and their functions from the knots, so a grid on
+    // other breakpoints gives a basis that does not sum to one in a cell. `tensor_product_grid`
+    // takes its breakpoints from these classes and is always accepted.
+    for (std::size_t k = 0; k < d; ++k) {
+      const std::span<const double> bp = hierarchy.root().breakpoints(k);
+      const std::span<const T> knots = root.spaces()[k].unique_knots_and_multiplicity(true).first;
+      const double axis_tol = root.spaces()[k].tolerance();
+      for (std::size_t i = 1; i + 1 < bp.size(); ++i) {
+        const auto knot = static_cast<double>(knots[i]);
+        if (!(std::abs(bp[i] - knot) <= axis_tol)) {
+          throw value_error("grid root breakpoints must match root_space knots: along axis " +
+                            std::to_string(k) + ", breakpoint " + std::to_string(i) + " is " +
+                            py_repr(bp[i]) + " where the knot is " + py_repr(knot) + ".");
+        }
+      }
+    }
     if (regularity.size() != d) {
       throw value_error("regularity must be a scalar or length-" + std::to_string(d) +
                         " sequence; got length " + std::to_string(regularity.size()) + ".");
