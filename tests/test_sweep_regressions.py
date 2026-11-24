@@ -7,7 +7,7 @@ XPASS failure, and the marker comes off, promoting the test to a permanent guard
 same data. That is the convention ``tests/test_review_regressions.py`` follows for the
 June 2026 review, whose markers have all since been removed.
 
-Twelve markers have already come off here: the domain-membership test, closed by the
+Thirteen markers have already come off here: the domain-membership test, closed by the
 ``np.isclose`` tolerance-leak fix in #289; the tanh-sinh endpoint test, closed by
 truncating the rule where the endpoint gap stops being resolvable; the Lagrange
 reproducibility test, closed by seeding the barycentric node permutation; the float32
@@ -21,9 +21,11 @@ accessor directly, and the restriction that returned a shorter domain than asked
 consequence, since its ``b_new + tol`` step ceased to be a no-op once ``tol`` carried the
 knot vector's magnitude; and the change of basis that reported numpy's ``LinAlgError`` for a
 legal degree, closed by giving every builder that solves a declared, documented
-``(degree, dtype)`` domain and a ``ValueError`` that names the argument at fault; and the
-Lagrange extraction that could not be built on a degree-0 space its two sibling extractions
-handle, closed by letting the two Lagrange change-of-basis builders accept degree 0.
+``(degree, dtype)`` domain and a ``ValueError`` that names the argument at fault; the knot
+factories that disagreed with their own documentation at zero intervals, closed by
+requiring at least one interval in the factories' validator; and the Lagrange extraction
+that could not be built on a degree-0 space its two sibling extractions handle, closed by
+letting the two Lagrange change-of-basis builders accept degree 0.
 
 One test per **root cause**, not per symptom: several of these root causes have many
 triggering combinations, and each test names them in a comment rather than repeating
