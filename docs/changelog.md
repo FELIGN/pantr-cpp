@@ -1344,6 +1344,17 @@
   in a separate package; until then pantr has none of its own.
 
 ### Fixed
+- **A periodic B-spline whose seam knot is repeated can be opened, restricted and split.**
+  `Bspline.to_open_bspline`, `restrict` and `split` counted the copies of a domain end among the
+  first or the last `degree + 1` knots only, so a copy inside the domain (a periodic knot vector
+  with a double knot at the seam, or a non-periodic one with `degree + 1` copies of its start
+  after an external knot) was missed, one copy too many was inserted, and every call refused with
+  "Inserting these knots would exceed the maximum multiplicity". The copies of an end are now
+  counted wherever they lie, by the rule `restrict` uses for a bound (knots equal to it). A space
+  built with `snap_knots=False` holding a knot distinct from the seam but within the tolerance of
+  it now raises `ValueError` naming the seam and the knot and suggesting `snap_knots=True`, as
+  `restrict` and `split` do at a cut end. The C++ `pantr::bspline::to_open_1d` and the functions
+  built on it are the same.
 - **`Bspline.restrict` and `Bspline.split` decide the knots at a bound by one rule**, so every
   end they cut has `degree + 1` equal knots and the value asked for. The bound is taken as a
   domain end or a knot within the space's tolerance of it, else as itself rounded to the storage

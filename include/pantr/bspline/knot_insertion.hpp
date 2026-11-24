@@ -29,6 +29,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -142,13 +143,76 @@ template <StorageFloat T>
   return KnotsAndCtrl<T>{std::move(refined), std::move(out)};
 }
 
+namespace detail {
+
+/// The index range of the knots bitwise equal to `value`.
+///
+/// Args:
+///     knots (std::span<const T>): A non-decreasing knot vector.
+///     value (T): The value searched for.
+///
+/// Returns:
+///     std::pair<std::size_t, std::size_t>: `[first, past)`, empty where no knot equals `value`.
+///
+/// Raises:
+///     value_error: `value` is NaN, which no knot equals and the search cannot order (it would
+///         report every knot as equal to it).
+template <StorageFloat T>
+[[nodiscard]] std::pair<std::size_t, std::size_t> equal_knots(std::span<const T> knots, T value) {
+  if (std::isnan(value)) {
+    throw value_error("A NaN bound has no knots at it.");
+  }
+  const auto [lo, hi] = std::equal_range(knots.begin(), knots.end(), value);
+  return {static_cast<std::size_t>(lo - knots.begin()),
+          static_cast<std::size_t>(hi - knots.begin())};
+}
+
+/// Refuse a piece whose end `end` has a distinct knot within `tol` of it inside the piece.
+///
+/// Only a space built with `snap_knots = false` holds such a knot. The piece's end class under
+/// `tol` would have more than `degree + 1` members, which a space refuses at its last knot; this
+/// refuses it at an end that a cut (`restrict`, `split`) or the conversion to open form
+/// (`to_open_1d`, at a domain end or the seam of a periodic direction) clamps.
+///
+/// Args:
+///     piece (std::span<const T>): The piece's knots, clamped at `end`.
+///     end (T): The value at the end checked, `piece.front()` or `piece.back()`.
+///     what (std::string_view): What the end is, for the message: `"bound"`, `"seam"` or
+///         `"domain end"`.
+///     value (double): The end as requested, for the message.
+///     tol (double): Absolute parametric tolerance.
+///
+/// Raises:
+///     value_error: A knot of `piece` other than `end` is within `tol` of it.
+template <StorageFloat T>
+void check_piece_end(std::span<const T> piece, T end, std::string_view what, double value,
+                     double tol) {
+  for (const T k : piece) {
+    if (k != end && static_cast<double>(std::abs(static_cast<T>(k - end))) <= tol) {
+      throw value_error("The " + std::string(what) + " " + py_repr(value) +
+                        " is within the tolerance " + py_repr(tol) + " of the distinct knot " +
+                        py_repr(static_cast<double>(k)) +
+                        ", which a piece cut there would hold beside its clamped end; build the "
+                        "space with snap_knots=True.");
+    }
+  }
+}
+
+}  // namespace detail
+
 /// Convert a single parametric direction to an open (clamped) knot vector.
 ///
-/// Inserts `degree + 1 - m_left` copies of the left boundary knot and `degree + 1 - m_right` of the
-/// right one so that both ends have multiplicity `degree + 1`, then trims the ghost (or external)
-/// knots, `degree + 1 - m_end` entries outside the domain on each side, each side with its own
-/// boundary multiplicity. For a periodic direction the `n_full = size - degree - 1` control points
-/// are first rebuilt by wrapping the stored ones (`full[i] = stored[i mod n_stored]`).
+/// Counts the copies of the domain start `a = knots[degree]` and end `b = knots[size - degree - 1]`
+/// wherever they lie, a knot being a copy when it is bitwise equal to the end (the rule of
+/// `restrict.hpp`): a periodic vector whose seam knot is repeated holds copies of `a` past index
+/// `degree`, or of `b` before `size - degree - 1`. Inserts `degree + 1 - m` copies of each end, `m`
+/// its count, then trims the ghost (or external) knots, those before the first copy of `a` and
+/// after the last copy of `b`. For a periodic direction the `n_full = size - degree - 1` control
+/// points are first rebuilt by wrapping the stored ones (`full[i] = stored[i mod n_stored]`).
+///
+/// `tol` decides one thing: a knot of the result distinct from an end but within `tol` of it,
+/// which only a space built with `snap_knots = false` holds, is refused (`check_piece_end`), as
+/// `restrict` refuses it at a cut end.
 ///
 /// Args:
 ///     knots (std::span<const T>): The knot vector (ghost knots included if `periodic`).
@@ -163,8 +227,10 @@ template <StorageFloat T>
 ///
 /// Raises:
 ///     value_error: `degree < 0` or fewer than `2 * degree + 2` knots; the control points do not
-///         match the knots (a periodic direction with no control points cannot be wrapped); or the
-///         knot vector already has multiplicity `degree + 1` at both ends and is not periodic.
+///         match the knots (a periodic direction with no control points cannot be wrapped); the
+///         knot vector already has multiplicity `degree + 1` at both ends and is not periodic; a
+///         domain end has more than `degree + 1` copies; or a knot distinct from a domain end
+///         (the seam, for a periodic direction) is within `tol` of it inside the domain.
 template <StorageFloat T>
 [[nodiscard]] KnotsAndCtrl<T> to_open_1d(std::span<const T> knots, int degree,
                                          mdview<const T, 2> ctrl, bool periodic, double tol) {
@@ -184,22 +250,31 @@ template <StorageFloat T>
     detail::check_net_matches("to_open", n_stored, knots.size(), degree);
   }
 
+  // Every copy of a domain end, wherever it lies; the knots before the first copy of `a` and after
+  // the last copy of `b` are the ones trimmed.
   const T a = knots[p];
   const T b = knots[knots.size() - p - 1];
-  std::size_t m_left = 0;
-  std::size_t m_right = 0;
-  for (std::size_t i = 0; i <= p; ++i) {
-    if (static_cast<double>(std::abs(static_cast<T>(knots[i] - a))) <= tol) {
-      ++m_left;
-    }
-    if (static_cast<double>(std::abs(static_cast<T>(knots[knots.size() - p - 1 + i] - b))) <= tol) {
-      ++m_right;
-    }
-  }
-  if (m_left == p + 1 && m_right == p + 1 && !periodic) {
+  const auto [first_a, past_a] = detail::equal_knots<T>(knots, a);
+  const auto [first_b, past_b] = detail::equal_knots<T>(knots, b);
+  if (first_a == 0 && past_b == knots.size() && !periodic) {
     throw value_error(
         "B-spline is already open (both boundary knots have multiplicity degree + 1).");
   }
+  // A raw knot vector can hold more copies of an end than its degree allows (a space cannot), and
+  // `degree + 1 - m` below would wrap.
+  const std::size_t m_left = past_a - first_a;
+  const std::size_t m_right = past_b - first_b;
+  for (const auto& [m, end] : {std::pair{m_left, a}, std::pair{m_right, b}}) {
+    if (m > p + 1) {
+      throw value_error("to_open: the domain end " + py_repr(static_cast<double>(end)) + " has " +
+                        std::to_string(m) +
+                        " copies, more than degree + 1 = " + std::to_string(p + 1) + ".");
+    }
+  }
+  const std::span<const T> kept = knots.subspan(first_a, past_b - first_a);
+  const std::string_view what = periodic ? "seam" : "domain end";
+  detail::check_piece_end<T>(kept, a, what, static_cast<double>(a), tol);
+  detail::check_piece_end<T>(kept, b, what, static_cast<double>(b), tol);
 
   // The full control points of the non-periodic form.
   NdArray<T> wrapped = detail::empty_net<T>();
@@ -222,7 +297,9 @@ template <StorageFloat T>
   std::vector<T> new_knots;
   NdArray<T> new_ctrl = detail::empty_net<T>();
   if (!to_insert.empty()) {
-    KnotsAndCtrl<T> inserted = insert_knots_1d<T>(knots, degree, full, to_insert, tol);
+    // A zero tolerance, as in `restrict_1d`: copies of a value, not classes under `tol` that a
+    // knot outside the result, within `tol` of an end, would join.
+    KnotsAndCtrl<T> inserted = insert_knots_1d<T>(knots, degree, full, to_insert, 0.0);
     new_knots = std::move(inserted.knots);
     new_ctrl = std::move(inserted.ctrl);
   } else {
@@ -231,9 +308,10 @@ template <StorageFloat T>
     std::copy(full.data_handle(), full.data_handle() + full.extent(0) * cols, new_ctrl.data());
   }
 
-  // Trim the external / ghost knots, each side counted with its own boundary multiplicity.
-  const std::size_t n_trim_left = p + 1 - m_left;
-  const std::size_t n_trim_right = p + 1 - m_right;
+  // Trim the external / ghost knots. The insertion adds only copies of `a` and `b`, so the knots
+  // before the first copy of `a` and after the last copy of `b` are where they were.
+  const std::size_t n_trim_left = first_a;
+  const std::size_t n_trim_right = knots.size() - past_b;
   const std::size_t end = new_knots.size() - n_trim_right;
   std::vector<T> open_knots(new_knots.begin() + static_cast<std::ptrdiff_t>(n_trim_left),
                             new_knots.begin() + static_cast<std::ptrdiff_t>(end));
