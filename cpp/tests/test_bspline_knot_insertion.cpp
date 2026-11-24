@@ -1593,7 +1593,7 @@ TEST_CASE_TEMPLATE("to_open, restrict and split: a periodic space with a repeate
     // One insertion pass rounds the control points by 8 (p + 1) u max|P| (the knot insertion
     // tests above), and max|P| <= 1. `restrict` and `split` insert once more on the opened
     // points: the exact refinement is a convex combination, so it carries the first pass's error
-    // without growth and adds its own, two passes in all.
+    // without growth and adds its own, two passes in all (to first order in u).
     const double pass = 8.0 * (static_cast<double>(c.p) + 1.0) * unit_roundoff<T>();
     check_agrees(per, n_stored, bs::to_open_bspline<T>(b), 0.0, 1.0, pass);
     const auto lo = static_cast<double>(static_cast<T>(0.3));
@@ -1694,4 +1694,24 @@ TEST_CASE("to_open_1d: copies of a domain end outside its first or last degree +
                              sp(over), 2, mdview<const double, 2>(cp.data(), 2, 1), true, 1e-12)),
                          message, pantr::value_error);
   }
+}
+
+TEST_CASE("to_open_1d: the end mirror of an external knot near a domain end, and the tolerance") {
+  const std::vector<double> cp = {1.0, 2.0, 3.0, 4.0, 5.0};
+  const auto open_of = [&](const std::vector<double>& k) {
+    return bs::to_open_1d<double>(sp(k), 2, mdview<const double, 2>(cp.data(), 5, 1), false, 1e-12);
+  };
+  // An external knot within the tolerance above the end is not a copy of it: the result ends at
+  // 1.5, the knots those of inserting 0 once and 1.5 twice and trimming one knot left and two
+  // right.
+  CHECK(open_of({-1.0, 0.0, 0.0, 0.5, 1.0, 1.5, 1.5 + 1e-15, 3.0}).knots ==
+        std::vector<double>{0.0, 0.0, 0.0, 0.5, 1.0, 1.5, 1.5, 1.5});
+  // A distinct knot inside the domain at exactly the tolerance from the start is refused, and one
+  // an ulp further is kept.
+  CHECK_THROWS_WITH_AS(static_cast<void>(open_of({-1.0, 0.0, 0.0, 1e-12, 1.0, 2.0, 2.0, 2.0})),
+                       doctest::Contains("The domain end 0.0 is within the tolerance 1e-12"),
+                       pantr::value_error);
+  const double above = std::nextafter(1e-12, 1.0);
+  CHECK(open_of({-1.0, 0.0, 0.0, above, 1.0, 2.0, 2.0, 2.0}).knots ==
+        std::vector<double>{0.0, 0.0, 0.0, above, 1.0, 2.0, 2.0, 2.0});
 }

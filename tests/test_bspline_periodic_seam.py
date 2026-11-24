@@ -75,6 +75,11 @@ def _reference(f: Bspline, pts: npt.NDArray[np.float64]) -> npt.NDArray[np.float
         npt.NDArray[np.float64]: The values, ``(len(pts), 1)``.
     """
     space = f.space.spaces[0]
+    # The oracle wraps the control points by their count, which must be the period's: one function
+    # per knot in ``[start, end)`` of the domain, counted here rather than taken from the library.
+    knots = np.asarray(space.knots)
+    lo, hi = (float(v) for v in space.domain)
+    assert f.control_points.shape[0] == np.count_nonzero((knots >= lo) & (knots < hi))
     rows = [
         bspline_exact.derivative([space.knots], [space.degree], f.control_points, [float(x)])
         for x in pts
@@ -218,6 +223,9 @@ class TestNearSeamKnot:
             pytest.param(lambda f: f.to_open_bspline(), id="to_open"),
             pytest.param(lambda f: f.restrict((0.3, 0.6)), id="restrict"),
             pytest.param(lambda f: f.split(0, 0.5), id="split"),
+            pytest.param(lambda f: f.insert_knots([0.375]), id="insert_knots"),
+            pytest.param(lambda f: f.elevate_degree(1), id="elevate_degree"),
+            pytest.param(lambda f: f.derivative(keep_degree=True), id="derivative"),
         ],
     )
     @pytest.mark.parametrize(
