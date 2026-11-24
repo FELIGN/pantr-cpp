@@ -235,11 +235,13 @@ def build_local(
 
     Raises:
         ValueError: If ``global_space`` is a periodic :class:`~pantr.bspline.BsplineSpace`
-            (THB spaces have no periodicity); or if ``rank`` is out of range,
-            ``partition`` does not match the space's cell count, or ``rank`` owns no cells.
+            (THB spaces have no periodicity) or one with no direction; or if ``rank`` is out
+            of range, ``partition`` does not match the space's cell count, or ``rank`` owns no
+            cells.
         RuntimeError: If a function of a :class:`~pantr.bspline.BsplineSpace` has an empty
-            support (an invalid space), or the restricted space and grid disagree on the cell
-            count (a bug in ``restrict``).
+            support (an invalid space), a :class:`~pantr.bspline.THBSplineSpace` is stale (its
+            grid modified after construction), or the restricted space and grid disagree on the
+            cell count (a bug in ``restrict``).
     """
     if isinstance(global_space, THBSplineSpace):
         return _build_local_thb(global_space, partition, rank)
