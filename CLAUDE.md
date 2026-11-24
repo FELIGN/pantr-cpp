@@ -86,9 +86,10 @@ The local suite passing is necessary but not sufficient. Known traps:
   scene with `Scene.to_plotter()` (`src/pantr/viz/_scene.py:187`) instead. One segfault takes
   down the whole run, coverage included.
 - **The `msvc` job compiles the C++ tests against the Windows SDK headers**, where `near` and `far`
-  are empty macros: a variable of that name compiles locally and fails there (PR #36). pantr's own
-  `windows.h` include (`include/pantr/parallel/affinity.hpp`) defines `NOMINMAX`, but a consumer
-  may include `windows.h` first without it, so spell `(std::max)(a, b)` in headers.
+  are empty macros: a variable of that name compiles locally and fails there (PR #36). `min` and
+  `max` are macros too unless `NOMINMAX` is defined; pantr's own `windows.h` include
+  (`include/pantr/parallel/affinity.hpp`) defines it only around itself, and a consumer may include
+  `windows.h` first without it, so spell `(std::max)(a, b)` in headers.
 - **A missing optional dependency skips tests silently.** If `pyvista` or `mpi4py` is absent
   locally, the tests that need them skip without complaint — install them before trusting a local
   green.
