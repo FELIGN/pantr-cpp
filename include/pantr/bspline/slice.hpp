@@ -41,7 +41,8 @@ namespace detail {
 ///     at_start (bool): Whether `u` is the start of the domain, where `knots[k] == u` exactly and
 ///         only the knots equal to `u` are copies of it.
 ///     at_end (bool): Whether `u` is the end of the domain, where no knot at or left of `k`
-///         equals `u`. At most one of `at_start` and `at_end` holds.
+///         equals `u`. At most one of `at_start` and `at_end` holds: a value within `tol` of both
+///         ends is taken as the start.
 struct SliceSpan {
   std::size_t k;
   double u;
@@ -76,9 +77,13 @@ template <StorageFloat T>
   const double u_right = static_cast<double>(knots[n_basis]);
   if (value <= u_left + tol) {
     // The span starting at the last knot equal to `knots[p]` (past `p` when `knots[p + 1]` equals
-    // it too, a non-clamped vector), as evaluation takes it: `knots[k] == u < knots[k + 1]`. It is
-    // chosen without a tolerance, so a knot within `tol` of the start, which a space built without
-    // snapping can hold, starts a span of its own rather than joining the start (`at_start`).
+    // it too: a non-clamped vector, or a start knot repeated more than `degree + 1` times), as
+    // evaluation takes it: `knots[k] == u < knots[k + 1]`. `span_and_first` neither clamps nor
+    // walks here: the space has an interval (`check_space_has_an_interval`), so
+    // `knots[p] < knots[n_basis]` and the last knot equal to `knots[p]` is in `[p, n_basis - 1]`.
+    // It is chosen without a tolerance, so a knot within `tol` of the start, which a space built
+    // without snapping can hold, starts a span of its own rather than joining the start
+    // (`at_start`).
     return {span_and_first<T, T>(knots, degree, knots[p]).knot_id, u_left, true, false};
   }
   if (value >= u_right - tol) {
