@@ -1,11 +1,11 @@
 """Tests for opening, restricting and splitting a periodic B-spline with a repeated seam knot.
 
-A periodic knot vector whose seam knot is repeated holds copies of the domain start ``a = knots[p]``
-past index ``p``, or copies of the end ``b = knots[n - p - 1]`` before index ``n - p - 1``, inside
-the domain, depending on which copy the vector starts its domain at. The conversion to open form
-counts every copy of a domain end, wherever it lies, and a space built with ``snap_knots=False``
-holding a knot distinct from the seam but within its tolerance is refused with a message naming the
-seam and that knot, as ``restrict`` and ``split`` refuse at a cut end.
+A periodic knot vector whose seam knot is repeated and whose domain starts at the first copy holds
+copies of the domain start ``a = knots[p]`` past index ``p``, inside the domain; a non-periodic
+vector can hold copies of an end inside its domain past an external knot too. The conversion to
+open form counts every copy of a domain end, wherever it lies, and a space built with
+``snap_knots=False`` holding a knot distinct from the seam but within its tolerance is refused with
+a message naming the seam and that knot, as ``restrict`` and ``split`` refuse at a cut end.
 
 Oracle: :mod:`tests.oracles.bspline_exact`, the Cox-de Boor recursion on the unwrapped periodic
 knot vector with the control point of function ``i`` read at ``i % n_stored``, in exact rational
@@ -26,9 +26,7 @@ _ATOL = 1e-12
 """The tolerance of the existing ``to_open_bspline`` correctness tests."""
 
 
-def _periodic_knots(
-    cycle: list[float], degree: int, *, mirror: bool = False
-) -> npt.NDArray[np.float64]:
+def _periodic_knots(cycle: list[float], degree: int) -> npt.NDArray[np.float64]:
     """Build the periodic knot vector of period 1 whose domain knots are ``cycle`` and ``1``.
 
     Knot ``i`` is ``cycle[(i - degree) % len(cycle)]`` shifted by its period, so ``knots[degree]``
@@ -37,35 +35,30 @@ def _periodic_knots(
     Args:
         cycle (list[float]): The knots of one period, in ``[0, 1)``, starting at the seam ``0``.
         degree (int): The degree.
-        mirror (bool): Return ``1 - knots`` reversed instead, whose ``knots[n - degree - 1]`` is
-            the last copy of the seam ``1`` and whose copies of ``0`` end at ``degree``. Defaults
-            to False.
 
     Returns:
         npt.NDArray[np.float64]: ``len(cycle) + 2 * degree + 1`` knots, with ``degree`` ghost
         knots on each side of the domain ``[0, 1]``.
     """
     n = len(cycle) + 2 * degree + 1
-    knots = np.array(
+    return np.array(
         [cycle[(i - degree) % len(cycle)] + ((i - degree) // len(cycle)) for i in range(n)],
         dtype=np.float64,
     )
-    return 1.0 - knots[::-1] if mirror else knots
 
 
-def _periodic(cycle: list[float], degree: int, *, snap: bool, mirror: bool = False) -> Bspline:
+def _periodic(cycle: list[float], degree: int, *, snap: bool) -> Bspline:
     """Build a periodic scalar B-spline over `_periodic_knots`, control points ``0, 1, ...``.
 
     Args:
         cycle (list[float]): The knots of one period, starting at the seam ``0``.
         degree (int): The degree.
         snap (bool): The space's ``snap_knots``.
-        mirror (bool): Passed to `_periodic_knots`. Defaults to False.
 
     Returns:
         Bspline: The periodic B-spline.
     """
-    space = BsplineSpace1D(_periodic_knots(cycle, degree, mirror=mirror), degree, True, snap)
+    space = BsplineSpace1D(_periodic_knots(cycle, degree), degree, True, snap)
     return Bspline(
         BsplineSpace([space]), np.arange(space.num_basis, dtype=np.float64).reshape(-1, 1)
     )
@@ -120,61 +113,49 @@ def _check_open_piece(f: Bspline, piece: Bspline, lo: float, hi: float) -> None:
     np.testing.assert_allclose(got, _reference(f, pts), atol=_ATOL, rtol=0.0)
 
 
-# Each case: the cycle, the degree, the copies of the seam in the cycle, and `_periodic_knots`'s
-# ``mirror``. Unmirrored, the copies of ``a`` past index ``p`` are missed by a count over the first
-# ``p + 1`` knots; mirrored, those of ``b`` before ``n - p - 1`` by a count over the last ``p + 1``.
+# Each case: the cycle, the degree, and the copies of the seam in the cycle. With ``p + 1`` copies
+# (``p1-double``) nothing is inserted and only the ghost knots are trimmed.
 _SEAM_CASES = [
-    pytest.param([0.0, 0.0, 0.25, 0.5, 0.75], 2, 2, False, id="p2-double"),
-    pytest.param([0.0, 0.0, 0.25, 0.5, 0.75], 3, 2, False, id="p3-double"),
-    pytest.param([0.0, 0.0, 0.0, 0.25, 0.5, 0.75], 3, 3, False, id="p3-triple"),
-    pytest.param([0.0, 0.0, 0.25, 0.5, 0.75], 2, 2, True, id="p2-double-mirror"),
-    pytest.param([0.0, 0.0, 0.0, 0.25, 0.5, 0.75], 3, 3, True, id="p3-triple-mirror"),
+    pytest.param([0.0, 0.0, 0.25, 0.5, 0.75], 2, 2, id="p2-double"),
+    pytest.param([0.0, 0.0, 0.25, 0.5, 0.75], 3, 2, id="p3-double"),
+    pytest.param([0.0, 0.0, 0.0, 0.25, 0.5, 0.75], 3, 3, id="p3-triple"),
+    pytest.param([0.0, 0.0, 0.25, 0.5, 0.75], 1, 2, id="p1-double"),
 ]
 
 
 class TestRepeatedSeamKnot:
     """A periodic space whose seam knot is repeated opens, restricts and splits."""
 
-    @pytest.mark.parametrize(("cycle", "degree", "copies", "mirror"), _SEAM_CASES)
-    def test_premise(self, cycle: list[float], degree: int, copies: int, mirror: bool) -> None:
-        """Copies of a domain end lie inside the domain, outside its end's ``p + 1`` knots."""
-        knots = np.asarray(
-            _periodic(cycle, degree, snap=False, mirror=mirror).space.spaces[0].knots
-        )
-        n = knots.size
-        if mirror:
-            assert knots[n - degree - 1] == 1.0
-            assert np.all(knots[n - degree - copies : n - degree] == 1.0)
-            assert knots[n - degree - copies - 1] < 1.0
-            assert knots[n - degree] > 1.0
-        else:
-            assert knots[degree] == 0.0
-            assert np.all(knots[degree : degree + copies] == 0.0)
-            assert knots[degree + copies] > 0.0
-            assert knots[degree - 1] < 0.0
+    @pytest.mark.parametrize(("cycle", "degree", "copies"), _SEAM_CASES)
+    def test_premise(self, cycle: list[float], degree: int, copies: int) -> None:
+        """Copies of the start lie past index ``p``, and the space has one function per knot."""
+        space = _periodic(cycle, degree, snap=False).space.spaces[0]
+        knots = np.asarray(space.knots)
+        assert space.num_basis == len(cycle)
+        assert np.all(knots[degree : degree + copies] == 0.0)
+        assert knots[degree + copies] > 0.0
+        assert knots[degree - 1] < 0.0
 
-    @pytest.mark.parametrize(("cycle", "degree", "copies", "mirror"), _SEAM_CASES)
+    @pytest.mark.parametrize(("cycle", "degree", "copies"), _SEAM_CASES)
     @pytest.mark.parametrize("snap", [False, True])
-    def test_to_open(
-        self, cycle: list[float], degree: int, copies: int, mirror: bool, snap: bool
-    ) -> None:
+    def test_to_open(self, cycle: list[float], degree: int, copies: int, snap: bool) -> None:
         """``to_open_bspline`` clamps at the seam and keeps the periodic curve."""
         del copies
-        f = _periodic(cycle, degree, snap=snap, mirror=mirror)
+        f = _periodic(cycle, degree, snap=snap)
         _check_open_piece(f, f.to_open_bspline(), 0.0, 1.0)
 
-    @pytest.mark.parametrize(("cycle", "degree", "copies", "mirror"), _SEAM_CASES)
-    def test_restrict(self, cycle: list[float], degree: int, copies: int, mirror: bool) -> None:
+    @pytest.mark.parametrize(("cycle", "degree", "copies"), _SEAM_CASES)
+    def test_restrict(self, cycle: list[float], degree: int, copies: int) -> None:
         """``restrict`` far from the seam keeps the periodic curve on the window."""
         del copies
-        f = _periodic(cycle, degree, snap=False, mirror=mirror)
+        f = _periodic(cycle, degree, snap=False)
         _check_open_piece(f, f.restrict((0.3, 0.6)), 0.3, 0.6)
 
-    @pytest.mark.parametrize(("cycle", "degree", "copies", "mirror"), _SEAM_CASES)
-    def test_split(self, cycle: list[float], degree: int, copies: int, mirror: bool) -> None:
+    @pytest.mark.parametrize(("cycle", "degree", "copies"), _SEAM_CASES)
+    def test_split(self, cycle: list[float], degree: int, copies: int) -> None:
         """``split`` at ``0.5`` gives two halves that keep the periodic curve."""
         del copies
-        f = _periodic(cycle, degree, snap=False, mirror=mirror)
+        f = _periodic(cycle, degree, snap=False)
         left, right = f.split(0, 0.5)
         _check_open_piece(f, left, 0.0, 0.5)
         _check_open_piece(f, right, 0.5, 1.0)
@@ -229,43 +210,75 @@ class TestNearSeamKnot:
         assert "snap_knots=True" in str(err.value)
         assert "multiplicity" not in str(err.value)
 
-    @pytest.mark.parametrize("cycle", [_NEAR_START, _NEAR_END])
-    def test_snapped_is_a_double_seam_knot(self, cycle: list[float]) -> None:
-        """Snapped, the near pair is one knot twice at the seam, and the space opens.
-
-        Next to the start the pair snaps onto ``0``: the vector of the ``p2-double`` case, with a
-        second copy of ``a`` at index ``p + 1``. Next to the end it snaps onto ``1 - 1e-15``,
-        which moves the seam there: the shape of ``p2-double-mirror``, a second copy of ``b`` at
-        ``n - p - 2``.
-        """
-        f = _periodic(cycle, 2, snap=True)
-        space = f.space.spaces[0]
-        knots = np.asarray(space.knots)
-        n = knots.size
-        a, b = (float(v) for v in space.domain)
-        assert np.count_nonzero(knots == a) == 2
-        assert np.count_nonzero(knots == b) == 2
-        if cycle is _NEAR_START:
-            assert (a, b) == (0.0, 1.0)
-            assert knots[3] == a
-        else:
-            assert (a, b) == (-(1.0 - (1.0 - 1e-15)), 1.0 - 1e-15)
-            assert knots[n - 4] == b
-        _check_open_piece(f, f.to_open_bspline(), a, b)
+    def test_snapped_is_the_double_seam_knot(self) -> None:
+        """Snapped, the pair next to the start is ``0`` twice (``p2-double``), and it opens."""
+        f = _periodic(_NEAR_START, 2, snap=True)
+        knots = np.asarray(f.space.spaces[0].knots)
+        np.testing.assert_array_equal(knots, _periodic_knots([0.0, 0.0, 0.25, 0.5, 0.75], 2))
+        _check_open_piece(f, f.to_open_bspline(), 0.0, 1.0)
         _check_open_piece(f, f.restrict((0.3, 0.6)), 0.3, 0.6)
         left, right = f.split(0, 0.5)
-        _check_open_piece(f, left, a, 0.5)
-        _check_open_piece(f, right, 0.5, b)
+        _check_open_piece(f, left, 0.0, 0.5)
+        _check_open_piece(f, right, 0.5, 1.0)
+
+
+def _open_of(knots: list[float], degree: int, *, snap: bool = True) -> Bspline:
+    """Open a non-periodic scalar B-spline with control points ``1, 2, ...`` over ``knots``.
+
+    Args:
+        knots (list[float]): The knot vector.
+        degree (int): The degree.
+        snap (bool): The space's ``snap_knots``. Defaults to True.
+
+    Returns:
+        Bspline: ``to_open_bspline()`` of it.
+    """
+    space = BsplineSpace1D(np.array(knots, dtype=np.float64), degree, False, snap)
+    assert not space.has_open_knots()
+    f = Bspline(BsplineSpace([space]), np.arange(1.0, space.num_basis + 1.0))
+    return f.to_open_bspline()
 
 
 class TestUnclampedEndCopies:
-    """A non-periodic unclamped space whose start has ``p + 1`` copies after an external knot."""
+    """A non-periodic unclamped space with copies of an end beyond its first or last ``p + 1``."""
 
-    def test_to_open_trims_the_external_knot(self) -> None:
-        """Nothing is inserted; the external knot and its control point are trimmed."""
-        space = BsplineSpace1D(np.array([-1.0, 0.0, 0.0, 0.0, 1.0, 2.0, 2.0, 2.0]), 2)
-        assert not space.has_open_knots()
-        f = Bspline(BsplineSpace([space]), np.arange(1.0, 6.0))
-        g = f.to_open_bspline()
+    def test_start_copies_after_an_external_knot(self) -> None:
+        """Nothing is inserted at the start; the external knot and its control point are trimmed."""
+        g = _open_of([-1.0, 0.0, 0.0, 0.0, 1.0, 2.0, 2.0, 2.0], 2)
         np.testing.assert_array_equal(g.space.spaces[0].knots, [0.0, 0.0, 0.0, 1.0, 2.0, 2.0, 2.0])
         np.testing.assert_array_equal(np.ravel(g.control_points), [2.0, 3.0, 4.0, 5.0])
+
+    def test_end_copies_before_an_external_knot(self) -> None:
+        """Nothing is inserted at the end; the external knot and its control point are trimmed."""
+        g = _open_of([0.0, 0.0, 0.0, 1.0, 2.0, 2.0, 2.0, 3.0], 2)
+        np.testing.assert_array_equal(g.space.spaces[0].knots, [0.0, 0.0, 0.0, 1.0, 2.0, 2.0, 2.0])
+        np.testing.assert_array_equal(np.ravel(g.control_points), [1.0, 2.0, 3.0, 4.0])
+
+    def test_an_external_knot_near_the_start_is_trimmed(self) -> None:
+        """A knot below the start within its tolerance is not a copy: the result starts at ``0``.
+
+        Counting copies under the tolerance took ``-1e-15`` for one and started the result there.
+        The values on the domain are unchanged: the knots and control points of the result are the
+        exact ones of Boehm insertion of ``0`` once and ``1.5`` twice, checked against the original
+        at interior points.
+        """
+        knots = [-1e-15, 0.0, 0.0, 0.5, 1.0, 1.5, 2.0, 3.0]
+        g = _open_of(knots, 2, snap=False)
+        space = g.space.spaces[0]
+        np.testing.assert_array_equal(space.knots, [0.0, 0.0, 0.0, 0.5, 1.0, 1.5, 1.5, 1.5])
+        assert float(space.domain[0]) == 0.0
+        original = BsplineSpace1D(np.array(knots), 2, False, False)
+        ctrl = np.arange(1.0, original.num_basis + 1.0).reshape(-1, 1)
+        pts = _interior(0.0, 1.5)
+        want = bspline_exact.to_float_array(
+            [bspline_exact.derivative([original.knots], [2], ctrl, [float(x)]) for x in pts]
+        )
+        got = np.asarray(g.evaluate(pts), dtype=np.float64).reshape(-1, 1)
+        np.testing.assert_allclose(got, want, atol=_ATOL, rtol=0.0)
+
+    def test_more_than_degree_plus_one_copies_is_refused(self) -> None:
+        """Four copies of the start at degree 2 are not a knot vector of that degree."""
+        with pytest.raises(
+            ValueError, match=r"^to_open: the domain end 0\.0 has 4 copies, more than degree"
+        ):
+            _open_of([0.0, 0.0, 0.0, 0.0, 0.5, 1.0, 1.5, 2.0, 3.0], 2)

@@ -1515,18 +1515,17 @@ TEST_CASE("restrict and split: the ends the review pinned, one by one") {
 
 // ---- a periodic space whose seam knot is repeated -----------------------------------------------
 //
-// A periodic knot vector whose seam knot is repeated holds copies of the domain start `a =
-// knots[p]` past index `p`, or copies of the end `b = knots[n - p - 1]` before index `n - p - 1`:
-// inside the domain, outside the first and the last `p + 1` knots. Opening it counts every copy of
-// a domain end.
+// A periodic knot vector whose seam knot is repeated and whose domain starts at the first copy
+// holds copies of the domain start `a = knots[p]` past index `p`: inside the domain, outside the
+// first `p + 1` knots. A non-periodic vector can hold copies of an end inside its domain past an
+// external knot too. Opening either counts every copy of a domain end.
 
 namespace {
 
 /// The periodic knot vector of period 1 whose domain knots are `cycle` and `1`:
 /// `cycle.size() + 2 p + 1` knots, `p` ghost knots on each side of `[0, 1]`, `knots[p]` the first
-/// copy of the seam `0`. With `mirror`, `1 - knots` reversed: `knots[n - p - 1]` the last copy of
-/// the seam `1`.
-std::vector<double> periodic_knots(const std::vector<double>& cycle, int p, bool mirror = false) {
+/// copy of the seam `0`.
+std::vector<double> periodic_knots(const std::vector<double>& cycle, int p) {
   const auto len = static_cast<long long>(cycle.size());
   const auto n = len + 2 * static_cast<long long>(p) + 1;
   std::vector<double> k;
@@ -1534,12 +1533,6 @@ std::vector<double> periodic_knots(const std::vector<double>& cycle, int p, bool
     const long long j = i - p;
     const long long period = j >= 0 ? j / len : -((-j + len - 1) / len);
     k.push_back(cycle[static_cast<std::size_t>(j - period * len)] + static_cast<double>(period));
-  }
-  if (mirror) {
-    std::reverse(k.begin(), k.end());
-    for (double& x : k) {
-      x = 1.0 - x;
-    }
   }
   return k;
 }
@@ -1573,37 +1566,27 @@ TEST_CASE_TEMPLATE("to_open, restrict and split: a periodic space with a repeate
     std::vector<double> cycle;
     int p;
     std::size_t copies;
-    bool mirror;
   };
-  for (const SeamCase& c : {SeamCase{{0.0, 0.0, 0.25, 0.5, 0.75}, 2, 2, false},
-                            SeamCase{{0.0, 0.0, 0.25, 0.5, 0.75}, 3, 2, false},
-                            SeamCase{{0.0, 0.0, 0.0, 0.25, 0.5, 0.75}, 3, 3, false},
-                            SeamCase{{0.0, 0.0, 0.25, 0.5, 0.75}, 2, 2, true},
-                            SeamCase{{0.0, 0.0, 0.0, 0.25, 0.5, 0.75}, 3, 3, true}}) {
+  // With p + 1 copies (degree 1, a double seam) nothing is inserted and only the ghosts are
+  // trimmed.
+  for (const SeamCase& c :
+       {SeamCase{{0.0, 0.0, 0.25, 0.5, 0.75}, 2, 2}, SeamCase{{0.0, 0.0, 0.25, 0.5, 0.75}, 3, 2},
+        SeamCase{{0.0, 0.0, 0.0, 0.25, 0.5, 0.75}, 3, 3},
+        SeamCase{{0.0, 0.0, 0.25, 0.5, 0.75}, 1, 2}}) {
     CAPTURE(c.p);
     CAPTURE(c.copies);
-    CAPTURE(c.mirror);
-    const std::vector<double> knots = periodic_knots(c.cycle, c.p, c.mirror);
+    const std::vector<double> knots = periodic_knots(c.cycle, c.p);
     const auto p = static_cast<std::size_t>(c.p);
-    const std::size_t n = knots.size();
-    // The premise: unmirrored, copies of `a = 0` past index p; mirrored, copies of `b = 1` before
-    // n - p - 1.
+    // The premise: copies of `a = 0` past index p.
     for (std::size_t i = 0; i < c.copies; ++i) {
-      if (c.mirror) {
-        REQUIRE(knots[n - p - 1 - i] == 1.0);
-      } else {
-        REQUIRE(knots[p + i] == 0.0);
-      }
+      REQUIRE(knots[p + i] == 0.0);
     }
-    if (c.mirror) {
-      REQUIRE(knots[n - p - 1 - c.copies] < 1.0);
-      REQUIRE(knots[n - p] > 1.0);
-    } else {
-      REQUIRE(knots[p + c.copies] > 0.0);
-      REQUIRE(knots[p - 1] < 0.0);
-    }
+    REQUIRE(knots[p + c.copies] > 0.0);
+    REQUIRE(knots[p - 1] < 0.0);
     const bs::BsplineSpace1D<T> ps = space_1d<T>(knots, c.p, true);
-    const auto n_stored = static_cast<std::size_t>(ps.num_basis());
+    // One function per knot of the cycle, as the oracle wraps the stored points.
+    REQUIRE(static_cast<std::size_t>(ps.num_basis()) == c.cycle.size());
+    const std::size_t n_stored = c.cycle.size();
     const std::vector<double> flat = values(n_stored, 11);
     const bs::Bspline<T> b = curve<T>(knots, c.p, flat, true);
     const ExactNet per = exact_net(knots, c.p, flat, 1);
@@ -1666,19 +1649,44 @@ TEST_CASE("to_open, restrict and split: an unsnapped knot within the tolerance o
 }
 
 TEST_CASE("to_open_1d: copies of a domain end outside its first or last degree + 1 knots") {
-  // Non-periodic: three copies of the start at indices 1 to 3 and one external knot before them.
-  // Nothing is inserted; the external knot and its control point are trimmed.
-  const std::vector<double> k = {-1.0, 0.0, 0.0, 0.0, 1.0, 2.0, 2.0, 2.0};
+  const auto open_of = [](const std::vector<double>& k, double tol) {
+    static const std::vector<double> cp = {1.0, 2.0, 3.0, 4.0, 5.0};
+    return bs::to_open_1d<double>(sp(k), 2, mdview<const double, 2>(cp.data(), k.size() - 3, 1),
+                                  false, tol);
+  };
+  const auto rows = [](const bs::KnotsAndCtrl<double>& r) {
+    return std::vector<double>(r.ctrl.data(), r.ctrl.data() + r.ctrl.size());
+  };
+  // Three copies of the start at indices 1 to 3 after an external knot, and three of the end at 4
+  // to 6 before one: nothing is inserted, the external knot and its control point are trimmed.
+  const bs::KnotsAndCtrl<double> start = open_of({-1.0, 0.0, 0.0, 0.0, 1.0, 2.0, 2.0, 2.0}, 1e-12);
+  CHECK(start.knots == std::vector<double>{0.0, 0.0, 0.0, 1.0, 2.0, 2.0, 2.0});
+  CHECK(rows(start) == std::vector<double>{2.0, 3.0, 4.0, 5.0});
+  const bs::KnotsAndCtrl<double> end = open_of({0.0, 0.0, 0.0, 1.0, 2.0, 2.0, 2.0, 3.0}, 1e-12);
+  CHECK(end.knots == std::vector<double>{0.0, 0.0, 0.0, 1.0, 2.0, 2.0, 2.0});
+  CHECK(rows(end) == std::vector<double>{1.0, 2.0, 3.0, 4.0});
+  // An external knot within the tolerance below the start is not a copy of it: the result starts
+  // at 0 (counted under the tolerance it started at -1e-15). The knots are those of inserting 0
+  // once and 1.5 twice and trimming one knot left and two right.
+  const bs::KnotsAndCtrl<double> near_start =
+      open_of({-1e-15, 0.0, 0.0, 0.5, 1.0, 1.5, 2.0, 3.0}, 1e-12);
+  CHECK(near_start.knots == std::vector<double>{0.0, 0.0, 0.0, 0.5, 1.0, 1.5, 1.5, 1.5});
+  // A distinct knot within the tolerance of a non-periodic end, inside the domain, is refused
+  // naming the domain end.
+  CHECK_THROWS_WITH_AS(
+      static_cast<void>(open_of({-1.0, 0.0, 0.0, 1e-15, 1.0, 2.0, 3.0, 4.0}, 1e-12)),
+      doctest::Contains("The domain end 0.0 is within the tolerance 1e-12 of the "
+                        "distinct knot 1e-15,"),
+      pantr::value_error);
+  // More than degree + 1 copies of a domain end is not a knot vector of that degree, at either end.
   const std::vector<double> cp = {1.0, 2.0, 3.0, 4.0, 5.0};
-  const bs::KnotsAndCtrl<double> open =
-      bs::to_open_1d<double>(sp(k), 2, mdview<const double, 2>(cp.data(), 5, 1), false, 1e-12);
-  CHECK(open.knots == std::vector<double>{0.0, 0.0, 0.0, 1.0, 2.0, 2.0, 2.0});
-  CHECK(std::vector<double>(open.ctrl.data(), open.ctrl.data() + open.ctrl.size()) ==
-        std::vector<double>{2.0, 3.0, 4.0, 5.0});
-  // More than degree + 1 copies of a domain end is not a knot vector of that degree.
-  const std::vector<double> over = {0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0};
-  CHECK_THROWS_WITH_AS(static_cast<void>(bs::to_open_1d<double>(
-                           sp(over), 2, mdview<const double, 2>(cp.data(), 2, 1), true, 1e-12)),
-                       "to_open: the domain end 0.0 has 4 copies, more than degree + 1 = 3.",
-                       pantr::value_error);
+  for (const auto& [over, message] :
+       {std::pair{std::vector<double>{0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0},
+                  "to_open: the domain end 0.0 has 4 copies, more than degree + 1 = 3."},
+        std::pair{std::vector<double>{0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0, 1.0},
+                  "to_open: the domain end 1.0 has 4 copies, more than degree + 1 = 3."}}) {
+    CHECK_THROWS_WITH_AS(static_cast<void>(bs::to_open_1d<double>(
+                             sp(over), 2, mdview<const double, 2>(cp.data(), 2, 1), true, 1e-12)),
+                         message, pantr::value_error);
+  }
 }
