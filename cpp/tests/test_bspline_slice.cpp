@@ -22,6 +22,7 @@
 #include "bspline_test_support.hpp"
 
 #include <pantr/bspline/bspline.hpp>
+#include <pantr/bspline/evaluate.hpp>
 #include <pantr/bspline/slice.hpp>
 #include <pantr/core/errors.hpp>
 
@@ -35,6 +36,7 @@
 
 namespace bs = pantr::bspline;
 namespace oracle = bspline_oracle;
+using bspline_test::cast_all;
 using bspline_test::clamped;
 using bspline_test::Dir;
 using bspline_test::make_spline;
@@ -422,6 +424,149 @@ TEST_CASE("boundary: the end of an unsnapped space beside a sub-tolerance knot g
         const double want = rational ? cp[i] / cp[2] : cp[i];
         CHECK(by_boundary.data()[i] == want);
         CHECK(by_slice.data()[i] == want);
+      }
+    }
+  }
+}
+
+TEST_CASE_TEMPLATE("boundary: the start of an unsnapped space beside a sub-tolerance knot gap", T,
+                   double, float) {
+  // Built without snapping, a knot `1e-15` from the start stays apart from it, closer than the
+  // space's tolerance; evaluation takes it as a distinct knot, and so must the slice. Oracle,
+  // analytic, from the knot vector. The span at the start `u` is `k`, the last knot equal to `u`
+  // (`knots[k] == u < knots[k + 1]`). Where `degree` or more knots at or left of `k` equal `u`,
+  // the one non-zero function there is `k - degree`'s and the slice is its control point, copied.
+  // In the last case a single knot equals `u`, between `-gap` and `gap`: at degree 2 the functions
+  // `0` and `1` are each 1/2 there, the one corner-cutting weight is `gap / (2 gap)`, exactly 1/2,
+  // and the slice is `(P0 + P1) / 2`, exact for the dyadic control points. All are compared bit
+  // for bit. Classed with the tolerance, each takes the knot at `gap` for a copy of the start and
+  // copies row 1; with the span right but the multiplicity counted with the tolerance, the
+  // `halfway` case takes `-gap` for a copy and copies row 0. The slices of a surface are also
+  // compared with the exact evaluation of the surface at the start (`slice_error`), and the curve's
+  // start point with `evaluate`, within the file's derived bound.
+  constexpr double gap = 1e-15;
+  struct Case {
+    std::vector<double> knots;
+    int degree;
+    bool halfway;  // The slice is the mean of rows 0 and 1, not row 0.
+  };
+  const std::vector<Case> cases = {
+      {{0, gap, 1}, 0, false},
+      {{0, 0, gap, 1, 1}, 1, false},
+      {{0, 0, 0, gap, 1, 2, 2, 2}, 2, false},
+      {{-1, -gap, 0, gap, 1, 2, 2, 2}, 2, true},
+  };
+  const auto expected = [](T row0, T row1, bool halfway) {
+    return halfway ? (row0 + row1) / T{2} : row0;
+  };
+  for (const Case& c : cases) {
+    const std::vector<T> knots = cast_all<T>(c.knots);
+    const bs::BsplineSpace1D<T> space(sp(knots), c.degree, false, false);
+    const double start = static_cast<double>(space.domain().first);
+    const double tol = space.tolerance();
+    // The premise: a knot within the tolerance of the start and distinct from it (and in the last
+    // case one on each side).
+    REQUIRE(start == 0.0);
+    REQUIRE(std::equal(space.knots().begin(), space.knots().end(), knots.begin(), knots.end()));
+    const auto above = std::upper_bound(knots.begin(), knots.end(), T{0});
+    REQUIRE(above != knots.end());
+    REQUIRE(static_cast<double>(*above) > start);
+    REQUIRE(static_cast<double>(*above) - start < tol);
+    if (c.halfway) {
+      const auto first = std::lower_bound(knots.begin(), knots.end(), T{0});
+      REQUIRE(first != knots.begin());
+      REQUIRE(static_cast<double>(*(first - 1)) < start);
+      REQUIRE(start - static_cast<double>(*(first - 1)) < tol);
+    }
+    for (const bool rational : {false, true}) {
+      CAPTURE(c.degree);
+      CAPTURE(c.halfway);
+      CAPTURE(rational);
+      const std::size_t cols = 2 + (rational ? 1 : 0);
+      const auto control_points = [&](std::size_t count, unsigned seed) {
+        std::vector<double> flat = values(count * cols, seed);
+        if (rational) {
+          for (std::size_t i = 0; i < count; ++i) {
+            flat[i * cols + 2] = 1.5 + flat[i * cols + 2] / 2.0;
+          }
+        }
+        return cast_all<T>(flat);
+      };
+      // The direction at each position of a surface and of a volume, the others clamped.
+      const std::vector<T> other = cast_all<T>(clamped(2, {0.5}));
+      for (const std::size_t dim : {std::size_t{2}, std::size_t{3}}) {
+        for (std::size_t axis = 0; axis < dim; ++axis) {
+          CAPTURE(dim);
+          CAPTURE(axis);
+          std::vector<bs::BsplineSpace1D<T>> spaces;
+          std::vector<std::size_t> shape;
+          std::size_t total = 1;
+          for (std::size_t d = 0; d < dim; ++d) {
+            spaces.push_back(d == axis ? space : bs::BsplineSpace1D<T>(sp(other), 2));
+            shape.push_back(static_cast<std::size_t>(spaces.back().num_basis()));
+            total *= shape.back();
+          }
+          const std::vector<T> cp = control_points(total, 29U);
+          const bs::Bspline<T> b(bs::BsplineSpace<T>(std::move(spaces)), sp(cp), rational);
+          const auto ax = static_cast<long long>(axis);
+          // A value within the tolerance of the start, either side, is the start.
+          const std::vector<bs::Bspline<T>> got = {
+              bs::boundary<T>(b, ax, 0), bs::slice<T>(b, ax, start),
+              bs::slice<T>(b, ax, start + 0.5 * tol), bs::slice<T>(b, ax, start - 0.5 * tol)};
+          std::size_t outer = 1;
+          for (std::size_t d = 0; d < axis; ++d) {
+            outer *= shape[d];
+          }
+          const std::size_t inner = cp.size() / (outer * shape[axis]);
+          // Rows 0 and 1 along `axis` differ, so copying the wrong one cannot pass.
+          bool rows_differ = false;
+          for (std::size_t o = 0; o < outer; ++o) {
+            for (std::size_t i = 0; i < inner; ++i) {
+              const std::size_t row0 = o * shape[axis] * inner + i;
+              rows_differ = rows_differ || cp[row0] != cp[row0 + inner];
+            }
+          }
+          REQUIRE(rows_differ);
+          for (std::size_t which = 0; which < got.size(); ++which) {
+            CAPTURE(which);  // boundary, slice at the start, at start + tol / 2, at start - tol / 2
+            const bs::Bspline<T>& g = got[which];
+            REQUIRE(g.control_points().size() == outer * inner);
+            for (std::size_t o = 0; o < outer; ++o) {
+              for (std::size_t i = 0; i < inner; ++i) {
+                const std::size_t row0 = o * shape[axis] * inner + i;
+                CHECK(g.control_points()[o * inner + i] ==
+                      expected(cp[row0], cp[row0 + inner], c.halfway));
+              }
+            }
+            if (dim == 2) {
+              CHECK(slice_error<T>(b, g, axis, start) <= slice_tolerance<T>(b, axis));
+            }
+          }
+        }
+      }
+      // A curve: the start point, projected when rational.
+      const std::vector<T> cp = control_points(static_cast<std::size_t>(space.num_basis()), 31U);
+      // Rows 0 and 1 differ, so copying the wrong one cannot pass.
+      REQUIRE(!std::equal(cp.begin(), cp.begin() + static_cast<std::ptrdiff_t>(cols),
+                          cp.begin() + static_cast<std::ptrdiff_t>(cols)));
+      const bs::Bspline<T> crv(bs::BsplineSpace<T>(std::vector<bs::BsplineSpace1D<T>>{space}),
+                               sp(cp), rational);
+      const pantr::NdArray<T> by_boundary = bs::boundary_point<T>(crv, 0, 0);
+      const pantr::NdArray<T> by_slice = bs::slice_point<T>(crv, 0, start);
+      std::vector<T> row(cols);
+      for (std::size_t i = 0; i < cols; ++i) {
+        row[i] = expected(cp[i], cp[cols + i], c.halfway);
+      }
+      const T at = static_cast<T>(start);
+      const pantr::NdArray<T> by_evaluate =
+          bs::evaluate<T, T>(crv, pantr::mdview<const T, 2>(&at, 1, 1));
+      const double bound = slice_tolerance<T>(crv, 0);
+      for (std::size_t i = 0; i < 2; ++i) {
+        const T want = rational ? row[i] / row[2] : row[i];
+        CHECK(by_boundary.data()[i] == want);
+        CHECK(by_slice.data()[i] == want);
+        CHECK(std::abs(static_cast<double>(by_evaluate.data()[i]) - static_cast<double>(want)) <=
+              bound);
       }
     }
   }

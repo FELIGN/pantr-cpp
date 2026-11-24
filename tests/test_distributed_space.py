@@ -278,6 +278,50 @@ def test_create_distributed_space_raises_runtime_error_where_the_partition_would
         assert comm.gathers == 0
 
 
+def _stale_thb_space() -> THBSplineSpace:
+    """Return a THB space whose grid was refined after construction (issue #40's space)."""
+    thb = create_thb_space(create_uniform_space([2, 2], [4, 4]))
+    thb.grid.refine(0, [0, 0], [1, 1])
+    return thb
+
+
+def test_stale_thb_space_raises_on_a_rank_that_owns_no_cell() -> None:
+    # Rank 0 owns every cell and rank 1 none: rank 1 builds no local space, which is where the
+    # staleness check used to live, so it constructed and went on alone into the next collective.
+    thb = _stale_thb_space()
+    part = Partition(np.zeros(thb.grid.num_cells, dtype=np.int32), 2)
+    for rank in range(2):
+        with pytest.raises(RuntimeError, match="THBSplineSpace is stale"):
+            DistributedSpace(thb, part, _FakeComm(rank, 2))
+
+
+def test_fresh_thb_space_still_builds_on_a_rank_that_owns_no_cell() -> None:
+    # The control: the same empty rank with the grid left as the space was built on.
+    thb = create_thb_space(create_uniform_space([2, 2], [4, 4]))
+    part = Partition(np.zeros(thb.grid.num_cells, dtype=np.int32), 2)
+    assert DistributedSpace(thb, part, _FakeComm(0, 2)).owns_cells
+    assert not DistributedSpace(thb, part, _FakeComm(1, 2)).owns_cells
+
+
+@pytest.mark.parametrize("method", ["grid", "graph"])
+def test_create_distributed_space_refuses_a_stale_thb_space_on_every_rank(method: str) -> None:
+    # Before the partition broadcast, as for an invalid B-spline space: no rank gathers.
+    thb = _stale_thb_space()
+    hub = _GatherHub()
+    for rank in range(2):
+        comm = _FakeComm(rank, 2, hub)
+        with pytest.raises(RuntimeError, match="THBSplineSpace is stale"):
+            create_distributed_space(thb, comm, method=method)
+        assert comm.gathers == 0
+
+
+def test_create_distributed_space_graph_leaves_a_non_space_to_coupling_graph() -> None:
+    # The graph method checks no type before the staleness check, which must not touch an object
+    # that is neither space: `coupling_graph`'s TypeError is what reaches the caller.
+    with pytest.raises(TypeError, match="coupling_graph expects"):
+        create_distributed_space(object(), _FakeComm(0, 1), method="graph")  # type: ignore[arg-type]
+
+
 def test_compute_halo_of_no_cell_still_checks_the_supports() -> None:
     # `DistributedSpace` relies on this on a rank that owns no cell: an early return on an empty
     # request would let that rank accept an invalid space and hang the next collective (#30).

@@ -1524,6 +1524,27 @@ TEST_CASE("THBSplineSpace: the constructor refuses what the Python implementatio
     THB_THROWS_WITH_AS(build(make_root<double>(nearly), grid, none),
                        "grid root bounds must match root_space domain.", pantr::value_error);
   }
+  SUBCASE("a grid whose root breakpoints are not the root's knots") {
+    // Same cell counts and bounds, other interior knots along axis 1: the cells would come from
+    // the grid and the functions from the knots, and the basis would not sum to one in a cell.
+    Setup moved = s;
+    moved.knots = {k2, {0.0, 0.0, 0.0, 0.1, 0.5, 0.9, 1.0, 1.0, 1.0}};
+    THB_THROWS_WITH_AS(build(make_root<double>(moved), grid, none),
+                       "grid root breakpoints must match root_space knots: along axis 1, "
+                       "breakpoint 1 is 0.25 where the knot is 0.1.",
+                       pantr::value_error);
+  }
+  SUBCASE("an interior knot below the knot tolerance from its breakpoint is accepted") {
+    // Each axis's own tolerance (8 eps at unit scale here), as for the bounds; one above refused.
+    Setup nearly = s;
+    nearly.knots = {k2, {0.0, 0.0, 0.0, 0.25, 0.5 + 4 * eps, 0.75, 1.0, 1.0, 1.0}};
+    THB_NOTHROW(build(make_root<double>(nearly), grid, none));
+    nearly.knots[1].assign({0.0, 0.0, 0.0, 0.25, 0.5 + 1e-6, 0.75, 1.0, 1.0, 1.0});
+    THB_THROWS_WITH_AS(build(make_root<double>(nearly), grid, none),
+                       "grid root breakpoints must match root_space knots: along axis 1, "
+                       "breakpoint 2 is 0.5 where the knot is 0.500001.",
+                       pantr::value_error);
+  }
   SUBCASE("regularity of the wrong length") {
     THB_THROWS_WITH_AS(build(root, grid, {1}),
                        "regularity must be a scalar or length-2 sequence; got length 1.",
