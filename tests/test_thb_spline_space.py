@@ -23,7 +23,13 @@ from pantr.bspline import (
     create_thb_space,
     create_uniform_space,
 )
-from pantr.grid import HierarchicalGrid, hierarchical_grid, tensor_product_grid, uniform_grid
+from pantr.grid import (
+    HierarchicalGrid,
+    TensorProductGrid,
+    hierarchical_grid,
+    tensor_product_grid,
+    uniform_grid,
+)
 from tests._thb_support import VALUE_ATOL, tensor_product_rows
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -131,6 +137,60 @@ class TestConstruction:
         grid = hierarchical_grid(uniform_grid([[0.0, 2.0]], 4), 2)
         with pytest.raises(ValueError, match="bounds"):
             THBSplineSpace(_root_1d(), grid, truncate=False)
+
+    def test_root_grid_breakpoints_mismatch_raises(self) -> None:
+        # Right cell count and bounds, other interior breakpoints: the cells would come from the
+        # grid and the functions from the knots, and the basis would not sum to one in cell 1.
+        grid = hierarchical_grid(TensorProductGrid([np.array([0.0, 0.1, 0.5, 0.9, 1.0])]), 2)
+        with pytest.raises(
+            ValueError,
+            match=r"grid root breakpoints must match root_space knots: along axis 0, "
+            r"breakpoint 1 is 0\.1 where the knot is 0\.25\.",
+        ):
+            THBSplineSpace(_root_1d(), grid)
+
+    def test_root_grid_of_the_root_knots_is_accepted(self) -> None:
+        # The control of the mismatch above: the same space on a grid of its own breakpoints,
+        # given by hand and by `tensor_product_grid`.
+        by_hand = TensorProductGrid([np.array([0.0, 0.25, 0.5, 0.75, 1.0])])
+        for root_grid in (by_hand, tensor_product_grid(_root_1d())):
+            THBSplineSpace(_root_1d(), hierarchical_grid(root_grid, 2))
+
+    def test_unsnapped_root_within_the_knot_tolerance_is_accepted(self) -> None:
+        # An interior knot a few ulps off the grid's breakpoint matches it within the axis's knot
+        # tolerance (8 eps at unit scale); one far above is refused.
+        eps = float(np.finfo(np.float64).eps)
+        near = _KNOTS_DEG2_4.copy()
+        near[4] = 0.5 + 4 * eps
+        THBSplineSpace(BsplineSpace([BsplineSpace1D(near, 2)]), _grid_1d())
+        near[4] = 0.5 + 1e-6
+        with pytest.raises(ValueError, match=r"along axis 0, breakpoint 2 is 0\.5 where"):
+            THBSplineSpace(BsplineSpace([BsplineSpace1D(near, 2)]), _grid_1d())
+
+    def test_breakpoints_are_held_to_each_axis_own_tolerance(self) -> None:
+        # Axes of different scale: the space's tolerance is the largest over the axes (that of
+        # `[0, 1e6]`, about 1.8e-9), the small axis's about 1.8e-18. A small-axis knot 1e-9 off
+        # its breakpoint, a relative 1e-6 of that axis, must be refused by the small axis's own.
+        def open_knots(length: float) -> npt.NDArray[np.float64]:
+            return np.concatenate([[0.0] * 2, np.linspace(0.0, length, 5), [length] * 2])
+
+        small = open_knots(1e-3)
+        small[4] += 1e-9
+        space = BsplineSpace([BsplineSpace1D(open_knots(1e6), 2), BsplineSpace1D(small, 2)])
+        grid = hierarchical_grid(
+            TensorProductGrid([np.linspace(0.0, 1e6, 5), np.linspace(0.0, 1e-3, 5)]), 2
+        )
+        with pytest.raises(ValueError, match="along axis 1, breakpoint 2 is"):
+            THBSplineSpace(space, grid)
+
+    def test_float32_root_on_a_float64_grid_of_its_knots_is_accepted(self) -> None:
+        # Knots that float32 cannot hold exactly (fifths), against a float64 grid of the exact
+        # values: the difference is half a float32 ulp at most, inside the axis's float32 knot
+        # tolerance, so the check must not be sized in double.
+        knots = np.concatenate([[0.0] * 2, np.linspace(0.0, 1.0, 6), [1.0] * 2]).astype(np.float32)
+        root = BsplineSpace([BsplineSpace1D(knots, 2)])
+        assert root.spaces[0].knots.dtype == np.float32  # the premise
+        THBSplineSpace(root, hierarchical_grid(uniform_grid([[0.0, 1.0]], 5), 2))
 
     def test_regularity_length_mismatch_raises(self) -> None:
         with pytest.raises(ValueError, match="regularity"):
