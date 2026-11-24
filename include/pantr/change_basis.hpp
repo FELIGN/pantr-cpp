@@ -205,7 +205,8 @@ NdArray<T> gram_projection(int degree, long long n_quad, NewEval new_eval, OldEv
 /// asking the variant for a one-node set (the Lobatto families have none).
 ///
 /// Raises:
-///     value_error: `degree < 0`, or the variant needs more nodes.
+///     value_error: `degree < 0`.
+///     capacity_error: The `(degree + 1, degree + 1)` matrix cannot be allocated.
 template <StorageFloat T>
 [[nodiscard]] NdArray<T> lagrange_to_bernstein(int degree, LagrangeVariant variant) {
   detail::check_non_negative(degree);

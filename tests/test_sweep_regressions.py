@@ -7,7 +7,7 @@ XPASS failure, and the marker comes off, promoting the test to a permanent guard
 same data. That is the convention ``tests/test_review_regressions.py`` follows for the
 June 2026 review, whose markers have all since been removed.
 
-Thirteen markers have already come off here: the domain-membership test, closed by the
+These markers have already come off here: the domain-membership test, closed by the
 ``np.isclose`` tolerance-leak fix in #289; the tanh-sinh endpoint test, closed by
 truncating the rule where the endpoint gap stops being resolvable; the Lagrange
 reproducibility test, closed by seeding the barycentric node permutation; the float32
