@@ -99,7 +99,8 @@ def test_fresh_thb_space_with_a_rank_without_cells_quasi_interpolates() -> None:
     func = lambda p: p[:, 0] + p[:, 1]  # noqa: E731
     dfn = quasi_interpolate_thb_spline_distributed(func, ds)
     serial = quasi_interpolate_thb_spline(func, thb)
-    # The tolerance the other distributed-versus-serial quasi-interpolation tests assert.
+    # The tolerance tests/mpi/test_distributed_mpi.py asserts for the same comparison, inherited
+    # rather than derived here.
     np.testing.assert_allclose(
         dfn.global_function.control_points, serial.control_points, atol=1e-10
     )

@@ -303,15 +303,23 @@ def test_fresh_thb_space_still_builds_on_a_rank_that_owns_no_cell() -> None:
     assert not DistributedSpace(thb, part, _FakeComm(1, 2)).owns_cells
 
 
-def test_create_distributed_space_refuses_a_stale_thb_space_on_every_rank() -> None:
+@pytest.mark.parametrize("method", ["grid", "graph"])
+def test_create_distributed_space_refuses_a_stale_thb_space_on_every_rank(method: str) -> None:
     # Before the partition broadcast, as for an invalid B-spline space: no rank gathers.
     thb = _stale_thb_space()
     hub = _GatherHub()
     for rank in range(2):
         comm = _FakeComm(rank, 2, hub)
         with pytest.raises(RuntimeError, match="THBSplineSpace is stale"):
-            create_distributed_space(thb, comm)
+            create_distributed_space(thb, comm, method=method)
         assert comm.gathers == 0
+
+
+def test_create_distributed_space_graph_leaves_a_non_space_to_the_partitioner() -> None:
+    # The graph method checks no type before the staleness check, which must not touch an object
+    # that is neither space: the partitioner's TypeError is what reaches the caller.
+    with pytest.raises(TypeError):
+        create_distributed_space(object(), _FakeComm(0, 1), method="graph")  # type: ignore[arg-type]
 
 
 def test_compute_halo_of_no_cell_still_checks_the_supports() -> None:
