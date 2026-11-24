@@ -207,6 +207,13 @@
   are accepted. The previous release used the float values in the spectral backend and rounded
   them in the METIS backend. An object array (of Python ints) now raises `TypeError`, where the
   previous release accepted it.
+- **`create_ruled` with control nets of one size and different shapes after `make_compat`**
+  raises `ValueError` naming both shapes ("ruled requires B-splines whose control nets have the
+  same shape after making them compatible, got (3, 2) and (2, 3)."). `make_compat` matches
+  interior knot classes only, so inputs whose end knot classes differ (a zero-support end
+  function, or knots outside the domain) can keep nets such as `(3, 2)` and `(2, 3)`; the
+  previous release paired their points by flat index and returned a B-spline whose second end
+  face was not the second input, without an error. Nets of different sizes are refused as before.
 
 ### Changed
 - **`TensorProductGrid.is_uniform` judges an axis's spacings relative to its scale**: uniform when

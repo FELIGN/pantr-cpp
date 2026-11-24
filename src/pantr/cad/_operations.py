@@ -80,6 +80,12 @@ def create_ruled(bspline1: Bspline, bspline2: Bspline) -> Bspline:
     share the same degree and knot vectors.  If one is rational and the
     other is not, the non-rational one is promoted.
 
+    The control nets of the two inputs must have equal shapes after
+    :func:`make_compat`.  It matches interior knot classes only, so inputs
+    whose end knot classes differ (a zero-support end function, or knots
+    outside the domain) can keep nets of different shapes, such as ``(3, 2)``
+    and ``(2, 3)``; those are refused rather than paired point by point.
+
     Args:
         bspline1: First boundary (curve or surface, dim <= 2).
         bspline2: Second boundary (same dim as *bspline1*).
@@ -90,6 +96,10 @@ def create_ruled(bspline1: Bspline, bspline2: Bspline) -> Bspline:
     Raises:
         ValueError: If the inputs have different parametric dimensions.
         ValueError: If either input has ``dim > 2``.
+        ValueError: If the control points differ in width after the rational
+            promotion (other than a second input of width 1, which is repeated).
+        ValueError: If the control nets differ in number of points or in shape
+            after :func:`make_compat`.
 
     Example:
         >>> from pantr.cad import create_circle, create_ruled
