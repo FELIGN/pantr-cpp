@@ -309,3 +309,18 @@ class TestUnclampedEndCopies:
             ValueError, match=r"^to_open: the domain end 0\.0 has 4 copies, more than degree"
         ):
             _open_of([0.0, 0.0, 0.0, 0.0, 0.5, 1.0, 1.5, 2.0, 3.0], 2)
+
+    def test_more_than_degree_plus_one_copies_of_the_end_is_refused(self) -> None:
+        """Four copies of the domain end at degree 2, before an external knot, are refused."""
+        with pytest.raises(
+            ValueError, match=r"^to_open: the domain end 1\.0 has 4 copies, more than degree"
+        ):
+            _open_of([0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 2.0], 2)
+
+    def test_unsnapped_knot_near_a_domain_end_is_refused(self) -> None:
+        """A distinct knot within the tolerance of the start, inside the domain, is refused."""
+        with pytest.raises(
+            ValueError, match=r"^The domain end 0\.0 is within the tolerance .* knot 1e-15,"
+        ) as err:
+            _open_of([-1.0, 0.0, 0.0, 1e-15, 1.0, 2.0, 3.0, 4.0], 2, snap=False)
+        assert "snap_knots=True" in str(err.value)

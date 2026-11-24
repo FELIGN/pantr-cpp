@@ -1590,15 +1590,19 @@ TEST_CASE_TEMPLATE("to_open, restrict and split: a periodic space with a repeate
     const std::vector<double> flat = values(n_stored, 11);
     const bs::Bspline<T> b = curve<T>(knots, c.p, flat, true);
     const ExactNet per = exact_net(knots, c.p, flat, 1);
-    // The tolerance of the `to_open` test above.
-    const double tol = 8.0 * 3.0 * unit_roundoff<T>();
-    check_agrees(per, n_stored, bs::to_open_bspline<T>(b), 0.0, 1.0, tol);
+    // One insertion pass rounds the control points by 8 (p + 1) u max|P| (the knot insertion
+    // tests above), and max|P| <= 1. `restrict` and `split` insert once more on the opened
+    // points: the exact refinement is a convex combination, so it carries the first pass's error
+    // without growth and adds its own, two passes in all.
+    const double pass = 8.0 * (static_cast<double>(c.p) + 1.0) * unit_roundoff<T>();
+    check_agrees(per, n_stored, bs::to_open_bspline<T>(b), 0.0, 1.0, pass);
     const auto lo = static_cast<double>(static_cast<T>(0.3));
     const auto hi = static_cast<double>(static_cast<T>(0.6));
-    check_agrees(per, n_stored, bs::restrict<T>(b, BoundsList{bs::Bounds{0.3, 0.6}}), lo, hi, tol);
+    check_agrees(per, n_stored, bs::restrict<T>(b, BoundsList{bs::Bounds{0.3, 0.6}}), lo, hi,
+                 2.0 * pass);
     const auto [left, right] = bs::split<T>(b, 0, 0.5);
-    check_agrees(per, n_stored, left, 0.0, 0.5, tol);
-    check_agrees(per, n_stored, right, 0.5, 1.0, tol);
+    check_agrees(per, n_stored, left, 0.0, 0.5, 2.0 * pass);
+    check_agrees(per, n_stored, right, 0.5, 1.0, 2.0 * pass);
   }
 }
 
