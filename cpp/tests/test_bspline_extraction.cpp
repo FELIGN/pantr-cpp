@@ -277,28 +277,21 @@ TEST_CASE_TEMPLATE(
       }
     };
 
-    std::vector<LagrangeVariant> variants = {LagrangeVariant::equispaces,
-                                             LagrangeVariant::gauss_legendre,
-                                             LagrangeVariant::chebyshev_1st};
-    if (s.degree >= 1) {  // the Lobatto families need both ends
-      variants.push_back(LagrangeVariant::gauss_lobatto_legendre);
-      variants.push_back(LagrangeVariant::chebyshev_2nd);
-    }
-    if (s.degree == 0) {
-      // No Lagrange basis of degree 0 is built (the change-of-basis matrix is refused).
-      NdArray<T> none({n_int, order, order}, pantr::for_overwrite);
-      CHECK(message_of([&] {
-              bs::lagrange_extraction_operators<T>(space, LagrangeVariant::equispaces,
-                                                   none.template view<3>());
-            }) == "Degree must at least 1");
-      variants.clear();
-    }
+    // Every variant at every degree, degree 0 included: the degree-0 Lagrange and Bernstein bases
+    // are both the constant 1, so the change of basis is `[[1]]` whatever the variant's nodes (the
+    // Lobatto families have no one-node set and are not asked for one), and every operator of a
+    // degree-0 space is the exact 1x1 identity.
+    const std::vector<LagrangeVariant> variants = {
+        LagrangeVariant::equispaces, LagrangeVariant::gauss_legendre,
+        LagrangeVariant::chebyshev_1st, LagrangeVariant::gauss_lobatto_legendre,
+        LagrangeVariant::chebyshev_2nd};
     for (const LagrangeVariant variant : variants) {
+      CAPTURE(static_cast<int>(variant));
       NdArray<T> got({n_int, order, order}, pantr::for_overwrite);
       bs::lagrange_extraction_operators<T>(space, variant, got.template view<3>());
       const auto matrix = pantr::change_basis::cached<T>(
           pantr::change_basis::Kind::lagrange_to_bernstein, s.degree, variant);
-      check_product(got, *matrix, std::vector<bool>(n_int, false));
+      check_product(got, *matrix, std::vector<bool>(n_int, s.degree == 0));
     }
 
     NdArray<T> card({n_int, order, order}, pantr::for_overwrite);

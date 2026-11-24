@@ -304,14 +304,17 @@ def _identity_residual(
 class TestLagrangeToBernsteinBasisOperator:
     """Test the compute_lagrange_to_bernstein_1d function."""
 
-    def test_degree_zero_error(self) -> None:
-        """Test that degree lower than 1 raises ValueError."""
-        with pytest.raises(ValueError, match="Degree must at least 1"):
-            compute_lagrange_to_bernstein_1d(0)
+    @pytest.mark.parametrize("dtype", [np.float32, np.float64])
+    @pytest.mark.parametrize("variant", list(LagrangeVariant))
+    def test_degree_zero_is_one(self, variant: LagrangeVariant, dtype: type[np.floating]) -> None:
+        """Test that degree 0 gives ``[[1.]]`` for every variant: both bases are the constant 1."""
+        result = compute_lagrange_to_bernstein_1d(0, variant, dtype=dtype)
+        assert result.dtype == dtype
+        np.testing.assert_array_equal(result, np.ones((1, 1)))
 
     def test_negative_degree_error(self) -> None:
         """Test that negative degree raises ValueError."""
-        with pytest.raises(ValueError, match="Degree must at least 1"):
+        with pytest.raises(ValueError, match="Degree must be non-negative"):
             compute_lagrange_to_bernstein_1d(-1)
 
     def test_invalid_dtype_error(self) -> None:
@@ -375,14 +378,17 @@ class TestLagrangeToBernsteinBasisOperator:
 class TestBernsteinToLagrangeBasisOperator:
     """Test the create_Bernstein_to_Lagrange_basis function."""
 
-    def test_degree_zero_error(self) -> None:
-        """Test that degree lower than 1 raises ValueError."""
-        with pytest.raises(ValueError, match="Degree must at least 1"):
-            compute_bernstein_to_lagrange_1d(0)
+    @pytest.mark.parametrize("dtype", [np.float32, np.float64])
+    @pytest.mark.parametrize("variant", list(LagrangeVariant))
+    def test_degree_zero_is_one(self, variant: LagrangeVariant, dtype: type[np.floating]) -> None:
+        """Test that degree 0 gives ``[[1.]]`` for every variant: both bases are the constant 1."""
+        result = compute_bernstein_to_lagrange_1d(0, variant, dtype=dtype)
+        assert result.dtype == dtype
+        np.testing.assert_array_equal(result, np.ones((1, 1)))
 
     def test_negative_degree_error(self) -> None:
         """Test that negative degree raises ValueError."""
-        with pytest.raises(ValueError, match="Degree must at least 1"):
+        with pytest.raises(ValueError, match="Degree must be non-negative"):
             compute_bernstein_to_lagrange_1d(-1)
 
     def test_invalid_dtype_error(self) -> None:
