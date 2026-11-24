@@ -261,8 +261,8 @@ template <StorageFloat T>
     throw value_error(
         "B-spline is already open (both boundary knots have multiplicity degree + 1).");
   }
-  // A knot vector can hold more copies of an end than its degree allows (a raw one, or a
-  // non-periodic space's at its start, which the space does not check), and `degree + 1 - m` below
+  // A knot vector can hold more copies of an end than its degree allows (a raw one, or a space's:
+  // a space refuses them only as its last knot, at positive degree), and `degree + 1 - m` below
   // would wrap.
   const std::size_t m_left = past_a - first_a;
   const std::size_t m_right = past_b - first_b;
