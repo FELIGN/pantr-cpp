@@ -89,7 +89,9 @@ class DistributedSpace:
                 ``comm.rank`` is outside ``[0, comm.size)`` (delegated to
                 :meth:`~pantr.grid.Partition.owned_cells`).
             RuntimeError: If a function of ``global_space`` has an empty support (an invalid
-                space). Raised on every rank, including one that owns no cells.
+                space), or if ``global_space`` is a stale
+                :class:`~pantr.bspline.THBSplineSpace` (its grid modified after construction).
+                Raised on every rank, including one that owns no cells.
 
         Note:
             Unlike :func:`~pantr.bspline.build_local`, construction succeeds when this rank
@@ -251,15 +253,16 @@ class DistributedSpace:
 
 
 def _check_global_space(space: BsplineSpace | THBSplineSpace) -> None:
-    """Refuse a periodic B-spline space, or one with a function of empty support, on any rank.
+    """Refuse an invalid or stale space on every rank, a rank that owns no cell included.
 
     A rank that owns no cell never calls ``build_local``, so without this it would accept a
-    space the other ranks refuse and then wait alone in the next collective. The check is
-    ``build_local``'s own, reached through :func:`~pantr.bspline.compute_halo`, which validates
-    the space's supports before answering the empty request; it needs no communication, as
-    every rank holds the same space. A :class:`~pantr.bspline.THBSplineSpace` refuses an empty
-    support at its own construction; whether it is stale (its grid refined after construction)
-    is not checked here.
+    space the other ranks refuse and then wait alone in the next collective. For a
+    :class:`~pantr.bspline.BsplineSpace` the check is ``build_local``'s own, reached through
+    :func:`~pantr.bspline.compute_halo`, which validates the space's supports before answering
+    the empty request. A :class:`~pantr.bspline.THBSplineSpace` refuses an empty support at its
+    own construction, and here it is refused when stale (its grid modified after construction),
+    with the ``RuntimeError`` ``build_local`` raises on a rank with cells. Neither check needs
+    communication, as every rank holds the same space.
 
     Args:
         space (BsplineSpace | THBSplineSpace): The global space.
@@ -267,10 +270,13 @@ def _check_global_space(space: BsplineSpace | THBSplineSpace) -> None:
     Raises:
         ValueError: If ``space`` is a periodic :class:`~pantr.bspline.BsplineSpace`, or one
             with no direction.
-        RuntimeError: If a function of ``space`` has an empty support (an invalid space).
+        RuntimeError: If a function of ``space`` has an empty support (an invalid space), or
+            if ``space`` is a stale :class:`~pantr.bspline.THBSplineSpace`.
     """
     if isinstance(space, BsplineSpace):
         compute_halo(space, np.empty(0, dtype=np.int64))
+    else:
+        space._check_not_stale()
 
 
 def _global_cell_count(space: BsplineSpace | THBSplineSpace) -> int:

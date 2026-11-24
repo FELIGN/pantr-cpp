@@ -85,7 +85,8 @@ def create_distributed_space(  # noqa: PLR0913 -- public factory mirrors the par
             with ``comm`` (e.g. ``comm.size`` mismatch), as raised downstream; on a rank
             other than 0, if rank 0 could not compute the partition.
         RuntimeError: If a function of ``global_space`` has an empty support (an invalid
-            space), on every rank, before the collective.
+            space), or if ``global_space`` is a stale ``THBSplineSpace`` (its grid modified
+            after construction), on every rank, before the collective.
 
     Example:
         Needs a live MPI communicator and several ranks, so it is not run as a doctest.

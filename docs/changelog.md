@@ -1605,6 +1605,13 @@
 - **A `BVH` built with a negative `n_cells` and no nodes** returns an empty array from
   `query_aabb`. The previous release read past its empty node arrays and returned a cell id taken
   from that memory.
+- **`DistributedSpace` and `create_distributed_space` refuse a stale `THBSplineSpace` on every
+  rank** (its grid modified after the space was built), a rank that owns no cell included, with the
+  `RuntimeError` the ranks with cells raised before ("THBSplineSpace is stale: ..."), and
+  `create_distributed_space` does so before the partition is sent. The previous release checked
+  staleness only while building a rank's local space, so with a partition that left a rank without
+  cells, that rank constructed while the others raised, and then waited forever in the next
+  collective.
 
 ## 0.7.0 (2026-08-19)
 
