@@ -202,11 +202,14 @@ NdArray<T> gram_projection(int degree, long long n_quad, NewEval new_eval, OldEv
 ///
 /// No solve (the Lagrange basis is cardinal at its own nodes), so no degree limit. At degree 0
 /// both bases are the constant 1, so the matrix is `[[1]]` for every variant, returned without
-/// asking the variant for a one-node set (the Lobatto families have none).
+/// asking the variant for a one-node set (the Lobatto families have none) and without checking
+/// `variant` (a value outside `LagrangeVariant` is refused only at degree 1 and above).
 ///
 /// Raises:
-///     value_error: `degree < 0`.
-///     capacity_error: The `(degree + 1, degree + 1)` matrix cannot be allocated.
+///     value_error: `degree < 0`, or `variant` is outside `LagrangeVariant` (degree 1 and above).
+///     capacity_error: `(degree + 1)^2 sizeof(T)` bytes exceed the largest `std::ptrdiff_t`.
+///     state_error: The Gauss-Legendre or Gauss-Lobatto-Legendre nodes' Newton iteration did not
+///         converge (not observed; a loud bound).
 template <StorageFloat T>
 [[nodiscard]] NdArray<T> lagrange_to_bernstein(int degree, LagrangeVariant variant) {
   detail::check_non_negative(degree);
