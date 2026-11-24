@@ -1438,19 +1438,21 @@
   length, as evaluation does. Also, in a space built with `snap_knots=False`, a knot closer to the
   end than the space's tolerance (`[0, 0, 1, 1 + 2.2e-15, 2]` at degree 1) was taken for a copy of
   the end, an error of order 1 as well; the end now takes no knot for a copy of it, as evaluation
-  does outside a Bezier-like space (`num_basis == degree + 1`), whose evaluation takes the
-  Bernstein form and ignores such an offset. A snapped knot vector whose last span is non-empty
-  keeps its slices bit for bit. The first defect is inherited from the previous release.
+  does outside a Bézier-like direction (one Bézier piece: non-periodic, ends open within the
+  tolerance, `degree + 1` functions; `BsplineSpace1D.has_Bezier_like_knots`), whose evaluation
+  takes the Bernstein form and ignores such an offset. A snapped knot vector whose last span is
+  non-empty keeps its slices bit for bit. The first defect is inherited from the previous release.
 - **`Bspline.slice` and `Bspline.boundary` at the domain start agree with `Bspline.evaluate` in a
-  space built with `snap_knots=False` that is not Bezier-like** (#34). A knot closer to the start
-  than the space's tolerance (`[0, 0, 1e-15, 1, 1]` at degree 1) was taken for a copy of the
-  start, so the slice or boundary at the start, and the start point of a curve, read the wrong
+  space built with `snap_knots=False`, outside a Bézier-like direction** (#34). A knot closer to
+  the start than the space's tolerance (`[0, 0, 1e-15, 1, 1]` at degree 1) was taken for a copy of
+  the start, so the slice or boundary at the start, and the start point of a curve, read the wrong
   control points, an error of order 1 with no exception. The start now takes the span starting at
-  the last knot equal to it, as evaluation does outside a Bezier-like space
-  (`num_basis == degree + 1`), and counts only knots equal to it as copies; a value within the
-  tolerance of the start is still taken as the start. In a Bezier-like space evaluation takes the
-  Bernstein form, which ignores a knot offset below the tolerance, so the slice there differs from
-  it by an amount that vanishes with the offset, at the start as at interior values. Snapped
+  the last knot equal to it, as evaluation does, and counts only knots equal to it as copies; a
+  value within the tolerance of the start is still taken as the start. In a Bézier-like direction
+  evaluation takes the Bernstein form, which ignores a knot offset within the tolerance, so the
+  slice there differs from it by an amount that vanishes with the offset, at the start as at
+  interior values; the start of such a direction used to match the Bernstein form, and now moves
+  by that amount. Snapped
   double spaces keep their slices bit for bit. Snapped float spaces do too, but for one case: a
   knot before the start whose distance to it is within the tolerance in exact arithmetic but not
   once rounded to float stays a knot of its own, and the old slice counted it as a copy of the
