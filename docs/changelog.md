@@ -1437,9 +1437,29 @@
   edges of their inputs this way, inherited it. The end now takes the last span of non-zero
   length, as evaluation does. Also, in a space built with `snap_knots=False`, a knot closer to the
   end than the space's tolerance (`[0, 0, 1, 1 + 2.2e-15, 2]` at degree 1) was taken for a copy of
-  the end, an error of order 1 as well; the end now takes no knot for a copy of it. The start of
-  the domain still does, in such a space. A snapped knot vector whose last span is non-empty keeps
-  its slices bit for bit. The first defect is inherited from the previous release.
+  the end, an error of order 1 as well; the end now takes no knot for a copy of it, as evaluation
+  does outside a Bézier-like direction (one Bézier piece: non-periodic, ends open within the
+  tolerance, `degree + 1` functions; `BsplineSpace1D.has_Bezier_like_knots`), whose evaluation
+  takes the Bernstein form and ignores such an offset. A snapped knot vector whose last span is
+  non-empty keeps its slices bit for bit. The first defect is inherited from the previous release.
+- **`Bspline.slice` and `Bspline.boundary` at the domain start agree with `Bspline.evaluate` in a
+  space built with `snap_knots=False`, outside a Bézier-like direction** (#34). A knot closer to
+  the start than the space's tolerance (`[0, 0, 1e-15, 1, 1]` at degree 1) was taken for a copy of
+  the start, so the slice or boundary at the start, and the start point of a curve, read the wrong
+  control points, an error of order 1 with no exception. The start now takes the span starting at
+  the last knot equal to it, as evaluation does, and counts only knots equal to it as copies; a
+  value within the tolerance of the start is still taken as the start. In a Bézier-like direction
+  evaluation takes the Bernstein form, which ignores a knot offset within the tolerance, so the
+  slice there differs from it by an amount that vanishes with the offset, at the start as at
+  interior values; the start of such a direction with a knot offset used to match the Bernstein
+  form, and now moves by that amount. Snapped double spaces keep their slices bit for bit. Snapped
+  float spaces do too, but for one case: a knot before the start whose distance to it is within
+  the tolerance in exact arithmetic but not once rounded to float stays a knot of its own, and the
+  old slice counted it as a copy of the start; the slice now takes it as a knot of its own there,
+  as it does at the end (at an interior value it still counts copies within the tolerance).
+  The previous release got a knot after the start right; with a knot before the start as well
+  (`[-1, -1e-15, 0, 1e-15, 1, 2, 2, 2]` at degree 2) it too counted the earlier knot as a copy of
+  the start, so that case is inherited from it.
 - **`make_compat` gives B-splines whose interior knots differ by less than the tolerance the same
   number of knots** (#13). It matched each breakpoint of the union of the inputs only against the
   first knot of an input not below it, so for knots `0.5` and `0.5 + tol / 4` it inserted a knot
