@@ -22,6 +22,7 @@
 #include "bspline_test_support.hpp"
 
 #include <pantr/bspline/bspline.hpp>
+#include <pantr/bspline/evaluate.hpp>
 #include <pantr/bspline/slice.hpp>
 #include <pantr/core/errors.hpp>
 
@@ -438,9 +439,10 @@ TEST_CASE_TEMPLATE("boundary: the start of an unsnapped space beside a sub-toler
   // In the last case a single knot equals `u`, between `-gap` and `gap`: at degree 2 the functions
   // `0` and `1` are each 1/2 there, the one corner-cutting weight is `gap / (2 gap)`, exactly 1/2,
   // and the slice is `(P0 + P1) / 2`, exact for the dyadic control points. All are compared bit
-  // for bit. Classed with the tolerance, all three take the knot at `gap` for a copy of the start
-  // and copy row 1; with the span right but the multiplicity counted with the tolerance, the third
-  // takes `-gap` for a copy and copies row 0.
+  // for bit. Classed with the tolerance, each takes the knot at `gap` for a copy of the start and
+  // copies row 1; with the span right but the multiplicity counted with the tolerance, the
+  // `halfway` case takes `-gap` for a copy and copies row 0. The curve is also compared with
+  // `evaluate` at the start, within the file's derived bound.
   constexpr double gap = 1e-15;
   struct Case {
     std::vector<double> knots;
@@ -448,6 +450,7 @@ TEST_CASE_TEMPLATE("boundary: the start of an unsnapped space beside a sub-toler
     bool halfway;  // The slice is the mean of rows 0 and 1, not row 0.
   };
   const std::vector<Case> cases = {
+      {{0, gap, 1}, 0, false},
       {{0, 0, gap, 1, 1}, 1, false},
       {{0, 0, 0, gap, 1, 2, 2, 2}, 2, false},
       {{-1, -gap, 0, gap, 1, 2, 2, 2}, 2, true},
@@ -514,7 +517,18 @@ TEST_CASE_TEMPLATE("boundary: the start of an unsnapped space beside a sub-toler
             outer *= shape[d];
           }
           const std::size_t inner = cp.size() / (outer * shape[axis]);
-          for (const bs::Bspline<T>& g : got) {
+          // Rows 0 and 1 along `axis` differ, so copying the wrong one cannot pass.
+          bool rows_differ = false;
+          for (std::size_t o = 0; o < outer; ++o) {
+            for (std::size_t i = 0; i < inner; ++i) {
+              const std::size_t row0 = o * shape[axis] * inner + i;
+              rows_differ = rows_differ || cp[row0] != cp[row0 + inner];
+            }
+          }
+          REQUIRE(rows_differ);
+          for (std::size_t which = 0; which < got.size(); ++which) {
+            CAPTURE(which);  // boundary, slice at the start, at start + tol / 2, at start - tol / 2
+            const bs::Bspline<T>& g = got[which];
             REQUIRE(g.control_points().size() == outer * inner);
             for (std::size_t o = 0; o < outer; ++o) {
               for (std::size_t i = 0; i < inner; ++i) {
@@ -528,6 +542,9 @@ TEST_CASE_TEMPLATE("boundary: the start of an unsnapped space beside a sub-toler
       }
       // A curve: the start point, projected when rational.
       const std::vector<T> cp = control_points(static_cast<std::size_t>(space.num_basis()), 31U);
+      // Rows 0 and 1 differ, so copying the wrong one cannot pass.
+      REQUIRE(!std::equal(cp.begin(), cp.begin() + static_cast<std::ptrdiff_t>(cols),
+                          cp.begin() + static_cast<std::ptrdiff_t>(cols)));
       const bs::Bspline<T> crv(bs::BsplineSpace<T>(std::vector<bs::BsplineSpace1D<T>>{space}),
                                sp(cp), rational);
       const pantr::NdArray<T> by_boundary = bs::boundary_point<T>(crv, 0, 0);
@@ -536,10 +553,16 @@ TEST_CASE_TEMPLATE("boundary: the start of an unsnapped space beside a sub-toler
       for (std::size_t i = 0; i < cols; ++i) {
         row[i] = expected(cp[i], cp[cols + i], c.halfway);
       }
+      const T at = static_cast<T>(start);
+      const pantr::NdArray<T> by_evaluate =
+          bs::evaluate<T, T>(crv, pantr::mdview<const T, 2>(&at, 1, 1));
+      const double bound = slice_tolerance<T>(crv, 0);
       for (std::size_t i = 0; i < 2; ++i) {
         const T want = rational ? row[i] / row[2] : row[i];
         CHECK(by_boundary.data()[i] == want);
         CHECK(by_slice.data()[i] == want);
+        CHECK(std::abs(static_cast<double>(by_evaluate.data()[i]) - static_cast<double>(want)) <=
+              bound);
       }
     }
   }

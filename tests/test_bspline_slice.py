@@ -363,6 +363,7 @@ class TestSliceStartBesideSubToleranceGap:
         ("knots", "degree", "below"),
         [
             # A knot just after the start.
+            ([0, 1e-15, 1], 0, False),
             ([0, 0, 1e-15, 1, 1], 1, False),
             ([0, 0, 0, 1e-15, 1, 2, 2, 2], 2, False),
             # One knot at the start, between a knot just before it and one just after.
