@@ -17,7 +17,12 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
-from pantr.bspline import THBSplineSpace, create_thb_space, create_uniform_space
+from pantr.bspline import (
+    THBSplineSpace,
+    create_thb_space,
+    create_uniform_space,
+    quasi_interpolate_thb_spline,
+)
 from pantr.grid import Partition
 from pantr.mpi import DistributedSpace, quasi_interpolate_thb_spline_distributed
 
@@ -91,5 +96,10 @@ def test_fresh_thb_space_with_a_rank_without_cells_quasi_interpolates() -> None:
     owner = np.zeros(thb.grid.num_cells, dtype=np.int32)
     ds = DistributedSpace(thb, Partition(owner, comm.size), comm)
     assert ds.owns_cells == (comm.rank == 0)
-    dfn = quasi_interpolate_thb_spline_distributed(lambda p: p[:, 0] + p[:, 1], ds)
-    assert dfn.global_function.control_points.shape[0] == thb.num_total_basis
+    func = lambda p: p[:, 0] + p[:, 1]  # noqa: E731
+    dfn = quasi_interpolate_thb_spline_distributed(func, ds)
+    serial = quasi_interpolate_thb_spline(func, thb)
+    # The tolerance the other distributed-versus-serial quasi-interpolation tests assert.
+    np.testing.assert_allclose(
+        dfn.global_function.control_points, serial.control_points, atol=1e-10
+    )

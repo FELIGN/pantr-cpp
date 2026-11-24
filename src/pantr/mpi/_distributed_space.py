@@ -41,7 +41,9 @@ class DistributedSpace:
     the same global space and partition, and holds only its own
     :class:`~pantr.bspline.LocalSpace` (``local``). A rank that owns no cells (an
     over-provisioned run, or a partition that excludes some ranks) has ``local`` set to
-    ``None`` and ``owns_cells`` ``False`` instead of failing.
+    ``None`` and ``owns_cells`` ``False`` instead of failing. An invalid space, or a stale
+    :class:`~pantr.bspline.THBSplineSpace` (its grid modified after construction), is
+    refused on every rank, a rank that owns no cells included.
 
     Construction performs no MPI communication: the partition must be identical on every
     rank, so that each rank can window the global space locally.
@@ -275,7 +277,7 @@ def _check_global_space(space: BsplineSpace | THBSplineSpace) -> None:
     """
     if isinstance(space, BsplineSpace):
         compute_halo(space, np.empty(0, dtype=np.int64))
-    else:
+    elif isinstance(space, THBSplineSpace):
         space._check_not_stale()
 
 
