@@ -918,9 +918,9 @@ template <StorageFloat T>
 ///         as possible.
 ///     tol (std::optional<double>): The deviation budget, a distance in **projected** space. No
 ///         value uses the round-off floor of `roundoff_deviation_floor`, grown for each later copy
-///         of a knot as `removal_floor_safety` describes, which removes only what is redundant to
-///         within the arithmetic (up to the conservative tier for a late copy), and may keep a
-///         redundant copy of a knot close to a clamped end.
+///         of a knot as `removal_floor_safety` describes: a copy is removed only when its deviation
+///         is within that floor (round-off for the first copy, at most the conservative tier for a
+///         later one), and a copy the spline does not need may stay close to a clamped end.
 ///
 /// Returns:
 ///     Bspline<T>: The B-spline with the reduced knot vectors.

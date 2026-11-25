@@ -306,8 +306,9 @@ void verify_shared_boundary(std::span<const T> row1, std::span<const T> row2,
 ///
 /// Attempts to remove up to `p - 1` copies of the junction knot (`remove_knots` at its default
 /// deviation budget, the round-off floor grown for later copies as
-/// `bspline::removal_floor_safety` describes, which removes only what is redundant to within the
-/// arithmetic and may keep a redundant copy of a knot close to a clamped end).
+/// `bspline::removal_floor_safety` describes: a copy goes only when its deviation is within that
+/// floor, at most the conservative tier, and one the spline does not need may stay close to a
+/// clamped end).
 ///
 /// Args:
 ///     b (const bspline::Bspline<T>&): The joined B-spline.

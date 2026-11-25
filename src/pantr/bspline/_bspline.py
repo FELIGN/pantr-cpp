@@ -908,6 +908,7 @@ class Bspline:
         With no ``tol`` the operation is **lossless**: only knots the spline does not
         actually need are removed, to within round-off (for a later copy of a knot,
         round-off amplified by the reconstruction, at most the conservative tier).
+        Not every such knot is removed: a copy close to a clamped end may stay.
         Removing a knot at the cost of a geometric error is a trade only the caller can
         price, so it has to be asked for by passing a ``tol``.
 
