@@ -66,10 +66,10 @@ namespace pantr::bspline {
 /// graded against this floor times `kappa_t / kappa_0`, which is 1 for the first copy. That assumes
 /// the net carries a rounding of about `floor / kappa_0` per point, which is admitted and not
 /// derived: it is the level the first-copy floor already implies. Where the net carries more, an
-/// exactly removable copy can still stay below the cap, as a single copy can under the first-copy
-/// floor; observed for knots close to a clamped end, where `kappa_0` itself is large (at degree 5
-/// with interior knots `1/4` and `3/4`, about `3.9e5` for a single copy `1/1024` from the end,
-/// against about 85 for one at `1/16`).
+/// exactly removable copy can still stay although its ratio is under the cap, as a single copy can
+/// under the first-copy floor; observed for knots close to a clamped end, where `kappa_0` itself is
+/// large (at degree 5 with interior knots `1/4` and `3/4`, about `3.9e5` for a single copy `1/1024`
+/// from the end, against about 85 for one at `1/16`).
 ///
 /// The ratio is clamped (`detail::removal_floor_growth`) to at least 1, so no copy is graded below
 /// the first and a single removal is graded exactly as before; and to at most
@@ -177,19 +177,22 @@ template <StorageFloat T>
   return n;
 }
 
-/// Get the deviation budget that admits exactly the removals round-off allows.
+/// Get the round-off deviation budget for the first copy of a knot.
 ///
 /// `removal_floor_safety * get_strict<T>() * (degree + 1) * sqrt(num_stacked) * scale`:
-/// `8 (degree + 1) eps` times `control_point_scale` for one control point (derivation in
-/// `removal_floor_safety`), times a `sqrt` for how many control points the kernel grades at once.
+/// `8 (degree + 1) eps` times `control_point_scale` for one control point (an operation count,
+/// see `removal_floor_safety`), times a `sqrt` for how many control points the kernel grades at
+/// once.
 ///
 /// This is the default budget of the first copy of a knot (a later copy multiplies it, see
 /// `removal_floor_safety`), and it is deliberately *not* a geometric one. A knot that a spline
 /// does not actually need is removable exactly, and what stands between it and a bit-for-bit
 /// reconstruction is round-off: the net's own, sent through the reconstruction, and the
-/// reconstruction's. A budget at that level therefore means "remove what is genuinely redundant and
-/// nothing else", which for the first copy is the one default that needs no constant beyond the
-/// admitted `removal_floor_safety`. Anything looser is a statement about how much geometry the
+/// reconstruction's. A budget at that level therefore aims at "remove what is genuinely redundant
+/// and nothing else", which for the first copy is the one default that needs no constant beyond the
+/// admitted `removal_floor_safety`. It falls short of the first half where the net carries more
+/// rounding than the floor assumes, close to a clamped end (see `removal_floor_safety`), and keeps
+/// the copy there. Anything looser is a statement about how much geometry the
 /// caller is willing to lose, which only the caller can make.
 ///
 /// **Why `sqrt(num_stacked)`.** For a curve the kernel compares one control point against one
@@ -915,8 +918,9 @@ template <StorageFloat T>
 ///         as possible.
 ///     tol (std::optional<double>): The deviation budget, a distance in **projected** space. No
 ///         value uses the round-off floor of `roundoff_deviation_floor`, grown for each later copy
-///         of a knot as `removal_floor_safety` describes, which removes what is redundant to within
-///         the arithmetic, up to the conservative tier for a late copy, and nothing more.
+///         of a knot as `removal_floor_safety` describes, which removes only what is redundant to
+///         within the arithmetic (up to the conservative tier for a late copy), and may keep a
+///         redundant copy of a knot close to a clamped end.
 ///
 /// Returns:
 ///     Bspline<T>: The B-spline with the reduced knot vectors.
