@@ -124,55 +124,6 @@ template <StorageFloat T>
   return static_cast<T>(snap_to_knot<T>(knots, value, tol));
 }
 
-/// The index range of the knots bitwise equal to `value`.
-///
-/// Args:
-///     knots (std::span<const T>): A non-decreasing knot vector.
-///     value (T): The value searched for.
-///
-/// Returns:
-///     std::pair<std::size_t, std::size_t>: `[first, past)`, empty where no knot equals `value`.
-///
-/// Raises:
-///     value_error: `value` is NaN, which no knot equals and the search cannot order (it would
-///         report every knot as equal to it).
-template <StorageFloat T>
-[[nodiscard]] std::pair<std::size_t, std::size_t> equal_knots(std::span<const T> knots, T value) {
-  if (std::isnan(value)) {
-    throw value_error("A NaN bound has no knots at it.");
-  }
-  const auto [lo, hi] = std::equal_range(knots.begin(), knots.end(), value);
-  return {static_cast<std::size_t>(lo - knots.begin()),
-          static_cast<std::size_t>(hi - knots.begin())};
-}
-
-/// Refuse a piece whose end `end` has a distinct knot within `tol` of it inside the piece.
-///
-/// Only a space built with `snap_knots = false` holds such a knot (the window's other end is
-/// further than `tol`, `check_window` having run). The piece's end class under `tol` would have
-/// more than `degree + 1` members, which a space refuses at its last knot; this refuses it at
-/// either cut end.
-///
-/// Args:
-///     piece (std::span<const T>): The piece's knots, clamped at `end`.
-///     end (T): The value at the end checked, `piece.front()` or `piece.back()`.
-///     bound (double): The bound as requested, for the message.
-///     tol (double): Absolute parametric tolerance.
-///
-/// Raises:
-///     value_error: A knot of `piece` other than `end` is within `tol` of it.
-template <StorageFloat T>
-void check_piece_end(std::span<const T> piece, T end, double bound, double tol) {
-  for (const T k : piece) {
-    if (k != end && static_cast<double>(std::abs(static_cast<T>(k - end))) <= tol) {
-      throw value_error("The bound " + py_repr(bound) + " is within the tolerance " + py_repr(tol) +
-                        " of the distinct knot " + py_repr(static_cast<double>(k)) +
-                        ", which a piece cut there would hold beside its clamped end; build the "
-                        "space with snap_knots=True.");
-    }
-  }
-}
-
 /// Refuse a window whose two ends are one knot under `tol`.
 ///
 /// Args:
@@ -318,9 +269,9 @@ template <StorageFloat T>
 ///
 /// Raises:
 ///     value_error: As `validate_restrict_bounds`, `compute_boundary_knots_to_insert` and
-///         `insert_knots_1d`; the two bounds are values within `tol` of each other ("... enclose
-///         no interval"); or a cut end would hold a distinct knot within `tol` of it ("The bound
-///         ... is within the tolerance").
+///         `insert_knots_1d`, and for a periodic direction as `to_open_1d`; the two bounds are
+///         values within `tol` of each other ("... enclose no interval"); or a cut end would hold a
+///         distinct knot within `tol` of it ("The bound ... is within the tolerance").
 template <StorageFloat T>
 [[nodiscard]] KnotsAndCtrl<T> restrict_1d(std::span<const T> knots, int degree,
                                           mdview<const T, 2> ctrl, bool periodic, double tol,
@@ -371,10 +322,10 @@ template <StorageFloat T>
   // An end the space already had (an open domain end, as `compute_boundary_knots_to_insert` keeps
   // it) is its own; a cut end is checked.
   if (!(lo == a && k[0] == a)) {
-    detail::check_piece_end<T>(piece, lo, bounds.lo, tol);
+    detail::check_piece_end<T>(piece, lo, "bound", bounds.lo, tol);
   }
   if (!(hi == b && k.back() == b)) {
-    detail::check_piece_end<T>(piece, hi, bounds.hi, tol);
+    detail::check_piece_end<T>(piece, hi, "bound", bounds.hi, tol);
   }
   KnotsAndCtrl<T> out{
       std::vector<T>(refined.knots.begin() + static_cast<std::ptrdiff_t>(i_start),
@@ -489,8 +440,8 @@ template <StorageFloat T>
   // The split index: the first of the p + 1 copies of the value, so `i_split + p + 1 <= size`.
   const std::span<const T> rk = refined.knots;
   const std::size_t i_split = detail::equal_knots<T>(rk, at).first;
-  detail::check_piece_end<T>(rk.first(i_split + p + 1), at, value, tol);
-  detail::check_piece_end<T>(rk.subspan(i_split), at, value, tol);
+  detail::check_piece_end<T>(rk.first(i_split + p + 1), at, "bound", value, tol);
+  detail::check_piece_end<T>(rk.subspan(i_split), at, "bound", value, tol);
   const std::size_t rows = refined.ctrl.shape()[0];
 
   std::pair<KnotsAndCtrl<T>, KnotsAndCtrl<T>> out{
