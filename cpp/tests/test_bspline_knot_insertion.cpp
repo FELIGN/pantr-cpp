@@ -20,6 +20,7 @@
 #include <pantr/bspline/knot_insertion.hpp>
 #include <pantr/bspline/periodic.hpp>
 #include <pantr/bspline/restrict.hpp>
+#include <pantr/core/format.hpp>
 #include <pantr/tolerance.hpp>
 
 #include <algorithm>
@@ -1510,4 +1511,207 @@ TEST_CASE("restrict and split: the ends the review pinned, one by one") {
   CHECK_THROWS_WITH_AS(static_cast<void>(bs::split_1d<double>(
                            sp(k), 2, ctrl, false, tol, std::numeric_limits<double>::quiet_NaN())),
                        doctest::Contains("NaN"), pantr::value_error);
+}
+
+// ---- a periodic space whose seam knot is repeated -----------------------------------------------
+//
+// A periodic knot vector whose seam knot is repeated and whose domain starts at the first copy
+// holds copies of the domain start `a = knots[p]` past index `p`: inside the domain, outside the
+// first `p + 1` knots. A non-periodic vector can hold copies of an end inside its domain past an
+// external knot too. Opening either counts every copy of a domain end.
+
+namespace {
+
+/// The periodic knot vector of period 1 whose domain knots are `cycle` and `1`:
+/// `cycle.size() + 2 p + 1` knots, `p` ghost knots on each side of `[0, 1]`, `knots[p]` the first
+/// copy of the seam `0`.
+std::vector<double> periodic_knots(const std::vector<double>& cycle, int p) {
+  const auto len = static_cast<long long>(cycle.size());
+  const auto n = len + 2 * static_cast<long long>(p) + 1;
+  std::vector<double> k;
+  for (long long i = 0; i < n; ++i) {
+    const long long j = i - p;
+    const long long period = j >= 0 ? j / len : -((-j + len - 1) / len);
+    k.push_back(cycle[static_cast<std::size_t>(j - period * len)] + static_cast<double>(period));
+  }
+  return k;
+}
+
+/// Check that `piece` is clamped on `[lo, hi]` and agrees with the periodic net `per` (of
+/// `n_stored` stored points) there, at 19 interior points, within `tol`.
+template <class T>
+void check_agrees(const ExactNet& per, std::size_t n_stored, const bs::Bspline<T>& piece, double lo,
+                  double hi, double tol) {
+  CHECK_FALSE(piece.space().spaces()[0].periodic());
+  check_clamped_on(piece, lo, hi);
+  const auto ps = piece.space().spaces()[0];
+  const std::vector<double> pk(ps.knots().begin(), ps.knots().end());
+  const std::vector<double> pc(piece.control_points().begin(), piece.control_points().end());
+  const ExactNet on = exact_net(pk, per.p, pc, 1);
+  for (int j = 1; j < 20; ++j) {
+    const Rational x = oracle::exact(lo + (hi - lo) * static_cast<double>(j) / 20.0);
+    Rational d = exact_curve(per, x, n_stored)[0] - exact_curve(on, x)[0];
+    if (d < 0) {
+      d = -d;
+    }
+    CHECK(static_cast<double>(d) <= tol);
+  }
+}
+
+}  // namespace
+
+TEST_CASE_TEMPLATE("to_open, restrict and split: a periodic space with a repeated seam knot", T,
+                   double, float) {
+  struct SeamCase {
+    std::vector<double> cycle;
+    int p;
+    std::size_t copies;
+  };
+  // With p + 1 copies (degree 1, a double seam) nothing is inserted and only the ghosts are
+  // trimmed.
+  for (const SeamCase& c :
+       {SeamCase{{0.0, 0.0, 0.25, 0.5, 0.75}, 2, 2}, SeamCase{{0.0, 0.0, 0.25, 0.5, 0.75}, 3, 2},
+        SeamCase{{0.0, 0.0, 0.0, 0.25, 0.5, 0.75}, 3, 3},
+        SeamCase{{0.0, 0.0, 0.25, 0.5, 0.75}, 1, 2}}) {
+    CAPTURE(c.p);
+    CAPTURE(c.copies);
+    const std::vector<double> knots = periodic_knots(c.cycle, c.p);
+    const auto p = static_cast<std::size_t>(c.p);
+    // The premise: copies of `a = 0` past index p.
+    for (std::size_t i = 0; i < c.copies; ++i) {
+      REQUIRE(knots[p + i] == 0.0);
+    }
+    REQUIRE(knots[p + c.copies] > 0.0);
+    REQUIRE(knots[p - 1] < 0.0);
+    const bs::BsplineSpace1D<T> ps = space_1d<T>(knots, c.p, true);
+    // One function per knot of the cycle, as the oracle wraps the stored points.
+    REQUIRE(static_cast<std::size_t>(ps.num_basis()) == c.cycle.size());
+    const std::size_t n_stored = c.cycle.size();
+    const std::vector<double> flat = values(n_stored, 11);
+    const bs::Bspline<T> b = curve<T>(knots, c.p, flat, true);
+    const ExactNet per = exact_net(knots, c.p, flat, 1);
+    // One insertion pass rounds the control points by 8 (p + 1) u max|P| (the knot insertion
+    // tests above), and max|P| <= 1. `restrict` and `split` insert once more on the opened
+    // points: the exact refinement is a convex combination, so it carries the first pass's error
+    // without growth and adds its own, two passes in all (to first order in u).
+    const double pass = 8.0 * (static_cast<double>(c.p) + 1.0) * unit_roundoff<T>();
+    check_agrees(per, n_stored, bs::to_open_bspline<T>(b), 0.0, 1.0, pass);
+    const auto lo = static_cast<double>(static_cast<T>(0.3));
+    const auto hi = static_cast<double>(static_cast<T>(0.6));
+    check_agrees(per, n_stored, bs::restrict<T>(b, BoundsList{bs::Bounds{0.3, 0.6}}), lo, hi,
+                 2.0 * pass);
+    const auto [left, right] = bs::split<T>(b, 0, 0.5);
+    check_agrees(per, n_stored, left, 0.0, 0.5, 2.0 * pass);
+    check_agrees(per, n_stored, right, 0.5, 1.0, 2.0 * pass);
+  }
+}
+
+TEST_CASE("to_open, restrict and split: an unsnapped knot within the tolerance of the seam") {
+  // Each cycle holds a knot distinct from the seam and within the space's tolerance of it (the
+  // knot vector spans 1.75, so the tolerance is about 3e-15): next to the start, or next to the
+  // end.
+  struct NearCase {
+    std::vector<double> cycle;
+    std::size_t near_index;
+    double seam;
+    const char* message;
+  };
+  for (const NearCase& c :
+       {NearCase{{0.0, 1e-15, 0.25, 0.5, 0.75}, 3, 0.0, "The seam 0.0 is within the tolerance "},
+        NearCase{{0.0, 0.25, 0.5, 0.75, 1.0 - 1e-15},
+                 6,
+                 1.0,
+                 "The seam 1.0 is within the tolerance "}}) {
+    CAPTURE(c.seam);
+    const std::vector<double> knots = periodic_knots(c.cycle, 2);
+    const bs::BsplineSpace1D<double> ps(sp(knots), 2, true, false);
+    // The premise: the near knot is kept, distinct and within the tolerance.
+    REQUIRE(ps.knots()[c.near_index] != c.seam);
+    REQUIRE(std::abs(ps.knots()[c.near_index] - c.seam) <= ps.tolerance());
+    const auto n_stored = static_cast<std::size_t>(ps.num_basis());
+    const std::vector<double> cp = values(n_stored, 5);
+    const bs::Bspline<double> b(bs::BsplineSpace<double>({ps}), sp(cp), false);
+    const std::string by_seam = "distinct knot " + pantr::py_repr(ps.knots()[c.near_index]) + ",";
+    const auto message_of = [&](auto&& call) -> std::string {
+      try {
+        call();
+      } catch (const pantr::value_error& e) {
+        return e.what();
+      }
+      return {};
+    };
+    for (const std::string& m :
+         {message_of([&] { static_cast<void>(bs::to_open_bspline<double>(b)); }), message_of([&] {
+            static_cast<void>(bs::restrict<double>(b, BoundsList{bs::Bounds{0.3, 0.6}}));
+          }),
+          message_of([&] { static_cast<void>(bs::split<double>(b, 0, 0.5)); })}) {
+      CAPTURE(m);
+      CHECK(m.starts_with(c.message));
+      CHECK(m.find(by_seam) != std::string::npos);
+      CHECK(m.ends_with("build the space with snap_knots=True."));
+    }
+  }
+}
+
+TEST_CASE("to_open_1d: copies of a domain end outside its first or last degree + 1 knots") {
+  const auto open_of = [](const std::vector<double>& k, double tol) {
+    static const std::vector<double> cp = {1.0, 2.0, 3.0, 4.0, 5.0};
+    return bs::to_open_1d<double>(sp(k), 2, mdview<const double, 2>(cp.data(), k.size() - 3, 1),
+                                  false, tol);
+  };
+  const auto rows = [](const bs::KnotsAndCtrl<double>& r) {
+    return std::vector<double>(r.ctrl.data(), r.ctrl.data() + r.ctrl.size());
+  };
+  // Three copies of the start at indices 1 to 3 after an external knot, and three of the end at 4
+  // to 6 before one: nothing is inserted, the external knot and its control point are trimmed.
+  const bs::KnotsAndCtrl<double> start = open_of({-1.0, 0.0, 0.0, 0.0, 1.0, 2.0, 2.0, 2.0}, 1e-12);
+  CHECK(start.knots == std::vector<double>{0.0, 0.0, 0.0, 1.0, 2.0, 2.0, 2.0});
+  CHECK(rows(start) == std::vector<double>{2.0, 3.0, 4.0, 5.0});
+  const bs::KnotsAndCtrl<double> end = open_of({0.0, 0.0, 0.0, 1.0, 2.0, 2.0, 2.0, 3.0}, 1e-12);
+  CHECK(end.knots == std::vector<double>{0.0, 0.0, 0.0, 1.0, 2.0, 2.0, 2.0});
+  CHECK(rows(end) == std::vector<double>{1.0, 2.0, 3.0, 4.0});
+  // An external knot within the tolerance below the start is not a copy of it: the result starts
+  // at 0 (counted under the tolerance it started at -1e-15). The knots are those of inserting 0
+  // once and 1.5 twice and trimming one knot left and two right.
+  const bs::KnotsAndCtrl<double> near_start =
+      open_of({-1e-15, 0.0, 0.0, 0.5, 1.0, 1.5, 2.0, 3.0}, 1e-12);
+  CHECK(near_start.knots == std::vector<double>{0.0, 0.0, 0.0, 0.5, 1.0, 1.5, 1.5, 1.5});
+  // A distinct knot within the tolerance of a non-periodic end, inside the domain, is refused
+  // naming the domain end.
+  CHECK_THROWS_WITH_AS(
+      static_cast<void>(open_of({-1.0, 0.0, 0.0, 1e-15, 1.0, 2.0, 3.0, 4.0}, 1e-12)),
+      doctest::Contains("The domain end 0.0 is within the tolerance 1e-12 of the "
+                        "distinct knot 1e-15,"),
+      pantr::value_error);
+  // More than degree + 1 copies of a domain end is not a knot vector of that degree, at either end.
+  const std::vector<double> cp = {1.0, 2.0, 3.0, 4.0, 5.0};
+  for (const auto& [over, message] :
+       {std::pair{std::vector<double>{0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0},
+                  "to_open: the domain end 0.0 has 4 copies, more than degree + 1 = 3."},
+        std::pair{std::vector<double>{0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0, 1.0},
+                  "to_open: the domain end 1.0 has 4 copies, more than degree + 1 = 3."}}) {
+    CHECK_THROWS_WITH_AS(static_cast<void>(bs::to_open_1d<double>(
+                             sp(over), 2, mdview<const double, 2>(cp.data(), 2, 1), true, 1e-12)),
+                         message, pantr::value_error);
+  }
+}
+
+TEST_CASE("to_open_1d: the end mirror of an external knot near a domain end, and the tolerance") {
+  const std::vector<double> cp = {1.0, 2.0, 3.0, 4.0, 5.0};
+  const auto open_of = [&](const std::vector<double>& k) {
+    return bs::to_open_1d<double>(sp(k), 2, mdview<const double, 2>(cp.data(), 5, 1), false, 1e-12);
+  };
+  // An external knot within the tolerance above the end is not a copy of it: the result ends at
+  // 1.5, the knots those of inserting 0 once and 1.5 twice and trimming one knot left and two
+  // right.
+  CHECK(open_of({-1.0, 0.0, 0.0, 0.5, 1.0, 1.5, 1.5 + 1e-15, 3.0}).knots ==
+        std::vector<double>{0.0, 0.0, 0.0, 0.5, 1.0, 1.5, 1.5, 1.5});
+  // A distinct knot inside the domain at exactly the tolerance from the start is refused, and one
+  // an ulp further is kept.
+  CHECK_THROWS_WITH_AS(static_cast<void>(open_of({-1.0, 0.0, 0.0, 1e-12, 1.0, 2.0, 2.0, 2.0})),
+                       doctest::Contains("The domain end 0.0 is within the tolerance 1e-12"),
+                       pantr::value_error);
+  const double above = std::nextafter(1e-12, 1.0);
+  CHECK(open_of({-1.0, 0.0, 0.0, above, 1.0, 2.0, 2.0, 2.0}).knots ==
+        std::vector<double>{0.0, 0.0, 0.0, above, 1.0, 2.0, 2.0, 2.0});
 }

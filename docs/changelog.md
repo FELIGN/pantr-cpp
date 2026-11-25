@@ -1361,6 +1361,26 @@
   in a separate package; until then pantr has none of its own.
 
 ### Fixed
+- **A periodic B-spline whose knot vector starts its domain at the first copy of a repeated seam
+  knot can be opened, restricted and split**, and refined, degree-elevated and differentiated with
+  `keep_degree=True`, which open it first. The conversion to open form counted the copies of a
+  domain end among the first or the last `degree + 1` knots only, so a copy inside the domain was
+  missed (in such a periodic vector, `[-0.5, -0.25, 0, 0, 0.25, …]` at degree 2, or in a
+  non-periodic one with `degree + 1` copies of an end beyond an external knot), one copy too many
+  was inserted, and every call refused with "Inserting these knots would exceed the maximum
+  multiplicity". The layout `create_uniform_periodic_knots` and `to_periodic` produce was not
+  affected. The copies of an end are now counted wherever they lie, by the rule `restrict` uses for
+  a bound (knots equal to it), so a non-periodic space built with `snap_knots=False` with an
+  external knot within the tolerance of an end, and the other end not open, now opens
+  clamped at that end, the domain the space reports; it was clamped at the external knot instead.
+  A periodic space built with `snap_knots=False` holding, inside its domain, a knot distinct from
+  the seam but within the tolerance of it now raises `ValueError` naming the seam and the knot and
+  suggesting `snap_knots=True`, for every call that opens the direction, `restrict` included
+  whatever the window. A domain end with more than `degree + 1` copies, which a space refuses only
+  as its last knot and only at positive degree, now raises `ValueError` naming the end and its
+  count; it raised the multiplicity error, or for a periodic direction opened into a space
+  that refused the next knot insertion. The C++ `pantr::bspline::to_open_1d` and the functions
+  built on it are the same.
 - **`Bspline.restrict` and `Bspline.split` decide the knots at a bound by one rule**, so every
   end they cut has `degree + 1` equal knots and the value asked for. The bound is taken as a
   domain end or a knot within the space's tolerance of it, else as itself rounded to the storage
