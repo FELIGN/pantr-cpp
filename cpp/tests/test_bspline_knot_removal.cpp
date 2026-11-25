@@ -350,20 +350,17 @@ TEST_CASE("knot removal: a knot outside the domain is refused, not read out of b
   }
 }
 
-TEST_CASE("knot removal: KNOWN LIMITATION, the default floor can leave a copy of a repeated knot") {
-  // This documents what the default does today; it is not what it should do. The floor is an
-  // operation count with a heuristic multiplier (`removal_floor_safety`, see knot_removal.hpp), and
-  // the removal of several copies of one knot reconstructs each copy from the previous one's
-  // rounding. For a rational degree-5 curve with three copies of a knot near the start of the
-  // domain, the default removes fewer copies than an explicit tolerance of the conservative tier
-  // does, although every copy is redundant by construction (the inserted knots are exactly
-  // removable), so the knot vector keeps a knot the spline does not need.
+TEST_CASE("knot removal: the default removes every copy of a repeated knot that was inserted") {
+  // Oracle: the original knot vector, and the explicit tolerance of the conservative tier on the
+  // same input. Every copy is redundant by construction (the inserted knots are exactly
+  // removable), so the default must remove as many as the explicit tolerance does: all of them.
   //
-  // Existence over a sweep, not one pinned case: whether the deviation of the last copy lands just
-  // above or just below the floor is decided by the rounding of the insertion that built the input,
-  // which differs between instruction-set rungs, so the seed that leaves a copy is not the same on
-  // every one. The sweep asks that some seed does, which holds wherever the verdict is decided by
-  // rounding at that size.
+  // For a rational degree-5 curve with three copies of a knot a sixteenth from the start of the
+  // domain, the second and third copies amplify the rounding the insertion left in the net about
+  // twenty and forty times as much as the first does (`removal_floor_safety` in
+  // knot_removal.hpp). A floor that did not grow with that amplification left one or two copies in
+  // some seeds, which seeds being decided by the rounding of the insertion and so differing
+  // between instruction-set rungs. The sweep asks that no seed does.
   constexpr int degree = 5;
   constexpr int copies = 3;
   int left_a_copy = 0;
@@ -379,7 +376,7 @@ TEST_CASE("knot removal: KNOWN LIMITATION, the default floor can leave a copy of
         remove_in<double>(inserted, 0, {0.0625}, std::nullopt, tier_tolerance(original));
     CHECK(knots_of<double>(explicit_tol, 0) == knots_of<double>(original, 0));
 
-    // The default removes at most as many, and for some seeds fewer.
+    // The default removes as many.
     const bs::Bspline<double> by_default =
         remove_in<double>(inserted, 0, {0.0625}, std::nullopt, std::nullopt);
     CHECK(knots_of<double>(by_default, 0).size() >= knots_of<double>(original, 0).size());
@@ -387,7 +384,7 @@ TEST_CASE("knot removal: KNOWN LIMITATION, the default floor can leave a copy of
       ++left_a_copy;
     }
   }
-  CHECK(left_a_copy > 0);
+  CHECK(left_a_copy == 0);
 }
 
 TEST_CASE("knot removal: a knot repeated more than degree + 1 times is refused, not walked") {
