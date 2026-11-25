@@ -207,10 +207,12 @@ TEST_CASE("knot removal: the round-off floor is the derivation's closed form") {
     CHECK(bs::roundoff_deviation_floor<double>(ctrl, 2, degree, 1) ==
           2.0 * strict * static_cast<double>(degree + 1) * diagonal);
   }
-  // The stacking factor is a square root: 10000 stacked points is a factor of 100.
-  CHECK(
-      bs::roundoff_deviation_floor<double>(ctrl, 2, 3, 10000) ==
-      doctest::Approx(100.0 * bs::roundoff_deviation_floor<double>(ctrl, 2, 3, 1)).epsilon(1e-14));
+  // The stacking factor is a square root: 10000 stacked points is a factor of 100. Relative, with
+  // no absolute floor: the values are below 1e-11, under doctest's default scale of 1.
+  CHECK(bs::roundoff_deviation_floor<double>(ctrl, 2, 3, 10000) ==
+        doctest::Approx(100.0 * bs::roundoff_deviation_floor<double>(ctrl, 2, 3, 1))
+            .epsilon(1e-14)
+            .scale(0.0));
   // A row larger than the diagonal wins; a NaN coordinate makes the scale NaN, as NumPy's max does.
   const std::vector<double> one_row = {3.0, 4.0};
   CHECK(bs::control_point_scale<double>(std::span<const double>(one_row), 2) == 5.0);
