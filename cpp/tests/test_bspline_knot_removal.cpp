@@ -552,12 +552,13 @@ TEST_CASE(
     // The first copy is graded at the first-copy floor: three floors refuse it, half a floor not.
     CHECK(removed(4, 3.0 * floor_0, std::nullopt) == 0);
     CHECK(removed(4, 0.5 * floor_0, std::nullopt) == 3);
-    // The third copy is graded at the grown floor, on both sides of it; the first-copy floor alone
-    // refuses the inside case.
+    // The third copy is graded at the grown floor, on both sides of it and within 20% of it, so a
+    // kernel reading the second copy's factor (about half the third's) is caught; the first-copy
+    // floor alone refuses the inside case.
     const double grown_2 = growth_2 * floor_0;
-    CHECK(removed(0, 0.5 * grown_2 / row0_coefficient, std::nullopt) == 3);
-    CHECK(removed(0, 0.5 * grown_2 / row0_coefficient, floor_0) == 2);
-    CHECK(removed(0, 1.5 * grown_2 / row0_coefficient, std::nullopt) == 2);
+    CHECK(removed(0, 0.8 * grown_2 / row0_coefficient, std::nullopt) == 3);
+    CHECK(removed(0, 0.8 * grown_2 / row0_coefficient, floor_0) == 2);
+    CHECK(removed(0, 1.2 * grown_2 / row0_coefficient, std::nullopt) == 2);
     // An explicit tolerance grades every copy at itself.
     const double tau = 1000.0 * floor_0;
     CHECK(removed(0, 1.5 * tau / row0_coefficient, tau) == 2);
@@ -569,11 +570,14 @@ TEST_CASE("knot removal: the grown floor is capped at the conservative tier") {
   // Oracle: the exact-rational evaluation of the curve before and after. Degree 7, seven copies of
   // a knot 1/1024 from a clamped end: each copy is exactly removable, but the later ones amplify
   // the insertion's rounding by up to 1.6e9, so removing them all changes the curve far above
-  // round-off. The capped default may remove fewer copies than were inserted. Each copy it removes
-  // was accepted at a control-point deviation within the capped floor, the conservative tier times
-  // the control-point scale, and a control-point deviation bounds the change of the curve, so the
-  // curve may change by at most that floor times the number of copies removed.
+  // round-off. The capped default may remove fewer copies than were inserted, and for some seeds
+  // does. Each copy it removes was accepted at a deviation within the capped floor, the
+  // conservative tier times the control-point scale, and the bound below is that tier times the
+  // number of copies removed. That the curve's change stays within the sum of the accepted
+  // deviations is observed, not proved (one later pass can move the curve by a few times its own
+  // deviation); the uncapped floor exceeds the bound by orders of magnitude.
   constexpr int degree = 7;
+  int kept_a_copy = 0;
   for (unsigned seed = 0; seed < 16; ++seed) {
     CAPTURE(seed);
     const auto dirs = std::vector<Dir>{{clamped(degree, {0.25, 0.75}), degree}};
@@ -585,12 +589,17 @@ TEST_CASE("knot removal: the grown floor is capped at the conservative tier") {
     const std::size_t removed =
         knots_of<double>(inserted, 0).size() - knots_of<double>(by_default, 0).size();
     CHECK(removed > 0);
-    const double capped_floor =
-        bs::roundoff_deviation_floor<double>(inserted.control_points(), 2, degree, 1) *
-        bs::removal_floor_growth_cap(degree);
+    if (removed < 7) {
+      ++kept_a_copy;
+    }
+    // The policy tier itself, not the cap function under test.
+    const double capped_floor = static_cast<double>(pantr::tolerance::get_conservative<double>()) *
+                                bs::control_point_scale<double>(inserted.control_points(), 2);
     CHECK(exact_difference<double>(by_default, inserted) <=
           static_cast<double>(removed) * capped_floor);
   }
+  // The cap binds for some seed, so the test exercises it.
+  CHECK(kept_a_copy > 0);
 }
 
 TEST_CASE_TEMPLATE("knot removal: the grown floor still keeps a copy the curve needs", T, double,
@@ -607,6 +616,16 @@ TEST_CASE_TEMPLATE("knot removal: the grown floor still keeps a copy the curve n
     const bs::Bspline<T> back = remove_in<T>(inserted, 0, {0.0625}, std::nullopt, std::nullopt);
     CHECK(knots_of<T>(back, 0) == knots_of<T>(original, 0));
   }
+}
+
+TEST_CASE("knot removal: at degree 0 the default removes nothing and grows no floor") {
+  // Oracle: the input knot vector. At degree 0 the removal count is capped at the degree, so the
+  // kernel runs no pass and the floor's growth is empty (the sanitizer builds check that nothing
+  // reads past it).
+  const auto dirs = std::vector<Dir>{{clamped(0, {0.5}), 0}};
+  const bs::Bspline<double> b = make_spline<double>(dirs, 2, false, 5U);
+  const bs::Bspline<double> back = remove_in<double>(b, 0, {0.5}, std::nullopt, std::nullopt);
+  CHECK(knots_of<double>(back, 0) == knots_of<double>(b, 0));
 }
 
 TEST_CASE("knot removal: a knot repeated more than degree + 1 times is refused, not walked") {
@@ -701,5 +720,10 @@ TEST_CASE_TEMPLATE("knot removal: random meshes, every multiplicity, are removed
     CHECK(knots_of<T>(back, 0) == knots_of<T>(original, 0));
     CHECK(max_difference<T>(back.control_points(), original.control_points()) <=
           tier_tolerance(original));
+    // The default floor on the same mesh, with a removal count between 1 and the degree (taken
+    // from `n`, so the sweep's draws above are unchanged): its verdicts are not asserted (see
+    // above), but the sanitizer builds walk the rows the floor's growth reads.
+    const long long num = 1 + static_cast<long long>(n % p);
+    CHECK_NOTHROW(static_cast<void>(remove_in<T>(inserted, 0, distinct, num, std::nullopt)));
   }
 }
