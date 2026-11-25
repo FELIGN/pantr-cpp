@@ -1361,6 +1361,18 @@
   in a separate package; until then pantr has none of its own.
 
 ### Fixed
+- **`Bspline.remove_knots` with `tol=None` removes every copy of a repeated knot that is exactly
+  removable** (issue #15). Each further copy of one knot removed in a call amplifies the rounding
+  the control net already carries by a factor fixed by the knots (about 22 and 42 times the first
+  copy's for the second and third copies of a knot a sixteenth from a clamped end at degree 5),
+  and the round-off floor did not grow with it, so the default could keep one or two knots the
+  spline does not need while an explicit `tol` removed them. The floor of a later copy is now the
+  first copy's times that factor, never less than the first copy's and at most the conservative
+  tier `4096 * eps * scale * sqrt(n)`; a copy whose removal would amplify the rounding past that
+  cap stays, as before. A single removal, and every removal under an explicit `tol`, is graded
+  as before. The C++ `pantr::bspline::remove_knot_1d` and `detail::remove_knot_kernel` take a
+  defaulted `RemovalBudget` (`fixed`, the previous behavior, or `roundoff_floor`), and
+  `cad::join`'s removal of the junction knots uses the grown floor too.
 - **A periodic B-spline whose knot vector starts its domain at the first copy of a repeated seam
   knot can be opened, restricted and split**, and refined, degree-elevated and differentiated with
   `keep_degree=True`, which open it first. The conversion to open form counted the copies of a
