@@ -1007,6 +1007,12 @@ class Bspline:
 
         Raises:
             ValueError: If the B-spline is already open in every direction.
+            ValueError: If a converted direction's space was built with ``snap_knots=False`` and
+                holds a knot distinct from a domain end (the seam, for a periodic direction),
+                within ``tolerance`` of it and inside the domain, which the result would hold
+                beside its clamped end.
+            ValueError: If a converted direction has more than ``degree + 1`` knots equal to a
+                domain end.
         """
         return self._from_result(self._h.to_open())
 
@@ -1050,6 +1056,8 @@ class Bspline:
             ValueError: If the space was built with ``snap_knots=False`` and a knot distinct
                 from a bound, within ``tolerance`` of it, would lie inside the result beside its
                 clamped end.
+            ValueError: As :meth:`to_open_bspline`, for a periodic direction, which is converted
+                to open form first.
         """
         if self.dim == 1:
             bounds_per_dim: list[tuple[float, float] | None] = [
@@ -1099,6 +1107,8 @@ class Bspline:
             ValueError: If the space was built with ``snap_knots=False`` and a knot distinct
                 from ``value``, within ``tolerance`` of it, would lie inside a half beside its
                 clamped end.
+            ValueError: As :meth:`to_open_bspline`, for a periodic direction, which is converted
+                to open form first.
 
         Example:
             >>> import numpy as np
