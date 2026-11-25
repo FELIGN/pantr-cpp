@@ -143,12 +143,6 @@ inline void check_non_negative(int degree) {
   }
 }
 
-inline void check_at_least_one(int degree) {
-  if (degree < 1) {
-    throw value_error("Degree must at least 1");
-  }
-}
-
 using linalg::as_matrix;
 using linalg::RowMatrix;
 
@@ -206,13 +200,24 @@ NdArray<T> gram_projection(int degree, long long n_quad, NewEval new_eval, OldEv
 
 /// Lagrange-to-Bernstein matrix `C`, `C[i, k] = B_i(x_k)` at the variant's nodes `x_k`.
 ///
-/// No solve (the Lagrange basis is cardinal at its own nodes), so no degree limit.
+/// No solve (the Lagrange basis is cardinal at its own nodes), so no degree limit. At degree 0
+/// both bases are the constant 1, so the matrix is `[[1]]` for every variant, returned without
+/// asking the variant for a one-node set (the Lobatto families have none) and without checking
+/// `variant` (a value outside `LagrangeVariant` is refused only at degree 1 and above).
 ///
 /// Raises:
-///     value_error: `degree < 1`, or the variant needs more nodes.
+///     value_error: `degree < 0`, or `variant` is outside `LagrangeVariant` (degree 1 and above).
+///     capacity_error: `(degree + 1)^2 sizeof(T)` bytes exceed the largest `std::ptrdiff_t`.
+///     state_error: The Gauss-Legendre or Gauss-Lobatto-Legendre nodes' Newton iteration did not
+///         converge (not observed; a loud bound).
 template <StorageFloat T>
 [[nodiscard]] NdArray<T> lagrange_to_bernstein(int degree, LagrangeVariant variant) {
-  detail::check_at_least_one(degree);
+  detail::check_non_negative(degree);
+  if (degree == 0) {
+    NdArray<T> one({1, 1});
+    one.data()[0] = static_cast<T>(1);
+    return one;
+  }
   detail::check_matrix_fits<T>(degree);
   const NdArray<T> x = basis::lagrange_points<T>(variant, static_cast<long long>(degree) + 1);
   const NdArray<T> b = basis::tabulate_bernstein_1d<T>(degree, x.flat());  // b[k, i] = B_i(x_k)
@@ -226,14 +231,15 @@ template <StorageFloat T>
   return out;
 }
 
-/// Bernstein-to-Lagrange matrix: the inverse of `lagrange_to_bernstein`.
+/// Bernstein-to-Lagrange matrix: the inverse of `lagrange_to_bernstein` (`[[1]]` at degree 0, for
+/// every variant).
 ///
 /// Raises:
-///     value_error: `degree < 1`, `degree` past `bernstein_to_lagrange_max_degree(variant)`, or an
+///     value_error: `degree < 0`, `degree` past `bernstein_to_lagrange_max_degree(variant)`, or an
 ///         exactly singular factorisation.
 template <StorageFloat T>
 [[nodiscard]] NdArray<T> bernstein_to_lagrange(int degree, LagrangeVariant variant) {
-  detail::check_at_least_one(degree);
+  detail::check_non_negative(degree);
   detail::check_domain<T>(degree, bernstein_to_lagrange_max_degree(variant),
                           std::string("compute_bernstein_to_lagrange_1d with ") +
                               basis::variant_name(variant) + " nodes");

@@ -666,16 +666,15 @@ def _change_basis_lagrange_pair_cases(profile: Profile) -> Iterator[Case]:
         profile (Profile): Sweep width.
 
     Yields:
-        Case: One hostile ``(degree, variant, dtype)`` combination, plus the
-        degree-0 and degree-negative rejections (both documented: these two
-        builders require ``degree >= 1``).
+        Case: One hostile ``(degree, variant, dtype)`` combination, degree 0 included
+        (``[[1]]`` for every variant: both bases are the constant 1, and the builders do
+        not ask the variant for a one-node set), plus the documented rejection of a
+        negative degree.
     """
     variants = tuple(LagrangeVariant) if profile is Profile.FULL else (LagrangeVariant.EQUISPACES,)
     for name, func in _LAGRANGE_PAIR_BUILDERS:
         for degree in _capped(degrees(profile), 2, profile):
             for variant in variants:
-                if degree + 1 < LAGRANGE_MIN_NODES[variant]:
-                    continue
                 for dtype in dtypes(profile):
                     yield Case(
                         GROUP,
@@ -686,10 +685,7 @@ def _change_basis_lagrange_pair_cases(profile: Profile) -> Iterator[Case]:
                         ),
                         {"degree": degree, "variant": variant, "dtype": dtype},
                         invariants=(expected_shape((degree + 1, degree + 1)),),
-                        # These two builders document "Must be at least 1", so the
-                        # swept degree 0 is a documented refusal, not a success.
-                        must_succeed=degree >= 1,
-                        must_reject=degree < 1,
+                        must_succeed=True,
                     )
         yield Case(
             GROUP,
@@ -826,14 +822,13 @@ def _round_trip_cases(profile: Profile) -> Iterator[Case]:
                 degree,
                 dtype,
             )
-            if degree >= 1:
-                yield _round_trip_case(
-                    "bernstein_lagrange",
-                    _lagrange_to_bernstein_default,
-                    _bernstein_to_lagrange_default,
-                    degree,
-                    dtype,
-                )
+            yield _round_trip_case(
+                "bernstein_lagrange",
+                _lagrange_to_bernstein_default,
+                _bernstein_to_lagrange_default,
+                degree,
+                dtype,
+            )
 
 
 def _out_same_array(expected: npt.NDArray[Any]) -> Invariant:

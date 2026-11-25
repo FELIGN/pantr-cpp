@@ -137,10 +137,32 @@ TEST_CASE("change_basis: domain refusals carry the builder, the degree and the d
       doctest::Contains("compute_bernstein_to_lagrange_1d with EQUISPACES nodes: degree 38"),
       pantr::value_error);
   CHECK_THROWS_WITH_AS(
-      static_cast<void>(cb::lagrange_to_bernstein<double>(0, LagrangeVariant::equispaces)),
-      "Degree must at least 1", pantr::value_error);
+      static_cast<void>(cb::lagrange_to_bernstein<double>(-1, LagrangeVariant::equispaces)),
+      "Degree must be non-negative", pantr::value_error);
+  CHECK_THROWS_WITH_AS(
+      static_cast<void>(cb::bernstein_to_lagrange<double>(-1, LagrangeVariant::equispaces)),
+      "Degree must be non-negative", pantr::value_error);
   CHECK_THROWS_WITH_AS(static_cast<void>(cb::legendre_to_cardinal<double>(-1)),
                        "Degree must be non-negative", pantr::value_error);
+}
+
+TEST_CASE_TEMPLATE("change_basis: the Lagrange matrices of degree 0 are [[1]] for every variant", T,
+                   float, double) {
+  // The degree-0 Lagrange and Bernstein bases are both the constant 1, so `C[0, 0] = B_0(x_0) = 1`
+  // at any node; the Lobatto families have no one-node set, and the builders must not ask for one.
+  for (const LagrangeVariant variant :
+       {LagrangeVariant::equispaces, LagrangeVariant::gauss_legendre,
+        LagrangeVariant::gauss_lobatto_legendre, LagrangeVariant::chebyshev_1st,
+        LagrangeVariant::chebyshev_2nd}) {
+    CAPTURE(pantr::basis::variant_name(variant));
+    for (const auto& m :
+         {cb::lagrange_to_bernstein<T>(0, variant), cb::bernstein_to_lagrange<T>(0, variant)}) {
+      REQUIRE(m.shape().size() == 2);
+      CHECK(m.shape()[0] == 1);
+      CHECK(m.shape()[1] == 1);
+      CHECK(m.data()[0] == static_cast<T>(1));
+    }
+  }
 }
 
 TEST_CASE("change_basis: process tables return one immutable matrix per key, bounded") {

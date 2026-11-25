@@ -277,7 +277,7 @@ def compute_lagrange_to_bernstein_1d(
         :func:`compute_bernstein_to_lagrange_1d`, is the one that carries a domain.
 
     Args:
-        degree (int): Polynomial degree. Must be at least 1.
+        degree (int): Polynomial degree. Must be non-negative; degree 0 gives ``[[1.]]``.
         lagrange_variant (LagrangeVariant): Lagrange point distribution
             (e.g., equispaced, gauss lobatto legendre, etc). Defaults to LagrangeVariant.EQUISPACES.
         dtype (npt.DTypeLike): Floating point type for the output matrix.
@@ -293,7 +293,7 @@ def compute_lagrange_to_bernstein_1d(
             returns the same array.
 
     Raises:
-        ValueError: If degree is lower than 1, dtype is not float32 or float64, or if `out` is
+        ValueError: If degree is negative, dtype is not float32 or float64, or if `out` is
             provided and has incorrect shape or dtype.
     """
     return _build(
@@ -344,7 +344,7 @@ def compute_bernstein_to_lagrange_1d(
         usable in single precision over the whole range of practical degrees.
 
     Args:
-        degree (int): Polynomial degree. Must be at least 1.
+        degree (int): Polynomial degree. Must be non-negative; degree 0 gives ``[[1.]]``.
         lagrange_variant (LagrangeVariant): Lagrange point distribution
             (e.g., equispaced, gauss lobatto legendre, etc). Defaults to LagrangeVariant.EQUISPACES.
         dtype (npt.DTypeLike): Floating point type for the output matrix.
@@ -360,7 +360,7 @@ def compute_bernstein_to_lagrange_1d(
             returns the same array.
 
     Raises:
-        ValueError: If degree is lower than 1, dtype is not float32 or float64, if `out` is
+        ValueError: If degree is negative, dtype is not float32 or float64, if `out` is
             provided and has incorrect shape or dtype, or if the
             ``(degree, dtype)`` pair is outside the supported domain:
             in float32, degree at most 17 for equispaced nodes, 22 for

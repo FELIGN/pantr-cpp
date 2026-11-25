@@ -308,6 +308,7 @@ template <StorageFloat T>
 
 /// Compute the Lagrange extraction operators of a knot vector: `C_i` with `C_i [Lagrange values] =
 /// [B-spline values on interval i]`, the Bézier operator times the Lagrange-to-Bernstein matrix.
+/// At degree 0 every operator is the 1x1 identity, for every variant.
 ///
 /// Args:
 ///     knots (std::span<const T>): The knot vector.

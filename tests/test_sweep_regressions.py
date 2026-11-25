@@ -7,7 +7,7 @@ XPASS failure, and the marker comes off, promoting the test to a permanent guard
 same data. That is the convention ``tests/test_review_regressions.py`` follows for the
 June 2026 review, whose markers have all since been removed.
 
-Eleven markers have already come off here: the domain-membership test, closed by the
+Markers that have come off here: the domain-membership test, closed by the
 ``np.isclose`` tolerance-leak fix in #289; the tanh-sinh endpoint test, closed by
 truncating the rule where the endpoint gap stops being resolvable; the Lagrange
 reproducibility test, closed by seeding the barycentric node permutation; the float32
@@ -21,11 +21,11 @@ accessor directly, and the restriction that returned a shorter domain than asked
 consequence, since its ``b_new + tol`` step ceased to be a no-op once ``tol`` carried the
 knot vector's magnitude; and the change of basis that reported numpy's ``LinAlgError`` for a
 legal degree, closed by giving every builder that solves a declared, documented
-``(degree, dtype)`` domain and a ``ValueError`` that names the argument at fault.
-
-Two remain open, both from the August 2026 triage of the full profile: knot-vector
-factories that disagree with their own documentation at zero intervals, and a Lagrange
-extraction that cannot be built on a degree-0 space its two sibling extractions handle.
+``(degree, dtype)`` domain and a ``ValueError`` that names the argument at fault; the knot
+factories that disagreed with their own documentation at zero intervals, closed by
+requiring at least one interval in the factories' validator; and the Lagrange extraction
+that could not be built on a degree-0 space its two sibling extractions handle, closed by
+letting the two Lagrange change-of-basis builders accept degree 0.
 
 One test per **root cause**, not per symptom: several of these root causes have many
 triggering combinations, and each test names them in a comment rather than repeating
@@ -817,19 +817,18 @@ def test_restrict_spans_the_requested_window() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Lagrange extraction is the only one of the three that a degree-0 space defeats
+# Lagrange extraction was the only one of the three that a degree-0 space defeated (fixed)
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="tabulate_Lagrange_extraction_operators reaches a change-of-basis builder "
-    "that requires degree >= 1, while the Bezier and cardinal extractions of the same "
-    "degree-0 space both succeed",
-)
 def test_lagrange_extraction_handles_a_degree_zero_space() -> None:
-    # A degree-0 `BsplineSpace1D` is legal -- the constructor accepts it, and it is what
-    # `subdivide(n, regularity=-1)` produces -- and two of its three extraction operators
+    # FIXED by letting the two Lagrange change-of-basis builders accept degree 0 and return
+    # `[[1]]` without asking the variant for a one-node set. Kept as a regression guard with
+    # its original triggering data, per this repository's convention that the fix PR un-xfails
+    # the tests it closes.
+    #
+    # What it was: a degree-0 `BsplineSpace1D` is legal -- the constructor accepts it, and it is
+    # what `subdivide(n, regularity=-1)` produces -- and two of its three extraction operators
     # are perfectly happy with it. The third is not: it reaches
     # `compute_lagrange_to_bernstein_1d`, whose documented precondition is "Must be at
     # least 1", and the `ValueError` that surfaces ("Degree must at least 1", the
@@ -857,11 +856,15 @@ def test_lagrange_extraction_handles_a_degree_zero_space() -> None:
     cardinal = np.asarray(space.tabulate_cardinal_extraction_operators())
     assert cardinal.shape[0] == 4
 
-    lagrange = np.asarray(space.tabulate_Lagrange_extraction_operators())
-    assert lagrange.shape == (4, 1, 1), (
-        f"degree-0 Lagrange extraction returned shape {lagrange.shape}, expected one "
-        f"1x1 identity per element"
-    )
+    # Every variant, the Lobatto families included (they have no one-node set, and the
+    # degree-0 matrix needs none): each element operator is exactly the constant 1.
+    for variant in LagrangeVariant:
+        lagrange = np.asarray(space.tabulate_Lagrange_extraction_operators(variant))
+        assert lagrange.shape == (4, 1, 1), (
+            f"degree-0 Lagrange extraction ({variant}) returned shape {lagrange.shape}, "
+            f"expected one 1x1 identity per element"
+        )
+        np.testing.assert_array_equal(lagrange, np.ones((4, 1, 1)))
 
 
 # ---------------------------------------------------------------------------

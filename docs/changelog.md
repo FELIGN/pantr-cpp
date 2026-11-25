@@ -1669,6 +1669,13 @@
   staleness only while building a rank's local space, so with a partition that left a rank without
   cells, that rank constructed while the others raised, and then waited forever in the next
   collective (#40).
+- **`BsplineSpace1D.tabulate_Lagrange_extraction_operators` of a degree-0 space** returns one 1x1
+  identity per interval, for every Lagrange variant, as the Bezier and cardinal extractions of the
+  same space already did, and so does `SpanwiseElementExtraction` with the Lagrange target;
+  `compute_lagrange_to_bernstein_1d(0)` and
+  `compute_bernstein_to_lagrange_1d(0)` return `[[1.]]`. The previous release refused degree 0 in
+  both Lagrange builders with "Degree must at least 1". A negative degree is refused with "Degree
+  must be non-negative", the message of the other change-of-basis builders.
 
 ## 0.7.0 (2026-08-19)
 
