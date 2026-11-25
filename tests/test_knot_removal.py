@@ -571,9 +571,11 @@ class TestDefaultToleranceIsARoundOffFloor:
         differs between instruction-set rungs: the whole sweep is asserted.
 
         Oracle: the original knot vector, and an explicit ``tol=1e-10`` removal on the same
-        input, which removes every copy and so shows the copies are removable.
+        input (the issue's control), which removes every copy and so shows the copies are
+        removable.
         """
         degree, copies, knot = 5, 3, 0.0625
+        control_tol = 1e-10  # the issue's control: an explicit budget far above round-off
         knots = np.array([0.0] * (degree + 1) + [0.25, 0.75] + [1.0] * (degree + 1))
         space = BsplineSpace1D(knots, degree)
         left_by_default: list[tuple[int, int]] = []
@@ -585,7 +587,7 @@ class TestDefaultToleranceIsARoundOffFloor:
             spline = Bspline(BsplineSpace([space]), cp, is_rational=rational)
             inserted = spline.insert_knots(np.full(copies, knot))
 
-            explicit = inserted.remove_knots(knot, tol=1e-10)
+            explicit = inserted.remove_knots(knot, tol=control_tol)
             assert np.array_equal(explicit.space.spaces[0].knots, knots), f"seed {seed}"
 
             by_default = inserted.remove_knots(knot)

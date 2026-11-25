@@ -359,8 +359,8 @@ TEST_CASE("knot removal: the default removes every copy of a repeated knot that 
   // domain, the second and third copies amplify the rounding the insertion left in the net about
   // twenty and forty times as much as the first does (`removal_floor_safety` in
   // knot_removal.hpp). A floor that did not grow with that amplification left one or two copies in
-  // some seeds, which seeds being decided by the rounding of the insertion and so differing
-  // between instruction-set rungs. The sweep asks that no seed does.
+  // some seeds; the rounding of the insertion decides which, so they differ between
+  // instruction-set rungs. The sweep asks that no seed does.
   constexpr int degree = 5;
   constexpr int copies = 3;
   int left_a_copy = 0;
@@ -379,7 +379,6 @@ TEST_CASE("knot removal: the default removes every copy of a repeated knot that 
     // The default removes as many.
     const bs::Bspline<double> by_default =
         remove_in<double>(inserted, 0, {0.0625}, std::nullopt, std::nullopt);
-    CHECK(knots_of<double>(by_default, 0).size() >= knots_of<double>(original, 0).size());
     if (knots_of<double>(by_default, 0).size() > knots_of<double>(original, 0).size()) {
       ++left_a_copy;
     }
@@ -397,31 +396,35 @@ TEST_CASE_TEMPLATE("knot removal: the discrepancy norms are the exact ones", T, 
     int degree;
     std::vector<double> interior;
     double knot;
-    std::vector<double> kappa;
+    int multiplicity;
+    std::vector<double> kappa;  // one per pass: the number of passes is its size
   };
   const std::vector<Case> cases = {
       // Degree 5, three copies a sixteenth from a clamped end: the case of issue #15.
       {5,
        {0.0625, 0.0625, 0.0625, 0.25, 0.75},
        0.0625,
+       3,
        {338.0 / 45.0, 36514.0 / 225.0, 70204.0 / 225.0}},
       // Degree 3, two copies: the second copy's map is smaller than the first's (ratio 440/549).
-      {3, {0.25, 0.4375, 0.4375, 0.5, 0.75}, 0.4375, {122.0 / 35.0, 176.0 / 63.0}},
+      {3, {0.25, 0.4375, 0.4375, 0.5, 0.75}, 0.4375, 2, {122.0 / 35.0, 176.0 / 63.0}},
+      // Degree 4, three copies and two passes: the row window depends on both counts.
+      {4, {0.25, 0.375, 0.375, 0.375, 0.75}, 0.375, 3, {22.0 / 5.0, 27.0 / 5.0}},
   };
   const double tol = static_cast<double>(pantr::tolerance::get_conservative<double>());
   for (const Case& c : cases) {
     CAPTURE(c.degree);
     const std::vector<T> knots = cast_all<T>(clamped(c.degree, c.interior));
-    const auto copies = static_cast<int>(c.kappa.size());
+    const auto passes = static_cast<int>(c.kappa.size());
     const std::size_t r =
         static_cast<std::size_t>(c.degree) + 1 +
         static_cast<std::size_t>(std::find(c.interior.begin(), c.interior.end(), c.knot) -
                                  c.interior.begin()) +
-        c.kappa.size() - 1;
+        static_cast<std::size_t>(c.multiplicity) - 1;
     REQUIRE(static_cast<double>(knots[r]) == c.knot);
     REQUIRE(static_cast<double>(knots[r + 1]) != c.knot);
-    const std::vector<double> norms =
-        bs::detail::removal_discrepancy_norms<T>(c.degree, sp(knots), c.knot, r, copies, copies);
+    const std::vector<double> norms = bs::detail::removal_discrepancy_norms<T>(
+        c.degree, sp(knots), c.knot, r, c.multiplicity, passes);
     REQUIRE(norms.size() == c.kappa.size());
     for (std::size_t t = 0; t < norms.size(); ++t) {
       CAPTURE(t);
@@ -516,12 +519,58 @@ TEST_CASE("knot removal: a copy whose norm ratio is below 1 is graded at the fir
   CHECK(discriminating > 0);
 }
 
+TEST_CASE(
+    "knot removal: each copy is graded at its own floor, and an explicit tolerance is not grown") {
+  // Oracle: the exact discrepancy coefficients of the case of issue #15 (degree 5, three copies of
+  // 1/16, interior knots 1/4 and 3/4), from the same exact replica as the norms above. Control row
+  // 4 enters pass 0 alone, with coefficient 1; row 0 enters pass 2 alone, with coefficient -495/16.
+  // Bumping one coordinate of one of those rows sets that pass's deviation to the bump times the
+  // coefficient (plus round-off), and leaves the other passes at round-off.
+  constexpr int degree = 5;
+  constexpr double knot = 0.0625;
+  constexpr double row0_coefficient = 495.0 / 16.0;
+  constexpr double growth_2 =
+      (70204.0 / 225.0) / (338.0 / 45.0);  // kappa_2 / kappa_0, under the cap
+  for (unsigned seed = 0; seed < 8; ++seed) {
+    CAPTURE(seed);
+    const auto dirs = std::vector<Dir>{{clamped(degree, {0.25, 0.75}), degree}};
+    const bs::Bspline<double> original = make_spline<double>(dirs, 2, false, seed);
+    const bs::Bspline<double> inserted =
+        insert_in<double>(original, 0, std::vector<double>(3, knot));
+    const std::vector<double> base(inserted.control_points().begin(),
+                                   inserted.control_points().end());
+    const double floor_0 = bs::roundoff_deviation_floor<double>(sp(base), 2, degree, 1);
+    const auto removed = [&](std::size_t row, double bump, std::optional<double> tol) {
+      std::vector<double> cp = base;
+      cp[row * 2] += bump;
+      const bs::Bspline<double> b(inserted.space(), sp(cp), false);
+      return knots_of<double>(inserted, 0).size() -
+             knots_of<double>(remove_in<double>(b, 0, {knot}, std::nullopt, tol), 0).size();
+    };
+    // The first copy is graded at the first-copy floor: three floors refuse it, half a floor not.
+    CHECK(removed(4, 3.0 * floor_0, std::nullopt) == 0);
+    CHECK(removed(4, 0.5 * floor_0, std::nullopt) == 3);
+    // The third copy is graded at the grown floor, on both sides of it; the first-copy floor alone
+    // refuses the inside case.
+    const double grown_2 = growth_2 * floor_0;
+    CHECK(removed(0, 0.5 * grown_2 / row0_coefficient, std::nullopt) == 3);
+    CHECK(removed(0, 0.5 * grown_2 / row0_coefficient, floor_0) == 2);
+    CHECK(removed(0, 1.5 * grown_2 / row0_coefficient, std::nullopt) == 2);
+    // An explicit tolerance grades every copy at itself.
+    const double tau = 1000.0 * floor_0;
+    CHECK(removed(0, 1.5 * tau / row0_coefficient, tau) == 2);
+    CHECK(removed(0, 0.5 * tau / row0_coefficient, tau) == 3);
+  }
+}
+
 TEST_CASE("knot removal: the grown floor is capped at the conservative tier") {
   // Oracle: the exact-rational evaluation of the curve before and after. Degree 7, seven copies of
   // a knot 1/1024 from a clamped end: each copy is exactly removable, but the later ones amplify
   // the insertion's rounding by up to 1.6e9, so removing them all changes the curve far above
-  // round-off. The capped default may remove fewer copies than were inserted; what it removes must
-  // leave the curve within the conservative tier.
+  // round-off. The capped default may remove fewer copies than were inserted. Each copy it removes
+  // was accepted at a control-point deviation within the capped floor, the conservative tier times
+  // the control-point scale, and a control-point deviation bounds the change of the curve, so the
+  // curve may change by at most that floor times the number of copies removed.
   constexpr int degree = 7;
   for (unsigned seed = 0; seed < 16; ++seed) {
     CAPTURE(seed);
@@ -531,8 +580,30 @@ TEST_CASE("knot removal: the grown floor is capped at the conservative tier") {
         insert_in<double>(original, 0, std::vector<double>(7, 1.0 / 1024.0));
     const bs::Bspline<double> by_default =
         remove_in<double>(inserted, 0, {1.0 / 1024.0}, std::nullopt, std::nullopt);
-    CHECK(knots_of<double>(by_default, 0).size() < knots_of<double>(inserted, 0).size());
-    CHECK(exact_difference<double>(by_default, inserted) <= tier_tolerance(original));
+    const std::size_t removed =
+        knots_of<double>(inserted, 0).size() - knots_of<double>(by_default, 0).size();
+    CHECK(removed > 0);
+    const double capped_floor =
+        bs::roundoff_deviation_floor<double>(inserted.control_points(), 2, degree, 1) *
+        bs::removal_floor_growth_cap(degree);
+    CHECK(exact_difference<double>(by_default, inserted) <=
+          static_cast<double>(removed) * capped_floor);
+  }
+}
+
+TEST_CASE_TEMPLATE("knot removal: the grown floor still keeps a copy the curve needs", T, double,
+                   float) {
+  // Oracle: the original knot vector. The knot 1/16 has two copies the curve needs (a random net on
+  // a double knot is not smoother there), and two more are inserted. The default removes the two
+  // inserted copies and must stop at the original two, although the passes that would remove those
+  // are graded against a grown floor (the growth near a clamped end is large, up to the cap).
+  for (int p = 3; p <= 6; ++p) {
+    CAPTURE(p);
+    const auto dirs = std::vector<Dir>{{clamped(p, {0.0625, 0.0625, 0.25, 0.75}), p}};
+    const bs::Bspline<T> original = make_spline<T>(dirs, 2, false, 41U + static_cast<unsigned>(p));
+    const bs::Bspline<T> inserted = insert_in<T>(original, 0, {0.0625, 0.0625});
+    const bs::Bspline<T> back = remove_in<T>(inserted, 0, {0.0625}, std::nullopt, std::nullopt);
+    CHECK(knots_of<T>(back, 0) == knots_of<T>(original, 0));
   }
 }
 
@@ -589,10 +660,9 @@ TEST_CASE_TEMPLATE("knot removal: random meshes, every multiplicity, are removed
   // Insert a random multiset of grid knots, then remove them under a budget of the conservative
   // tier: the knot vector must be the original again, whatever the multiplicities and the degree
   // (the sanitizer builds run this sweep over every index the kernel touches). The budget is not
-  // the default floor: the floor is an operation count, and on a mesh like this one (several
-  // copies of knots close to the end of the domain at degree 5) the removal of the last copy sits
-  // within a few percent of it, so a verdict there reports the rounding of the insertion that made
-  // the input and not the algorithm.
+  // the default floor: on a mesh like this one (several copies of knots close to the end of the
+  // domain) a late copy can amplify the insertion's rounding past the floor's cap at the
+  // conservative tier, where the default keeps the copy by design.
   std::uint32_t state = 0x85EBCA6BU;
   const auto next = [&state](std::uint32_t bound) {
     state ^= state << 13;

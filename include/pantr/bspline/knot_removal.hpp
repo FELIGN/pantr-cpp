@@ -54,26 +54,31 @@ namespace pantr::bspline {
 /// count; it is admitted as a heuristic and not derived.
 ///
 /// **Later copies of one knot.** On an exactly removable net, what pass `t` of one removal call
-/// measures is a linear map of the rounding the net already carries (chiefly from the insertion
-/// that made it) and of the kernel's own: the blending weights depend only on the knots, so the map
-/// does too. Its 1-norm `kappa_t` (`detail::removal_discrepancy_norms`) bounds the part due to the
-/// net's rounding by `kappa_t` times the largest rounding of one control point, and that bound is
-/// sharp. `kappa_t` grows with each further copy by a factor set by where the knot sits: at degree
-/// 5, a sixteenth from a clamped end, the second and third copies have about 22 and 42 times the
-/// first copy's. The count above has no term for it, so on its own it can leave a late copy that
-/// an explicit tolerance removes. Copy `t` is therefore graded against this floor times
-/// `kappa_t / kappa_0`, which is 1 for the first copy. That assumes the net carries a rounding of
-/// about `floor / kappa_0` per point, which is admitted and not derived: it is the level the
-/// first-copy floor already implies.
+/// measures is the rounding the net already carries (chiefly from the insertion that made it) sent
+/// through a linear map, plus the kernel's own rounding: the blending weights depend only on the
+/// knots, so the map does too. Its 1-norm `kappa_t` (`detail::removal_discrepancy_norms`) bounds
+/// the part due to the net's rounding by `kappa_t` times the largest rounding of one control point,
+/// and that bound is sharp. `kappa_t` changes from copy to copy by a factor set by where the knot
+/// sits, usually upwards: at degree 5, three copies of a knot a sixteenth from a clamped end with
+/// interior knots `1/4` and `3/4`, the second and third copies have about 22 and 42 times the first
+/// copy's, and it can also be smaller than the first copy's. The count above has no term for it, so
+/// on its own it can leave a late copy that an explicit tolerance removes. Copy `t` is therefore
+/// graded against this floor times `kappa_t / kappa_0`, which is 1 for the first copy. That assumes
+/// the net carries a rounding of about `floor / kappa_0` per point, which is admitted and not
+/// derived: it is the level the first-copy floor already implies. Where the net carries more, an
+/// exactly removable copy can still stay below the cap, as a single copy can under the first-copy
+/// floor (observed for knots within a few hundredths of a clamped end at degree 5 and up).
 ///
 /// The ratio is clamped (`detail::removal_floor_growth`) to at least 1, so no copy is graded below
 /// the first and a single removal is graded exactly as before; and to at most
 /// `removal_floor_growth_cap`, which keeps the floor within the conservative tier,
 /// `get_conservative * scale`. The cap reuses that policy tier ("a condition number up to about
-/// 1e3"); it is admitted and not derived. Past it, accepting a removal would turn the input's
-/// rounding into a change of the curve far above round-off (at degree 7 with seven copies of a knot
-/// `1/1024` from a clamped end, `kappa_6 / kappa_0` is about `1.6e9`), so the copy stays,
-/// losslessly, as it did before the ratio was introduced.
+/// 1e3"); it is admitted and not derived. Without it, a floor grown by the whole ratio would admit
+/// removals that turn the input's rounding into a change of the curve far above round-off (at
+/// degree 7 with seven copies of a knot `1/1024` from a clamped end and interior knots `1/4` and
+/// `3/4`, `kappa_6 / kappa_0` is about `1.6e9`). With it, a copy whose deviation exceeds the capped
+/// floor stays, losslessly, as a copy over the first-copy floor did before the ratio was
+/// introduced.
 ///
 /// All of that describes **one** control point, which is what a curve has per index. See
 /// `roundoff_deviation_floor` for the `sqrt` that a surface or a volume adds; the ratio is per
@@ -176,7 +181,8 @@ template <StorageFloat T>
 /// `8 (degree + 1) eps` times `control_point_scale` for one control point (derivation in
 /// `removal_floor_safety`), times a `sqrt` for how many control points the kernel grades at once.
 ///
-/// This is the default budget, and it is deliberately *not* a geometric one. A knot that a spline
+/// This is the default budget of the first copy of a knot (a later copy multiplies it, see
+/// `removal_floor_safety`), and it is deliberately *not* a geometric one. A knot that a spline
 /// does not actually need is removable exactly, and the only thing standing between it and a
 /// bit-for-bit reconstruction is the round-off of the reconstruction itself. A budget at that level
 /// therefore means "remove what is genuinely redundant and nothing else", which is the one default
@@ -246,7 +252,7 @@ template <StorageFloat T>
 
 /// How a removal is graded against its deviation budget.
 enum class RemovalBudget : std::uint8_t {
-  /// Every copy against the budget as given: an explicit tolerance, or none at all.
+  /// Every copy against the budget as given: an explicit tolerance, or an infinite budget.
   fixed,
   /// Copy `t` against the budget times `detail::removal_floor_growth`: the budget is the
   /// first-copy round-off floor of `roundoff_deviation_floor`.
@@ -906,8 +912,8 @@ template <StorageFloat T>
 ///         as possible.
 ///     tol (std::optional<double>): The deviation budget, a distance in **projected** space. No
 ///         value uses the round-off floor of `roundoff_deviation_floor`, grown for each later copy
-///         of a knot as `removal_floor_safety` derives, which removes what is redundant to within
-///         the arithmetic and nothing more.
+///         of a knot as `removal_floor_safety` describes, which removes what is redundant to within
+///         the arithmetic, up to the conservative tier for a late copy, and nothing more.
 ///
 /// Returns:
 ///     Bspline<T>: The B-spline with the reduced knot vectors.

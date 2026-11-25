@@ -931,9 +931,10 @@ class Bspline:
                 counts for a surface or a volume), so a knot is removed only when doing
                 so is exact to the arithmetic. That is the floor for the first copy of a
                 knot; each later copy removed in the same call amplifies the net's
-                rounding by a factor fixed by the knots, and its floor grows by that
-                factor, capped at the conservative tier ``4096 * eps * scale *
-                sqrt(n)``. A copy past the cap stays.
+                rounding by a factor fixed by the knots, and its floor is the first
+                copy's times that factor, never less than the first copy's and capped
+                at the conservative tier ``4096 * eps * scale * sqrt(n)``. A copy whose
+                deviation exceeds its floor stays.
 
         Returns:
             Bspline: New B-spline with the same geometry (within tolerance)
