@@ -79,7 +79,11 @@ template <StorageFloat T>
   const auto p = static_cast<std::size_t>(degree);
   const double u_left = static_cast<double>(knots[p]);
   const double u_right = static_cast<double>(knots[n_basis]);
-  if (value <= u_left + tol) {
+  // Each end test compares a distance with `tol`, never the parameter with a shifted end: a
+  // shifted end such as `u_left + tol` is rounded, and on a domain only a few ulps wider than
+  // `tol` it can round onto the other end, which then reads as the start. A distance between two
+  // values within a factor of 2 of each other is exact (Sterbenz).
+  if (value - u_left <= tol) {
     // The span starting at the last knot equal to `knots[p]` (past `p` when `knots[p + 1]` equals
     // it too: a non-clamped vector, or a start knot repeated more than `degree + 1` times), as
     // evaluation takes it: `knots[k] == u < knots[k + 1]` (in a Bézier-like space evaluation
@@ -91,7 +95,7 @@ template <StorageFloat T>
     // (`at_start`).
     return {span_and_first<T, T>(knots, degree, knots[p]).knot_id, u_left, true, false};
   }
-  if (value >= u_right - tol) {
+  if (u_right - value <= tol) {
     // The last span of non-zero length, as evaluation takes it. Span `n_basis - 1` is empty when
     // `knots[n_basis - 1] == knots[n_basis]`; once `knots[n_basis - degree - 1 .. n_basis]` are
     // all equal, the first function of that span's window has empty support. The span is chosen
