@@ -176,7 +176,7 @@ template <StorageFloat T>
   // to it. Counting with `tol` there would take a knot closer to an end than `tol`, which a space
   // built without snapping can hold, for a copy, and skip corner cutting it needs. The weights
   // below stay in [0, 1] and no denominator is zero: `left <= u < knots[k + 1] <= right` at the
-  // start, `left <= knots[k] < u <= right` at the end.
+  // start and inside, `left <= knots[k] < u <= right` at the end.
   std::size_t s = 0;
   if (span.at_start) {
     s = count_slice_multiplicity<T>(knots, k, degree, span.u, 0.0);
@@ -220,14 +220,13 @@ template <StorageFloat T>
     for (std::size_t i = 0; i + j <= r; ++i) {
       const double left_knot = static_cast<double>(knots[k - p + j + i]);
       const double right_knot = static_cast<double>(knots[i + k + 1]);
-      const double denom = right_knot - left_knot;
-      // Repeated knots in the window make the denominator exactly zero, and the weight is then 0.
-      // The test is exact, not a tolerance: a space built from a stored tolerance (no snapping) can
-      // hold two knots less than its tolerance apart, whose denominator is small and nonzero. That
-      // is safe: `left_knot <= knots[k] <= u <= knots[k + 1] <= right_knot` (the indices run
-      // `k - degree + 1 .. k` and `k + 1 ..`), and a correctly rounded subtraction is monotone, so
-      // `alpha` is in [0, 1] whatever the denominator.
-      const double alpha = denom == 0.0 ? 0.0 : (span.u - left_knot) / denom;
+      // The denominator is positive: the indices run `k - degree + 1 .. k` and `k + 1 ..`, so
+      // `left_knot <= knots[k] < knots[k + 1] <= right_knot` (every span `find_slice_span` returns
+      // has `knots[k] < knots[k + 1]`), and the difference of two distinct doubles is nonzero under
+      // gradual underflow. It may be far smaller than the tolerance in a space built without
+      // snapping; a correctly rounded subtraction is monotone, so `alpha` is in [0, 1] all the
+      // same.
+      const double alpha = (span.u - left_knot) / (right_knot - left_knot);
       // The weights are formed in double and rounded to `T`, as the operands they multiply.
       corner_cut_rows<T>(work.data() + i * rest, work.data() + (i + 1) * rest, rest,
                          static_cast<T>(alpha), static_cast<T>(1.0 - alpha));
