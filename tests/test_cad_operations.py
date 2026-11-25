@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import numpy as np
+import numpy.typing as npt
 import pytest
 from numpy.testing import assert_allclose
 
+from pantr.bspline import Bspline, BsplineSpace, BsplineSpace1D
 from pantr.cad import create_bilinear, create_circle, create_extrusion, create_line, create_ruled
 
 _RANK_3D = 3
@@ -169,3 +171,79 @@ class TestRuled:
         # Center should be at (0.5, 0.5, 0.5)
         pt = vol.evaluate(np.array([[0.5, 0.5, 0.5]]))
         assert_allclose(pt, [0.5, 0.5, 0.5], atol=1e-14)
+
+    @staticmethod
+    def _bilinear_surface(
+        u_knots: list[float], v_knots: list[float], cp: npt.NDArray[np.float64]
+    ) -> Bspline:
+        """Build a degree-(1, 1) surface on the given knots.
+
+        Args:
+            u_knots (list[float]): Knots in the first direction.
+            v_knots (list[float]): Knots in the second direction.
+            cp (npt.NDArray[np.float64]): Control net of shape ``(nu, nv, 3)``.
+
+        Returns:
+            Bspline: The surface.
+        """
+        space = BsplineSpace([BsplineSpace1D(u_knots, 1), BsplineSpace1D(v_knots, 1)])
+        return Bspline(space, cp)
+
+    @staticmethod
+    def _net(nu: int, nv: int) -> npt.NDArray[np.float64]:
+        """Build a control net whose points are all distinct.
+
+        Args:
+            nu (int): Points in the first direction.
+            nv (int): Points in the second direction.
+
+        Returns:
+            npt.NDArray[np.float64]: Shape ``(nu, nv, 3)``.
+        """
+        i, j = np.meshgrid(np.arange(nu), np.arange(nv), indexing="ij")
+        return np.stack([i, j, (i + 1.0) * (j + 2.0)], axis=-1).astype(np.float64)
+
+    @pytest.mark.parametrize(
+        ("u_knots", "nu", "shapes"),
+        [
+            ([0.0, 0.0, 0.0, 1.0, 1.0], 3, r"\(3, 2\) and \(2, 3\)"),  # a zero-support end function
+            ([-1.0, 0.0, 0.0, 1.0, 1.0, 2.0], 4, r"\(4, 2\) and \(2, 4\)"),  # knots off the domain
+        ],
+        ids=["zero-support-end-function", "knots-outside-the-domain"],
+    )
+    def test_ruled_refuses_nets_of_one_size_and_different_shapes(
+        self, u_knots: list[float], nu: int, shapes: str
+    ) -> None:
+        """Test that transposed nets, unmatched by make_compat, are refused, not paired by index.
+
+        `make_compat` matches interior knot classes only, so the second input (the first one
+        transposed) keeps a net of the transposed shape, with the same number of points.
+        """
+        cp = self._net(nu, 2)
+        s1 = self._bilinear_surface(u_knots, [0.0, 0.0, 1.0, 1.0], cp)
+        s2 = self._bilinear_surface([0.0, 0.0, 1.0, 1.0], u_knots, np.swapaxes(cp, 0, 1))
+        with pytest.raises(ValueError, match=rf"control nets have the same shape.*got {shapes}\."):
+            create_ruled(s1, s2)
+
+    def test_ruled_nets_of_one_shape_keep_both_inputs_as_end_faces(self) -> None:
+        """Test that the shape check leaves equal shapes alone: the end faces are the inputs.
+
+        The oracle is the inputs evaluated directly. The bound is the one the C++ suite derives
+        for a ruled B-spline of two degree-1 inputs, ``4 (3 d + 2^d) eps max |cp|`` with ``d = 2``
+        (``cpp/tests/test_cad_operations.cpp``, its header), taken over the larger net, whose
+        coordinates reach ``max |cp| + 5``. The result is a volume, but at ``t = 0`` or ``1`` its
+        degree-1 basis in ``t`` is exactly ``(1, 0)`` or ``(0, 1)``, which adds no rounding, so
+        two inexact directions remain and ``d = 2`` holds.
+        """
+        cp = self._net(3, 2)
+        u_knots = [0.0, 0.0, 0.0, 1.0, 1.0]
+        s1 = self._bilinear_surface(u_knots, [0.0, 0.0, 1.0, 1.0], cp)
+        s2 = self._bilinear_surface(u_knots, [0.0, 0.0, 1.0, 1.0], cp + np.array([0.0, 0.0, 5.0]))
+        r = create_ruled(s1, s2)
+        uu, vv = np.meshgrid(np.linspace(0, 1, 7), np.linspace(0, 1, 7), indexing="ij")
+        uv = np.column_stack([uu.ravel(), vv.ravel()])
+        d = 2
+        atol = 4 * (3 * d + 2**d) * np.finfo(np.float64).eps * (np.abs(cp).max() + 5.0)
+        for t, src in ((0.0, s1), (1.0, s2)):
+            face = r.evaluate(np.column_stack([uv, np.full(len(uv), t)]))
+            assert_allclose(face, src.evaluate(uv), rtol=0, atol=atol)

@@ -15,6 +15,7 @@
 #include "pantr/cad/primitives.hpp"
 #include "pantr/config.hpp"
 #include "pantr/core/errors.hpp"
+#include "pantr/core/format.hpp"
 #include "pantr/core/scalar.hpp"
 #include "pantr/transform/affine_transform.hpp"
 
@@ -181,11 +182,13 @@ inline constexpr double norm_tol = 1e-14;
 /// made compatible with `make_compat`; if one is rational and the other not, the polynomial one
 /// gets unit weights.
 ///
-/// The control points of the two inputs are stacked along the new axis, which needs them to have
-/// one width after the promotion. One exception is kept from the NumPy implementation this
-/// replaces, which broadcast: a second B-spline of control-point width 1 (a rank-1, polynomial
-/// one) is repeated over the columns of a wider first. The reverse, and every other mismatch, is
-/// refused.
+/// The control points of the two inputs are stacked along the new axis, which needs their control
+/// nets to have one shape after `make_compat`, and one width after the promotion. One exception is
+/// kept from the NumPy implementation this replaces, which broadcast: a second B-spline of
+/// control-point width 1 (a rank-1, polynomial one) is repeated over the columns of a wider first.
+/// The reverse, and every other mismatch of shape or width, is refused. End knot classes that
+/// differ while the nets have one shape are not detected: the result takes the first input's
+/// knots, so its second end face can differ from the second input.
 ///
 /// Args:
 ///     bspline1 (const bspline::Bspline<T>&): The first boundary (a curve or a surface).
@@ -200,7 +203,9 @@ inline constexpr double norm_tol = 1e-14;
 ///         dimension is above 2 ("ruled requires dim <= 2, got ..."); `make_compat` refuses; the
 ///         control-point widths differ after the promotion and the second is not of width 1
 ///         ("ruled requires control points of the same width ..."); the compatible B-splines
-///         have different numbers of control points (the guard below).
+///         have different numbers of control points, or control nets of one size and different
+///         shapes, such as (3, 2) and (2, 3) (the guards below: `make_compat` matches interior
+///         knot classes only, so inputs whose end knot classes differ can reach them).
 template <StorageFloat T>
 [[nodiscard]] bspline::Bspline<T> create_ruled(const bspline::Bspline<T>& bspline1,
                                                const bspline::Bspline<T>& bspline2) {
@@ -244,6 +249,17 @@ template <StorageFloat T>
         "ruled requires B-splines with equal numbers of control points after "
         "making them compatible, got " +
         std::to_string(points) + " and " + std::to_string(b2.size() / width2) + ".");
+  }
+  // Equal totals do not make the nets agree: unmatched end classes can leave nets such as (3, 2)
+  // and (2, 3), which the stacking below would pair by flat index into a wrong second face. The
+  // Coons builders compare shapes the same way.
+  const std::span<const std::size_t> net1 = b1.shape().first(b1.dim());
+  const std::span<const std::size_t> net2 = b2.shape().first(b2.dim());
+  if (!std::equal(net1.begin(), net1.end(), net2.begin(), net2.end())) {
+    throw value_error(
+        "ruled requires B-splines whose control nets have the same shape after making them "
+        "compatible, got " +
+        py_repr(net1) + " and " + py_repr(net2) + ".");
   }
 
   const std::span<const T> cp1 = b1.control_points();

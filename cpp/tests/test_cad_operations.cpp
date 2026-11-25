@@ -351,6 +351,30 @@ TEST_CASE_TEMPLATE("create_ruled: unequal sizes after make_compat are still refu
                   "them compatible, got 4 and 5.") != std::string::npos);
 }
 
+TEST_CASE_TEMPLATE("create_ruled: nets of one size and different shapes are refused", T, float,
+                   double) {
+  // `make_compat` matches interior knot classes only, so end classes that differ leave the nets
+  // unequal in shape. Nets of (3, 2) and (2, 3) points have one total and used to be paired by
+  // flat index, giving a `t = 1` face that is not the second input. Two ways to an unmatched end
+  // class: a zero-support end function (a first class of `degree + 2` knots), and knots outside
+  // the domain.
+  const auto message = [](const bs::Bspline<T>& a, const bs::Bspline<T>& b) {
+    return message_of([&] { static_cast<void>(cad::create_ruled<T>(a, b)); });
+  };
+  const std::vector<double> long_end = {0, 0, 0, 1, 1};
+  const std::vector<double> plain = {0, 0, 1, 1};
+  const bs::Bspline<T> a = make_spline<T>({Dir{long_end, 1}, Dir{plain, 1}}, 3, false, 1);
+  const bs::Bspline<T> b = make_spline<T>({Dir{plain, 1}, Dir{long_end, 1}}, 3, false, 2);
+  CHECK(message(a, b).find("ruled requires B-splines whose control nets have the same shape after "
+                           "making them compatible, got (3, 2) and (2, 3).") != std::string::npos);
+  CHECK(message(b, a).find("got (2, 3) and (3, 2).") != std::string::npos);
+
+  const std::vector<double> outside = {-1, 0, 0, 1, 1, 2};
+  const bs::Bspline<T> c = make_spline<T>({Dir{outside, 1}, Dir{plain, 1}}, 3, false, 3);
+  const bs::Bspline<T> d = make_spline<T>({Dir{plain, 1}, Dir{outside, 1}}, 3, false, 4);
+  CHECK(message(c, d).find("got (4, 2) and (2, 4).") != std::string::npos);
+}
+
 TEST_CASE_TEMPLATE("make_compat: interior knots within the tolerance of each other are one class",
                    T, float, double) {
   // A seeded property test of 100 pairs of curves (each of degree 2 or 3) whose interior knots are

@@ -216,6 +216,14 @@
   the functions of other knot spans: `tabulate_basis` returned values that do not sum to one,
   without an error. A root grid built with `tensor_product_grid(root_space)` takes its breakpoints
   from those knots.
+- **`create_ruled` with control nets of one size and different shapes after `make_compat`**
+  raises `ValueError` naming both shapes ("ruled requires B-splines whose control nets have the
+  same shape after making them compatible, got (3, 2) and (2, 3)."). `make_compat` matches
+  interior knot classes only, so inputs whose end knot classes differ (a zero-support end
+  function, or knots outside the domain) can keep nets such as `(3, 2)` and `(2, 3)`; the
+  previous release paired their points by flat index and returned a B-spline whose second end
+  face was not the second input, without an error. Nets of different sizes are refused as before.
+  Inputs whose end knot classes differ while their nets keep one shape are still not detected.
 
 ### Changed
 - **`TensorProductGrid.is_uniform` judges an axis's spacings relative to its scale**: uniform when
