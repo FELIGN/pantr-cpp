@@ -906,9 +906,10 @@ class Bspline:
         within *tol*.
 
         With no ``tol`` the operation is **lossless**: only knots the spline does not
-        actually need are removed, to within the round-off of the reconstruction that
-        decides it. Removing a knot at the cost of a geometric error is a trade only
-        the caller can price, so it has to be asked for by passing a ``tol``.
+        actually need are removed, to within round-off (for a later copy of a knot,
+        round-off amplified by the reconstruction, at most the conservative tier).
+        Removing a knot at the cost of a geometric error is a trade only the caller can
+        price, so it has to be asked for by passing a ``tol``.
 
         Args:
             knot_values (float | npt.ArrayLike | Sequence[npt.ArrayLike | None]):
@@ -932,9 +933,10 @@ class Bspline:
                 so is exact to the arithmetic. That is the floor for the first copy of a
                 knot; each later copy removed in the same call amplifies the net's
                 rounding by a factor fixed by the knots, and its floor is the first
-                copy's times that factor, never less than the first copy's and capped
-                at the conservative tier ``4096 * eps * scale * sqrt(n)``. A copy whose
-                deviation exceeds its floor stays.
+                copy's times the ratio of that factor to the first copy's, never less
+                than the first copy's and capped at the conservative tier ``4096 * eps *
+                scale * sqrt(n)`` (below degree 512). A copy whose deviation exceeds its
+                floor stays.
 
         Returns:
             Bspline: New B-spline with the same geometry (within tolerance)

@@ -67,7 +67,9 @@ namespace pantr::bspline {
 /// the net carries a rounding of about `floor / kappa_0` per point, which is admitted and not
 /// derived: it is the level the first-copy floor already implies. Where the net carries more, an
 /// exactly removable copy can still stay below the cap, as a single copy can under the first-copy
-/// floor (observed for knots within a few hundredths of a clamped end at degree 5 and up).
+/// floor; observed for knots close to a clamped end, where `kappa_0` itself is large (at degree 5
+/// with interior knots `1/4` and `3/4`, about `3.9e5` for a single copy `1/1024` from the end,
+/// against about 85 for one at `1/16`).
 ///
 /// The ratio is clamped (`detail::removal_floor_growth`) to at least 1, so no copy is graded below
 /// the first and a single removal is graded exactly as before; and to at most
@@ -183,10 +185,11 @@ template <StorageFloat T>
 ///
 /// This is the default budget of the first copy of a knot (a later copy multiplies it, see
 /// `removal_floor_safety`), and it is deliberately *not* a geometric one. A knot that a spline
-/// does not actually need is removable exactly, and the only thing standing between it and a
-/// bit-for-bit reconstruction is the round-off of the reconstruction itself. A budget at that level
-/// therefore means "remove what is genuinely redundant and nothing else", which is the one default
-/// that needs no arbitrary constant. Anything looser is a statement about how much geometry the
+/// does not actually need is removable exactly, and what stands between it and a bit-for-bit
+/// reconstruction is round-off: the net's own, sent through the reconstruction, and the
+/// reconstruction's. A budget at that level therefore means "remove what is genuinely redundant and
+/// nothing else", which for the first copy is the one default that needs no constant beyond the
+/// admitted `removal_floor_safety`. Anything looser is a statement about how much geometry the
 /// caller is willing to lose, which only the caller can make.
 ///
 /// **Why `sqrt(num_stacked)`.** For a curve the kernel compares one control point against one
@@ -557,7 +560,7 @@ template <StorageFloat T>
 /// Get the factor the round-off floor is multiplied by for each pass of the default removal.
 ///
 /// `max(1, min(kappa_t / kappa_0, removal_floor_growth_cap(degree)))`, `kappa_t` from
-/// `removal_discrepancy_norms` (derivation in `removal_floor_safety`). Exactly 1 for the first
+/// `removal_discrepancy_norms` (rationale in `removal_floor_safety`). Exactly 1 for the first
 /// pass. The lower clamp is applied last, so it wins where the cap is below 1 (degree 512 and up)
 /// and the floor is never below the first-copy floor. A NaN ratio gives 1 as well.
 ///
