@@ -305,8 +305,10 @@ void verify_shared_boundary(std::span<const T> row1, std::span<const T> row2,
 /// Try removing junction knots to increase smoothness.
 ///
 /// Attempts to remove up to `p - 1` copies of the junction knot (`remove_knots` at its default
-/// deviation budget, the round-off floor, which removes what is redundant to within the
-/// arithmetic and nothing more).
+/// deviation budget, the round-off floor grown for later copies as
+/// `bspline::removal_floor_safety` describes: a copy goes only when its deviation is within that
+/// floor, at most the conservative tier, and one the spline does not need may stay close to a
+/// clamped end).
 ///
 /// Args:
 ///     b (const bspline::Bspline<T>&): The joined B-spline.

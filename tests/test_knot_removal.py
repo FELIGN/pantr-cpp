@@ -560,6 +560,42 @@ class TestDefaultToleranceIsARoundOffFloor:
         base = roundoff_deviation_floor(cp, 3, 1)
         assert roundoff_deviation_floor(cp, 3, 10_000) == pytest.approx(100.0 * base, rel=1e-14)
 
+    @pytest.mark.parametrize("rational", [True, False])
+    def test_every_inserted_copy_of_a_repeated_knot_comes_out(self, rational: bool) -> None:
+        """Three copies of a knot inserted into a degree-5 curve all come out under the default.
+
+        Regression for issue #15.  Each further copy of one knot amplifies the rounding the
+        insertion left in the net (about twenty and forty times the first copy's, a
+        sixteenth from a clamped end), and a floor that did not grow with it left one or two
+        copies in some seeds.  Which seeds depends on the rounding of the insertion, so it
+        differs between instruction-set rungs: the whole sweep is asserted.
+
+        Oracle: the original knot vector, and an explicit ``tol=1e-10`` removal on the same
+        input (the issue's control), which removes every copy and so shows the copies are
+        removable.
+        """
+        degree, copies, knot = 5, 3, 0.0625
+        control_tol = 1e-10  # the issue's control: an explicit budget far above round-off
+        knots = np.array([0.0] * (degree + 1) + [0.25, 0.75] + [1.0] * (degree + 1))
+        space = BsplineSpace1D(knots, degree)
+        left_by_default: list[tuple[int, int]] = []
+        for seed in range(128):
+            rng = np.random.default_rng(seed)
+            cp = rng.uniform(-1.0, 1.0, (space.num_basis, 3))
+            if rational:
+                cp[:, 2] = 1.5 + cp[:, 2] / 2.0  # a positive weight column
+            spline = Bspline(BsplineSpace([space]), cp, is_rational=rational)
+            inserted = spline.insert_knots(np.full(copies, knot))
+
+            explicit = inserted.remove_knots(knot, tol=control_tol)
+            assert np.array_equal(explicit.space.spaces[0].knots, knots), f"seed {seed}"
+
+            by_default = inserted.remove_knots(knot)
+            extra = by_default.space.spaces[0].knots.size - knots.size
+            if extra > 0:
+                left_by_default.append((seed, extra))
+        assert left_by_default == []
+
 
 class TestRationalDeviationIsMeasuredInProjectedSpace:
     """A caller's budget is a distance between points, not between homogeneous columns.

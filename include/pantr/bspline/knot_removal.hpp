@@ -40,7 +40,7 @@ namespace pantr::bspline {
 /// Extra factor on the strict tier for the round-off floor of an exact removal.
 ///
 /// With `get_strict` this is `8 eps`, and it is applied per step of the reconstruction chain: the
-/// floor is `8 (degree + 1) eps * control-point scale`.
+/// floor for the first copy of a knot is `8 (degree + 1) eps * control-point scale`.
 ///
 /// **Shape.** Removing a knot once runs Algorithm A5.8's two one-sided reconstructions towards each
 /// other, at most `degree + 1` control points from each side, and reads off how far apart they
@@ -51,17 +51,40 @@ namespace pantr::bspline {
 ///
 /// **The multiplier is a heuristic.** `removal_floor_safety = 2.0` doubles the strict tier, as
 /// `knot_merge_safety` does, for an FMA contraction and a differing summation order on top of the
-/// count; it is admitted as a heuristic and not derived. The floor can therefore be tight, or
-/// insufficient, for the removal of several copies of one knot, where each copy reconstructs from
-/// the previous copy's rounding: the default can leave a copy that an explicit tolerance removes.
-/// `cpp/tests/test_bspline_knot_removal.cpp` pins one such case as a known limitation, and also
-/// removes single knots and several copies of one under the default floor on non-rational nets over
-/// a range of degrees ("a knot just inserted comes out" and "a repeated knot comes out as often as
-/// it was inserted"). Those cases show the default admits the removals they build; they do not
-/// bound how far the floor sits above the round-off of an arbitrary one.
+/// count; it is admitted as a heuristic and not derived.
+///
+/// **Later copies of one knot.** On an exactly removable net, what pass `t` of one removal call
+/// measures is the rounding the net already carries (chiefly from the insertion that made it) sent
+/// through a linear map, plus the kernel's own rounding: the blending weights depend only on the
+/// knots, so the map does too. Its 1-norm `kappa_t` (`detail::removal_discrepancy_norms`) bounds
+/// the part due to the net's rounding by `kappa_t` times the largest rounding of one control point,
+/// and that bound is sharp. `kappa_t` changes from copy to copy by a factor set by where the knot
+/// sits, usually upwards: at degree 5, three copies of a knot a sixteenth from a clamped end with
+/// interior knots `1/4` and `3/4`, the second and third copies have about 22 and 42 times the first
+/// copy's, and it can also be smaller than the first copy's. The count above has no term for it, so
+/// on its own it can leave a late copy that an explicit tolerance removes. Copy `t` is therefore
+/// graded against this floor times `kappa_t / kappa_0`, which is 1 for the first copy. That assumes
+/// the net carries a rounding of about `floor / kappa_0` per point, which is admitted and not
+/// derived: it is the level the first-copy floor already implies. Where the net carries more, an
+/// exactly removable copy can still stay although its ratio is under the cap, as a single copy can
+/// under the first-copy floor; observed for knots close to a clamped end, where `kappa_0` itself is
+/// large (at degree 5 with interior knots `1/4` and `3/4`, about `3.9e5` for a single copy `1/1024`
+/// from the end, against about 85 for one at `1/16`).
+///
+/// The ratio is clamped (`detail::removal_floor_growth`) to at least 1, so no copy is graded below
+/// the first and a single removal is graded exactly as before; and to at most
+/// `removal_floor_growth_cap`, which keeps the floor within the conservative tier,
+/// `get_conservative * scale`. The cap reuses that policy tier ("a condition number up to about
+/// 1e3"); it is admitted and not derived. Without it, a floor grown by the whole ratio would admit
+/// removals that turn the input's rounding into a change of the curve far above round-off (at
+/// degree 7 with seven copies of a knot `1/1024` from a clamped end and interior knots `1/4` and
+/// `3/4`, `kappa_6 / kappa_0` is about `1.6e9`). With it, a copy whose deviation exceeds the capped
+/// floor stays, losslessly, as a copy over the first-copy floor did before the ratio was
+/// introduced.
 ///
 /// All of that describes **one** control point, which is what a curve has per index. See
-/// `roundoff_deviation_floor` for the `sqrt` that a surface or a volume adds.
+/// `roundoff_deviation_floor` for the `sqrt` that a surface or a volume adds; the ratio is per
+/// point and multiplies it.
 inline constexpr double removal_floor_safety = 2.0;
 
 /// Get the magnitude a control-point distance is relative to.
@@ -154,17 +177,22 @@ template <StorageFloat T>
   return n;
 }
 
-/// Get the deviation budget that admits exactly the removals round-off allows.
+/// Get the round-off deviation budget for the first copy of a knot.
 ///
 /// `removal_floor_safety * get_strict<T>() * (degree + 1) * sqrt(num_stacked) * scale`:
-/// `8 (degree + 1) eps` times `control_point_scale` for one control point (derivation in
-/// `removal_floor_safety`), times a `sqrt` for how many control points the kernel grades at once.
+/// `8 (degree + 1) eps` times `control_point_scale` for one control point (an operation count,
+/// see `removal_floor_safety`), times a `sqrt` for how many control points the kernel grades at
+/// once.
 ///
-/// This is the default budget, and it is deliberately *not* a geometric one. A knot that a spline
-/// does not actually need is removable exactly, and the only thing standing between it and a
-/// bit-for-bit reconstruction is the round-off of the reconstruction itself. A budget at that level
-/// therefore means "remove what is genuinely redundant and nothing else", which is the one default
-/// that needs no arbitrary constant. Anything looser is a statement about how much geometry the
+/// This is the default budget of the first copy of a knot (a later copy multiplies it, see
+/// `removal_floor_safety`), and it is deliberately *not* a geometric one. A knot that a spline
+/// does not actually need is removable exactly, and what stands between it and a bit-for-bit
+/// reconstruction is round-off: the net's own, sent through the reconstruction, and the
+/// reconstruction's. A budget at that level therefore aims at "remove what is genuinely redundant
+/// and nothing else", which for the first copy is the one default that needs no constant beyond the
+/// admitted `removal_floor_safety`. It falls short of the first half where the net carries more
+/// rounding than the floor assumes, close to a clamped end (see `removal_floor_safety`), and keeps
+/// the copy there. Anything looser is a statement about how much geometry the
 /// caller is willing to lose, which only the caller can make.
 ///
 /// **Why `sqrt(num_stacked)`.** For a curve the kernel compares one control point against one
@@ -206,6 +234,36 @@ template <StorageFloat T>
                            static_cast<double>(degree + 1) * scale;
   return per_point * std::sqrt(static_cast<double>(num_stacked));
 }
+
+/// Get the largest factor the default floor grows by for a later copy of one knot.
+///
+/// `conservative_eps_factor / (removal_floor_safety * strict_eps_factor * (degree + 1))`, so the
+/// first-copy floor of `roundoff_deviation_floor` times this factor is
+/// `get_conservative * scale * sqrt(num_stacked)`: the cap keeps the default within the
+/// conservative tier (rationale in `removal_floor_safety`). The factors are powers of two, so the
+/// quotient is exact up to the division by `degree + 1`.
+///
+/// Below 1 from degree 512 on, where the first-copy floor already exceeds the conservative tier;
+/// `detail::removal_floor_growth` then keeps the first-copy floor.
+///
+/// Args:
+///     degree (int): Polynomial degree in the direction being reduced, at least 0.
+///
+/// Returns:
+///     double: The cap on `kappa_t / kappa_0`.
+[[nodiscard]] constexpr double removal_floor_growth_cap(int degree) noexcept {
+  return tolerance::conservative_eps_factor /
+         (removal_floor_safety * tolerance::strict_eps_factor * static_cast<double>(degree + 1));
+}
+
+/// How a removal is graded against its deviation budget.
+enum class RemovalBudget : std::uint8_t {
+  /// Every copy against the budget as given: an explicit tolerance, or an infinite budget.
+  fixed,
+  /// Copy `t` against the budget times `detail::removal_floor_growth`: the budget is the
+  /// first-copy round-off floor of `roundoff_deviation_floor`.
+  roundoff_floor,
+};
 
 /// Pull a projected-space deviation budget back to homogeneous control points.
 ///
@@ -381,6 +439,169 @@ template <StorageFloat T>
                     " not found in knot vector (tolerance=" + py_repr(tol) + ").");
 }
 
+/// Get the blending weight `alpha` of one step of `remove_knot_kernel`.
+///
+/// `(knot_value - lo) / (hi - lo)`, the knot difference of the storage type and the weight of
+/// `double`. A zero difference gives a zero weight, as in the source; a valid space cannot produce
+/// one here (it needs `degree + 2` equal knots).
+///
+/// Args:
+///     knot_value (double): The knot value being removed.
+///     lo (T): The lower knot of the step.
+///     hi (T): The upper knot of the step.
+///
+/// Returns:
+///     double: The weight.
+template <StorageFloat T>
+[[nodiscard]] double removal_alpha(double knot_value, T lo, T hi) noexcept {
+  const T denom = static_cast<T>(hi - lo);
+  return denom != T{0} ? (knot_value - static_cast<double>(lo)) / static_cast<double>(denom) : 0.0;
+}
+
+/// Get `kappa_t`, the 1-norm of the discrepancy map of each pass of `remove_knot_kernel`.
+///
+/// The discrepancy pass `t` measures is linear in the control points, `D_t(P) = sum_k C_{t,k} P_k`,
+/// with coefficients fixed by the knots (all earlier passes accepted), so a rounding `delta_k` of
+/// each control point moves it by at most `kappa_t max_k ||delta_k||`, `kappa_t = sum_k |C_{t,k}|`.
+/// The coefficients are found by running the kernel's own recurrence, with its own weights, on the
+/// identity: one column per control row the passes read, rows `r - degree - num` to
+/// `r - multiplicity + num`.
+///
+/// Args:
+///     degree (int): Polynomial degree.
+///     knots (std::span<const T>): Knot vector.
+///     knot_value (double): The knot value to remove.
+///     knot_index (std::size_t): The index `r` of the last knot of its class.
+///     multiplicity (int): The multiplicity `s` of that class.
+///     num (int): The number of passes.
+///
+/// Returns:
+///     std::vector<double>: `kappa_t` for `t = 0, ..., num - 1`, in `double`.
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed): the preconditions of
+///     `remove_knot_kernel`. For general use, call `remove_knot_1d`.
+template <StorageFloat T>
+[[nodiscard]] std::vector<double> removal_discrepancy_norms(int degree, std::span<const T> knots,
+                                                            double knot_value,
+                                                            std::size_t knot_index,
+                                                            int multiplicity, int num) {
+  using Index = std::ptrdiff_t;
+  const Index order = degree + 1;
+  const auto r = static_cast<Index>(knot_index);
+  const Index s = multiplicity;
+  const Index lo = r - degree - num;  // the first control row any pass reads
+  const Index width = degree - s + 2 * static_cast<Index>(num) + 1;
+  const auto w = static_cast<std::size_t>(width);
+
+  // `net` row `k` holds the coefficients of control row `lo + k`: the identity to start.
+  std::vector<double> net(w * w, 0.0);
+  for (std::size_t k = 0; k < w; ++k) {
+    net[k * w + k] = 1.0;
+  }
+  std::vector<double> temp(static_cast<std::size_t>(2 * degree + 1) * w);
+  const auto row = [w](std::vector<double>& v, Index i) {
+    return std::span<double>(v).subspan(static_cast<std::size_t>(i) * w, w);
+  };
+  const auto knot = [&knots](Index i) { return knots[static_cast<std::size_t>(i)]; };
+
+  std::vector<double> norms;
+  norms.reserve(static_cast<std::size_t>(num));
+  Index first = r - degree;
+  Index last = r - s;
+  for (Index t = 0; t < num; ++t) {
+    const Index off = first - 1;
+    std::ranges::copy(row(net, off - lo), row(temp, 0).begin());
+    std::ranges::copy(row(net, last + 1 - lo), row(temp, last + 1 - off).begin());
+    Index i = first;
+    Index ii = 1;
+    Index j = last;
+    Index jj = last - off;
+    while (j - i > t) {
+      const double alpha_i = removal_alpha<T>(knot_value, knot(i), knot(i + order + t));
+      const double alpha_j = removal_alpha<T>(knot_value, knot(j - t), knot(j + order));
+      for (std::size_t c = 0; c < w; ++c) {
+        const double from_left = (1.0 - alpha_i) * row(temp, ii - 1)[c];
+        const double from_right = alpha_j * row(temp, jj + 1)[c];
+        row(temp, ii)[c] = (row(net, i - lo)[c] - from_left) / alpha_i;
+        row(temp, jj)[c] = (row(net, j - lo)[c] - from_right) / (1.0 - alpha_j);
+      }
+      ++i;
+      ++ii;
+      --j;
+      --jj;
+    }
+    double norm = 0.0;
+    if (j - i < t) {
+      for (std::size_t c = 0; c < w; ++c) {
+        norm += std::abs(row(temp, ii - 1)[c] - row(temp, jj + 1)[c]);
+      }
+    } else {
+      const double alpha_i = removal_alpha<T>(knot_value, knot(i), knot(i + order + t));
+      for (std::size_t c = 0; c < w; ++c) {
+        const double from_right = alpha_i * row(temp, ii + t + 1)[c];
+        const double from_left = (1.0 - alpha_i) * row(temp, ii - 1)[c];
+        const double blended = from_right + from_left;
+        norm += std::abs(row(net, i - lo)[c] - blended);
+      }
+    }
+    norms.push_back(norm);
+    i = first;
+    j = last;
+    while (j - i > t) {
+      std::ranges::copy(row(temp, i - off), row(net, i - lo).begin());
+      std::ranges::copy(row(temp, j - off), row(net, j - lo).begin());
+      ++i;
+      --j;
+    }
+    --first;
+    ++last;
+  }
+  return norms;
+}
+
+/// Get the factor the round-off floor is multiplied by for each pass of the default removal.
+///
+/// `max(1, min(kappa_t / kappa_0, removal_floor_growth_cap(degree)))`, `kappa_t` from
+/// `removal_discrepancy_norms` (rationale in `removal_floor_safety`). Exactly 1 for the first
+/// pass. The lower clamp is applied last, so it wins where the cap is below 1 (degree 512 and up)
+/// and the floor is never below the first-copy floor. A NaN ratio gives 1 as well.
+///
+/// `kappa_0` is not zero in exact arithmetic: pass 0 is A5.8's test of whether the knot can be
+/// removed once, and a map that vanished identically would declare every spline of the space
+/// removable, while the splines with one copy fewer of the knot are a proper subspace.
+///
+/// Args:
+///     degree (int): Polynomial degree.
+///     knots (std::span<const T>): Knot vector.
+///     knot_value (double): The knot value to remove.
+///     knot_index (std::size_t): The index `r` of the last knot of its class.
+///     multiplicity (int): The multiplicity `s` of that class.
+///     num (int): The number of passes.
+///
+/// Returns:
+///     std::vector<double>: The factor for `t = 0, ..., num - 1`.
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed): the preconditions of
+///     `remove_knot_kernel`. For general use, call `remove_knot_1d`.
+template <StorageFloat T>
+[[nodiscard]] std::vector<double> removal_floor_growth(int degree, std::span<const T> knots,
+                                                       double knot_value, std::size_t knot_index,
+                                                       int multiplicity, int num) {
+  std::vector<double> growth =
+      removal_discrepancy_norms<T>(degree, knots, knot_value, knot_index, multiplicity, num);
+  if (growth.empty()) {  // `num` is 0 at degree 0, where `remove_knot_1d` caps it at the degree
+    return growth;
+  }
+  const double kappa_0 = growth.front();
+  const double cap = removal_floor_growth_cap(degree);
+  for (double& g : growth) {
+    g = (std::max)(1.0, (std::min)(g / kappa_0, cap));
+  }
+  return growth;
+}
+
 /// Remove a single knot value up to `num` times from a 1D B-spline.
 ///
 /// Implements Algorithm A5.8 from *The NURBS Book* (Piegl and Tiller, 1997). Each removal is
@@ -400,7 +621,10 @@ template <StorageFloat T>
 ///     multiplicity (int): The multiplicity `s` of that class, `1 <= s <= degree + 1`.
 ///     num (int): The most removals to attempt. **Load-bearing for memory safety**: see the note.
 ///     tol (double): The largest Euclidean distance between the two intermediate control-point
-///         approximations that still accepts a removal.
+///         approximations that still accepts a removal; under `RemovalBudget::roundoff_floor`, the
+///         first-copy floor, which pass `t` multiplies by `removal_floor_growth`.
+///     budget (RemovalBudget): How `tol` is applied to each pass. Defaults to
+///         `RemovalBudget::fixed`, every pass against `tol` as given.
 ///
 /// Returns:
 ///     RemovalResult<T>: The knots, the control points and the number of removals.
@@ -428,8 +652,15 @@ template <StorageFloat T>
 [[nodiscard]] RemovalResult<T> remove_knot_kernel(int degree, std::span<const T> knots,
                                                   mdview<const T, 2> ctrl, double knot_value,
                                                   std::size_t knot_index, int multiplicity, int num,
-                                                  double tol) {
+                                                  double tol,
+                                                  RemovalBudget budget = RemovalBudget::fixed) {
   using Index = std::ptrdiff_t;
+  // The factor each pass multiplies `tol` by; none under a fixed budget, which compares against
+  // `tol` itself.
+  const std::vector<double> growth =
+      budget == RemovalBudget::roundoff_floor
+          ? removal_floor_growth<T>(degree, knots, knot_value, knot_index, multiplicity, num)
+          : std::vector<double>();
   const std::size_t rank = ctrl.extent(1);
   const auto n = static_cast<Index>(ctrl.extent(0)) - 1;  // last control point index
   const Index m = n + degree + 1;                         // last knot index
@@ -467,23 +698,10 @@ template <StorageFloat T>
     Index jj = last - off;
 
     while (j - i > t) {
-      // The knot differences are of the storage type, the blending weights of `double`. A zero
-      // difference gives a zero weight, as in the source; a valid space cannot produce one here (it
-      // needs `degree + 2` equal knots).
-      const T denom_i = static_cast<T>(wk[static_cast<std::size_t>(i + order + t)] -
-                                       wk[static_cast<std::size_t>(i)]);
-      const double alpha_i =
-          denom_i != T{0} ? (knot_value - static_cast<double>(wk[static_cast<std::size_t>(i)])) /
-                                static_cast<double>(denom_i)
-                          : 0.0;
-
-      const T denom_j = static_cast<T>(wk[static_cast<std::size_t>(j + order)] -
-                                       wk[static_cast<std::size_t>(j - t)]);
-      const double alpha_j =
-          denom_j != T{0}
-              ? (knot_value - static_cast<double>(wk[static_cast<std::size_t>(j - t)])) /
-                    static_cast<double>(denom_j)
-              : 0.0;
+      const double alpha_i = removal_alpha<T>(knot_value, wk[static_cast<std::size_t>(i)],
+                                              wk[static_cast<std::size_t>(i + order + t)]);
+      const double alpha_j = removal_alpha<T>(knot_value, wk[static_cast<std::size_t>(j - t)],
+                                              wk[static_cast<std::size_t>(j + order)]);
 
       for (std::size_t d = 0; d < rank; ++d) {
         // A zero `alpha` here is a division by zero (inf or NaN, not a trap). It needs the knot
@@ -509,6 +727,7 @@ template <StorageFloat T>
     }
 
     // Check deviation.
+    const double tol_t = growth.empty() ? tol : tol * growth[static_cast<std::size_t>(t)];
     bool accepted = false;
     if (j - i < t) {
       // Odd case: the distance between the two meeting points. The differences are of the storage
@@ -520,15 +739,11 @@ template <StorageFloat T>
         dist += square;
       }
       dist = std::sqrt(dist);
-      accepted = dist <= tol;
+      accepted = dist <= tol_t;
     } else {
       // Even case: the blended point against the both-side approximation.
-      const T denom_i = static_cast<T>(wk[static_cast<std::size_t>(i + order + t)] -
-                                       wk[static_cast<std::size_t>(i)]);
-      const double alpha_i =
-          denom_i != T{0} ? (knot_value - static_cast<double>(wk[static_cast<std::size_t>(i)])) /
-                                static_cast<double>(denom_i)
-                          : 0.0;
+      const double alpha_i = removal_alpha<T>(knot_value, wk[static_cast<std::size_t>(i)],
+                                              wk[static_cast<std::size_t>(i + order + t)]);
       double dist = 0.0;
       for (std::size_t d = 0; d < rank; ++d) {
         const double from_right = alpha_i * static_cast<double>(at(temp, ii + t + 1, d));
@@ -539,7 +754,7 @@ template <StorageFloat T>
         dist += square;
       }
       dist = std::sqrt(dist);
-      accepted = dist <= tol;
+      accepted = dist <= tol_t;
     }
 
     if (!accepted) {
@@ -615,7 +830,10 @@ template <StorageFloat T>
 ///     tol_space (double): Absolute parametric tolerance for the knot comparisons.
 ///     tol_deviation (double): The largest control-point deviation an accepted removal may have,
 ///         already in the units the kernel measures in (homogeneous for a rational spline; see the
-///         file note). Infinity accepts every removal.
+///         file note). Infinity accepts every removal. Under `RemovalBudget::roundoff_floor`, the
+///         first-copy floor of `roundoff_deviation_floor`.
+///     budget (RemovalBudget): How `tol_deviation` is applied to each copy. Defaults to
+///         `RemovalBudget::fixed`, every copy against `tol_deviation` as given.
 ///
 /// Returns:
 ///     RemovalResult<T>: The new knots, control points and the number of removals.
@@ -630,7 +848,8 @@ template <StorageFloat T>
 [[nodiscard]] RemovalResult<T> remove_knot_1d(std::span<const T> knots, int degree,
                                               mdview<const T, 2> ctrl, double knot_value,
                                               std::optional<long long> num, double tol_space,
-                                              double tol_deviation) {
+                                              double tol_deviation,
+                                              RemovalBudget budget = RemovalBudget::fixed) {
   if (num.has_value() && *num < 1) {
     throw value_error("num must be a positive integer or None, got " + std::to_string(*num) + ".");
   }
@@ -680,7 +899,7 @@ template <StorageFloat T>
       (std::min)(static_cast<long long>(s), static_cast<long long>(degree));
   const long long capped = num.has_value() ? (std::min)(*num, max_removals) : max_removals;
   return detail::remove_knot_kernel<T>(degree, knots, ctrl, knot_value, r, static_cast<int>(s),
-                                       static_cast<int>(capped), tol_deviation);
+                                       static_cast<int>(capped), tol_deviation, budget);
 }
 
 /// Remove knots, direction by direction, from a B-spline.
@@ -698,8 +917,10 @@ template <StorageFloat T>
 ///     num (std::optional<long long>): The most removals per knot value; no value removes as many
 ///         as possible.
 ///     tol (std::optional<double>): The deviation budget, a distance in **projected** space. No
-///         value uses the round-off floor of `roundoff_deviation_floor`, which removes what is
-///         redundant to within the arithmetic and nothing more.
+///         value uses the round-off floor of `roundoff_deviation_floor`, grown for each later copy
+///         of a knot as `removal_floor_safety` describes: a copy is removed only when its deviation
+///         is within that floor (round-off for the first copy, at most the conservative tier for a
+///         later one), and a copy the spline does not need may stay close to a clamped end.
 ///
 /// Returns:
 ///     Bspline<T>: The B-spline with the reduced knot vectors.
@@ -742,6 +963,8 @@ template <StorageFloat T>
         // values to a point; the scale and the weights do not depend on their order.
         const std::span<const T> all(flat.data_handle(), flat.extent(0) * flat.extent(1));
         double tol_deviation = 0.0;
+        const RemovalBudget budget =
+            tol.has_value() ? RemovalBudget::fixed : RemovalBudget::roundoff_floor;
         if (!tol.has_value()) {
           tol_deviation = roundoff_deviation_floor<T>(all, cols, space.degree(),
                                                       num_stacked_control_points(extents, d));
@@ -759,9 +982,9 @@ template <StorageFloat T>
         NdArray<T> ctrl({flat.extent(0), flat.extent(1)}, for_overwrite);
         std::copy(flat.data_handle(), flat.data_handle() + all.size(), ctrl.data());
         for (const T val : knot_values[d]) {
-          RemovalResult<T> r =
-              remove_knot_1d<T>(std::span<const T>(knots), space.degree(), ctrl.template view<2>(),
-                                static_cast<double>(val), num, space.tolerance(), tol_deviation);
+          RemovalResult<T> r = remove_knot_1d<T>(std::span<const T>(knots), space.degree(),
+                                                 ctrl.template view<2>(), static_cast<double>(val),
+                                                 num, space.tolerance(), tol_deviation, budget);
           knots = std::move(r.knots);
           ctrl = std::move(r.ctrl);
         }
