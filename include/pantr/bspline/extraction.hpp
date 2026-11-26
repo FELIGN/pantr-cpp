@@ -318,9 +318,12 @@ template <StorageFloat T>
 ///     out (mdview<T, 3>): Extents `(intervals, degree + 1, degree + 1)`; written.
 ///
 /// Raises:
-///     value_error: As `bezier_extraction_operators`; or `degree` is beyond the degrees the
-///         Lagrange-to-Bernstein matrix of `variant` can be built for (checked after the output
-///         extents, before anything is written).
+///     value_error: As `bezier_extraction_operators`; or, at degree 1 and above, `variant` is
+///         outside `LagrangeVariant` (checked after the output extents, before anything is
+///         written).
+///     capacity_error: As `change_basis::cached` for the Lagrange-to-Bernstein matrix.
+///     state_error: As `change_basis::cached` for the Lagrange-to-Bernstein matrix.
+///     std::system_error: As `change_basis::cached`.
 template <StorageFloat T>
 void lagrange_extraction_operators(std::span<const T> knots, int degree, double tol,
                                    basis::LagrangeVariant variant, mdview<T, 3> out) {
@@ -443,9 +446,11 @@ void bezier_structural_identity_mask(const BsplineSpace1D<T>& space, std::span<b
 ///     out (std::span<bool>): One flag per interval.
 ///
 /// Raises:
-///     value_error: `out` does not hold `num_intervals()` flags; or, for a degree above 0, the
-///         degree is beyond the degrees the Lagrange-to-Bernstein matrix of `variant` can be built
-///         for.
+///     value_error: `out` does not hold `num_intervals()` flags; or, at degree 1 and above,
+///         `variant` is outside `LagrangeVariant`.
+///     capacity_error: As `change_basis::cached` for the Lagrange-to-Bernstein matrix.
+///     state_error: As `change_basis::cached` for the Lagrange-to-Bernstein matrix.
+///     std::system_error: As `change_basis::cached`.
 template <StorageFloat T>
 void lagrange_structural_identity_mask(const BsplineSpace1D<T>& space,
                                        basis::LagrangeVariant variant, std::span<bool> out) {
