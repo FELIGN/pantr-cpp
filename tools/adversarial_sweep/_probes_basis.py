@@ -27,10 +27,17 @@ finiteness check and nothing stronger.
 from __future__ import annotations
 
 import itertools
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, NamedTuple
 
 import numpy as np
 
+from pantr._testing import (
+    _BERNSTEIN_TO_CARDINAL_MAX_DEGREE,
+    _BERNSTEIN_TO_LAGRANGE_MAX_DEGREE,
+    _CARDINAL_TO_BERNSTEIN_MAX_DEGREE,
+    _CARDINAL_TO_LEGENDRE_MAX_DEGREE,
+    _DegreeLimit,
+)
 from pantr.basis import (
     LagrangeVariant,
     tabulate_bernstein,
@@ -66,7 +73,7 @@ from ._axes import (
 from ._core import Case, custom, expected_shape, partition_of_unity
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Iterator, Mapping
 
     import numpy.typing as npt
 
@@ -107,6 +114,27 @@ def _capped(seq: tuple[Any, ...], n: int, profile: Profile) -> tuple[Any, ...]:
         tuple[Any, ...]: ``seq`` unchanged for FULL, ``seq[:n]`` for SMOKE.
     """
     return seq if profile is Profile.FULL else seq[:n]
+
+
+def _supports(limit: _DegreeLimit | None, degree: int, dtype: npt.DTypeLike) -> bool:
+    """Say whether a change-of-basis builder's supported-degree domain holds a degree.
+
+    The domain is the one the library declares (``pantr.change_basis``, the
+    ``_*_MAX_DEGREE`` limits), read rather than copied, so the probes follow it when it
+    moves. Past it the builder refuses with the ``ValueError`` its ``Raises:`` documents.
+
+    Args:
+        limit (_DegreeLimit | None): The builder's largest supported degree per dtype, or
+            ``None`` for a builder that documents no degree limit (it solves nothing).
+        degree (int): Polynomial degree.
+        dtype (npt.DTypeLike): Output dtype, ``float32`` or ``float64``.
+
+    Returns:
+        bool: ``True`` when the builder supports ``degree`` in ``dtype``.
+    """
+    if limit is None:
+        return True
+    return degree <= (limit.float32 if np.dtype(dtype) == np.float32 else limit.float64)
 
 
 def _bernstein_nonneg() -> Invariant:
@@ -446,7 +474,7 @@ def _call_lagrange(
 
 
 def _nd_wrapper_cases(
-    name: str,
+    entry: Callable[..., Any],
     call: Callable[..., Any],
     profile: Profile,
     *,
@@ -456,7 +484,9 @@ def _nd_wrapper_cases(
     """Yield hostile cases for one tensor-product ``nD`` tabulator wrapper.
 
     Args:
-        name (str): Short identifier used in case labels.
+        entry (Callable[..., Any]): The ``tabulate_*`` function ``call`` adapts. Its
+            ``Raises:`` grades a rejection (the adapter's lists nothing), and its name less
+            the ``tabulate_`` prefix labels the cases.
         call (Callable[..., Any]): Adapter with signature
             ``call(degrees_tuple, pts, funcs_order="C")``.
         profile (Profile): Sweep width.
@@ -466,6 +496,7 @@ def _nd_wrapper_cases(
     Yields:
         Case: One hostile ``nD`` tabulation call.
     """
+    name = entry.__name__.removeprefix("tabulate_")
     generator = rng(41)
     for degrees_tuple in _nd_degree_tuples(profile):
         dim = len(degrees_tuple)
@@ -485,7 +516,7 @@ def _nd_wrapper_cases(
             yield Case(
                 GROUP,
                 f"{name}_nd_deg{degrees_tuple}_{np.dtype(dtype).name}",
-                call,
+                entry,
                 lambda call=call, degrees_tuple=degrees_tuple, pts=pts: call(degrees_tuple, pts),
                 {"degrees": degrees_tuple, "dtype": dtype},
                 invariants=tuple(invariants),
@@ -505,21 +536,20 @@ def _nd_wrapper_cases(
     # boundary. No docstring in this module says whether an empty `degrees` is legal,
     # and there is a defensible answer either way -- the empty tensor product is the
     # single constant function 1, or a basis needs at least one direction. What the
-    # code does is reject it from Layer 2 ("The dimension of the points must be at
-    # least 1", `_basis_multidim.py:161`) with a `ValueError` the Layer-1 `Raises:`
-    # does not list, so the sweep reports it as a *suspected* undocumented rejection,
-    # which is exactly the right strength of claim until the contract says.
+    # code does is reject it ("The dimension of the points must be at least 1") with a
+    # `ValueError`. The tabulator's `Raises:` lists `ValueError`, for other reasons, and
+    # the grading reads exception types, so this grades as a documented rejection.
     yield Case(
         GROUP,
         f"{name}_nd_empty_degrees",
-        call,
+        entry,
         lambda call=call, empty_pts=empty_pts: call((), empty_pts),
         {"degrees": (), "kind": "empty-degrees"},
     )
     yield Case(
         GROUP,
         f"{name}_nd_funcs_order_F",
-        call,
+        entry,
         lambda call=call, degrees_tuple=degrees_tuple, pts=pts: call(
             degrees_tuple, pts, funcs_order="F"
         ),
@@ -533,7 +563,7 @@ def _nd_wrapper_cases(
     yield Case(
         GROUP,
         f"{name}_nd_points_lattice",
-        call,
+        entry,
         lambda call=call, degrees_tuple=degrees_tuple, lattice=lattice: call(
             degrees_tuple, lattice
         ),
@@ -544,13 +574,13 @@ def _nd_wrapper_cases(
     mismatched_pts = _scattered_points(3, dtype, generator)
     # Two degrees against three-dimensional points: the `degrees`/`pts` pairing is
     # per-direction by definition, so there is no basis to tabulate and *returning*
-    # something would be the finding. (The `ValueError` it raises comes from Layer 2
-    # and is absent from the Layer-1 `Raises:` list -- a documentation gap, not a
-    # reason to call the input legal.)
+    # something would be the finding. (The tabulator's `Raises:` lists `ValueError`
+    # but not this reason for it -- a documentation gap, not a reason to call the input
+    # legal.)
     yield Case(
         GROUP,
         f"{name}_nd_dim_mismatch",
-        call,
+        entry,
         lambda call=call, degrees_tuple=degrees_tuple, mismatched_pts=mismatched_pts: call(
             degrees_tuple, mismatched_pts
         ),
@@ -560,7 +590,7 @@ def _nd_wrapper_cases(
     yield Case(
         GROUP,
         f"{name}_nd_negative_degree",
-        call,
+        entry,
         lambda call=call, pts=pts: call((-1, 2), pts),
         {"degrees": (-1, 2), "kind": "negative-degree"},
         must_reject=True,  # "If any degree is negative"
@@ -586,7 +616,7 @@ def _lagrange_nd_variant_cases(profile: Profile) -> Iterator[Case]:
         yield Case(
             GROUP,
             f"lagrange_nd_variant_{variant.value}",
-            _call_lagrange,
+            tabulate_lagrange,
             lambda degrees_tuple=degrees_tuple, pts=pts, variant=variant: _call_lagrange(
                 degrees_tuple, pts, variant=variant
             ),
@@ -597,17 +627,22 @@ def _lagrange_nd_variant_cases(profile: Profile) -> Iterator[Case]:
         )
 
 
-_SquareBuilder = tuple[str, "Callable[..., Any]"]
+_SquareBuilder = tuple[str, "Callable[..., Any]", _DegreeLimit | None]
 _SQUARE_BUILDERS: Final[tuple[_SquareBuilder, ...]] = (
-    ("bernstein_to_cardinal", compute_bernstein_to_cardinal_1d),
-    ("cardinal_to_bernstein", compute_cardinal_to_bernstein_1d),
-    ("legendre_to_cardinal", compute_legendre_to_cardinal_1d),
-    ("cardinal_to_legendre", compute_cardinal_to_legendre_1d),
-    ("cardinal_dual_legendre", compute_cardinal_dual_legendre_coeffs_1d),
-    ("monomial_to_bernstein", compute_monomial_to_bernstein_1d),
+    ("bernstein_to_cardinal", compute_bernstein_to_cardinal_1d, _BERNSTEIN_TO_CARDINAL_MAX_DEGREE),
+    ("cardinal_to_bernstein", compute_cardinal_to_bernstein_1d, _CARDINAL_TO_BERNSTEIN_MAX_DEGREE),
+    ("legendre_to_cardinal", compute_legendre_to_cardinal_1d, None),
+    ("cardinal_to_legendre", compute_cardinal_to_legendre_1d, _CARDINAL_TO_LEGENDRE_MAX_DEGREE),
+    (
+        "cardinal_dual_legendre",
+        compute_cardinal_dual_legendre_coeffs_1d,
+        _CARDINAL_TO_LEGENDRE_MAX_DEGREE,
+    ),
+    ("monomial_to_bernstein", compute_monomial_to_bernstein_1d, None),
 )
 """The six ``compute_*_1d`` change-of-basis builders that take ``degree >= 0``
-and no ``LagrangeVariant`` argument."""
+and no ``LagrangeVariant`` argument, each with its supported-degree domain (``None``
+for the two that document no degree limit)."""
 
 
 def _change_basis_square_cases(profile: Profile) -> Iterator[Case]:
@@ -617,21 +652,26 @@ def _change_basis_square_cases(profile: Profile) -> Iterator[Case]:
         profile (Profile): Sweep width.
 
     Yields:
-        Case: One hostile call per builder.
+        Case: One hostile call per builder, degree and dtype, a degree past the builder's
+        supported domain built to be refused (the documented ``ValueError``), plus the
+        documented rejections of a negative degree and, in the ``full`` profile, an
+        ``int64`` dtype.
     """
-    # All six document exactly two preconditions -- "Must be non-negative" and a
-    # float32/float64 dtype -- with a matching `Raises: ValueError` naming both.
-    for name, func in _SQUARE_BUILDERS:
+    # All six document a non-negative degree and a float32/float64 dtype, and the four
+    # that carry a degree domain document it too, with a matching `Raises: ValueError` naming each.
+    for name, func, limit in _SQUARE_BUILDERS:
         for degree in _capped(degrees(profile), 2, profile):
             for dtype in dtypes(profile):
+                supported = _supports(limit, degree, dtype)
                 yield Case(
                     GROUP,
                     f"{name}_deg{degree}_{np.dtype(dtype).name}",
                     func,
                     lambda func=func, degree=degree, dtype=dtype: func(degree, dtype),
                     {"degree": degree, "dtype": dtype},
-                    invariants=(expected_shape((degree + 1, degree + 1)),),
-                    must_succeed=True,
+                    invariants=(expected_shape((degree + 1, degree + 1)),) if supported else (),
+                    must_succeed=supported,
+                    must_reject=not supported,
                 )
         yield Case(
             GROUP,
@@ -652,11 +692,15 @@ def _change_basis_square_cases(profile: Profile) -> Iterator[Case]:
             )
 
 
-_LagrangePairBuilder = tuple[str, "Callable[..., Any]"]
+_LagrangePairBuilder = tuple[
+    str, "Callable[..., Any]", "Mapping[LagrangeVariant, _DegreeLimit] | None"
+]
 _LAGRANGE_PAIR_BUILDERS: Final[tuple[_LagrangePairBuilder, ...]] = (
-    ("lagrange_to_bernstein", compute_lagrange_to_bernstein_1d),
-    ("bernstein_to_lagrange", compute_bernstein_to_lagrange_1d),
+    ("lagrange_to_bernstein", compute_lagrange_to_bernstein_1d, None),
+    ("bernstein_to_lagrange", compute_bernstein_to_lagrange_1d, _BERNSTEIN_TO_LAGRANGE_MAX_DEGREE),
 )
+"""The two Lagrange-variant builders, each with its supported-degree domain per variant
+(``None`` for the tabulation, which documents no degree limit)."""
 
 
 def _change_basis_lagrange_pair_cases(profile: Profile) -> Iterator[Case]:
@@ -668,14 +712,18 @@ def _change_basis_lagrange_pair_cases(profile: Profile) -> Iterator[Case]:
     Yields:
         Case: One hostile ``(degree, variant, dtype)`` combination, degree 0 included
         (``[[1]]`` for every variant: both bases are the constant 1, and the builders do
-        not ask the variant for a one-node set), plus the documented rejection of a
+        not ask the variant for a one-node set), and a degree past the variant's
+        supported domain as the documented rejection, plus the documented rejection of a
         negative degree.
     """
     variants = tuple(LagrangeVariant) if profile is Profile.FULL else (LagrangeVariant.EQUISPACES,)
-    for name, func in _LAGRANGE_PAIR_BUILDERS:
+    for name, func, limits in _LAGRANGE_PAIR_BUILDERS:
         for degree in _capped(degrees(profile), 2, profile):
             for variant in variants:
                 for dtype in dtypes(profile):
+                    supported = _supports(
+                        None if limits is None else limits[variant], degree, dtype
+                    )
                     yield Case(
                         GROUP,
                         f"{name}_deg{degree}_{variant.value}_{np.dtype(dtype).name}",
@@ -684,8 +732,11 @@ def _change_basis_lagrange_pair_cases(profile: Profile) -> Iterator[Case]:
                             degree, variant, dtype
                         ),
                         {"degree": degree, "variant": variant, "dtype": dtype},
-                        invariants=(expected_shape((degree + 1, degree + 1)),),
-                        must_succeed=True,
+                        invariants=(
+                            (expected_shape((degree + 1, degree + 1)),) if supported else ()
+                        ),
+                        must_succeed=supported,
+                        must_reject=not supported,
                     )
         yield Case(
             GROUP,
@@ -723,77 +774,126 @@ def _bernstein_to_lagrange_default(degree: int, dtype: npt.DTypeLike) -> npt.NDA
     return compute_bernstein_to_lagrange_1d(degree, LagrangeVariant.EQUISPACES, dtype)
 
 
+class _RoundTrip(NamedTuple):
+    """A change-of-basis pair whose round trip is checked against the identity.
+
+    Attributes:
+        label (str): Short identifier for the pair, used in the case label.
+        forward (Callable[[int, npt.DTypeLike], npt.NDArray[Any]]): Builds the matrix
+            whose conditioning sets the tolerance.
+        backward (Callable[[int, npt.DTypeLike], npt.NDArray[Any]]): Builds the matrix
+            applied second in the round trip.
+        entry (Callable[..., Any]): The library builder ``backward`` calls, whose
+            ``Raises:`` grades a refusal.
+        limits (tuple[_DegreeLimit, ...]): The supported-degree domains of the two
+            builders, for those that document one.
+    """
+
+    label: str
+    forward: Callable[[int, npt.DTypeLike], npt.NDArray[Any]]
+    backward: Callable[[int, npt.DTypeLike], npt.NDArray[Any]]
+    entry: Callable[..., Any]
+    limits: tuple[_DegreeLimit, ...]
+
+
+_ROUND_TRIPS: Final[tuple[_RoundTrip, ...]] = (
+    _RoundTrip(
+        "cardinal_bernstein",
+        compute_bernstein_to_cardinal_1d,
+        compute_cardinal_to_bernstein_1d,
+        compute_cardinal_to_bernstein_1d,
+        (_BERNSTEIN_TO_CARDINAL_MAX_DEGREE, _CARDINAL_TO_BERNSTEIN_MAX_DEGREE),
+    ),
+    _RoundTrip(
+        "cardinal_legendre",
+        compute_legendre_to_cardinal_1d,
+        compute_cardinal_to_legendre_1d,
+        compute_cardinal_to_legendre_1d,
+        (_CARDINAL_TO_LEGENDRE_MAX_DEGREE,),
+    ),
+    _RoundTrip(
+        "bernstein_lagrange",
+        _lagrange_to_bernstein_default,
+        _bernstein_to_lagrange_default,
+        compute_bernstein_to_lagrange_1d,
+        (_BERNSTEIN_TO_LAGRANGE_MAX_DEGREE[LagrangeVariant.EQUISPACES],),
+    ),
+)
+"""The three change-of-basis pairs whose round trip is checked."""
+
+
 def _round_trip_case(
-    label: str,
-    forward: Callable[[int, npt.DTypeLike], npt.NDArray[Any]],
-    backward: Callable[[int, npt.DTypeLike], npt.NDArray[Any]],
-    degree: int,
-    dtype: np.dtype[np.float32 | np.float64],
+    pair: _RoundTrip, degree: int, dtype: np.dtype[np.float32 | np.float64]
 ) -> Case:
     """Build one round-trip identity case for a change-of-basis pair.
 
     The tolerance is derived from the condition number of the matrix actually
     being inverted (measured with :func:`numpy.linalg.cond`, an oracle
     independent of the algorithm under test), matching the conditioning
-    documented at ``change_basis.py:376-381`` (``cond ~ 1.1e3`` at degree 4,
-    ``3.0e8`` at degree 8, for the cardinal/Legendre pair): a bare literal
-    tolerance would be meaningless across that six-orders-of-magnitude range.
+    documented in the ``Warning:`` of ``compute_cardinal_to_legendre_1d``
+    (``cond ~ 1.1e3`` at degree 4, ``3.0e8`` at degree 8, for the
+    cardinal/Legendre pair): a bare literal
+    tolerance would be meaningless across that five-orders-of-magnitude range.
     An explicit factor of ``16 * (degree + 1)`` covers the round trip's own
     matrix product on top of the conditioning bound.
 
+    No builder is called here: both matrices, and the condition number, are computed
+    when the case runs, so a builder's refusal is that case's outcome and cannot end
+    the enumeration of the cases after it.
+
     Args:
-        label (str): Short identifier for the pair, used in the case label.
-        forward (Callable[[int, npt.DTypeLike], npt.NDArray[Any]]): Builds the
-            matrix whose conditioning sets the tolerance.
-        backward (Callable[[int, npt.DTypeLike], npt.NDArray[Any]]): Builds the
-            matrix applied second in the round trip.
+        pair (_RoundTrip): The pair.
         degree (int): Polynomial degree.
         dtype (np.dtype[np.float32 | np.float64]): Working precision.
 
     Returns:
-        Case: The round-trip case.
+        Case: The round-trip case: legal when the degree is inside every domain in
+        ``pair.limits``, and built to be refused (the documented ``ValueError``) when it
+        is past any of them.
     """
     from pantr.tolerance import get_machine_epsilon  # noqa: PLC0415 -- avoids import cycle
 
-    matrix_a = np.asarray(forward(degree, dtype), dtype=np.float64)
-    cond = float(np.linalg.cond(matrix_a))
+    supported = all(_supports(limit, degree, dtype) for limit in pair.limits)
     eps = get_machine_epsilon(dtype)
-    tol = 16.0 * (degree + 1) * cond * eps
     identity = np.eye(degree + 1, dtype=np.float64)
+    conds: list[float] = []  # the forward matrix's, appended by `run` for `predicate`
 
     def run() -> npt.NDArray[Any]:
-        return backward(degree, dtype) @ forward(degree, dtype)
+        matrix_a = pair.forward(degree, dtype)
+        conds.append(float(np.linalg.cond(np.asarray(matrix_a, dtype=np.float64))))
+        return pair.backward(degree, dtype) @ matrix_a
 
     def predicate(result: Any) -> str | None:  # noqa: ANN401 -- classifies any return value
+        cond = conds[-1]
+        # Once cond(A) * eps reaches 1, the classical backward-error bound for
+        # solving a linear system guarantees zero correct digits: no factor in
+        # front of it turns a vacuous bound into a meaningful one (an attainable-
+        # accuracy limit needs margin, not a claim placed exactly at the cliff
+        # where accuracy is already gone). At that point the round trip is
+        # still executed -- so a crash or a non-finite result is still a
+        # BUG via the automatic finiteness check -- but the numerical-identity
+        # claim itself is dropped rather than asserted with a tolerance that
+        # cannot fail informatively.
+        if cond * eps >= 1.0:
+            return None
+        tol = 16.0 * (degree + 1) * cond * eps
         arr = np.asarray(result, dtype=np.float64)
         worst = float(np.max(np.abs(arr - identity)))
         if not np.isfinite(worst) or worst > tol:
             return f"max|BA - I| = {worst:.3e} > {tol:.3e} (cond={cond:.3e})"
         return None
 
-    # Once cond(A) * eps reaches 1, the classical backward-error bound for
-    # solving a linear system guarantees zero correct digits: no factor in
-    # front of it turns a vacuous bound into a meaningful one (an attainable-
-    # accuracy limit needs margin, not a claim placed exactly at the cliff
-    # where accuracy is already gone). At that point the round trip is
-    # still executed -- so a crash or a non-finite result is still a
-    # BUG via the automatic finiteness check -- but the numerical-identity
-    # claim itself is dropped rather than asserted with a tolerance that
-    # cannot fail informatively.
-    invariants: tuple[Invariant, ...] = (
-        () if cond * eps >= 1.0 else (custom("round-trip-identity", predicate),)
-    )
-
     return Case(
         GROUP,
-        f"roundtrip_{label}_deg{degree}_{np.dtype(dtype).name}",
-        backward,
+        f"roundtrip_{pair.label}_deg{degree}_{np.dtype(dtype).name}",
+        pair.entry,
         run,
-        {"degree": degree, "dtype": dtype, "kind": "round-trip", "cond": cond},
-        invariants=invariants,
-        # Both matrices are built at a degree and dtype each builder accepts, so
-        # neither call may refuse; ill-conditioning is not grounds for an exception.
-        must_succeed=True,
+        {"degree": degree, "dtype": dtype, "kind": "round-trip"},
+        invariants=(custom("round-trip-identity", predicate),) if supported else (),
+        # Inside both domains neither call may refuse; ill-conditioning is not grounds
+        # for an exception.
+        must_succeed=supported,
+        must_reject=not supported,
     )
 
 
@@ -808,27 +908,8 @@ def _round_trip_cases(profile: Profile) -> Iterator[Case]:
     """
     for degree in _capped(degrees(profile), 2, profile):
         for dtype in dtypes(profile):
-            yield _round_trip_case(
-                "cardinal_bernstein",
-                compute_bernstein_to_cardinal_1d,
-                compute_cardinal_to_bernstein_1d,
-                degree,
-                dtype,
-            )
-            yield _round_trip_case(
-                "cardinal_legendre",
-                compute_legendre_to_cardinal_1d,
-                compute_cardinal_to_legendre_1d,
-                degree,
-                dtype,
-            )
-            yield _round_trip_case(
-                "bernstein_lagrange",
-                _lagrange_to_bernstein_default,
-                _bernstein_to_lagrange_default,
-                degree,
-                dtype,
-            )
+            for pair in _ROUND_TRIPS:
+                yield _round_trip_case(pair, degree, dtype)
 
 
 def _out_same_array(expected: npt.NDArray[Any]) -> Invariant:
@@ -1059,17 +1140,17 @@ def cases(profile: Profile) -> Iterator[Case]:
     yield from _lagrange_cardinality_cases(profile)
 
     yield from _nd_wrapper_cases(
-        "bernstein", _call_bernstein, profile, claims_partition=True, claims_nonneg=True
+        tabulate_bernstein, _call_bernstein, profile, claims_partition=True, claims_nonneg=True
     )
     yield from _nd_wrapper_cases(
-        "cardinal_bspline",
+        tabulate_cardinal_bspline,
         _call_cardinal_bspline,
         profile,
         claims_partition=False,
         claims_nonneg=False,
     )
     yield from _nd_wrapper_cases(
-        "lagrange", _call_lagrange, profile, claims_partition=False, claims_nonneg=False
+        tabulate_lagrange, _call_lagrange, profile, claims_partition=False, claims_nonneg=False
     )
     yield from _lagrange_nd_variant_cases(profile)
 

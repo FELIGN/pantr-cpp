@@ -18,6 +18,10 @@ results and declared invariants only.
 Run it with::
 
     PANTR_RUN_SWEEP=1 pytest tests/test_adversarial_sweep.py
+
+The tests after it are not gated: they check, in process, that the ``full`` profile's basis
+probes grade the library's documented refusals as refusals, by running the cases of those probes
+rather than the profile.
 """
 
 from __future__ import annotations
@@ -27,10 +31,25 @@ import os
 import pathlib
 import subprocess
 import sys
+from functools import partial
+from importlib import import_module
+from typing import TYPE_CHECKING, Any
 
+import numpy as np
 import pytest
 
 from tests._tree_env import subprocess_env
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
+
+# Imported by name, so that the type check of `tests` does not follow into `tools/`, which it
+# does not cover.
+_probes_basis: Any = import_module("tools.adversarial_sweep._probes_basis")
+_sweep_core: Any = import_module("tools.adversarial_sweep._core")
+Profile: Any = import_module("tools.adversarial_sweep._axes").Profile
+Verdict: Any = _sweep_core.Verdict
+run_case: Any = _sweep_core.run_case
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
 _LAUNCHER = _ROOT / "tools" / "sweep.py"
@@ -160,3 +179,152 @@ def test_smoke_sweep_finds_nothing_new(tmp_path: pathlib.Path) -> None:
         if r["verdict"] == "BUG" and r["label"] in new
     )
     assert not new, f"the sweep found {len(new)} finding(s) not in _KNOWN_FINDINGS:\n{details}"
+
+
+# The `full` profile's basis group, checked in process. These tests run the cases of the
+# probes they concern, not the profile: CI runs only the smoke profile.
+
+
+def test_full_basis_enumeration_calls_no_builder(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A builder called while the cases are built, rather than inside a case, ends the group's
+    # generator on its first refusal and drops every case after it. Every public builder
+    # computes through `_build`, looked up when it is called, so patching it there reaches the
+    # builders the probes hold in their tables too. Calls are recorded, not only raised, so a
+    # call inside a handler is seen as well.
+    calls: list[tuple[object, ...]] = []
+
+    def refuse(*args: object, **kwargs: object) -> None:
+        calls.append(args)
+        raise AssertionError("a change-of-basis builder ran")
+
+    monkeypatch.setattr(import_module("pantr.change_basis"), "_build", refuse)
+
+    assert len(list(_probes_basis.cases(Profile.FULL))) > 0
+    assert calls == []
+
+    # The patch is live for every builder the probes hold.
+    variant = _probes_basis.LagrangeVariant.EQUISPACES
+    builders: list[Callable[[], object]] = [
+        partial(func, 1, np.float64) for _, func, _ in _probes_basis._SQUARE_BUILDERS
+    ]
+    builders += [
+        partial(func, 1, variant, np.float64)
+        for _, func, _ in _probes_basis._LAGRANGE_PAIR_BUILDERS
+    ]
+    builders += [
+        partial(func, 1, np.float64)
+        for pair in _probes_basis._ROUND_TRIPS
+        for func in (pair.forward, pair.backward)
+    ]
+    for call in builders:
+        with pytest.raises(AssertionError, match="a change-of-basis builder ran"):
+            call()
+    assert len(calls) == len(builders)
+
+
+@pytest.mark.parametrize(
+    "generator",
+    [
+        _probes_basis._change_basis_square_cases,
+        _probes_basis._change_basis_lagrange_pair_cases,
+        _probes_basis._round_trip_cases,
+    ],
+    ids=["square", "lagrange_pair", "round_trip"],
+)
+def test_full_change_of_basis_cases_find_nothing(
+    generator: Callable[[Any], Iterator[Any]],
+) -> None:
+    # The library decides what it refuses: a degree past a builder's supported domain is
+    # refused with the documented ValueError, and a case that expects the opposite of what the
+    # library does is graded BUG, in either direction.
+    outcomes = [run_case(i, case) for i, case in enumerate(generator(Profile.FULL))]
+    assert outcomes
+
+    findings = [
+        f"{o.case.label} [{o.verdict.name}]: {o.detail.splitlines()[0]}"
+        for o in outcomes
+        if o.verdict in (Verdict.BUG, Verdict.UNDOCUMENTED_REJECTION)
+    ]
+    assert not findings, "\n".join(findings)
+
+    # A refusal grades as documented whether or not the case is marked `must_reject`, so the
+    # grading alone cannot tell a past-domain case built to be refused from one left
+    # unclassified: every case the library refuses must be one built to be refused, or a builder
+    # that starts accepting a past-domain degree would go unreported.
+    refused = [o.case for o in outcomes if o.verdict is Verdict.DOCUMENTED_REJECTION]
+    assert refused
+    unexpected = [case.label for case in refused if not case.must_reject]
+    assert not unexpected, "\n".join(unexpected)
+
+
+def _accepts(func: Callable[..., Any], degree: int, dtype: np.dtype[Any]) -> bool:
+    """Say whether a builder returns, rather than refusing the degree as outside its domain."""
+    try:
+        func(degree, dtype)
+    except ValueError as exc:
+        if "outside the supported domain" not in str(exc):
+            raise
+        return False
+    return True
+
+
+def test_probes_read_each_builder_domain_at_its_edge() -> None:
+    # The full profile's degrees straddle few domain edges, so the probes' reading of each
+    # domain is checked here against the library itself, at both dtypes' last supported degree
+    # and the one after it, for every table the probes read a domain from.
+    dtypes = (np.dtype(np.float32), np.dtype(np.float64))
+    checked = 0
+    disagreements = []
+    single: list[tuple[str, Callable[..., Any], Any]] = [
+        (name, func, limit) for name, func, limit in _probes_basis._SQUARE_BUILDERS
+    ]
+    single += [
+        (
+            f"{name}_{variant.value}",
+            (lambda degree, dtype, func=func, variant=variant: func(degree, variant, dtype)),
+            limits[variant],
+        )
+        for name, func, limits in _probes_basis._LAGRANGE_PAIR_BUILDERS
+        if limits is not None
+        for variant in limits
+    ]
+    for name, build, limit in single:
+        if limit is None:  # no documented limit; refusal past one is checked by the sweep
+            continue
+        checked += 1
+        for degree in (limit.float32, limit.float32 + 1, limit.float64, limit.float64 + 1):
+            for dtype in dtypes:
+                probe = _probes_basis._supports(limit, degree, dtype)
+                if probe != _accepts(build, degree, dtype):
+                    disagreements.append(f"{name} degree {degree} {dtype.name}: probe says {probe}")
+    for pair in _probes_basis._ROUND_TRIPS:
+        checked += 1
+        degrees = {d for limit in pair.limits for d in (limit.float32, limit.float64)}
+        for degree in sorted(degrees | {d + 1 for d in degrees}):
+            for dtype in dtypes:
+                probe = _probes_basis._round_trip_case(pair, degree, dtype).must_succeed
+                library = _accepts(pair.forward, degree, dtype) and _accepts(
+                    pair.backward, degree, dtype
+                )
+                if probe != library:
+                    disagreements.append(
+                        f"roundtrip_{pair.label} degree {degree} {dtype.name}: probe says {probe}"
+                    )
+    # Four limited square builders, bernstein_to_lagrange per variant, three round trips.
+    assert checked == 4 + 5 + 3
+    assert not disagreements, "\n".join(disagreements)
+
+
+def test_full_nd_rejections_are_documented() -> None:
+    # Graded against the `Raises:` of the tabulator the probe calls, not of the probe's adapter.
+    suffixes = ("_nd_empty_degrees", "_nd_dim_mismatch", "_nd_negative_degree")
+    cases = []
+    for case in _probes_basis.cases(Profile.FULL):
+        if case.label.endswith(suffixes):
+            cases.append(case)
+        if len(cases) == 9:  # three tabulators, three rejections each
+            break
+
+    assert len(cases) == 9
+    verdicts = {case.label: run_case(0, case).verdict for case in cases}
+    assert verdicts == dict.fromkeys(verdicts, Verdict.DOCUMENTED_REJECTION)
