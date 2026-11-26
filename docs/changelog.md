@@ -223,7 +223,19 @@
   function, or knots outside the domain) can keep nets such as `(3, 2)` and `(2, 3)`; the
   previous release paired their points by flat index and returned a B-spline whose second end
   face was not the second input, without an error. Nets of different sizes are refused as before.
-  Inputs whose end knot classes differ while their nets keep one shape are still not detected.
+  Inputs whose end knot classes differ while their nets keep one shape are refused too (next
+  entry).
+- **`create_ruled` with end knot classes that differ after `make_compat` while the control nets
+  keep one shape** raises `ValueError` naming the direction and both classes ("ruled requires
+  B-splines with the same end knot classes after making them compatible, got (3, 2) and (2, 3) in
+  direction 0 ..."), a class being the number of knots at or before the domain's start and at or
+  after its end (issue #54). Curves on `[0, 0, 0, 1, 1]` and `[0, 0, 1, 1, 2]` at degree 1 both
+  have three control points; the previous release built the result on the first input's knots,
+  so its second end face was the second input's control points on another basis, without an
+  error. Inputs with equal end classes are unaffected, including knots that differ in value within
+  one class. `create_coons_surface`, which builds its ruled terms with `create_ruled`, now
+  refuses opposite curves whose end classes differ with this message; it refused them before
+  too, when combining terms of different shapes.
 
 ### Changed
 - **`TensorProductGrid.is_uniform` judges an axis's spacings relative to its scale**: uniform when

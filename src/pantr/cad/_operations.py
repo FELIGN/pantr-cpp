@@ -86,9 +86,11 @@ def create_ruled(bspline1: Bspline, bspline2: Bspline) -> Bspline:
     inputs whose end knot classes differ (a zero-support end function, or
     knots outside the domain) can keep nets of different shapes, such as
     ``(3, 2)`` and ``(2, 3)``; those are refused rather than paired point by
-    point.  Inputs whose end knot classes differ while their nets have one
-    shape are not detected: the result takes the first input's knots, so its
-    second end face can differ from the second input.
+    point.  The result takes the first input's knots, so inputs whose end
+    knot classes (the number of knots at or before the domain's start, and
+    at or after its end) differ in any direction are refused too, even when
+    their nets have one shape.  Knots that differ in value within one class
+    are accepted, as :func:`make_compat` leaves them.
 
     Args:
         bspline1: First boundary (curve or surface, dim <= 2).
@@ -104,6 +106,9 @@ def create_ruled(bspline1: Bspline, bspline2: Bspline) -> Bspline:
             promotion (other than a second input of width 1, which is repeated).
         ValueError: If the control nets differ in number of points or in shape
             after :func:`make_compat`.
+        ValueError: If the nets have one shape but the end knot classes differ
+            in a direction after :func:`make_compat`; the message names the
+            direction and both classes.
 
     Example:
         >>> from pantr.cad import create_circle, create_ruled

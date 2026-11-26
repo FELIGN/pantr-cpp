@@ -7,6 +7,7 @@
 #pragma once
 
 #include "pantr/bspline/bspline.hpp"
+#include "pantr/bspline/knots.hpp"
 #include "pantr/bspline/reparametrize.hpp"
 #include "pantr/bspline/space.hpp"
 #include "pantr/bspline/space_1d.hpp"
@@ -23,6 +24,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <numbers>
 #include <optional>
 #include <span>
@@ -173,6 +175,39 @@ inline constexpr double norm_tol = 1e-14;
   return qw;
 }
 
+/// Count the knots of a direction's two end knot classes.
+///
+/// The classes are the space's own (`classify_knots` at the space's tolerance), so the counts are
+/// those of whole classes: the classes up to the one holding the first domain knot, and from the
+/// one holding the last.
+///
+/// Args:
+///     space (const bspline::BsplineSpace1D<T>&): The direction.
+///
+/// Returns:
+///     std::array<std::int64_t, 2>: The number of knots at or before the domain's start, and at or
+///     after its end.
+///
+/// Note:
+///     Inputs are assumed to be correct (no validation performed).
+template <StorageFloat T>
+[[nodiscard]] std::array<std::int64_t, 2> end_knot_classes(
+    const bspline::BsplineSpace1D<T>& space) {
+  const bspline::KnotClassification<T> cls =
+      bspline::classify_knots<T>(space.knots(), space.degree(), space.tolerance());
+  const std::vector<std::int64_t>& mult = cls.classes.multiplicities;
+  std::array<std::int64_t, 2> out = {0, 0};
+  for (std::size_t c = 0; c < mult.size(); ++c) {
+    if (c <= cls.lo_class) {
+      out[0] += mult[c];
+    }
+    if (c >= cls.hi_class) {
+      out[1] += mult[c];
+    }
+  }
+  return out;
+}
+
 }  // namespace detail
 
 /// Construct a ruled surface or volume between two B-splines.
@@ -186,9 +221,11 @@ inline constexpr double norm_tol = 1e-14;
 /// nets to have one shape after `make_compat`, and one width after the promotion. One exception is
 /// kept from the NumPy implementation this replaces, which broadcast: a second B-spline of
 /// control-point width 1 (a rank-1, polynomial one) is repeated over the columns of a wider first.
-/// The reverse, and every other mismatch of shape or width, is refused. End knot classes that
-/// differ while the nets have one shape are not detected: the result takes the first input's
-/// knots, so its second end face can differ from the second input.
+/// The reverse, and every other mismatch of shape or width, is refused. The result takes the first
+/// input's knots, so the compatible inputs must also agree, in every direction, in their end knot
+/// classes (the number of knots at or before the domain's start, and at or after its end), which
+/// `make_compat` does not match; inputs that differ there are refused. Knots that differ in value
+/// within one class are accepted, as `make_compat` leaves them.
 ///
 /// Args:
 ///     bspline1 (const bspline::Bspline<T>&): The first boundary (a curve or a surface).
@@ -205,7 +242,10 @@ inline constexpr double norm_tol = 1e-14;
 ///         ("ruled requires control points of the same width ..."); the compatible B-splines
 ///         have different numbers of control points, or control nets of one size and different
 ///         shapes, such as (3, 2) and (2, 3) (the guards below: `make_compat` matches interior
-///         knot classes only, so inputs whose end knot classes differ can reach them).
+///         knot classes only, so inputs whose end knot classes differ can reach them); nets of
+///         one shape whose end knot classes differ in a direction ("ruled requires B-splines with
+///         the same end knot classes after making them compatible, got (3, 2) and (2, 3) in
+///         direction 0 ..."); (checked in that order).
 template <StorageFloat T>
 [[nodiscard]] bspline::Bspline<T> create_ruled(const bspline::Bspline<T>& bspline1,
                                                const bspline::Bspline<T>& bspline2) {
@@ -260,6 +300,21 @@ template <StorageFloat T>
         "ruled requires B-splines whose control nets have the same shape after making them "
         "compatible, got " +
         py_repr(net1) + " and " + py_repr(net2) + ".");
+  }
+  // Equal shapes still allow end classes that differ, such as (3, 2) and (2, 3) knots at or before
+  // the start and at or after the end: the result is built on the first's knots, so its second end
+  // face would be the second's points on another basis. Classes are counts, so this is exact.
+  for (std::size_t a = 0; a < b1.dim(); ++a) {
+    const std::array<std::int64_t, 2> e1 = detail::end_knot_classes<T>(b1.space().spaces()[a]);
+    const std::array<std::int64_t, 2> e2 = detail::end_knot_classes<T>(b2.space().spaces()[a]);
+    if (e1 != e2) {
+      throw value_error(
+          "ruled requires B-splines with the same end knot classes after making them compatible, "
+          "got (" +
+          std::to_string(e1[0]) + ", " + std::to_string(e1[1]) + ") and (" + std::to_string(e2[0]) +
+          ", " + std::to_string(e2[1]) + ") in direction " + std::to_string(a) +
+          " (knots at or before the domain's start, at or after its end).");
+    }
   }
 
   const std::span<const T> cp1 = b1.control_points();
