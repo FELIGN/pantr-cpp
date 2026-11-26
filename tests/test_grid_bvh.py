@@ -586,16 +586,20 @@ def test_concurrent_first_queries_agree_with_a_serial_one(kind: str) -> None:
 
     The first query builds the tree with the GIL released, and a thread that finds the build under
     way waits for it; the result of every thread must equal the one a single thread gets from an
-    identical grid. A smoke test: the build is short, so the threads need not overlap it, and the
-    absence of a deadlock rests on the argument at the binding's ``ensure_bvh``, not on this test.
+    identical grid. The grids are large enough that the build's estimated work reaches the
+    binding's ``gil_release_min_ops`` (a BVH of 400^2 cells or more, ``bvh_build_ops``), so the
+    builder releases the GIL, the other threads wait on the build's mutex, and the builder takes
+    the GIL back afterwards; a smaller grid builds with the GIL held and exercises none of that.
+    A smoke test: the threads need not overlap the build, and the absence of a deadlock rests on
+    the argument at the binding's ``ensure_bvh``, not on this test.
     """
 
     def make() -> Grid:
-        root = uniform_grid([[0.0, 1.0], [0.0, 1.0]], [40, 40])
+        root = uniform_grid([[0.0, 1.0], [0.0, 1.0]], [400, 400])
         if kind == "tensor-product":
             return root
         g = hierarchical_grid(root, 2)
-        g.refine(0, [5, 5], [30, 30])
+        g.refine(0, [50, 50], [300, 300])
         return g
 
     query = AABB([0.2, 0.3], [0.45, 0.6])
