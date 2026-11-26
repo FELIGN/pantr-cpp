@@ -225,10 +225,10 @@ template <StorageFloat T>
 /// input's knots, so the compatible inputs must also agree, in every direction, in their end knot
 /// classes (the number of knots at or before the domain's start, and at or after its end), which
 /// `make_compat` does not match; inputs that differ there are refused. Knots that differ in value
-/// within one class are accepted, as `make_compat` leaves them. Equal counts are not equal bases
-/// when knots lie outside the domain: at degree 2, `[0, 0, 0, 0.5, 1, 1, 1]` and `[-1, -0.5, 0,
-/// 0.5, 1, 1.5, 2]` both count (3, 3), and their bases on the domain differ, so such a pair is not
-/// detected and the second end face differs from the second input.
+/// within one class are accepted, as `make_compat` leaves them. Equal counts need not be equal
+/// bases when knots lie outside the domain: at degree 2, `[0, 0, 0, 0.5, 1, 1, 1]` and `[-1, -0.5,
+/// 0, 0.5, 1, 1.5, 2]` both count (3, 3), and their bases on the domain differ, so such a pair is
+/// not detected and the second end face differs from the second input.
 ///
 /// Args:
 ///     bspline1 (const bspline::Bspline<T>&): The first boundary (a curve or a surface).
