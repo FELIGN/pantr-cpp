@@ -39,6 +39,7 @@ from pantr.bspline import (
     fit_bspline,
     quasi_interpolate_bspline,
 )
+from pantr.geometry import AABB
 from pantr.grid import cell_quadrature, partition_grid, uniform_grid
 from pantr.quad import gauss_legendre_quadrature
 
@@ -191,6 +192,16 @@ def _block_partition(cells: int) -> Callable[[], Callable[[], object]]:
     return setup
 
 
+def _first_query(cells: int) -> Callable[[], Callable[[], object]]:
+    """Query a new grid, so that the call builds its BVH."""
+
+    def setup() -> Callable[[], object]:
+        box = AABB([0.1, 0.1], [0.2, 0.2])  # made here: one held by the module outlives nanobind
+        return lambda: uniform_grid(_UNIT_SQUARE, cells).query_aabb(box)
+
+    return setup
+
+
 _WINDOWS_BLOCKED = pytest.mark.skipif(
     sys.platform == "win32",
     reason="the Windows wheel legs showed slice and restrict, and in a later run split and "
@@ -218,6 +229,8 @@ SETUPS: dict[str, Callable[[], Callable[[], object]]] = {
     "collect_cell_bounds": _collect_cell_bounds(2500),
     "partition_grid": _block_partition(3000),
     "cell_quadrature selection": _selected_cell_quadrature(1000),
+    # A BVH of 400^2 cells: 4 operations per cell for its corners and each of its 18 full levels.
+    "query_aabb first": _first_query(400),
 }
 
 
@@ -285,6 +298,7 @@ SHORT_CALLS: dict[str, Callable[[], Callable[[], object]]] = {
     "collect_cell_bounds": _collect_cell_bounds(10),
     "partition_grid": _block_partition(10),
     "cell_quadrature selection": _selected_cell_quadrature(10),
+    "query_aabb first": _first_query(4),
 }
 
 
