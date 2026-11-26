@@ -491,7 +491,7 @@ def control_point_scale(ctrl: npt.NDArray[np.floating[Any]]) -> float:
 def roundoff_deviation_floor(
     ctrl: npt.NDArray[np.floating[Any]], degree: int, num_stacked: int
 ) -> float:
-    """Get the deviation budget that admits exactly the removals round-off allows.
+    """Get the round-off deviation budget for the first copy of a knot.
 
     Args:
         ctrl (npt.NDArray[np.floating[Any]]): Control points as the removal sees them, the last

@@ -161,7 +161,7 @@ void def_testing(nb::module_& m, const std::string& suffix) {
                                                       num_stacked);
         },
         nb::arg("ctrl").noconvert(), nb::arg("degree"), nb::arg("num_stacked"),
-        "The deviation budget that admits exactly the removals round-off allows.");
+        "The round-off deviation budget for the first copy of a knot.");
   m.def(("homogeneous_deviation_tolerance" + suffix).c_str(),
         [](const In2D<T>& ctrl, double tol) {
           return bspline::homogeneous_deviation_tolerance<T>(
