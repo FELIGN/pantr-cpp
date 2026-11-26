@@ -1121,3 +1121,24 @@ TEST_CASE("astype: the same type is the same value, and a value beyond the range
       std::span<const double>(huge), false);
   CHECK_THROWS_AS((void)bs::astype<float>(wide), pantr::value_error);
 }
+
+TEST_CASE("corner_sets_match: a sum of squares outside the normal range takes the hypot route") {
+  using mp::detail::corner_sets_match;
+  const std::vector<double> origin = {0.0, 0.0, 0.0};
+  // Normal sum: the square root of 25 is exactly 5.
+  const std::vector<double> pythagorean = {3.0, 4.0, 0.0};
+  CHECK(corner_sets_match(origin, 3, pythagorean, 3, 5.0));
+  CHECK_FALSE(corner_sets_match(origin, 3, pythagorean, 3, 4.9));
+  // Each square underflows to zero, so the sum is zero while the corners are 1e-170 apart: a
+  // square root of the sum would read them as coincident.
+  const std::vector<double> underflow = {1e-170, 1e-170, 0.0};
+  CHECK_FALSE(corner_sets_match(origin, 3, underflow, 3, 1e-180));
+  CHECK(corner_sets_match(origin, 3, underflow, 3, 2e-170));
+  // The square overflows to infinity while the distance, 2e154, is finite.
+  const std::vector<double> overflow = {2e154, 0.0, 0.0};
+  CHECK(corner_sets_match(origin, 3, overflow, 3, 3e154));
+  CHECK_FALSE(corner_sets_match(origin, 3, overflow, 3, 1e154));
+  // A NaN coordinate has no partner, whatever the tolerance.
+  const std::vector<double> nan = {std::numeric_limits<double>::quiet_NaN(), 0.0, 0.0};
+  CHECK_FALSE(corner_sets_match(origin, 3, nan, 3, 1e300));
+}

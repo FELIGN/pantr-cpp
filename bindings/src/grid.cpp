@@ -122,6 +122,8 @@ std::pair<NumpyArray<double>, NumpyArray<double>> corners_to_numpy(
 /// cell, a lower bound on each such pass. Producing a cell's corners stores `2 * ndim` values (the
 /// tensor-product grid's collection, `cell_bounds` per selected cell, the `rcb` partition, which
 /// collects them); the `block` partition loads and adds one term per axis for each cell's owner.
+/// The estimates here run before the call validates its arguments, so they bound the work of a call
+/// that is not refused; a refused one may release the GIL for nothing, which costs only the wait.
 double corner_ops(std::size_t cells, std::size_t ndim) {
   return static_cast<double>(cells) * 2.0 * static_cast<double>(ndim);
 }
@@ -139,10 +141,12 @@ bool collect_releases(const G& g) {
 }
 
 /// Work of building the BVH of `n` cells, for the GIL decision only. Every level of depth up to
-/// `floor(log2 n)` holds every cell (the median split leaves at least `floor(n / 2^d) >= 1` cells
-/// in each node of depth `d`), and each level's node boxes take a min and a max per cell and axis,
-/// `2 * ndim * n`; with the corners collected first, `2 * ndim * n * (floor(log2 n) + 2)`. A lower
-/// bound: it leaves out the centroids and the sorts (`detail::bvh_build_core`).
+/// `floor(log2 n)` holds every cell: the median split leaves at least `floor(n / 2^d)` cells in
+/// each node of depth `d`, so a node above that depth has two or more and splits. Per node and
+/// axis the box takes two loads, a min and a max for each further cell, and two stores, at least
+/// `2 * count`, so a level costs `2 * ndim * n`; with the corners collected first,
+/// `2 * ndim * n * (floor(log2 n) + 2)`. A lower bound: it leaves out the centroids and the sorts
+/// (`detail::bvh_build_core`).
 double bvh_build_ops(std::size_t n, std::size_t ndim) {
   return corner_ops(n, ndim) * static_cast<double>(std::bit_width(n) + 1);
 }

@@ -229,7 +229,9 @@
 - **A tensor-product grid's `collect_cell_bounds`, `cell_quadrature` and `partition_grid`, and
   `cell_quadrature` with a cell selection on a hierarchical grid, release the GIL when long**:
   from about a switch interval of work (`sys.getswitchinterval()`), as the other calls that never
-  use the thread pool do. They held it for the whole call, however many cells.
+  use the thread pool do. They held it for the whole call, however many cells. A hierarchical
+  grid's `cell_quadrature` without a selection, which released it only when its corners were
+  collected on the thread pool, now also releases it when its mapping of the rule is long.
 - **A grid's first `query_aabb` or `cell_bvh` keeps the GIL while it builds a small grid's BVH**,
   and releases it for a large one (about a switch interval of work or more) or one whose corners
   are collected on the thread pool. It released it for every build, so under a CPU-bound Python
@@ -326,14 +328,14 @@
   and the compiled parts of `fit_bezier`, `interpolate_bezier`, `fit_bspline`,
   `interpolate_bspline`, `l2_project_bspline` and `quasi_interpolate_bspline`, never use the pool
   and release it only when their estimated work is about the default switch interval
-  (`sys.getswitchinterval()`) or more, the build of an exact reduction operator the call needs
-  first counting toward that work, so a low-degree build keeps the GIL and a high-degree one
-  releases it: while another Python thread is busy, releasing costs the caller about a switch interval, more
-  than a shorter call computes. A call on the pool releases from a far smaller size, so Python
-  threads that each run pantr calls scale, and a mid-size pool call can wait up to a switch
-  interval when another Python thread is busy. `THBSpline.prolong_to`, the THB prolongation and
-  multipatch interface detection release it only when their work reaches the pool, where they
-  used to release it always.
+  (`sys.getswitchinterval()`) or more, a lower bound on the build of an exact reduction operator
+  the call needs first counting toward that work, so a low-degree build keeps the GIL and a
+  high-degree one releases it: while another Python thread is busy, releasing costs the caller
+  about a switch interval, more than a shorter call computes. A call on the pool releases from a
+  far smaller size, so Python threads that each run pantr calls scale, and a mid-size pool call
+  can wait up to a switch interval when another Python thread is busy. `THBSpline.prolong_to`, the
+  THB prolongation and multipatch interface detection release it only when their work reaches the
+  pool, where they used to release it always.
 - **numba and threadpoolctl are no longer dependencies**, and `import pantr` imports neither:
   every Numba kernel is replaced by C++ compiled into pantr's extension, and its thread pool
   replaces Numba's. Nor does the import start a background thread to compile kernels, and the

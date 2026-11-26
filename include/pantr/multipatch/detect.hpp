@@ -415,10 +415,12 @@ template <StorageFloat T>
   // The square root of the sum of squares where that sum is a finite normal number, and otherwise
   // the chain of `hypot` calls, as in `joint_tolerances`, which is far slower. A finite normal sum
   // is within about `(2 rank - 1) u` of the exact one, an underflowed square losing at most half
-  // the smallest subnormal, under `u` times the sum; so its root is within a few units of rounding
-  // of the distance, as the `hypot` chain is. The chain takes a sum that overflowed (a difference
-  // from about 1.3e154, where corners coinciding to rounding would otherwise have no partner), a
-  // zero or subnormal one, which may have lost its relative accuracy to underflow, and NaN.
+  // the smallest subnormal, under `u` times the sum (gradual underflow: under flush-to-zero a
+  // square near `DBL_MIN` is lost whole and only the `hypot` chain holds); so its root is within a
+  // few units of rounding of the distance, as the `hypot` chain is. The chain takes a sum that
+  // overflowed (a difference from about 1.3e154, where corners coinciding to rounding would
+  // otherwise have no partner), a zero or subnormal one, which may have lost its relative accuracy
+  // to underflow, and NaN.
   const auto distance = [&](std::size_t i, std::size_t j) {
     double sum = 0.0;
     for (std::size_t c = 0; c < rank_a; ++c) {

@@ -16,6 +16,7 @@
 #include <nanobind/stl/vector.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <memory>
 #include <optional>
@@ -98,7 +99,8 @@ double operator_build_ops(long long p, long long t) {
 /// Work of `reduce_degree` and `degree_reduction_error`, for the GIL decision only: the first
 /// reduced direction applies a `(p - t + 1, p + 1)` operator to every column of the net, so it
 /// costs `b.size() * (p - t + 1)` multiply-adds; plus the largest operator build a direction needs
-/// (`operator_build_ops`; a build is shared by directions of one key, so not their sum).
+/// (`operator_build_ops`; the maximum rather than the sum, a bound whether or not directions of one
+/// key share a build).
 template <class T>
 double reduction_ops(const Bezier<T>& b, const std::vector<long long>& decrements) {
   double ops = 0.0;
@@ -121,11 +123,13 @@ double reduction_ops(const Bezier<T>& b, const std::vector<long long>& decrement
 /// Work of `minimize_degree`, for the GIL decision only: its first trial applies a `(p, p + 1)`
 /// operator to every column of the net, `b.size() * p` multiply-adds for the first direction of
 /// degree `p >= 1`; plus the largest first-trial operator build a direction needs
-/// (`operator_build_ops`). Zero for a tolerance that is not positive, which runs no trial.
+/// (`operator_build_ops`). Zero for a tolerance that is not positive, which runs no trial, or not
+/// finite, which the call refuses.
 template <class T>
 double minimization_ops(const Bezier<T>& b, std::optional<double> tol) {
-  if (tol.has_value() && !(*tol > 0.0)) {
-    return 0.0;  // no trial: a tolerance that is not positive keeps the degree, or is refused
+  if (tol.has_value() && !(*tol > 0.0 && std::isfinite(*tol))) {
+    return 0.0;  // no trial: a tolerance that is not positive keeps the degree; one not finite is
+                 // refused
   }
   double ops = 0.0;
   double build = 0.0;
