@@ -408,6 +408,33 @@ class TestSliceStartBesideSubToleranceGap:
         np.testing.assert_allclose(pt_boundary, ref_pt, rtol=0, atol=1e-14)
 
 
+class TestSliceEndOfADomainBarelyWiderThanTolerance:
+    """Slice and boundary at the end of a domain only a few ulps wider than the tolerance.
+
+    The end is farther than the tolerance from the start, so it is the end and not the start. A
+    test of ``value <= start + tol`` rounds ``start + tol`` up to the end and takes the start's
+    span, which returns the other end's control point. Oracle: ``evaluate`` at the end, which for
+    degree 1 is the last control point of the domain's span.
+    """
+
+    def test_end_is_not_taken_for_the_start(self) -> None:
+        """At the end of a domain wider than the tolerance, the slice is the end's value."""
+        knots = np.array([-1.3, 1.0, 1.0000000000000078, 3.0137])
+        space = BsplineSpace1D(knots, 1, snap_knots=False)
+        start, end = (float(x) for x in space.domain)
+        tol = space.tolerance
+        assert end - start > tol  # exact: both are close, so the subtraction is exact (Sterbenz)
+        assert start + tol >= end  # the premise: the rounded bound reaches the end
+
+        ctrl = np.array([[1.0, 10.0], [5.0, 50.0]])
+        crv = Bspline(BsplineSpace([space]), ctrl)
+        ref = crv.evaluate(np.array([end]))
+        np.testing.assert_array_equal(ref, ctrl[1])
+        np.testing.assert_array_equal(crv.slice(0, end), ref)
+        np.testing.assert_array_equal(crv.boundary(0, 1), ref)
+        np.testing.assert_array_equal(crv.boundary(0, 0), ctrl[0])
+
+
 class TestSliceDtype:
     """Test that slice preserves dtype."""
 

@@ -67,7 +67,11 @@ cmake --preset gcc-release && cmake --build --preset gcc-release && ctest --pres
 > headers. Reuse this checkout's fetched dependencies rather than copying `build/_deps` (a copied
 > `*-subbuild` breaks configure): `make ext EXT_CMAKE_ARGS="-DFETCHCONTENT_FULLY_DISCONNECTED=ON
 > -DFETCHCONTENT_SOURCE_DIR_PANTR_<NAME>=<this checkout>/build/_deps/pantr_<name>-src ..."` for
-> each of `boost_config`, `boost_multiprecision`, `eigen`, `mdspan`, `spectra`.
+> each of `boost_config`, `boost_multiprecision`, `eigen`, `mdspan`, `spectra`. Those are what
+> `make ext` needs. The C++ test presets also need `doctest`, which `build/_deps` need not hold
+> (only a test preset fetches it), so configure them without `FETCHCONTENT_FULLY_DISCONNECTED` and
+> let it fetch. This checkout's own extension is whatever its last `make ext` built, not
+> necessarily `main`: to learn what `main` does, build a worktree of `main` the same way.
 
 > **A test filter that matches nothing passes.** doctest's `-tc` splits its argument on commas, so
 > a test name containing one selects nothing; `ctest -R` is a case-sensitive regex (`-R thb` skips

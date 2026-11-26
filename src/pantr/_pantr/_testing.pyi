@@ -283,7 +283,7 @@ def roundoff_deviation_floor(
     degree: int,
     num_stacked: int,
 ) -> float:
-    """The deviation budget that admits exactly the removals round-off allows."""
+    """The round-off deviation budget for the first copy of a knot."""
 
 def homogeneous_deviation_tolerance(
     ctrl: Annotated[
@@ -341,7 +341,7 @@ def roundoff_deviation_floor_f32(
     degree: int,
     num_stacked: int,
 ) -> float:
-    """The deviation budget that admits exactly the removals round-off allows."""
+    """The round-off deviation budget for the first copy of a knot."""
 
 def homogeneous_deviation_tolerance_f32(
     ctrl: Annotated[

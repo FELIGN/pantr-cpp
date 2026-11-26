@@ -179,7 +179,9 @@ template <StorageFloat T>
 ///         has no end runs to lack; every other unclamped direction is refused. Clamped is not
 ///         enough, though: an interior knot of multiplicity `p + 1` (a `C^-1` knot) becomes a run
 ///         of `p + 1` in a hodograph of degree `p - 1`, one more than a knot may repeat, and the
-///         direction is refused, degree 1 included.
+///         direction is refused, degree 1 included. A periodic direction is first opened, and
+///         is refused as `to_open_1d` refuses it (a seam with more than `degree + 1` copies, or a
+///         knot distinct from the seam within `tol` of it).
 template <StorageFloat T>
 [[nodiscard]] Bspline<T> derivative_keep_degree_nonrational(const Bspline<T>& b,
                                                             long long direction) {

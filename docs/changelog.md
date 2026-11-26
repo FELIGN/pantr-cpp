@@ -1375,6 +1375,11 @@
   in a separate package; until then pantr has none of its own.
 
 ### Fixed
+- **`Bspline.slice` and `Bspline.boundary` at the end of a domain only a few ulps wider than the
+  space's tolerance** (a space built with `snap_knots=False`) return the curve's value at the end.
+  The end was tested as `value <= start + tol`, and the rounded `start + tol` could reach the end,
+  which was then taken for the start: the result was the start's value. Both end tests now compare
+  the distance to the end with the tolerance.
 - **`Bspline.remove_knots` with `tol=None` grades each later copy of a repeated knot against a
   floor grown with that copy's amplification of the net's rounding, up to the conservative tier**
   (issue #15). Each further copy of one knot removed in a call amplifies the rounding the control
@@ -1508,8 +1513,11 @@
   the end, an error of order 1 as well; the end now takes no knot for a copy of it, as evaluation
   does outside a Bézier-like direction (one Bézier piece: non-periodic, ends open within the
   tolerance, `degree + 1` functions; `BsplineSpace1D.has_Bezier_like_knots`), whose evaluation
-  takes the Bernstein form and ignores such an offset. A snapped knot vector whose last span is
-  non-empty keeps its slices bit for bit. The first defect is inherited from the previous release.
+  takes the Bernstein form and ignores such an offset. A snapped double knot vector whose last span
+  is non-empty keeps its slices bit for bit. A snapped float one does too, but for one case: a knot
+  before the end whose distance to it is within the tolerance in exact arithmetic but not once
+  rounded to float stays a knot of its own, and the end now takes it as one, where it used to be
+  counted as a copy of the end. The first defect is inherited from the previous release.
 - **`Bspline.slice` and `Bspline.boundary` at the domain start agree with `Bspline.evaluate` in a
   space built with `snap_knots=False`, outside a Bézier-like direction** (#34). A knot closer to
   the start than the space's tolerance (`[0, 0, 1e-15, 1, 1]` at degree 1) was taken for a copy of
