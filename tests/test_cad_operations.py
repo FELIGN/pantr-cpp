@@ -327,7 +327,8 @@ class TestRuled:
         zero = BsplineSpace1D(np.array([0.0, 0.0, 0.0, 1.0, 1.0]), 1)
         d = 0.25 * zero.tolerance
         dust = BsplineSpace1D(np.array([0.0, 0.0, d, 1.0, 1.0]), 1, snap_knots=False)
-        assert dust.knots[2] == d > 0.0
+        assert d > 0.0
+        assert dust.knots[2] == d
         cp_up = self._END_CLASS_CP + self._END_CLASS_SHIFT
         a = Bspline(BsplineSpace([zero]), self._END_CLASS_CP)
         b = Bspline(BsplineSpace([dust]), cp_up)

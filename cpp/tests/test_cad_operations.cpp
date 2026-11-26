@@ -450,12 +450,21 @@ TEST_CASE_TEMPLATE("create_ruled: end knot classes that differ are refused, in e
       CHECK(std::abs(rb[i] - eb[i]) <= tol);
     }
   }
+}
 
-  // Knots that differ in value within one end class are accepted: a third knot a quarter of the
-  // space tolerance above the start (unsnapped) is in the first class, so `[0, 0, d, 1, 1]` counts
-  // (3, 2) as `[0, 0, 0, 1, 1]` does, though a count of knots exactly at or before 0 would give 2.
-  // The result is the two nets stacked on the first input's knots, in either order.
-  const bs::Bspline<T> zero_start = curve_on(long_start, cp);
+TEST_CASE_TEMPLATE("create_ruled: end knots differing within one class are accepted", T, float,
+                   double) {
+  // Issue #54. A third knot a quarter of the space tolerance above the start (unsnapped) is in the
+  // first class, so `[0, 0, d, 1, 1]` counts (3, 2) as `[0, 0, 0, 1, 1]` does, though a count of
+  // knots exactly at or before 0 would give 2. The result is the two nets stacked on the first
+  // input's knots, in either order; the control points are small integers, exact in either type.
+  const auto curve_on = [](const std::vector<double>& knots, const std::vector<double>& pts) {
+    const std::vector<T> c = bspline_test::cast_all<T>(pts);
+    return bs::Bspline<T>(bspline_test::space_of<T>({Dir{knots, 1}}), bspline_test::sp(c), false);
+  };
+  const std::vector<double> cp = {0, 0, 1, 2, 2, 0};
+  const std::vector<double> cp_up = {0, 3, 1, 5, 2, 3};  // `cp` moved by (0, 3)
+  const bs::Bspline<T> zero_start = curve_on({0, 0, 0, 1, 1}, cp);
   const double space_tol = zero_start.space().spaces()[0].tolerance();
   const T d = static_cast<T>(0.25 * space_tol);
   REQUIRE(d > static_cast<T>(0));
