@@ -8,9 +8,10 @@ on any machine where the call takes tens of milliseconds, so it does not depend 
 speed. The cases cover the Bezier operations that reach the thread pool, the reductions and fits
 that run exact or dense solves, and the grids' serial passes over their cells; each is sized above
 the work at which the binding releases the GIL (``gil_release_min_ops`` in
-``bindings/src/arrays.hpp``), or builds an exact reduction operator the process table does not
-hold yet. ``l2_project_bspline`` releases it too but is absent: its sum-factorised solves are short
-beside sampling the user's function, so the call does not tell a held GIL from a released one.
+``bindings/src/arrays.hpp``), or builds a high-degree exact reduction operator the process table
+does not hold yet. ``l2_project_bspline`` releases it too but is absent: its sum-factorised solves
+are short beside sampling the user's function, so the call does not tell a held GIL from a released
+one.
 
 A short call keeps the GIL: releasing it while another thread is CPU-bound costs the caller about
 one switch interval before it gets the GIL back, which is far more than the call itself.
@@ -248,6 +249,13 @@ def _small_compose() -> Callable[[], object]:
 
 _SMALL = _net((4, 4, 2))
 
+
+def _cold_reduction_error(b: Bezier) -> object:
+    """Reduce a curve whose exact operator is built in the call: a short build at a low degree."""
+    reduction_cache_clear()
+    return b.degree_reduction_error(1)
+
+
 SHORT_CALLS: dict[str, Callable[[], Callable[[], object]]] = {
     "split": _on(_SMALL, lambda b: b.split(0, 0.3)),
     "multiply": _on(_SMALL, lambda b: b.multiply(b)),
@@ -257,6 +265,7 @@ SHORT_CALLS: dict[str, Callable[[], Callable[[], object]]] = {
     "compose": _small_compose,
     "reduce_degree": _on(_SMALL, lambda b: b.reduce_degree(1)),
     "degree_reduction_error": _on(_SMALL, lambda b: b.degree_reduction_error(1)),
+    "degree_reduction_error cold": _on(_net((4, 1)), _cold_reduction_error),
     "minimize_degree": _on(_SMALL, lambda b: b.minimize_degree()),
     "fit_bezier tensor": lambda: lambda: fit_bezier(
         _rng().random((5, 5)), [np.linspace(0.0, 1.0, 5)] * 2, degree=[3, 3]
