@@ -18,6 +18,10 @@ results and declared invariants only.
 Run it with::
 
     PANTR_RUN_SWEEP=1 pytest tests/test_adversarial_sweep.py
+
+The tests after it are not gated: they check, in process, that the ``full`` profile's basis
+probes grade the library's documented refusals as refusals, by running the cases of those probes
+rather than the profile.
 """
 
 from __future__ import annotations
@@ -27,10 +31,23 @@ import os
 import pathlib
 import subprocess
 import sys
+from importlib import import_module
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from tests._tree_env import subprocess_env
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
+
+# Imported by name, so that the type check of `tests` does not follow into `tools/`, which it
+# does not cover.
+_probes_basis: Any = import_module("tools.adversarial_sweep._probes_basis")
+_sweep_core: Any = import_module("tools.adversarial_sweep._core")
+Profile: Any = import_module("tools.adversarial_sweep._axes").Profile
+Verdict: Any = _sweep_core.Verdict
+run_case: Any = _sweep_core.run_case
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
 _LAUNCHER = _ROOT / "tools" / "sweep.py"
@@ -160,3 +177,64 @@ def test_smoke_sweep_finds_nothing_new(tmp_path: pathlib.Path) -> None:
         if r["verdict"] == "BUG" and r["label"] in new
     )
     assert not new, f"the sweep found {len(new)} finding(s) not in _KNOWN_FINDINGS:\n{details}"
+
+
+# The `full` profile's basis group, checked in process. These tests run the cases of the
+# probes they concern, not the profile: CI runs only the smoke profile.
+
+_CHANGE_OF_BASIS_BUILDERS = tuple(
+    name for name in dir(_probes_basis) if name.startswith("compute_")
+)
+"""The ``compute_*_1d`` builders the basis probes import."""
+
+
+def test_full_basis_enumeration_calls_no_builder(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A builder called while the cases are built, rather than inside a case, ends the group's
+    # generator on its first refusal and drops every case after it.
+    def refuse(*args: object, **kwargs: object) -> None:
+        raise AssertionError("a change-of-basis builder ran while the cases were being built")
+
+    for name in _CHANGE_OF_BASIS_BUILDERS:
+        monkeypatch.setattr(_probes_basis, name, refuse)
+
+    assert len(list(_probes_basis.cases(Profile.FULL))) > 0
+
+
+@pytest.mark.parametrize(
+    "generator",
+    [
+        _probes_basis._change_basis_square_cases,
+        _probes_basis._change_basis_lagrange_pair_cases,
+        _probes_basis._round_trip_cases,
+    ],
+    ids=["square", "lagrange_pair", "round_trip"],
+)
+def test_full_change_of_basis_cases_find_nothing(
+    generator: Callable[[Any], Iterator[Any]],
+) -> None:
+    # The library decides what it refuses: a degree past a builder's supported domain is
+    # refused with the documented ValueError, and a case that expects the opposite of what the
+    # library does is graded BUG, in either direction.
+    outcomes = [run_case(i, case) for i, case in enumerate(generator(Profile.FULL))]
+
+    bugs = [
+        f"{o.case.label}: {o.detail.splitlines()[0]}" for o in outcomes if o.verdict is Verdict.BUG
+    ]
+    assert not bugs, "\n".join(bugs)
+    refused = [o for o in outcomes if o.verdict is Verdict.DOCUMENTED_REJECTION]
+    assert all(o.case.must_reject for o in refused)
+
+
+def test_full_nd_rejections_are_documented() -> None:
+    # Graded against the `Raises:` of the tabulator the probe calls, not of the probe's adapter.
+    suffixes = ("_nd_empty_degrees", "_nd_dim_mismatch", "_nd_negative_degree")
+    cases = []
+    for case in _probes_basis.cases(Profile.FULL):
+        if case.label.endswith(suffixes):
+            cases.append(case)
+        if len(cases) == 9:  # three tabulators, three rejections each
+            break
+
+    assert len(cases) == 9
+    verdicts = {case.label: run_case(0, case).verdict for case in cases}
+    assert verdicts == dict.fromkeys(verdicts, Verdict.DOCUMENTED_REJECTION)
