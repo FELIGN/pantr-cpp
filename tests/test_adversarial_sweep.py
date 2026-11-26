@@ -238,6 +238,7 @@ def test_full_change_of_basis_cases_find_nothing(
     # refused with the documented ValueError, and a case that expects the opposite of what the
     # library does is graded BUG, in either direction.
     outcomes = [run_case(i, case) for i, case in enumerate(generator(Profile.FULL))]
+    assert outcomes
 
     findings = [
         f"{o.case.label} [{o.verdict.name}]: {o.detail.splitlines()[0]}"
@@ -245,6 +246,15 @@ def test_full_change_of_basis_cases_find_nothing(
         if o.verdict in (Verdict.BUG, Verdict.UNDOCUMENTED_REJECTION)
     ]
     assert not findings, "\n".join(findings)
+
+    # A refusal grades as documented whether or not the case expected it, so the grading alone
+    # cannot tell a past-domain case built to be refused from one left unclassified: every case
+    # the library refuses must be one built to be refused, or a builder that starts accepting a
+    # past-domain degree would go unreported.
+    refused = [o.case for o in outcomes if o.verdict is Verdict.DOCUMENTED_REJECTION]
+    assert refused
+    unexpected = [case.label for case in refused if not case.must_reject]
+    assert not unexpected, "\n".join(unexpected)
 
 
 def _accepts(func: Callable[..., Any], degree: int, dtype: np.dtype[Any]) -> bool:
