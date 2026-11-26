@@ -60,6 +60,7 @@
 #include <random>
 #include <span>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -373,6 +374,115 @@ TEST_CASE_TEMPLATE("create_ruled: nets of one size and different shapes are refu
   const bs::Bspline<T> c = make_spline<T>({Dir{outside, 1}, Dir{plain, 1}}, 3, false, 3);
   const bs::Bspline<T> d = make_spline<T>({Dir{plain, 1}, Dir{outside, 1}}, 3, false, 4);
   CHECK(message(c, d).find("got (4, 2) and (2, 4).") != std::string::npos);
+}
+
+TEST_CASE_TEMPLATE("create_ruled: end knot classes that differ are refused, in either order", T,
+                   float, double) {
+  // Issue #54. `make_compat` leaves end classes as given, so two curves of three points each, one
+  // with a first class of three knots and one with a knot after the domain's end, keep one net
+  // shape; the result used to be built on the first input's knots, so its `t = 1` edge was the
+  // second input's points on the wrong basis, with no error. The class of an end is the number of
+  // knots at or before the domain's start, and at or after its end. The second pair uses only knot
+  // vectors with at most `degree + 1` copies of an end knot. The control points are small
+  // integers, exact in either type.
+  const auto message = [](const bs::Bspline<T>& a, const bs::Bspline<T>& b) {
+    return message_of([&] { static_cast<void>(cad::create_ruled<T>(a, b)); });
+  };
+  const auto curve_on = [](const std::vector<double>& knots, const std::vector<double>& pts) {
+    const std::vector<T> c = bspline_test::cast_all<T>(pts);
+    return bs::Bspline<T>(bspline_test::space_of<T>({Dir{knots, 1}}), bspline_test::sp(c), false);
+  };
+  const std::vector<double> cp = {0, 0, 1, 2, 2, 0};
+  const std::vector<double> cp_up = {0, 3, 1, 5, 2, 3};       // `cp` moved by (0, 3)
+  const std::vector<double> long_start = {0, 0, 0, 1, 1};     // classes (3, 2)
+  const std::vector<double> past_end = {0, 0, 1, 1, 2};       // classes (2, 3)
+  const std::vector<double> before_start = {-1, 0, 0, 1, 1};  // classes (3, 2)
+  const std::string prefix =
+      "ruled requires B-splines with the same end knot classes after making them compatible, got ";
+  struct Case {
+    std::vector<double> first;
+    std::vector<double> second;
+    std::string first_classes;
+    std::string second_classes;
+  };
+  for (const Case& c : {Case{long_start, past_end, "(3, 2)", "(2, 3)"},
+                        Case{past_end, before_start, "(2, 3)", "(3, 2)"}}) {
+    const bs::Bspline<T> a = curve_on(c.first, cp);
+    const bs::Bspline<T> b = curve_on(c.second, cp_up);
+    CHECK(message(a, b).find(prefix + c.first_classes + " and " + c.second_classes +
+                             " in direction 0") != std::string::npos);
+    CHECK(message(b, a).find(prefix + c.second_classes + " and " + c.first_classes +
+                             " in direction 0") != std::string::npos);
+  }
+
+  // A surface whose classes differ in direction 1 only: the message names that direction.
+  const std::vector<double> plain = {0, 0, 1, 1};
+  const bs::Bspline<T> s1 = make_spline<T>({Dir{plain, 1}, Dir{long_start, 1}}, 3, false, 1);
+  const bs::Bspline<T> s2 = make_spline<T>({Dir{plain, 1}, Dir{past_end, 1}}, 3, false, 2);
+  CHECK(message(s1, s2).find(prefix + "(3, 2) and (2, 3) in direction 1") != std::string::npos);
+
+  // The controls: the second curve on the first's knots, so the classes are equal. The result is
+  // the two nets stacked on those knots and `[0, 0, 1, 1]`, exactly as before the refusal existed,
+  // and its edges are the inputs (the bound of the first ruled test, two degree-1 directions).
+  const double tol = 4.0 * (3.0 * 2.0 + 4.0) * eps<T>() * max_abs_of(cp_up);
+  const std::vector<double> us = linspace(0.0, 1.0, 11);
+  std::vector<double> edge0;
+  std::vector<double> edge1;
+  for (const double u : us) {
+    edge0.insert(edge0.end(), {u, 0.0});
+    edge1.insert(edge1.end(), {u, 1.0});
+  }
+  for (const std::vector<double>* knots : {&long_start, &past_end}) {
+    const bs::Bspline<T> a = curve_on(*knots, cp);
+    const bs::Bspline<T> b = curve_on(*knots, cp_up);
+    const bs::Bspline<T> r = cad::create_ruled<T>(a, b);
+    CHECK(knots_as_double(r, 0) == *knots);
+    CHECK(knots_as_double(r, 1) == std::vector<double>{0, 0, 1, 1});
+    CHECK(control_points_of(r) == std::vector<double>{0, 0, 0, 3, 1, 2, 1, 5, 2, 0, 2, 3});
+    const std::vector<double> ra = evaluate_at(r, edge0);
+    const std::vector<double> rb = evaluate_at(r, edge1);
+    const std::vector<double> ea = evaluate_at(a, us);
+    const std::vector<double> eb = evaluate_at(b, us);
+    REQUIRE(ra.size() == ea.size());
+    REQUIRE(rb.size() == eb.size());
+    for (std::size_t i = 0; i < ea.size(); ++i) {
+      CHECK(std::abs(ra[i] - ea[i]) <= tol);
+      CHECK(std::abs(rb[i] - eb[i]) <= tol);
+    }
+  }
+}
+
+TEST_CASE_TEMPLATE("create_ruled: end knots differing within one class are accepted", T, float,
+                   double) {
+  // Issue #54. A third knot a quarter of the space tolerance above the start (unsnapped) is in the
+  // first class, so `[0, 0, d, 1, 1]` counts (3, 2) as `[0, 0, 0, 1, 1]` does, though a count of
+  // knots exactly at or before 0 would give 2. The result is the two nets stacked on the first
+  // input's knots, in either order; the control points are small integers, exact in either type.
+  const auto curve_on = [](const std::vector<double>& knots, const std::vector<double>& pts) {
+    const std::vector<T> c = bspline_test::cast_all<T>(pts);
+    return bs::Bspline<T>(bspline_test::space_of<T>({Dir{knots, 1}}), bspline_test::sp(c), false);
+  };
+  const std::vector<double> cp = {0, 0, 1, 2, 2, 0};
+  const std::vector<double> cp_up = {0, 3, 1, 5, 2, 3};  // `cp` moved by (0, 3)
+  const bs::Bspline<T> zero_start = curve_on({0, 0, 0, 1, 1}, cp);
+  const double space_tol = zero_start.space().spaces()[0].tolerance();
+  const T d = static_cast<T>(0.25 * space_tol);
+  REQUIRE(d > static_cast<T>(0));
+  const std::vector<T> dust_knots = {0, 0, d, 1, 1};
+  const std::vector<T> cp_up_t = bspline_test::cast_all<T>(cp_up);
+  const bs::Bspline<T> dust_start(
+      bs::BsplineSpace<T>({bs::BsplineSpace1D<T>(bspline_test::sp(dust_knots), 1, false, false)}),
+      bspline_test::sp(cp_up_t), false);
+  REQUIRE(dust_start.space().spaces()[0].knots()[2] == d);
+  for (const auto& [first, second, stacked] :
+       {std::tuple{&zero_start, &dust_start,
+                   std::vector<double>{0, 0, 0, 3, 1, 2, 1, 5, 2, 0, 2, 3}},
+        std::tuple{&dust_start, &zero_start,
+                   std::vector<double>{0, 3, 0, 0, 1, 5, 1, 2, 2, 3, 2, 0}}}) {
+    const bs::Bspline<T> r = cad::create_ruled<T>(*first, *second);
+    CHECK(knots_as_double(r, 0) == knots_as_double(*first, 0));
+    CHECK(control_points_of(r) == stacked);
+  }
 }
 
 TEST_CASE_TEMPLATE("make_compat: interior knots within the tolerance of each other are one class",
