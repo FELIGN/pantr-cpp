@@ -90,7 +90,11 @@ def create_ruled(bspline1: Bspline, bspline2: Bspline) -> Bspline:
     knot classes (the number of knots at or before the domain's start, and
     at or after its end) differ in any direction are refused too, even when
     their nets have one shape.  Knots that differ in value within one class
-    are accepted, as :func:`make_compat` leaves them.
+    are accepted, as :func:`make_compat` leaves them.  Equal counts are not
+    equal bases when knots lie outside the domain: at degree 2,
+    ``[0, 0, 0, 0.5, 1, 1, 1]`` and ``[-1, -0.5, 0, 0.5, 1, 1.5, 2]`` both
+    count ``(3, 3)`` and have different bases on the domain, so such a pair
+    is not detected and the second end face differs from *bspline2*.
 
     Args:
         bspline1: First boundary (curve or surface, dim <= 2).

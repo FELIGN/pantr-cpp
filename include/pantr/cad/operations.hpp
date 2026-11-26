@@ -225,7 +225,10 @@ template <StorageFloat T>
 /// input's knots, so the compatible inputs must also agree, in every direction, in their end knot
 /// classes (the number of knots at or before the domain's start, and at or after its end), which
 /// `make_compat` does not match; inputs that differ there are refused. Knots that differ in value
-/// within one class are accepted, as `make_compat` leaves them.
+/// within one class are accepted, as `make_compat` leaves them. Equal counts are not equal bases
+/// when knots lie outside the domain: at degree 2, `[0, 0, 0, 0.5, 1, 1, 1]` and `[-1, -0.5, 0,
+/// 0.5, 1, 1.5, 2]` both count (3, 3), and their bases on the domain differ, so such a pair is not
+/// detected and the second end face differs from the second input.
 ///
 /// Args:
 ///     bspline1 (const bspline::Bspline<T>&): The first boundary (a curve or a surface).
@@ -303,10 +306,14 @@ template <StorageFloat T>
   }
   // Equal shapes still allow end classes that differ, such as (3, 2) and (2, 3) knots at or before
   // the start and at or after the end: the result is built on the first's knots, so its second end
-  // face would be the second's points on another basis. Classes are counts, so this is exact.
+  // face would be the second's points on another basis. Each space's classes are its own (at its
+  // own tolerance), and the comparison of their counts is exact. Equal counts do not compare the
+  // values of knots outside the domain, which the basis also depends on (see the docstring).
+  const bspline::BsplineSpace<T> space1 = b1.space();
+  const bspline::BsplineSpace<T> space2 = b2.space();
   for (std::size_t a = 0; a < b1.dim(); ++a) {
-    const std::array<std::int64_t, 2> e1 = detail::end_knot_classes<T>(b1.space().spaces()[a]);
-    const std::array<std::int64_t, 2> e2 = detail::end_knot_classes<T>(b2.space().spaces()[a]);
+    const std::array<std::int64_t, 2> e1 = detail::end_knot_classes<T>(space1.spaces()[a]);
+    const std::array<std::int64_t, 2> e2 = detail::end_knot_classes<T>(space2.spaces()[a]);
     if (e1 != e2) {
       throw value_error(
           "ruled requires B-splines with the same end knot classes after making them compatible, "
