@@ -5,12 +5,12 @@ millisecond and records when it ran. A call that holds the GIL blocks that threa
 duration; one that releases it leaves gaps of about the wake period. The assertion compares the
 largest gap with half the call's duration, a margin of an order of magnitude over the wake period
 on any machine where the call takes tens of milliseconds, so it does not depend on the machine's
-speed. The cases cover the Bezier operations that reach the thread pool and the reductions and fits
-that run exact or dense solves; each is sized above the work at which the binding releases the GIL
-(``gil_release_min_ops`` in ``bindings/src/arrays.hpp``), or builds an exact reduction operator
-the process table does not hold yet. ``l2_project_bspline`` releases it too but is absent: its
-sum-factorised solves are short beside sampling the user's function, so the call does not tell a
-held GIL from a released one.
+speed. The cases cover the Bezier operations that reach the thread pool, the reductions and fits
+that run exact or dense solves, and the grids' serial passes over their cells; each is sized above
+the work at which the binding releases the GIL (``gil_release_min_ops`` in
+``bindings/src/arrays.hpp``), or builds an exact reduction operator the process table does not
+hold yet. ``l2_project_bspline`` releases it too but is absent: its sum-factorised solves are short
+beside sampling the user's function, so the call does not tell a held GIL from a released one.
 
 A short call keeps the GIL: releasing it while another thread is CPU-bound costs the caller about
 one switch interval before it gets the GIL back, which is far more than the call itself.
@@ -38,6 +38,8 @@ from pantr.bspline import (
     fit_bspline,
     quasi_interpolate_bspline,
 )
+from pantr.grid import cell_quadrature, partition_grid, uniform_grid
+from pantr.quad import gauss_legendre_quadrature
 
 _WAKE_PERIOD = 0.001
 _MIN_DURATION = 0.02  # below this the gap and the wake period are not an order of magnitude apart
@@ -153,6 +155,41 @@ def _multiply() -> Callable[[], object]:
     return lambda: square.multiply(square)
 
 
+_UNIT_SQUARE = [[0.0, 1.0], [0.0, 1.0]]
+
+
+def _collect_cell_bounds(cells: int) -> Callable[[], Callable[[], object]]:
+    """Collect the corners of a tensor-product grid's cells (``2 * ndim`` stores per cell)."""
+
+    def setup() -> Callable[[], object]:
+        grid = uniform_grid(_UNIT_SQUARE, cells)
+        return grid.collect_cell_bounds
+
+    return setup
+
+
+def _selected_cell_quadrature(cells: int) -> Callable[[], Callable[[], object]]:
+    """Map a one-point rule onto every cell of a tensor-product grid, given as a selection."""
+
+    def setup() -> Callable[[], object]:
+        grid = uniform_grid(_UNIT_SQUARE, cells)
+        ids = np.arange(grid.num_cells)
+        rule = gauss_legendre_quadrature(2, 1)
+        return lambda: cell_quadrature(grid, rule, ids)
+
+    return setup
+
+
+def _block_partition(cells: int) -> Callable[[], Callable[[], object]]:
+    """Partition a tensor-product grid into four blocks."""
+
+    def setup() -> Callable[[], object]:
+        grid = uniform_grid(_UNIT_SQUARE, cells)
+        return lambda: partition_grid(grid, 4, backend="block")
+
+    return setup
+
+
 _WINDOWS_BLOCKED = pytest.mark.skipif(
     sys.platform == "win32",
     reason="the Windows wheel legs showed slice and restrict, and in a later run split and "
@@ -175,6 +212,11 @@ SETUPS: dict[str, Callable[[], Callable[[], object]]] = {
     "fit_bspline scattered": _untimed_setup(_scattered_fit),
     "fit_bspline tensor": _untimed_setup(_tensor_fit),
     "quasi_interpolate_bspline": _untimed_setup(_qi),
+    # 2500^2 cells of 4 stores each, 3000^2 of 4 operations each, and 1000^2 cells of 4 + 5
+    # operations each: above the threshold.
+    "collect_cell_bounds": _collect_cell_bounds(2500),
+    "partition_grid": _block_partition(3000),
+    "cell_quadrature selection": _selected_cell_quadrature(1000),
 }
 
 
@@ -231,6 +273,9 @@ SHORT_CALLS: dict[str, Callable[[], Callable[[], object]]] = {
     "quasi_interpolate_bspline": lambda: lambda: quasi_interpolate_bspline(
         lambda pts: np.ones(pts.shape[0]), create_uniform_space(2, [4, 4])
     ),
+    "collect_cell_bounds": _collect_cell_bounds(10),
+    "partition_grid": _block_partition(10),
+    "cell_quadrature selection": _selected_cell_quadrature(10),
 }
 
 
