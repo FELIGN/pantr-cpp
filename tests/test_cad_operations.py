@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import numpy as np
 import numpy.typing as npt
 import pytest
@@ -247,3 +249,68 @@ class TestRuled:
         for t, src in ((0.0, s1), (1.0, s2)):
             face = r.evaluate(np.column_stack([uv, np.full(len(uv), t)]))
             assert_allclose(face, src.evaluate(uv), rtol=0, atol=atol)
+
+    _END_CLASS_CP = np.array([[0.0, 0.0], [1.0, 2.0], [2.0, 0.0]])
+    """The control points of issue #54's curves, small integers so that every array is exact."""
+    _END_CLASS_SHIFT = np.array([0.0, 3.0])
+    """The offset of the second curve's control points."""
+
+    @staticmethod
+    def _degree1_curve(knots: list[float], cp: npt.NDArray[np.float64]) -> Bspline:
+        """Build a degree-1 curve on the given knots.
+
+        Args:
+            knots (list[float]): The knot vector.
+            cp (npt.NDArray[np.float64]): Control points of shape ``(n, rank)``.
+
+        Returns:
+            Bspline: The curve.
+        """
+        return Bspline(BsplineSpace([BsplineSpace1D(np.array(knots, dtype=np.float64), 1)]), cp)
+
+    @pytest.mark.parametrize(
+        ("knots1", "classes1", "knots2", "classes2"),
+        [
+            # Issue #54's case: a first class of three knots against a knot past the domain's end.
+            ([0.0, 0.0, 0.0, 1.0, 1.0], "(3, 2)", [0.0, 0.0, 1.0, 1.0, 2.0], "(2, 3)"),
+            # No end knot repeated more than `degree + 1` times: a knot before the domain's start.
+            ([0.0, 0.0, 1.0, 1.0, 2.0], "(2, 3)", [-1.0, 0.0, 0.0, 1.0, 1.0], "(3, 2)"),
+        ],
+        ids=["long-start-vs-past-end", "past-end-vs-before-start"],
+    )
+    @pytest.mark.parametrize("swap", [False, True], ids=["in-order", "swapped"])
+    def test_ruled_refuses_end_knot_classes_that_differ(
+        self, knots1: list[float], classes1: str, knots2: list[float], classes2: str, swap: bool
+    ) -> None:
+        """Test that nets of one shape on different end knot classes are refused (issue #54).
+
+        `make_compat` leaves end classes as given, and the result used to take the first input's
+        knots, so its ``t = 1`` edge was not the second input. A class counts the knots at or
+        before the domain's start, and at or after its end.
+        """
+        a = self._degree1_curve(knots1, self._END_CLASS_CP)
+        b = self._degree1_curve(knots2, self._END_CLASS_CP + self._END_CLASS_SHIFT)
+        first, second = (classes2, classes1) if swap else (classes1, classes2)
+        message = f"same end knot classes after making them compatible, got {first} and {second}"
+        with pytest.raises(ValueError, match=re.escape(f"{message} in direction 0")):
+            create_ruled(*((b, a) if swap else (a, b)))
+
+    @pytest.mark.parametrize(
+        "knots",
+        [[0.0, 0.0, 0.0, 1.0, 1.0], [0.0, 0.0, 1.0, 1.0, 2.0]],
+        ids=["long-start", "past-end"],
+    )
+    def test_ruled_equal_end_knot_classes_stack_the_nets(self, knots: list[float]) -> None:
+        """Test that equal end classes give the stacked nets on the first input's knots, exactly.
+
+        The controls of issue #54: the data are small integers, so the arrays are exact, and the
+        result is the one returned before the end classes were checked.
+        """
+        a = self._degree1_curve(knots, self._END_CLASS_CP)
+        b = self._degree1_curve(knots, self._END_CLASS_CP + self._END_CLASS_SHIFT)
+        r = create_ruled(a, b)
+        np.testing.assert_array_equal(r.space.spaces[0].knots, knots)
+        np.testing.assert_array_equal(r.space.spaces[1].knots, [0.0, 0.0, 1.0, 1.0])
+        np.testing.assert_array_equal(
+            r.control_points, np.stack([a.control_points, b.control_points], axis=1)
+        )
