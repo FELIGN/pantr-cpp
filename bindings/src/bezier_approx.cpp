@@ -61,20 +61,48 @@ NumpyView<double> operator_view(std::shared_ptr<const NdArray<double>> op) {
 // and the result is converted after the guard ends). Each estimate below runs before the call
 // validates its arguments, so it reads only what an invalid argument still allows.
 
-/// Whether a reduction would first build an exact operator: the call that builds one, in exact
-/// arithmetic, is long whatever the size of the net, so it releases the GIL.
-bool builds_operator(long long degree, long long decrement) {
-  return !bezier::detail::reduction_operator_cached(bezier::ReductionKind::interpolating, degree,
-                                                    decrement);
+/// Exact-integer steps of `bernstein_gram_exact(n)`: each of its `(n + 1)^2` entries forms
+/// `C(n, i)`, `C(n, j)` and `C(2n, i + j)` with `comb_exact`, which takes `min(k, m - k)` steps for
+/// `C(m, k)`. Summed in closed form over `i` and `j`: `2 (n + 1) sum_i min(i, n - i)`, and
+/// `sum_s (k_s + 1) k_s` with `k_s = min(s, 2n - s)`, `k_s + 1` pairs having `i + j = s`.
+double gram_steps(long long n) {
+  double single = 0.0;
+  double pairs = 0.0;
+  for (long long i = 0; i <= n; ++i) {
+    single += static_cast<double>((std::min)(i, n - i));
+  }
+  for (long long s = 0; s <= 2 * n; ++s) {
+    const auto k = static_cast<double>((std::min)(s, 2 * n - s));
+    pairs += (k + 1.0) * k;
+  }
+  return 2.0 * static_cast<double>(n + 1) * single + pairs;
+}
+
+/// Work of building the interpolating reduction operator from degree `p` to `q = p - t`, for the
+/// GIL decision only, or zero when the process table holds it. A lower bound: it counts only the
+/// steps of the Gram matrices the build assembles (degree `p` unless `q == 1`, degree `q` when
+/// `q >= 2`; `interpolating_reduction_operator`), each a multi-precision multiplication and exact
+/// division by a machine integer, and leaves out the gcd that reduces each entry and the exact
+/// projection and elimination that follow. Each step is charged 16 operations, an admitted
+/// heuristic rather than a derivation: two calls into the multi-precision library, one of them a
+/// hardware integer division. Never tuned on a particular machine.
+double operator_build_ops(long long p, long long t) {
+  if (bezier::detail::reduction_operator_cached(bezier::ReductionKind::interpolating, p, t)) {
+    return 0.0;
+  }
+  const long long q = p - t;
+  const double steps = (q != 1 ? gram_steps(p) : 0.0) + (q >= 2 ? gram_steps(q) : 0.0);
+  return 16.0 * steps;
 }
 
 /// Work of `reduce_degree` and `degree_reduction_error`, for the GIL decision only: the first
 /// reduced direction applies a `(p - t + 1, p + 1)` operator to every column of the net, so it
-/// costs `b.size() * (p - t + 1)` multiply-adds; or the threshold itself when some direction would
-/// first build its operator.
+/// costs `b.size() * (p - t + 1)` multiply-adds; plus the largest operator build a direction needs
+/// (`operator_build_ops`; a build is shared by directions of one key, so not their sum).
 template <class T>
 double reduction_ops(const Bezier<T>& b, const std::vector<long long>& decrements) {
   double ops = 0.0;
+  double build = 0.0;
   const std::size_t n = (std::min)(b.dim(), decrements.size());
   for (std::size_t d = 0; d < n; ++d) {
     const auto p = static_cast<long long>(b.degree(d));
@@ -82,35 +110,36 @@ double reduction_ops(const Bezier<T>& b, const std::vector<long long>& decrement
     if (t < 1 || t > p) {
       continue;  // nothing to reduce, or an argument the call refuses
     }
-    if (builds_operator(p, t)) {
-      return gil_release_min_ops;
-    }
+    build = (std::max)(build, operator_build_ops(p, t));
     if (ops == 0.0) {
       ops = static_cast<double>(b.size()) * static_cast<double>(p - t + 1);
     }
   }
-  return ops;
+  return ops + build;
 }
 
 /// Work of `minimize_degree`, for the GIL decision only: its first trial applies a `(p, p + 1)`
 /// operator to every column of the net, `b.size() * p` multiply-adds for the first direction of
-/// degree `p >= 1`; or the threshold itself when some direction would first build its operator.
+/// degree `p >= 1`; plus the largest first-trial operator build a direction needs
+/// (`operator_build_ops`). Zero for a tolerance that is not positive, which runs no trial.
 template <class T>
-double minimization_ops(const Bezier<T>& b) {
+double minimization_ops(const Bezier<T>& b, std::optional<double> tol) {
+  if (tol.has_value() && !(*tol > 0.0)) {
+    return 0.0;  // no trial: a tolerance that is not positive keeps the degree, or is refused
+  }
   double ops = 0.0;
+  double build = 0.0;
   for (std::size_t d = 0; d < b.dim(); ++d) {
     const auto p = static_cast<long long>(b.degree(d));
     if (p < 1) {
       continue;
     }
-    if (builds_operator(p, 1)) {
-      return gil_release_min_ops;
-    }
+    build = (std::max)(build, operator_build_ops(p, 1));
     if (ops == 0.0) {
       ops = static_cast<double>(b.size()) * static_cast<double>(p);
     }
   }
-  return ops;
+  return ops + build;
 }
 
 template <class T>
@@ -132,7 +161,7 @@ void def_reduction(nb::module_& m) {
   m.def(
       "minimize_degree",
       [](const Bezier<T>& b, std::optional<double> tol) {
-        const ReleaseIfLong release(minimization_ops(b));
+        const ReleaseIfLong release(minimization_ops(b, tol));
         return bezier::minimize_degree(b, tol);
       },
       nb::arg("bezier"), nb::arg("tol").none(), "The lowest degree within a relative tolerance.");

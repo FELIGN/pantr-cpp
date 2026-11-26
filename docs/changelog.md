@@ -322,8 +322,9 @@
   and the compiled parts of `fit_bezier`, `interpolate_bezier`, `fit_bspline`,
   `interpolate_bspline`, `l2_project_bspline` and `quasi_interpolate_bspline`, never use the pool
   and release it only when their estimated work is about the default switch interval
-  (`sys.getswitchinterval()`) or more, or when a degree reduction first builds an exact operator:
-  while another Python thread is busy, releasing costs the caller about a switch interval, more
+  (`sys.getswitchinterval()`) or more, the build of an exact reduction operator the call needs
+  first counting toward that work, so a low-degree build keeps the GIL and a high-degree one
+  releases it: while another Python thread is busy, releasing costs the caller about a switch interval, more
   than a shorter call computes. A call on the pool releases from a far smaller size, so Python
   threads that each run pantr calls scale, and a mid-size pool call can wait up to a switch
   interval when another Python thread is busy. `THBSpline.prolong_to`, the THB prolongation and
