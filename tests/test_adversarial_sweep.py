@@ -34,6 +34,7 @@ import sys
 from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
 import pytest
 
 from tests._tree_env import subprocess_env
@@ -182,22 +183,24 @@ def test_smoke_sweep_finds_nothing_new(tmp_path: pathlib.Path) -> None:
 # The `full` profile's basis group, checked in process. These tests run the cases of the
 # probes they concern, not the profile: CI runs only the smoke profile.
 
-_CHANGE_OF_BASIS_BUILDERS = tuple(
-    name for name in dir(_probes_basis) if name.startswith("compute_")
-)
-"""The ``compute_*_1d`` builders the basis probes import."""
-
 
 def test_full_basis_enumeration_calls_no_builder(monkeypatch: pytest.MonkeyPatch) -> None:
     # A builder called while the cases are built, rather than inside a case, ends the group's
-    # generator on its first refusal and drops every case after it.
+    # generator on its first refusal and drops every case after it. Every public builder
+    # computes through `_build`, looked up when it is called, so patching it there reaches the
+    # builders the probes hold in their tables too.
     def refuse(*args: object, **kwargs: object) -> None:
         raise AssertionError("a change-of-basis builder ran while the cases were being built")
 
-    for name in _CHANGE_OF_BASIS_BUILDERS:
-        monkeypatch.setattr(_probes_basis, name, refuse)
+    monkeypatch.setattr(import_module("pantr.change_basis"), "_build", refuse)
 
-    assert len(list(_probes_basis.cases(Profile.FULL))) > 0
+    cases = list(_probes_basis.cases(Profile.FULL))
+
+    round_trips = [case for case in cases if case.label.startswith("roundtrip_")]
+    assert round_trips
+    # The patch is live: running a case does reach it.
+    with pytest.raises(AssertionError, match="while the cases were being built"):
+        round_trips[0].run()
 
 
 @pytest.mark.parametrize(
@@ -217,12 +220,52 @@ def test_full_change_of_basis_cases_find_nothing(
     # library does is graded BUG, in either direction.
     outcomes = [run_case(i, case) for i, case in enumerate(generator(Profile.FULL))]
 
-    bugs = [
-        f"{o.case.label}: {o.detail.splitlines()[0]}" for o in outcomes if o.verdict is Verdict.BUG
+    findings = [
+        f"{o.case.label} [{o.verdict.name}]: {o.detail.splitlines()[0]}"
+        for o in outcomes
+        if o.verdict in (Verdict.BUG, Verdict.UNDOCUMENTED_REJECTION)
     ]
-    assert not bugs, "\n".join(bugs)
-    refused = [o for o in outcomes if o.verdict is Verdict.DOCUMENTED_REJECTION]
-    assert all(o.case.must_reject for o in refused)
+    assert not findings, "\n".join(findings)
+
+
+def _accepts(func: Callable[..., Any], *args: Any) -> bool:
+    """Say whether a builder returns rather than refusing with `ValueError`."""
+    try:
+        func(*args)
+    except ValueError:
+        return False
+    return True
+
+
+def test_probes_read_each_builder_domain_at_its_edge() -> None:
+    # The swept degrees never sit on the edge of a domain, so the probes' reading of each domain
+    # is checked here against the library itself, at both dtypes' last supported degree and the
+    # one after it.
+    domains = [
+        (name, (lambda degree, dtype, func=func: func(degree, dtype)), limit)
+        for name, func, limit in _probes_basis._SQUARE_BUILDERS
+    ] + [
+        (
+            f"{name}_{variant.value}",
+            (lambda degree, dtype, func=func, variant=variant: func(degree, variant, dtype)),
+            limits[variant],
+        )
+        for name, func, limits in _probes_basis._LAGRANGE_PAIR_BUILDERS
+        if limits is not None
+        for variant in limits
+    ]
+    disagreements = []
+    for name, build, limit in domains:
+        if limit is None:
+            continue
+        edges = (limit.float32, limit.float32 + 1, limit.float64, limit.float64 + 1)
+        for dtype in (np.dtype(np.float32), np.dtype(np.float64)):
+            for degree in edges:
+                probe = _probes_basis._supports(limit, degree, dtype)
+                if probe != _accepts(build, degree, dtype):
+                    disagreements.append(f"{name} degree {degree} {dtype.name}: probe says {probe}")
+    assert len(domains) == 6 + 5  # six square builders, bernstein_to_lagrange per variant
+    assert not disagreements, "\n".join(disagreements)
 
 
 def test_full_nd_rejections_are_documented() -> None:

@@ -642,7 +642,7 @@ _SQUARE_BUILDERS: Final[tuple[_SquareBuilder, ...]] = (
 )
 """The six ``compute_*_1d`` change-of-basis builders that take ``degree >= 0``
 and no ``LagrangeVariant`` argument, each with its supported-degree domain (``None``
-for the three that document no degree limit)."""
+for the two that document no degree limit)."""
 
 
 def _change_basis_square_cases(profile: Profile) -> Iterator[Case]:
@@ -654,7 +654,7 @@ def _change_basis_square_cases(profile: Profile) -> Iterator[Case]:
     Yields:
         Case: One hostile call per builder.
     """
-    # All six document a non-negative degree and a float32/float64 dtype, and the three
+    # All six document a non-negative degree and a float32/float64 dtype, and the four
     # that solve a degree domain too, with a matching `Raises: ValueError` naming each.
     for name, func, limit in _SQUARE_BUILDERS:
         for degree in _capped(degrees(profile), 2, profile):
@@ -827,8 +827,9 @@ def _round_trip_case(
     The tolerance is derived from the condition number of the matrix actually
     being inverted (measured with :func:`numpy.linalg.cond`, an oracle
     independent of the algorithm under test), matching the conditioning
-    documented at ``change_basis.py:376-381`` (``cond ~ 1.1e3`` at degree 4,
-    ``3.0e8`` at degree 8, for the cardinal/Legendre pair): a bare literal
+    documented in the ``Warning:`` of ``compute_cardinal_to_legendre_1d``
+    (``cond ~ 1.1e3`` at degree 4, ``3.0e8`` at degree 8, for the
+    cardinal/Legendre pair): a bare literal
     tolerance would be meaningless across that six-orders-of-magnitude range.
     An explicit factor of ``16 * (degree + 1)`` covers the round trip's own
     matrix product on top of the conditioning bound.
