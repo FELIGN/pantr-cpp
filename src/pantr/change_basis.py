@@ -19,10 +19,11 @@ Five of the builders recover their result from a linear solve, and a solve is on
 defined while the matrix it uses is not singular to working precision. Each of those five
 declares the largest degree it supports per dtype and raises :class:`ValueError` past it,
 naming the degree, the dtype and the supported range, rather than letting
-:class:`numpy.linalg.LinAlgError` or an overflow to infinity escape. The two builders that
-solve nothing carry no degree limit -- :func:`compute_lagrange_to_bernstein_1d`, which is
-a tabulation, and :func:`compute_legendre_to_cardinal_1d`, whose Gram matrix is the
-identity -- and :func:`compute_monomial_to_bernstein_1d` evaluates a closed form.
+:class:`numpy.linalg.LinAlgError` or an overflow to infinity escape. Two builders carry no
+degree limit: :func:`compute_lagrange_to_bernstein_1d`, which is a tabulation and solves
+nothing, and :func:`compute_legendre_to_cardinal_1d`, whose projection solves with the
+Legendre Gram matrix, the identity up to round-off. :func:`compute_monomial_to_bernstein_1d`
+evaluates a closed form.
 
 The boundary is the largest degree :math:`p` at which the matrix :math:`M_p` the builder
 solves with satisfies
