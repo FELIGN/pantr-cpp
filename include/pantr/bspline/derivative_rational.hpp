@@ -129,7 +129,10 @@ template <StorageFloat T>
 ///     value_error: `b` is not rational; the direction is out of range or has degree 0; the
 ///         direction is periodic with a `C^0` seam (seam multiplicity equal to the degree); or as
 ///         `derivative_keep_degree_nonrational` (the degree envelope of the binomial kernel, a
-///         direction of degree 2 or more not clamped at both ends, a `C^-1` interior knot).
+///         direction of degree 2 or more not clamped at both ends, a `C^-1` interior knot); or the
+///         direction is opened (periodic, or not clamped) and `to_open_1d` refuses it (an end
+///         with more than `degree + 1` copies, or a knot distinct from an end within `tol` of
+///         it).
 template <StorageFloat T>
 [[nodiscard]] Bspline<T> derivative_rational(const Bspline<T>& b, long long direction) {
   if (!b.rational()) {

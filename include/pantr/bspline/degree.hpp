@@ -767,8 +767,9 @@ namespace detail {
 ///         is positive; an elevated degree exceeds the exactness envelope of the binomial kernel
 ///         (`bincoeff_max_n`, also when `degree + increment` overflows `long long`, which the
 ///         message states as a bound and not as a degree); a direction to be elevated repeats a
-///         knot more than `degree + 1` times; or one is not periodic and its knot vector is not
-///         clamped.
+///         knot more than `degree + 1` times; one is not periodic and its knot vector is not
+///         clamped; or one is periodic and `to_open_1d` refuses it (a seam with more than
+///         `degree + 1` copies, or a knot distinct from the seam within `tol` of it).
 template <StorageFloat T>
 [[nodiscard]] Bspline<T> elevate_degree(const Bspline<T>& b,
                                         std::span<const long long> increments) {
@@ -873,8 +874,10 @@ template <StorageFloat T>
 /// Raises:
 ///     value_error: Invalid decrements (the number does not match the dimension; one is negative;
 ///         none is positive; one exceeds the degree); a direction to be reduced repeats a knot
-///         more than `degree + 1` times; one is not periodic and its knot vector is not clamped; or
-///         a rational result has a control weight that is not strictly positive.
+///         more than `degree + 1` times; one is not periodic and its knot vector is not clamped;
+///         one is periodic and `to_open_1d` refuses it (a seam with more than `degree + 1` copies,
+///         or a knot distinct from the seam within `tol` of it); or a rational result has a control
+///         weight that is not strictly positive.
 template <StorageFloat T>
 [[nodiscard]] Bspline<T> reduce_degree(const Bspline<T>& b, std::span<const long long> decrements) {
   if (decrements.size() != b.dim()) {
