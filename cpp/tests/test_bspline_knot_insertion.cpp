@@ -844,7 +844,9 @@ TEST_CASE("restrict and split: refusals and their messages") {
   CHECK_THROWS_WITH_AS(static_cast<void>(one(0.5, 1.5)),
                        "Upper bound (1.5) is above the domain end (1.0).", pantr::value_error);
   CHECK_THROWS_WITH_AS(static_cast<void>(one(0.0, 1.0)),
-                       "Bounds match the full domain and the direction is already open.",
+                       "Bounds match the full domain and both its ends are already open (a "
+                       "periodic direction is converted to open form first), so there is "
+                       "nothing to restrict.",
                        pantr::value_error);
   CHECK_THROWS_WITH_AS((static_cast<void>(bs::restrict<double>(
                            b, std::vector<std::optional<bs::Bounds>>{std::nullopt}))),
