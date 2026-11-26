@@ -412,10 +412,23 @@ template <StorageFloat T>
     return false;
   }
   const std::size_t n = corners_a.size() / rank_a;
-  // `hypot` rather than the square root of a sum of squares, as in `joint_tolerances`: the square
-  // of a difference overflows from about 1.3e154, and a pair of corners that coincide to rounding
-  // on patches that large then had no partner.
+  // The square root of the sum of squares where that sum is a finite normal number, and otherwise
+  // the chain of `hypot` calls, as in `joint_tolerances`, which is far slower. A finite normal sum
+  // is within about `(2 rank - 1) u` of the exact one, an underflowed square losing at most half
+  // the smallest subnormal, under `u` times the sum; so its root is within a few units of rounding
+  // of the distance, as the `hypot` chain is. The chain takes a sum that overflowed (a difference
+  // from about 1.3e154, where corners coinciding to rounding would otherwise have no partner), a
+  // zero or subnormal one, which may have lost its relative accuracy to underflow, and NaN.
   const auto distance = [&](std::size_t i, std::size_t j) {
+    double sum = 0.0;
+    for (std::size_t c = 0; c < rank_a; ++c) {
+      const double diff = corners_a[i * rank_a + c] - corners_b[j * rank_a + c];
+      sum += diff * diff;
+    }
+    if (sum >= (std::numeric_limits<double>::min)() &&
+        sum <= (std::numeric_limits<double>::max)()) {
+      return std::sqrt(sum);
+    }
     double d = 0.0;
     for (std::size_t c = 0; c < rank_a; ++c) {
       const double diff = corners_a[i * rank_a + c] - corners_b[j * rank_a + c];
