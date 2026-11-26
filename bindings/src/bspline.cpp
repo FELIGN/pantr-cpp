@@ -148,7 +148,9 @@ void def_space_1d(nb::module_& m, const char* name) {
       .def_prop_ro("num_intervals", &S::num_intervals, "The number of in-domain intervals.")
       .def_prop_ro("left_open", &S::has_left_end_open, "Whether the left end is open.")
       .def_prop_ro("right_open", &S::has_right_end_open, "Whether the right end is open.")
-      .def_prop_ro("bezier_like", &S::has_bezier_like_knots, "Whether the space is one piece.")
+      .def_prop_ro(
+          "bezier_like", &S::has_bezier_like_knots,
+          "Whether the space is one Bézier piece: non-periodic, open ends, degree + 1 functions.")
       .def_prop_ro(
           "knots", [](const S& s) { return view_1d<T, T>(s.knots(), s.rep()); },
           nb::rv_policy::automatic, "Read-only view of the knot vector.")

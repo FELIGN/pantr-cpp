@@ -580,10 +580,13 @@ class BsplineSpace1D:
     def has_Bezier_like_knots(self) -> bool:
         """Check if the knot vector represents a Bézier-like configuration.
 
-        A Bézier-like configuration has open ends and only one non-zero span.
+        A Bézier-like configuration is non-periodic, open at both ends (the first and the last
+        ``degree + 1`` knots each equal up to the space's tolerance) and has exactly
+        ``degree + 1`` basis functions, so its basis is the Bernstein basis on the domain.
 
         Returns:
-            bool: True if knots have open ends and only one span.
+            bool: True if the space is non-periodic, open at both ends and has ``degree + 1``
+            basis functions.
 
         Example:
             >>> bspline = BsplineSpace1D([1, 1, 1, 3, 3, 3], 2)

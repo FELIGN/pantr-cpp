@@ -243,11 +243,12 @@ class BsplineSpace:
     def has_Bezier_like_knots(self) -> bool:
         """Check if the knot vector represents a Bézier-like configuration.
 
-        A Bézier-like configuration has open ends and only one non-zero span
-        for each dimension.
+        Every direction must be Bézier-like: non-periodic, open at both ends (the first and the
+        last ``degree + 1`` knots each equal up to its tolerance) and with exactly ``degree + 1``
+        basis functions.
 
         Returns:
-            bool: True if knots have open ends and only one span.
+            bool: True if every direction is Bézier-like.
 
         Example:
             >>> from pantr.bspline import BsplineSpace1D

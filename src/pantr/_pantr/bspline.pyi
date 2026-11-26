@@ -68,7 +68,7 @@ class BsplineSpace1DF64:
 
     @property
     def bezier_like(self) -> bool:
-        """Whether the space is one piece."""
+        """Whether the space is one Bézier piece: non-periodic, open ends, degree + 1 functions."""
 
     @property
     def knots(self) -> Annotated[NDArray[numpy.float64], dict(writable=False)]:
@@ -252,7 +252,7 @@ class BsplineSpace1DF32:
 
     @property
     def bezier_like(self) -> bool:
-        """Whether the space is one piece."""
+        """Whether the space is one Bézier piece: non-periodic, open ends, degree + 1 functions."""
 
     @property
     def knots(self) -> Annotated[NDArray[numpy.float32], dict(writable=False)]:
