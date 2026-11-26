@@ -60,6 +60,7 @@
 #include <random>
 #include <span>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -442,10 +443,36 @@ TEST_CASE_TEMPLATE("create_ruled: end knot classes that differ are refused, in e
     const std::vector<double> rb = evaluate_at(r, edge1);
     const std::vector<double> ea = evaluate_at(a, us);
     const std::vector<double> eb = evaluate_at(b, us);
+    REQUIRE(ra.size() == ea.size());
+    REQUIRE(rb.size() == eb.size());
     for (std::size_t i = 0; i < ea.size(); ++i) {
       CHECK(std::abs(ra[i] - ea[i]) <= tol);
       CHECK(std::abs(rb[i] - eb[i]) <= tol);
     }
+  }
+
+  // Knots that differ in value within one end class are accepted: a third knot a quarter of the
+  // space tolerance above the start (unsnapped) is in the first class, so `[0, 0, d, 1, 1]` counts
+  // (3, 2) as `[0, 0, 0, 1, 1]` does, though a count of knots exactly at or before 0 would give 2.
+  // The result is the two nets stacked on the first input's knots, in either order.
+  const bs::Bspline<T> zero_start = curve_on(long_start, cp);
+  const double space_tol = zero_start.space().spaces()[0].tolerance();
+  const T d = static_cast<T>(0.25 * space_tol);
+  REQUIRE(d > static_cast<T>(0));
+  const std::vector<T> dust_knots = {0, 0, d, 1, 1};
+  const std::vector<T> cp_up_t = bspline_test::cast_all<T>(cp_up);
+  const bs::Bspline<T> dust_start(
+      bs::BsplineSpace<T>({bs::BsplineSpace1D<T>(bspline_test::sp(dust_knots), 1, false, false)}),
+      bspline_test::sp(cp_up_t), false);
+  REQUIRE(dust_start.space().spaces()[0].knots()[2] == d);
+  for (const auto& [first, second, stacked] :
+       {std::tuple{&zero_start, &dust_start,
+                   std::vector<double>{0, 0, 0, 3, 1, 2, 1, 5, 2, 0, 2, 3}},
+        std::tuple{&dust_start, &zero_start,
+                   std::vector<double>{0, 3, 0, 0, 1, 5, 1, 2, 2, 3, 2, 0}}}) {
+    const bs::Bspline<T> r = cad::create_ruled<T>(*first, *second);
+    CHECK(knots_as_double(r, 0) == knots_as_double(*first, 0));
+    CHECK(control_points_of(r) == stacked);
   }
 }
 

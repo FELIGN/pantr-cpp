@@ -314,3 +314,25 @@ class TestRuled:
         np.testing.assert_array_equal(
             r.control_points, np.stack([a.control_points, b.control_points], axis=1)
         )
+
+    @pytest.mark.parametrize("swap", [False, True], ids=["in-order", "swapped"])
+    def test_ruled_accepts_end_knots_differing_within_one_class(self, swap: bool) -> None:
+        """Test that end knots differing in value within one class are accepted (issue #54).
+
+        A third knot a quarter of the space tolerance above the start (unsnapped) is in the first
+        class, so ``[0, 0, d, 1, 1]`` counts ``(3, 2)`` as ``[0, 0, 0, 1, 1]`` does, though a
+        count of knots exactly at or before 0 would give 2. The result is the two nets stacked
+        on the first input's knots.
+        """
+        zero = BsplineSpace1D(np.array([0.0, 0.0, 0.0, 1.0, 1.0]), 1)
+        d = 0.25 * zero.tolerance
+        dust = BsplineSpace1D(np.array([0.0, 0.0, d, 1.0, 1.0]), 1, snap_knots=False)
+        assert dust.knots[2] == d > 0.0
+        cp_up = self._END_CLASS_CP + self._END_CLASS_SHIFT
+        a = Bspline(BsplineSpace([zero]), self._END_CLASS_CP)
+        b = Bspline(BsplineSpace([dust]), cp_up)
+        first, second = (b, a) if swap else (a, b)
+        r = create_ruled(first, second)
+        np.testing.assert_array_equal(r.space.spaces[0].knots, first.space.spaces[0].knots)
+        nets = [cp_up, self._END_CLASS_CP] if swap else [self._END_CLASS_CP, cp_up]
+        np.testing.assert_array_equal(r.control_points, np.stack(nets, axis=1))
