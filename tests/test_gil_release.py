@@ -294,7 +294,7 @@ def _cold_minimization(b: Bezier) -> object:
 
 
 def _cold_zero_tol_minimization(b: Bezier) -> object:
-    """Minimize with ``tol=0``, which runs no trial and builds nothing, however high the degree."""
+    """Minimize with ``tol=0``, which runs no trial and builds nothing, up to ``bincoeff_max_n``."""
     reduction_cache_clear()
     return b.minimize_degree(0.0)
 
@@ -317,12 +317,13 @@ SHORT_CALLS: dict[str, Callable[[], Callable[[], object]]] = {
     "reduce_degree": _on(_SMALL, lambda b: b.reduce_degree(1)),
     "degree_reduction_error": _on(_SMALL, lambda b: b.degree_reduction_error(1)),
     # A cold build at degree 10 is estimated at 16 * 2290 operations, two orders below the
-    # threshold; at degree 61 with ``tol=0`` the call builds nothing.
+    # threshold; at degree 61 with ``tol=0`` the call builds nothing and copies the net, wide
+    # enough here that the call is not trivially short.
     "degree_reduction_error cold": _on(_net((11, 1)), _cold_reduction_error),
     "reduce_degree cold": _on(_net((11, 1)), _cold_reduction),
     "minimize_degree": _on(_SMALL, lambda b: b.minimize_degree()),
     "minimize_degree cold": _on(_net((11, 1)), _cold_minimization),
-    "minimize_degree tol 0 cold": _on(_net((62, 1)), _cold_zero_tol_minimization),
+    "minimize_degree tol 0 cold": _on(_net((62, 2000)), _cold_zero_tol_minimization),
     "minimize_degree refused": _on(_net((63, 1)), _refused_minimization),
     "fit_bezier tensor": lambda: lambda: fit_bezier(
         _rng().random((5, 5)), [np.linspace(0.0, 1.0, 5)] * 2, degree=[3, 3]

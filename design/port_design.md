@@ -363,18 +363,19 @@ exhaustion becomes a status the caller receives, never a plausible value:
   particular many-core machine. This replaces `_PARALLEL_MIN_NUM_PTS = 4096` and the serial-twin kernels.
 - One pool and one per-thread setting per **process**, across extension modules: `_pantr` owns them and every other
   pantr module attaches its table at import (DR-20, `design/threading.md`).
-- The GIL is released around any call that reaches the pool, and only then (`ReleaseIfParallel`, the same work
-  model), so Python threads that each run pantr calls scale. A call that never reaches the pool releases it only when
-  its estimated work reaches `gil_release_min_ops` (2^22 operations, `ReleaseIfLong`, `bindings/src/arrays.hpp`):
-  releasing while another Python thread is CPU-bound costs the caller about one switch interval before it gets the
-  GIL back, so it pays only for a call about that long; the constant is that interval at the work model's one
-  operation per cycle, an **admitted heuristic** like the two above. Each site's estimate is a cheap lower bound on
-  its work. A reduction that would first build an exact operator releases only when its estimate, the operator's
-  application plus a lower bound on the build (`operator_build_ops`, conservative by choice: it counts the Gram
-  assembly alone, so a cold build of middle degree keeps the GIL), reaches `gil_release_min_ops`. The lazy BVH build
-  releases when `bvh_build_ops` reaches it, or on a hierarchical grid also when the corner collection reaches the
-  pool; the serial grid passes on a tensor-product grid release on `gil_release_min_ops` likewise. The CAD,
-  refinement and modification bindings never release (no estimate is stated for them yet).
+- The GIL is released around any call that reaches the pool, and only then (`ReleaseIfParallel`, the same work model),
+  so Python threads that each run pantr calls scale. A call that never reaches the pool releases it only when its
+  estimated work reaches `gil_release_min_ops` (2^22 operations, `ReleaseIfLong`, `bindings/src/arrays.hpp`):
+  releasing while another Python thread is CPU-bound costs the caller about one switch interval before it gets the GIL
+  back, so it pays only for a call about that long; the constant is the default interval at the work model's one
+  operation per cycle, fixed (it does not follow `sys.setswitchinterval`), an **admitted heuristic** like the two
+  above. Each site's estimate is a cheap lower bound on its work. A reduction that would first build an exact operator
+  releases only when its estimate, the operator's application plus a lower bound on the build (`operator_build_ops`,
+  conservative by choice: it counts the Gram assembly alone, so a cold build of middle degree can keep the GIL),
+  reaches `gil_release_min_ops`. The lazy BVH build releases when `bvh_build_ops` reaches it, or on a hierarchical
+  grid also when the corner collection reaches the pool; the serial grid passes on a tensor-product grid release on
+  `gil_release_min_ops` likewise. The CAD, refinement and modification bindings never release (no estimate is stated
+  for them yet).
 - MPI: `MPI_THREAD_FUNNELED` is sufficient because collectives are only called by the calling thread, outside
   `parallel_for`; `pantr::mpi` checks `MPI_Query_thread() >= FUNNELED` at entry and says that the caller must be the
   thread that initialised MPI.

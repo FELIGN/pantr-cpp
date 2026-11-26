@@ -251,15 +251,6 @@
   and releases it for a large one (about the default switch interval of work or more) or one whose
   corners are collected on the thread pool. It released it for every build, so under a CPU-bound
   Python thread the first query of a small grid waited about a switch interval.
-- **`detect_interfaces`, and `MultiPatch` when it detects its interfaces, compare face corners
-  by the square root of the sum of squared differences** where that sum is a finite normal number,
-  and by the previous release's chain of `hypot` calls, which is far slower, only where the sum
-  overflows, is subnormal or zero, or is NaN. The two are each within a few units of rounding of
-  the distance but not equal, so a pair of corners whose distance is within a few units of
-  rounding of the geometric tolerance may be classified differently from the previous release, in
-  either direction, and differently on the extension's FMA rungs (x86-64-v3 and v4), where the
-  sum may be computed with fused multiply-adds, than on the generic one. A pair farther from the
-  tolerance than that is classified as before.
 - **`TensorProductGrid.is_uniform` judges an axis's spacings relative to its scale**: uniform when
   their spread is at most `16 eps max(span, |b[0]|, |b[-1]|)`, where the previous release took an
   absolute `1e-10`. That read spacings of `1e-13` and `9e-13` as uniform, and most `linspace`
@@ -355,7 +346,7 @@
   while another Python thread is busy, releasing costs the caller about a switch interval, more than
   a shorter call computes. A degree reduction that first builds an exact operator counts a lower
   bound on that build toward its work. The bound is conservative, so a build of low or middle degree
-  keeps the GIL for its whole first call, and a high-degree one releases it. A call on the pool
+  can keep the GIL for its whole first call, and a high-degree one releases it. A call on the pool
   releases from a far smaller size, so Python threads that each run pantr calls scale, and a
   mid-size pool call can wait up to a switch interval when another Python thread is busy.
   `THBSpline.prolong_to`, the THB prolongation and multipatch interface detection release it only
@@ -1651,6 +1642,16 @@
   took the length of the patches' joint bounding box with `numpy.linalg.norm`, whose sum of
   squares overflowed to `inf`, so the tolerance became infinite and every face was matched with
   every face.
+- **`detect_interfaces` and `MultiPatch` compare face corners whose differences are huge or tiny
+  without overflow or underflow.** The previous release took each corner distance with
+  `numpy.linalg.norm`, whose sum of squares overflowed to `inf` for a coordinate difference from
+  about `1.34e154`, so corners of huge patches that coincide to rounding had no partner, and
+  underflowed to zero for corners about `1e-170` apart, which then read as coincident under any
+  tolerance. Such a sum, one that overflows, is subnormal or zero, or is NaN, now takes a chain of
+  `hypot` calls. A finite normal sum still takes its square root, with its own roundings, so a pair
+  whose distance is within a few units of rounding of the geometric tolerance may be classified
+  differently from the previous release, in either direction, and differently on a target with
+  fused multiply-add (the extension's x86-64-v3 and v4 rungs, arm64) than on x86-64 generic.
 - **`detect_interfaces` and `MultiPatch` of a patch whose knot vector sits far from the origin
   relative to its span** find the interfaces there are. The knots are compared after mapping
   each vector onto `[0, 1]`, whose rounding grows with that ratio, against the bare relative

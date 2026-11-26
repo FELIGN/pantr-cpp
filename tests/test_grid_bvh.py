@@ -587,7 +587,7 @@ def test_concurrent_first_queries_agree_with_a_serial_one(kind: str) -> None:
     The first query builds the tree with the GIL released, and a thread that finds the build under
     way waits for it; the result of every thread must equal the one a single thread gets from an
     identical grid. The grids are large enough that the build's estimated work reaches the
-    binding's ``gil_release_min_ops`` (a BVH of 400^2 cells or more, ``bvh_build_ops``), so the
+    binding's ``gil_release_min_ops`` (``bvh_build_ops``, which 400^2 cells exceed), so the
     builder releases the GIL, the other threads wait on the build's mutex, and the builder takes
     the GIL back afterwards; a smaller grid builds with the GIL held and exercises none of that.
     A smoke test: the threads need not overlap the build, and the absence of a deadlock rests on

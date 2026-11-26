@@ -158,8 +158,9 @@ double bvh_build_ops(std::size_t n, std::size_t ndim) {
 /// build under way waits on the block's mutex; it cannot deadlock against the builder: a builder
 /// that released the GIL takes it back only after `cell_bvh` has returned and released that mutex,
 /// and one that kept the GIL holds it for the whole build, so no other Python thread reaches the
-/// mutex meanwhile. A short build keeps the GIL, since releasing it
-/// costs the caller about a switch interval when another Python thread is CPU-bound.
+/// mutex meanwhile. The choice depends on the grid alone, so every caller of one grid makes the
+/// same one. A short build keeps the GIL, since releasing it costs the caller about a switch
+/// interval when another Python thread is CPU-bound.
 template <class G>
 void ensure_bvh(const G& g) {
   if (!g.bvh_built()) {
