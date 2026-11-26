@@ -652,8 +652,10 @@ def _change_basis_square_cases(profile: Profile) -> Iterator[Case]:
         profile (Profile): Sweep width.
 
     Yields:
-        Case: One hostile call per builder, degree and dtype; past the builder's
-        supported-degree domain, built to be refused (the documented ``ValueError``).
+        Case: One hostile call per builder, degree and dtype, a degree past the builder's
+        supported domain built to be refused (the documented ``ValueError``), plus the
+        documented rejections of a negative degree and, in the ``full`` profile, an
+        ``int64`` dtype.
     """
     # All six document a non-negative degree and a float32/float64 dtype, and the four
     # that carry a degree domain document it too, with a matching `Raises: ValueError` naming each.
@@ -845,9 +847,9 @@ def _round_trip_case(
         dtype (np.dtype[np.float32 | np.float64]): Working precision.
 
     Returns:
-        Case: The round-trip case: legal when the degree is inside both builders'
-        supported-degree domains, and built to be refused (the documented ``ValueError``)
-        when it is past either.
+        Case: The round-trip case: legal when the degree is inside every domain in
+        ``pair.limits``, and built to be refused (the documented ``ValueError``) when it
+        is past any of them.
     """
     from pantr.tolerance import get_machine_epsilon  # noqa: PLC0415 -- avoids import cycle
 

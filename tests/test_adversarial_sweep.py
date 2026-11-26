@@ -247,10 +247,10 @@ def test_full_change_of_basis_cases_find_nothing(
     ]
     assert not findings, "\n".join(findings)
 
-    # A refusal grades as documented whether or not the case expected it, so the grading alone
-    # cannot tell a past-domain case built to be refused from one left unclassified: every case
-    # the library refuses must be one built to be refused, or a builder that starts accepting a
-    # past-domain degree would go unreported.
+    # A refusal grades as documented whether or not the case is marked `must_reject`, so the
+    # grading alone cannot tell a past-domain case built to be refused from one left
+    # unclassified: every case the library refuses must be one built to be refused, or a builder
+    # that starts accepting a past-domain degree would go unreported.
     refused = [o.case for o in outcomes if o.verdict is Verdict.DOCUMENTED_REJECTION]
     assert refused
     unexpected = [case.label for case in refused if not case.must_reject]
