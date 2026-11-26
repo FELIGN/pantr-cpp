@@ -182,6 +182,17 @@ def _selected_cell_quadrature(cells: int) -> Callable[[], Callable[[], object]]:
     return setup
 
 
+def _cell_quadrature(cells: int) -> Callable[[], Callable[[], object]]:
+    """Map a one-point rule onto every cell of a tensor-product grid, without a selection."""
+
+    def setup() -> Callable[[], object]:
+        grid = uniform_grid(_UNIT_SQUARE, cells)
+        rule = gauss_legendre_quadrature(2, 1)
+        return lambda: cell_quadrature(grid, rule)
+
+    return setup
+
+
 def _block_partition(cells: int) -> Callable[[], Callable[[], object]]:
     """Partition a tensor-product grid into four blocks."""
 
@@ -224,13 +235,14 @@ SETUPS: dict[str, Callable[[], Callable[[], object]]] = {
     "fit_bspline scattered": _untimed_setup(_scattered_fit),
     "fit_bspline tensor": _untimed_setup(_tensor_fit),
     "quasi_interpolate_bspline": _untimed_setup(_qi),
-    # 2500^2 cells of 4 stores each, 3000^2 of 4 operations each, and 1000^2 cells of 4 + 5
-    # operations each: above the threshold.
+    # 2500^2 cells of 4 stores each, 4500^2 of 4 operations each, and 1500^2 and 1000^2 cells of
+    # 4 + 5 operations each: above the threshold.
     "collect_cell_bounds": _collect_cell_bounds(2500),
-    "partition_grid": _block_partition(3000),
+    "partition_grid": _block_partition(4500),
+    "cell_quadrature": _cell_quadrature(1500),
     "cell_quadrature selection": _selected_cell_quadrature(1000),
-    # A BVH of 400^2 cells: 4 operations per cell for its corners and each of its 18 full levels.
-    "query_aabb first": _first_query(400),
+    # A BVH of 600^2 cells: 4 operations per cell for its corners and each of its 19 full levels.
+    "query_aabb first": _first_query(600),
 }
 
 
@@ -269,6 +281,24 @@ def _cold_reduction_error(b: Bezier) -> object:
     return b.degree_reduction_error(1)
 
 
+def _cold_reduction(b: Bezier) -> object:
+    """Reduce as ``_cold_reduction_error`` does, returning the reduced Bezier."""
+    reduction_cache_clear()
+    return b.reduce_degree(1)
+
+
+def _cold_minimization(b: Bezier) -> object:
+    """Minimize a curve whose first trial's exact operator is built in the call."""
+    reduction_cache_clear()
+    return b.minimize_degree()
+
+
+def _cold_zero_tol_minimization(b: Bezier) -> object:
+    """Minimize with ``tol=0``, which runs no trial and builds nothing, however high the degree."""
+    reduction_cache_clear()
+    return b.minimize_degree(0.0)
+
+
 def _refused_minimization(b: Bezier) -> object:
     """Minimize a curve of degree above ``bincoeff_max_n`` (61), which the call refuses at once."""
     reduction_cache_clear()  # unrefused, the call would build an operator above the threshold
@@ -286,8 +316,13 @@ SHORT_CALLS: dict[str, Callable[[], Callable[[], object]]] = {
     "compose": _small_compose,
     "reduce_degree": _on(_SMALL, lambda b: b.reduce_degree(1)),
     "degree_reduction_error": _on(_SMALL, lambda b: b.degree_reduction_error(1)),
-    "degree_reduction_error cold": _on(_net((4, 1)), _cold_reduction_error),
+    # A cold build at degree 10 is estimated at 16 * 2290 operations, two orders below the
+    # threshold; at degree 61 with ``tol=0`` the call builds nothing.
+    "degree_reduction_error cold": _on(_net((11, 1)), _cold_reduction_error),
+    "reduce_degree cold": _on(_net((11, 1)), _cold_reduction),
     "minimize_degree": _on(_SMALL, lambda b: b.minimize_degree()),
+    "minimize_degree cold": _on(_net((11, 1)), _cold_minimization),
+    "minimize_degree tol 0 cold": _on(_net((62, 1)), _cold_zero_tol_minimization),
     "minimize_degree refused": _on(_net((63, 1)), _refused_minimization),
     "fit_bezier tensor": lambda: lambda: fit_bezier(
         _rng().random((5, 5)), [np.linspace(0.0, 1.0, 5)] * 2, degree=[3, 3]
@@ -304,10 +339,13 @@ SHORT_CALLS: dict[str, Callable[[], Callable[[], object]]] = {
     "quasi_interpolate_bspline": lambda: lambda: quasi_interpolate_bspline(
         lambda pts: np.ones(pts.shape[0]), create_uniform_space(2, [4, 4])
     ),
-    "collect_cell_bounds": _collect_cell_bounds(10),
-    "partition_grid": _block_partition(10),
-    "cell_quadrature selection": _selected_cell_quadrature(10),
-    "query_aabb first": _first_query(4),
+    # Sized so that each estimate is at most a tenth of the threshold while the call is not
+    # trivially short: 300^2 cells of 4 stores, 300^2 of 4 operations, 100^2 of 4 + 5, and a BVH
+    # of 40^2 cells at 4 operations per cell for its corners and each of its 11 full levels.
+    "collect_cell_bounds": _collect_cell_bounds(300),
+    "partition_grid": _block_partition(300),
+    "cell_quadrature selection": _selected_cell_quadrature(100),
+    "query_aabb first": _first_query(40),
 }
 
 
