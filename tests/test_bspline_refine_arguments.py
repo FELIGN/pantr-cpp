@@ -113,6 +113,15 @@ class TestRestrictArguments:
         with pytest.raises(ValueError, match="already open"):
             _curve().restrict((0, 1))
 
+    def test_the_full_domain_of_a_periodic_curve_says_it_is_opened_first(self) -> None:
+        """A periodic direction is opened before the bounds are compared with its ends."""
+        knots = create_uniform_periodic_knots(6, 2)
+        space = BsplineSpace([BsplineSpace1D(knots, 2, periodic=True)])
+        crv = Bspline(space, np.zeros((space.num_basis[0], 2)))
+        lo, hi = (float(x) for x in space.spaces[0].domain)
+        with pytest.raises(ValueError, match="periodic direction is converted to open form first"):
+            crv.restrict((lo, hi))
+
     @pytest.mark.parametrize("bounds", [("a", "b"), ("0.1", "0.5"), (None, 0.5)])
     def test_bounds_that_are_not_numbers_are_a_type_error(
         self, bounds: tuple[object, object]

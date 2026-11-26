@@ -235,7 +235,9 @@ template <StorageFloat T>
   const bool left_kept = lo == a && knots[0] == a;
   const bool right_kept = hi == b && knots.back() == b;
   if (left_kept && right_kept) {
-    throw value_error("Bounds match the full domain and the direction is already open.");
+    throw value_error(
+        "Bounds match the full domain and both its ends are already open (a periodic direction "
+        "is converted to open form first), so there is nothing to restrict.");
   }
 
   std::vector<T> out;
