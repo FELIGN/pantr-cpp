@@ -1361,6 +1361,11 @@
   in a separate package; until then pantr has none of its own.
 
 ### Fixed
+- **`Bspline.slice` and `Bspline.boundary` at the end of a domain only a few ulps wider than the
+  space's tolerance** (a space built with `snap_knots=False`) return the curve's value at the end.
+  The end was tested as `value <= start + tol`, and the rounded `start + tol` could reach the end,
+  which was then taken for the start: the result was the start's value. Both end tests now compare
+  the distance to the end with the tolerance.
 - **`Bspline.remove_knots` with `tol=None` grades each later copy of a repeated knot against a
   floor grown with that copy's amplification of the net's rounding, up to the conservative tier**
   (issue #15). Each further copy of one knot removed in a call amplifies the rounding the control
