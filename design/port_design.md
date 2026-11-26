@@ -369,9 +369,10 @@ exhaustion becomes a status the caller receives, never a plausible value:
   releasing while another Python thread is CPU-bound costs the caller about one switch interval before it gets the
   GIL back, so it pays only for a call about that long; the constant is that interval at the work model's one
   operation per cycle, an **admitted heuristic** like the two above. Each site's estimate is a cheap lower bound on
-  its work; a reduction that would first build an exact operator releases whatever its size. The CAD, refinement and
-  modification bindings never release (no estimate is stated for them yet), and the lazy BVH build releases whenever
-  it runs.
+  its work. A reduction that would first build an exact operator, and the lazy BVH build, release only when the
+  build's estimated work reaches `gil_release_min_ops` (`operator_build_ops`, `bvh_build_ops`); the serial grid
+  passes on a tensor-product grid likewise. The CAD, refinement and modification bindings never release (no estimate
+  is stated for them yet).
 - MPI: `MPI_THREAD_FUNNELED` is sufficient because collectives are only called by the calling thread, outside
   `parallel_for`; `pantr::mpi` checks `MPI_Query_thread() >= FUNNELED` at entry and says that the caller must be the
   thread that initialised MPI.
