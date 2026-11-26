@@ -29,32 +29,32 @@ Coverage
 --------
 
 What the ``full`` profile actually crosses, so the claim can be read off rather than
-guessed. Case counts are from the first complete run.
+guessed.
 
-======================  =====  =========================================================
-group                   cases  covered
-======================  =====  =========================================================
-``geometry``              352  ``AABB`` and ``AffineTransform``: construction, degenerate
-                               and inverted boxes, set operations, transform enclosure and
-                               inverse round trip, dimensions 1-4, every domain.
-``grid``                  518  ``TensorProductGrid``, ``HierarchicalGrid``, ``BVH``,
-                               ``Partition``/``partition_grid`` (three backends),
-                               ``overlay``, tags, ``cell_quadrature``; refinement depth to
-                               20, anisotropic factors, degenerate BVH configurations.
-``quad``                  282  all seven 1D rules, ``PointsLattice``, ``QuadratureRule``,
-                               ``tensor_product_quadrature``, ``gauss_legendre_quadrature``;
-                               point counts 1-1000, both dtypes, exactness against exact
-                               rational moments.
-``basis``                1192  every ``tabulate_*`` and every ``change_basis`` builder,
-                               degrees 0-62, both dtypes, conditioning-derived round trips.
-``bspline``             13341  the multiplicity ladder crossed with degree, dtype and
-                               domain, then **every** operation that takes a spline pushed
-                               through each fixture; plus nD spaces to dimension 4,
-                               extraction for three targets, the knot-vector factories,
-                               interpolation, and THB spaces truncated and not.
-``bezier``                  -  see ``_probes_bezier``; curve, surface and volume Bezier
-                               operations, and the one named private kernel.
-======================  =====  =========================================================
+======================  =========================================================
+group                   covered
+======================  =========================================================
+``geometry``            ``AABB`` and ``AffineTransform``: construction, degenerate
+                        and inverted boxes, set operations, transform enclosure and
+                        inverse round trip, dimensions 1-4, every domain.
+``grid``                ``TensorProductGrid``, ``HierarchicalGrid``, ``BVH``,
+                        ``Partition``/``partition_grid`` (three backends),
+                        ``overlay``, tags, ``cell_quadrature``; refinement depth to
+                        20, anisotropic factors, degenerate BVH configurations.
+``quad``                all seven 1D rules, ``PointsLattice``, ``QuadratureRule``,
+                        ``tensor_product_quadrature``, ``gauss_legendre_quadrature``;
+                        point counts 1-1000, both dtypes, exactness against exact
+                        rational moments.
+``basis``               every ``tabulate_*`` and every ``change_basis`` builder,
+                        degrees 0-62, both dtypes, conditioning-derived round trips.
+``bspline``             the multiplicity ladder crossed with degree, dtype and
+                        domain, then **every** operation that takes a spline pushed
+                        through each fixture; plus nD spaces to dimension 4,
+                        extraction for three targets, the knot-vector factories,
+                        interpolation, and THB spaces truncated and not.
+``bezier``              see ``_probes_bezier``; curve, surface and volume Bezier
+                        operations, and the one named private kernel.
+======================  =========================================================
 
 Axes crossed: interior knot multiplicity 1 to ``degree + 1``; degree 0, 1, 2, 3, 15, 62;
 domains ``[0,1]``, ``[0,1e-6]``, ``[0,5]``, ``[0,100]``, ``[0,1e6]`` and ``[1e6,1e6+1]``;
