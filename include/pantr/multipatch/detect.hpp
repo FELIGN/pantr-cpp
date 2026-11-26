@@ -417,10 +417,18 @@ template <StorageFloat T>
   // is within about `(2 rank - 1) u` of the exact one, an underflowed square losing at most half
   // the smallest subnormal, under `u` times the sum (gradual underflow: under flush-to-zero a
   // square near `DBL_MIN` is lost whole and only the `hypot` chain holds); so its root is within a
-  // few units of rounding of the distance, as the `hypot` chain is. The chain takes a sum that
-  // overflowed (a difference from about 1.3e154, where corners coinciding to rounding would
-  // otherwise have no partner), a zero or subnormal one, which may have lost its relative accuracy
-  // to underflow, and NaN.
+  // few units of rounding of the distance, as the `hypot` chain is. The bound assumes
+  // round-to-nearest in `double` and holds whether or not the compiler contracts `sum += diff *
+  // diff` into a fused multiply-add (`-ffp-contract=on`, which `pantr::pantr` sets), since the
+  // contraction only drops a rounding. Both routes being within a few units, not equal, a pair
+  // whose distance is within a few units of rounding of `tol` may classify differently from the
+  // `hypot` chain used for every pair before, in either direction; and differently on a target
+  // with FMA, where the sum may be contracted (the extension's v3 and v4 rungs), than on one
+  // without (generic). The chain takes a sum that overflowed (a difference from about 1.3e154,
+  // where corners coinciding to rounding would otherwise have no partner); a subnormal one, which
+  // may have lost its relative accuracy to underflow; a zero one, most often from bitwise-equal
+  // corners, where the chain returns zero too, and otherwise from squares that all underflowed;
+  // and NaN.
   const auto distance = [&](std::size_t i, std::size_t j) {
     double sum = 0.0;
     for (std::size_t c = 0; c < rank_a; ++c) {

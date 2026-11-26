@@ -250,6 +250,15 @@
   and releases it for a large one (about a switch interval of work or more) or one whose corners
   are collected on the thread pool. It released it for every build, so under a CPU-bound Python
   thread the first query of a small grid waited about a switch interval.
+- **`detect_interfaces`, and `MultiPatch` when it detects its interfaces, compare face corners
+  by the square root of the sum of squared differences** where that sum is a finite normal number,
+  and by the previous release's chain of `hypot` calls, which is far slower, only where the sum
+  overflows, is subnormal or zero, or is NaN. The two are each within a few units of rounding of
+  the distance but not equal, so a pair of corners whose distance is within a few units of
+  rounding of the geometric tolerance may be classified differently from the previous release, in
+  either direction, and differently on the extension's FMA rungs (x86-64-v3 and v4), where the
+  sum may be computed with fused multiply-adds, than on the generic one. A pair farther from the
+  tolerance than that is classified as before.
 - **`TensorProductGrid.is_uniform` judges an axis's spacings relative to its scale**: uniform when
   their spread is at most `16 eps max(span, |b[0]|, |b[-1]|)`, where the previous release took an
   absolute `1e-10`. That read spacings of `1e-13` and `9e-13` as uniform, and most `linspace`
