@@ -117,7 +117,8 @@ extraction's batch applies, point location, the grids' batch queries, the THB ev
 prolongation, and interface detection. Operations that never use the pool (Bézier multiply and
 composition, the degree reductions, the fits, projections and quasi-interpolants, and a
 tensor-product grid's `collect_cell_bounds`, `cell_quadrature` and `partition_grid`, as well as
-`cell_quadrature` with a cell selection on any grid) release it only when they are long, about a switch interval of work (`sys.getswitchinterval()`) or more. Several
+`cell_quadrature` with a cell selection on any grid, and the BVH build of a grid's first
+`query_aabb`) release it only when they are long, about a switch interval of work (`sys.getswitchinterval()`) or more. Several
 Python threads then run PaNTr kernels concurrently, as in this pattern. One cost remains: when
 another Python thread runs CPU-bound bytecode, a call that releases the GIL waits up to a switch
 interval to get it back, which a mid-size pool call notices and a short call that keeps the GIL

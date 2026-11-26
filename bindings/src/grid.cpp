@@ -26,6 +26,7 @@
 #include <nanobind/stl/vector.h>
 
 #include <algorithm>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -137,18 +138,29 @@ bool collect_releases(const G& g) {
   }
 }
 
-/// Build `g`'s lazy BVH, with the GIL released, unless a call has built it already.
+/// Work of building the BVH of `n` cells, for the GIL decision only. Every level of depth up to
+/// `floor(log2 n)` holds every cell (the median split leaves at least `floor(n / 2^d) >= 1` cells
+/// in each node of depth `d`), and each level's node boxes take a min and a max per cell and axis,
+/// `2 * ndim * n`; with the corners collected first, `2 * ndim * n * (floor(log2 n) + 2)`. A lower
+/// bound: it leaves out the centroids and the sorts (`detail::bvh_build_core`).
+double bvh_build_ops(std::size_t n, std::size_t ndim) {
+  return corner_ops(n, ndim) * static_cast<double>(std::bit_width(n) + 1);
+}
+
+/// Build `g`'s lazy BVH unless a call has built it already, releasing the GIL when the build is
+/// long (`bvh_build_ops` against `gil_release_min_ops`) or collects the corners on the pool.
 ///
 /// The build reads the grid and writes only C++ state, so it needs no GIL. A thread that finds the
-/// build under way waits on the block's mutex; it cannot deadlock against the builder, which takes
-/// the GIL back only after `cell_bvh` has returned and released that mutex. The release costs one
-/// lock round trip, paid only by a call that finds the tree unbuilt (once per grid, or a few
-/// times when threads race to the first query), and spares the other Python threads a stall for
-/// the length of the build.
+/// build under way waits on the block's mutex; it cannot deadlock against the builder, which never
+/// takes the GIL while it holds that mutex: one that released it takes it back only after
+/// `cell_bvh` has returned. A short build keeps the GIL, since releasing it costs the caller about
+/// a switch interval when another Python thread is CPU-bound.
 template <class G>
 void ensure_bvh(const G& g) {
   if (!g.bvh_built()) {
-    const nb::gil_scoped_release release;
+    const auto n = static_cast<std::size_t>(g.num_cells());
+    const ReleaseGil release(collect_releases(g) ||
+                             bvh_build_ops(n, g.ndim()) >= gil_release_min_ops);
     static_cast<void>(g.cell_bvh());
   }
 }

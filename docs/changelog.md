@@ -230,6 +230,10 @@
   `cell_quadrature` with a cell selection on a hierarchical grid, release the GIL when long**:
   from about a switch interval of work (`sys.getswitchinterval()`), as the other calls that never
   use the thread pool do. They held it for the whole call, however many cells.
+- **A grid's first `query_aabb` or `cell_bvh` keeps the GIL while it builds a small grid's BVH**,
+  and releases it for a large one (about a switch interval of work or more) or one whose corners
+  are collected on the thread pool. It released it for every build, so under a CPU-bound Python
+  thread the first query of a small grid waited about a switch interval.
 - **`TensorProductGrid.is_uniform` judges an axis's spacings relative to its scale**: uniform when
   their spread is at most `16 eps max(span, |b[0]|, |b[-1]|)`, where the previous release took an
   absolute `1e-10`. That read spacings of `1e-13` and `9e-13` as uniform, and most `linspace`
