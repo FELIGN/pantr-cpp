@@ -269,6 +269,14 @@ def _cold_reduction_error(b: Bezier) -> object:
     return b.degree_reduction_error(1)
 
 
+def _refused_minimization(b: Bezier) -> object:
+    """Minimize a curve of degree above ``bincoeff_max_n`` (61), which the call refuses at once."""
+    reduction_cache_clear()  # unrefused, the call would build an operator above the threshold
+    with pytest.raises(ValueError, match="binomial coefficients"):
+        b.minimize_degree()
+    return None
+
+
 SHORT_CALLS: dict[str, Callable[[], Callable[[], object]]] = {
     "split": _on(_SMALL, lambda b: b.split(0, 0.3)),
     "multiply": _on(_SMALL, lambda b: b.multiply(b)),
@@ -280,6 +288,7 @@ SHORT_CALLS: dict[str, Callable[[], Callable[[], object]]] = {
     "degree_reduction_error": _on(_SMALL, lambda b: b.degree_reduction_error(1)),
     "degree_reduction_error cold": _on(_net((4, 1)), _cold_reduction_error),
     "minimize_degree": _on(_SMALL, lambda b: b.minimize_degree()),
+    "minimize_degree refused": _on(_net((63, 1)), _refused_minimization),
     "fit_bezier tensor": lambda: lambda: fit_bezier(
         _rng().random((5, 5)), [np.linspace(0.0, 1.0, 5)] * 2, degree=[3, 3]
     ),
