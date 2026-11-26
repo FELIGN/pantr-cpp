@@ -7,6 +7,7 @@
 #include "pantr/bezier/bezier.hpp"
 #include "pantr/bezier/fit.hpp"
 #include "pantr/bezier/reduce.hpp"
+#include "pantr/core/binomial.hpp"
 #include "pantr/core/errors.hpp"
 #include "pantr/core/ndarray.hpp"
 
@@ -64,8 +65,10 @@ NumpyView<double> operator_view(std::shared_ptr<const NdArray<double>> op) {
 
 /// Exact-integer steps of `bernstein_gram_exact(n)`: each of its `(n + 1)^2` entries forms
 /// `C(n, i)`, `C(n, j)` and `C(2n, i + j)` with `comb_exact`, which takes `min(k, m - k)` steps for
-/// `C(m, k)`. Summed in closed form over `i` and `j`: `2 (n + 1) sum_i min(i, n - i)`, and
-/// `sum_s (k_s + 1) k_s` with `k_s = min(s, 2n - s)`, `k_s + 1` pairs having `i + j = s`.
+/// `C(m, k)`. Summed over the entries by grouping them, in loops of `O(n)` terms rather than over
+/// the `(n + 1)^2` entries: `2 (n + 1) sum_i min(i, n - i)` for the first two, and
+/// `sum_s (k_s + 1) k_s` with `k_s = min(s, 2n - s)` for the third, `k_s + 1` pairs having
+/// `i + j = s`.
 double gram_steps(long long n) {
   double single = 0.0;
   double pairs = 0.0;
@@ -100,17 +103,25 @@ double operator_build_ops(long long p, long long t) {
 /// reduced direction applies a `(p - t + 1, p + 1)` operator to every column of the net, so it
 /// costs `b.size() * (p - t + 1)` multiply-adds; plus the largest operator build a direction needs
 /// (`operator_build_ops`; the maximum rather than the sum, a bound whether or not directions of one
-/// key share a build).
+/// key share a build). Zero for decrements `detail::check_decrements` refuses (a count other than
+/// the dimension, a negative one, or one above its direction's degree; none positive counts nothing
+/// below), since the call then does no work. Only the private binding reaches those: the public
+/// wrapper refuses them first.
 template <class T>
 double reduction_ops(const Bezier<T>& b, const std::vector<long long>& decrements) {
+  if (decrements.size() != b.dim()) {
+    return 0.0;
+  }
   double ops = 0.0;
   double build = 0.0;
-  const std::size_t n = (std::min)(b.dim(), decrements.size());
-  for (std::size_t d = 0; d < n; ++d) {
+  for (std::size_t d = 0; d < b.dim(); ++d) {
     const auto p = static_cast<long long>(b.degree(d));
     const long long t = decrements[d];
-    if (t < 1 || t > p) {
-      continue;  // nothing to reduce, or an argument the call refuses
+    if (t < 0 || t > p) {
+      return 0.0;
+    }
+    if (t == 0) {
+      continue;
     }
     build = (std::max)(build, operator_build_ops(p, t));
     if (ops == 0.0) {
@@ -123,18 +134,21 @@ double reduction_ops(const Bezier<T>& b, const std::vector<long long>& decrement
 /// Work of `minimize_degree`, for the GIL decision only: its first trial applies a `(p, p + 1)`
 /// operator to every column of the net, `b.size() * p` multiply-adds for the first direction of
 /// degree `p >= 1`; plus the largest first-trial operator build a direction needs
-/// (`operator_build_ops`). Zero for a tolerance that is not positive, which runs no trial, or not
-/// finite, which the call refuses.
+/// (`operator_build_ops`). Zero for a tolerance that is not positive, which runs no trial, and
+/// for a call `minimize_degree` refuses before any work: a tolerance that is not finite, or a
+/// direction of degree above `bincoeff_max_n`.
 template <class T>
 double minimization_ops(const Bezier<T>& b, std::optional<double> tol) {
   if (tol.has_value() && !(*tol > 0.0 && std::isfinite(*tol))) {
-    return 0.0;  // no trial: a tolerance that is not positive keeps the degree; one not finite is
-                 // refused
+    return 0.0;
   }
   double ops = 0.0;
   double build = 0.0;
   for (std::size_t d = 0; d < b.dim(); ++d) {
     const auto p = static_cast<long long>(b.degree(d));
+    if (p > bincoeff_max_n) {
+      return 0.0;
+    }
     if (p < 1) {
       continue;
     }

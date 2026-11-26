@@ -155,10 +155,11 @@ double bvh_build_ops(std::size_t n, std::size_t ndim) {
 /// long (`bvh_build_ops` against `gil_release_min_ops`) or collects the corners on the pool.
 ///
 /// The build reads the grid and writes only C++ state, so it needs no GIL. A thread that finds the
-/// build under way waits on the block's mutex; it cannot deadlock against the builder, which never
-/// takes the GIL while it holds that mutex: one that released it takes it back only after
-/// `cell_bvh` has returned. A short build keeps the GIL, since releasing it costs the caller about
-/// a switch interval when another Python thread is CPU-bound.
+/// build under way waits on the block's mutex; it cannot deadlock against the builder: a builder
+/// that released the GIL takes it back only after `cell_bvh` has returned and released that mutex,
+/// and one that kept the GIL holds it for the whole build, so no other Python thread reaches the
+/// mutex meanwhile. A short build keeps the GIL, since releasing it
+/// costs the caller about a switch interval when another Python thread is CPU-bound.
 template <class G>
 void ensure_bvh(const G& g) {
   if (!g.bvh_built()) {
