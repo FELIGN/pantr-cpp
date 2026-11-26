@@ -428,13 +428,14 @@ void bezier_structural_identity_mask(const BsplineSpace1D<T>& space, std::span<b
 
 /// Flag the intervals whose Lagrange extraction operator is structurally the identity.
 ///
-/// A degree-0 space has the 1x1 operator `[[1]]` on every interval. Otherwise the operator is the
-/// Bézier one times the Lagrange-to-Bernstein matrix, so it is the identity exactly where the
-/// Bézier operator is and that matrix is the identity. The matrix is the identity exactly when the
-/// Lagrange basis is the Bernstein basis, `B_i(x_k) = delta_ik` at the nodes `x_k`. That needs each
-/// Bernstein function to reach 1 at a node, which an interior one (`0 < i < degree`) never does,
-/// so it happens for degree 1 only (nodes 0 and 1: equispaced, Gauss-Lobatto or Chebyshev-Lobatto);
-/// for any other matrix no interval is flagged.
+/// The operator is the Bézier one times the Lagrange-to-Bernstein matrix, so it is the identity
+/// exactly where the Bézier operator is and that matrix is the identity. The matrix is the identity
+/// exactly when the Lagrange basis is the Bernstein basis, `B_i(x_k) = delta_ik` at the nodes
+/// `x_k`. That needs each Bernstein function to reach 1 at a node, which an interior one
+/// (`0 < i < degree`) never does, so it happens for degree 0 (both bases are the constant 1, the
+/// matrix is `[[1]]` for every variant, and every knot class has multiplicity at least
+/// `degree + 1 = 1`, so every interval is flagged) and degree 1 (nodes 0 and 1: equispaced,
+/// Gauss-Lobatto or Chebyshev-Lobatto); for any other matrix no interval is flagged.
 ///
 /// Args:
 ///     space (const BsplineSpace1D<T>&): The space.
@@ -449,10 +450,6 @@ template <StorageFloat T>
 void lagrange_structural_identity_mask(const BsplineSpace1D<T>& space,
                                        basis::LagrangeVariant variant, std::span<bool> out) {
   detail::check_mask_size(static_cast<std::size_t>(space.num_intervals()), out);
-  if (space.degree() == 0) {
-    std::fill(out.begin(), out.end(), true);
-    return;
-  }
   const auto matrix =
       change_basis::cached<T>(change_basis::Kind::lagrange_to_bernstein, space.degree(), variant);
   const auto order = static_cast<std::size_t>(space.degree()) + 1;

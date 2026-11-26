@@ -281,6 +281,7 @@ template <StorageFloat T>
 ///
 /// Raises:
 ///     value_error: `degree < 0`.
+///     capacity_error: `(degree + 1)^2 sizeof(T)` bytes exceed the largest `std::ptrdiff_t`.
 template <StorageFloat T>
 [[nodiscard]] NdArray<T> legendre_to_cardinal(int degree) {
   detail::check_non_negative(degree);
@@ -336,6 +337,7 @@ template <StorageFloat T>
 ///
 /// Raises:
 ///     value_error: `degree < 0`.
+///     capacity_error: `(degree + 1)^2 sizeof(T)` bytes exceed the largest `std::ptrdiff_t`.
 template <StorageFloat T>
 [[nodiscard]] NdArray<T> monomial_to_bernstein(int degree) {
   detail::check_non_negative(degree);

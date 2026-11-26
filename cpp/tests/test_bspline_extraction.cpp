@@ -551,3 +551,29 @@ TEST_CASE_TEMPLATE(
           bs::bezier_structural_identity_mask<double>(two, std::span<bool>(wrong.get(), 3));
         }) == "Output array has shape (3,), but expected shape (2,)");
 }
+
+TEST_CASE_TEMPLATE(
+    "Lagrange structural identity mask: a degree-0 space is the identity on every interval, for "
+    "every variant",
+    T, double, float) {
+  // Every degree-0 operator is the 1x1 identity `[[1]]`, whatever the variant's nodes (the
+  // Lagrange and Bernstein bases are both the constant 1), so every interval is flagged.
+  using pantr::basis::LagrangeVariant;
+  const std::vector<T> k = bspline_test::cast_all<T>({0.0, 0.25, 1.0, 1.5, 3.0});
+  const bs::BsplineSpace1D<T> space(std::span<const T>(k), 0);
+  const std::size_t n = static_cast<std::size_t>(space.num_intervals());
+  REQUIRE(n == 4);
+  const LagrangeVariant variants[] = {LagrangeVariant::equispaces, LagrangeVariant::gauss_legendre,
+                                      LagrangeVariant::gauss_lobatto_legendre,
+                                      LagrangeVariant::chebyshev_1st,
+                                      LagrangeVariant::chebyshev_2nd};
+  for (const LagrangeVariant variant : variants) {
+    CAPTURE(pantr::basis::variant_name(variant));
+    std::unique_ptr<bool[]> got(new bool[n]);
+    std::fill(got.get(), got.get() + n, false);
+    bs::lagrange_structural_identity_mask<T>(space, variant, std::span<bool>(got.get(), n));
+    for (std::size_t i = 0; i < n; ++i) {
+      CHECK(got[i]);
+    }
+  }
+}
