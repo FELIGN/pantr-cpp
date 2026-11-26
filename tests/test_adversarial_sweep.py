@@ -31,6 +31,7 @@ import os
 import pathlib
 import subprocess
 import sys
+from functools import partial
 from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
@@ -188,19 +189,37 @@ def test_full_basis_enumeration_calls_no_builder(monkeypatch: pytest.MonkeyPatch
     # A builder called while the cases are built, rather than inside a case, ends the group's
     # generator on its first refusal and drops every case after it. Every public builder
     # computes through `_build`, looked up when it is called, so patching it there reaches the
-    # builders the probes hold in their tables too.
+    # builders the probes hold in their tables too. Calls are recorded, not only raised, so a
+    # call inside a handler is seen as well.
+    calls: list[tuple[object, ...]] = []
+
     def refuse(*args: object, **kwargs: object) -> None:
-        raise AssertionError("a change-of-basis builder ran while the cases were being built")
+        calls.append(args)
+        raise AssertionError("a change-of-basis builder ran")
 
     monkeypatch.setattr(import_module("pantr.change_basis"), "_build", refuse)
 
-    cases = list(_probes_basis.cases(Profile.FULL))
+    assert len(list(_probes_basis.cases(Profile.FULL))) > 0
+    assert calls == []
 
-    round_trips = [case for case in cases if case.label.startswith("roundtrip_")]
-    assert round_trips
-    # The patch is live: running a case does reach it.
-    with pytest.raises(AssertionError, match="while the cases were being built"):
-        round_trips[0].run()
+    # The patch is live for every builder the probes hold.
+    variant = _probes_basis.LagrangeVariant.EQUISPACES
+    builders: list[Callable[[], object]] = [
+        partial(func, 1, np.float64) for _, func, _ in _probes_basis._SQUARE_BUILDERS
+    ]
+    builders += [
+        partial(func, 1, variant, np.float64)
+        for _, func, _ in _probes_basis._LAGRANGE_PAIR_BUILDERS
+    ]
+    builders += [
+        partial(func, 1, np.float64)
+        for pair in _probes_basis._ROUND_TRIPS
+        for func in (pair.forward, pair.backward)
+    ]
+    for call in builders:
+        with pytest.raises(AssertionError, match="a change-of-basis builder ran"):
+            call()
+    assert len(calls) == len(builders)
 
 
 @pytest.mark.parametrize(
@@ -228,23 +247,28 @@ def test_full_change_of_basis_cases_find_nothing(
     assert not findings, "\n".join(findings)
 
 
-def _accepts(func: Callable[..., Any], *args: Any) -> bool:
-    """Say whether a builder returns rather than refusing with `ValueError`."""
+def _accepts(func: Callable[..., Any], degree: int, dtype: np.dtype[Any]) -> bool:
+    """Say whether a builder returns, rather than refusing the degree as outside its domain."""
     try:
-        func(*args)
-    except ValueError:
+        func(degree, dtype)
+    except ValueError as exc:
+        if "outside the supported domain" not in str(exc):
+            raise
         return False
     return True
 
 
 def test_probes_read_each_builder_domain_at_its_edge() -> None:
-    # The swept degrees never sit on the edge of a domain, so the probes' reading of each domain
-    # is checked here against the library itself, at both dtypes' last supported degree and the
-    # one after it.
-    domains = [
-        (name, (lambda degree, dtype, func=func: func(degree, dtype)), limit)
-        for name, func, limit in _probes_basis._SQUARE_BUILDERS
-    ] + [
+    # The full profile's degrees straddle few domain edges, so the probes' reading of each
+    # domain is checked here against the library itself, at both dtypes' last supported degree
+    # and the one after it, for every table the probes read a domain from.
+    dtypes = (np.dtype(np.float32), np.dtype(np.float64))
+    checked = 0
+    disagreements = []
+    single: list[tuple[str, Callable[..., Any], Any]] = [
+        (name, func, limit) for name, func, limit in _probes_basis._SQUARE_BUILDERS
+    ]
+    single += [
         (
             f"{name}_{variant.value}",
             (lambda degree, dtype, func=func, variant=variant: func(degree, variant, dtype)),
@@ -254,17 +278,30 @@ def test_probes_read_each_builder_domain_at_its_edge() -> None:
         if limits is not None
         for variant in limits
     ]
-    disagreements = []
-    for name, build, limit in domains:
-        if limit is None:
+    for name, build, limit in single:
+        if limit is None:  # no documented limit; refusal past one is checked by the sweep
             continue
-        edges = (limit.float32, limit.float32 + 1, limit.float64, limit.float64 + 1)
-        for dtype in (np.dtype(np.float32), np.dtype(np.float64)):
-            for degree in edges:
+        checked += 1
+        for degree in (limit.float32, limit.float32 + 1, limit.float64, limit.float64 + 1):
+            for dtype in dtypes:
                 probe = _probes_basis._supports(limit, degree, dtype)
                 if probe != _accepts(build, degree, dtype):
                     disagreements.append(f"{name} degree {degree} {dtype.name}: probe says {probe}")
-    assert len(domains) == 6 + 5  # six square builders, bernstein_to_lagrange per variant
+    for pair in _probes_basis._ROUND_TRIPS:
+        checked += 1
+        degrees = {d for limit in pair.limits for d in (limit.float32, limit.float64)}
+        for degree in sorted(degrees | {d + 1 for d in degrees}):
+            for dtype in dtypes:
+                probe = _probes_basis._round_trip_case(pair, degree, dtype).must_succeed
+                library = _accepts(pair.forward, degree, dtype) and _accepts(
+                    pair.backward, degree, dtype
+                )
+                if probe != library:
+                    disagreements.append(
+                        f"roundtrip_{pair.label} degree {degree} {dtype.name}: probe says {probe}"
+                    )
+    # Four limited square builders, bernstein_to_lagrange per variant, three round trips.
+    assert checked == 4 + 5 + 3
     assert not disagreements, "\n".join(disagreements)
 
 

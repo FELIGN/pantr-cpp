@@ -655,7 +655,7 @@ def _change_basis_square_cases(profile: Profile) -> Iterator[Case]:
         Case: One hostile call per builder.
     """
     # All six document a non-negative degree and a float32/float64 dtype, and the four
-    # that solve a degree domain too, with a matching `Raises: ValueError` naming each.
+    # that carry a degree domain document it too, with a matching `Raises: ValueError` naming each.
     for name, func, limit in _SQUARE_BUILDERS:
         for degree in _capped(degrees(profile), 2, profile):
             for dtype in dtypes(profile):
@@ -830,7 +830,7 @@ def _round_trip_case(
     documented in the ``Warning:`` of ``compute_cardinal_to_legendre_1d``
     (``cond ~ 1.1e3`` at degree 4, ``3.0e8`` at degree 8, for the
     cardinal/Legendre pair): a bare literal
-    tolerance would be meaningless across that six-orders-of-magnitude range.
+    tolerance would be meaningless across that five-orders-of-magnitude range.
     An explicit factor of ``16 * (degree + 1)`` covers the round trip's own
     matrix product on top of the conditioning bound.
 
