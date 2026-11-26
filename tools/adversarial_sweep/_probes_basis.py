@@ -652,7 +652,8 @@ def _change_basis_square_cases(profile: Profile) -> Iterator[Case]:
         profile (Profile): Sweep width.
 
     Yields:
-        Case: One hostile call per builder.
+        Case: One hostile call per builder, degree and dtype; past the builder's
+        supported-degree domain, built to be refused (the documented ``ValueError``).
     """
     # All six document a non-negative degree and a float32/float64 dtype, and the four
     # that carry a degree domain document it too, with a matching `Raises: ValueError` naming each.
@@ -834,7 +835,7 @@ def _round_trip_case(
     An explicit factor of ``16 * (degree + 1)`` covers the round trip's own
     matrix product on top of the conditioning bound.
 
-    Nothing is built here: both matrices, and the condition number, are computed
+    No builder is called here: both matrices, and the condition number, are computed
     when the case runs, so a builder's refusal is that case's outcome and cannot end
     the enumeration of the cases after it.
 
@@ -844,8 +845,9 @@ def _round_trip_case(
         dtype (np.dtype[np.float32 | np.float64]): Working precision.
 
     Returns:
-        Case: The round-trip case: legal past neither builder's supported-degree domain,
-        and built to be refused (the documented ``ValueError``) past either.
+        Case: The round-trip case: legal when the degree is inside both builders'
+        supported-degree domains, and built to be refused (the documented ``ValueError``)
+        when it is past either.
     """
     from pantr.tolerance import get_machine_epsilon  # noqa: PLC0415 -- avoids import cycle
 
