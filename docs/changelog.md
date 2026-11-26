@@ -226,6 +226,10 @@
   Inputs whose end knot classes differ while their nets keep one shape are still not detected.
 
 ### Changed
+- **A tensor-product grid's `collect_cell_bounds`, `cell_quadrature` and `partition_grid`, and
+  `cell_quadrature` with a cell selection on a hierarchical grid, release the GIL when long**:
+  from about a switch interval of work (`sys.getswitchinterval()`), as the other calls that never
+  use the thread pool do. They held it for the whole call, however many cells.
 - **`TensorProductGrid.is_uniform` judges an axis's spacings relative to its scale**: uniform when
   their spread is at most `16 eps max(span, |b[0]|, |b[-1]|)`, where the previous release took an
   absolute `1e-10`. That read spacings of `1e-13` and `9e-13` as uniform, and most `linspace`

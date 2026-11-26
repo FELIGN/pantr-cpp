@@ -117,6 +117,26 @@ std::pair<NumpyArray<double>, NumpyArray<double>> corners_to_numpy(
   return {copy_to_numpy(c.first), copy_to_numpy(c.second)};
 }
 
+/// Work of a serial pass over `cells` cells, for the GIL decision only: `2 * ndim` operations per
+/// cell, a lower bound on each such pass. Producing a cell's corners stores `2 * ndim` values (the
+/// tensor-product grid's collection, `cell_bounds` per selected cell, the `rcb` partition, which
+/// collects them); the `block` partition loads and adds one term per axis for each cell's owner.
+double corner_ops(std::size_t cells, std::size_t ndim) {
+  return static_cast<double>(cells) * 2.0 * static_cast<double>(ndim);
+}
+
+/// Whether collecting every cell's corners releases the GIL: the hierarchical grid collects on the
+/// pool (`ReleaseIfParallel`'s rule), the tensor-product grid serially (`ReleaseIfLong`'s).
+template <class G>
+bool collect_releases(const G& g) {
+  const auto n = static_cast<std::size_t>(g.num_cells());
+  if constexpr (std::is_same_v<G, HierarchicalGrid>) {
+    return parallel::worth_parallel(n, g.collect_work());
+  } else {
+    return corner_ops(n, g.ndim()) >= gil_release_min_ops;
+  }
+}
+
 /// Build `g`'s lazy BVH, with the GIL released, unless a call has built it already.
 ///
 /// The build reads the grid and writes only C++ state, so it needs no GIL. A thread that finds the
@@ -163,11 +183,7 @@ void def_common(nb::class_<G>& cls) {
           [](const G& g) {
             auto bounds = [&] {
               // Only the hierarchical grid collects in parallel; the tensor-product one is serial.
-              std::optional<ReleaseIfParallel> release;
-              if constexpr (std::is_same_v<G, HierarchicalGrid>) {
-                release.emplace(static_cast<std::size_t>(g.num_cells()),
-                                g.collect_work().ops_per_item);
-              }
+              const ReleaseGil release(collect_releases(g));
               return g.collect_cell_bounds();
             }();
             return std::pair(to_numpy(std::move(bounds.first)), to_numpy(std::move(bounds.second)));
@@ -540,14 +556,19 @@ void def_generic(nb::module_& m) {
         auto [points, weights] = [&] {
           // Without a selection a hierarchical grid collects every cell's corners in parallel;
           // a selection is read cell by cell, serially, and a tensor-product grid collects
-          // serially.
-          std::optional<ReleaseIfParallel> release;
+          // serially. The mapping is serial: per selected cell its corners, then per rule point a
+          // multiply and an add per coordinate and a multiply for the weight, a lower bound.
+          const std::size_t n_sel =
+              selected.has_value() ? selected->size() : static_cast<std::size_t>(g.num_cells());
+          const double per_point = 2.0 * static_cast<double>(g.ndim()) + 1.0;
+          const double ops =
+              corner_ops(n_sel, g.ndim()) +
+              static_cast<double>(n_sel) * static_cast<double>(rule_points.shape(0)) * per_point;
+          bool pool = false;
           if constexpr (std::is_same_v<G, HierarchicalGrid>) {
-            if (!selected.has_value()) {
-              release.emplace(static_cast<std::size_t>(g.num_cells()),
-                              g.collect_work().ops_per_item);
-            }
+            pool = !selected.has_value() && collect_releases(g);
           }
+          const ReleaseGil release(pool || ops >= gil_release_min_ops);
           return grid::cell_quadrature(g, span_of(rule_points), rule_points.shape(0),
                                        rule_points.shape(1), span_of(rule_weights), selected);
         }();
@@ -570,11 +591,9 @@ void def_generic(nb::module_& m) {
                                             active->size());
         }
         // A hierarchical grid has no block backend, so its partition always collects the cell
-        // corners in parallel; a tensor-product grid collects serially.
-        std::optional<ReleaseIfParallel> release;
-        if constexpr (std::is_same_v<G, HierarchicalGrid>) {
-          release.emplace(static_cast<std::size_t>(g.num_cells()), g.collect_work().ops_per_item);
-        }
+        // corners in parallel; a tensor-product grid's partition is serial, and either backend
+        // passes over every cell with at least `corner_ops` work.
+        const ReleaseGil release(collect_releases(g));
         return grid::partition_grid(g, n_parts, backend, w, a);
       },
       nb::arg("grid"), nb::arg("n_parts"), nb::arg("backend"), nb::arg("weights").none(),
