@@ -234,8 +234,8 @@
   so its second end face was the second input's control points on another basis, without an
   error. Inputs with equal end classes are unaffected, including knots that differ in value within
   one class. `create_coons_surface`, which builds its ruled terms with `create_ruled`, now
-  refuses opposite curves whose end classes differ with this message; it refused them before
-  too, when combining terms of different shapes. Equal counts with knots outside the domain whose
+  refuses opposite curves whose end classes differ while their nets keep one shape with this
+  message; it refused them before too, when combining terms of different shapes. Equal counts with knots outside the domain whose
   values differ (`[0, 0, 0, 0.5, 1, 1, 1]` and `[-1, -0.5, 0, 0.5, 1, 1.5, 2]` at degree 2) are
   still not detected.
 
