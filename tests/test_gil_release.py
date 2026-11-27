@@ -518,12 +518,21 @@ SETUPS: dict[str, Callable[[], Callable[[], object]]] = {
     "compute_uniform_subdivision_knots": _subdivision_knots(4_500_000),
     # rest * (n + increment * intervals) = 3000 * (1000 + 997).
     "elevate_degree": _on_spline(3, [997, 997], 3, lambda b: b.elevate_degree([1, 0])),
+    # The next two are copy-bound: each removal copies the whole net into its working rows and out
+    # into its result, a net of a few MB that a large cache holds across the removals. A core then
+    # copies far more than the work model's one value a nanosecond, up to about 20 (four a cycle at
+    # 5 GHz, an admitted ceiling), so each is sized at 4e8 value copies, 20 ms at that rate, well
+    # above its estimate. The estimate first, then the copies.
+    #
     # rest * (intervals * (q + 1) (p + 1) + removals * (q + intervals)), one forced removal at each
-    # of the 214 interior knots: 654 * (215 * 12 + 214 * 217).
-    "Bspline.reduce_degree": _on_spline(3, [215, 215], 3, lambda b: b.reduce_degree([1, 0])),
-    # rest * (n + sum_k (n - 3 k)) for the copy and the 36 removals' working copies:
-    # 1800 * (600 + 36 * 600 - 3 * 630).
-    "remove_knots": _remove_knots(597, 36),
+    # of the 359 interior knots: 1089 * (360 * 12 + 359 * 362). Each removal from the Bezier form's
+    # 721 rows is accepted, and copies the rows in and all but one out:
+    # 1089 * sum_{i < 359} (2 (721 - i) - 1).
+    "Bspline.reduce_degree": _on_spline(3, [360, 360], 3, lambda b: b.reduce_degree([1, 0])),
+    # rest * (n + sum_k (n - 3 k)) for the copy and the 190 removals' working copies:
+    # 1800 * (600 + 190 * 600 - 3 * 17955). Each removal, refused on a random net, copies the
+    # 600 * 1800 values in and out again: 190 * 2 * 600 * 1800.
+    "remove_knots": _remove_knots(597, 190),
     # 2 * rest * (n - 1) = 2 * 3300 * 1099, along direction 1, which flattens the net (a
     # transposed copy) and restores it.
     "derivative": _on_spline(3, [1097, 1097], 3, lambda b: b.derivative(1)),
