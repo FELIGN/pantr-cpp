@@ -11,12 +11,13 @@
 // bound of its work, and only around the C++ call: no Python object is touched inside the guard,
 // and the NumPy results are built after it. Each estimate runs before the call validates its
 // arguments. A refusal it can read off the arguments and the space's cached state (a count other
-// than the dimension, a direction or a parameter out of range, nothing to do) counts no work, so
-// such a call keeps the GIL. Every other refusal is left unmirrored, since mirroring it would
-// repeat the library's own checks (a knot outside the domain, a multiplicity above
-// `degree + 1`, a capacity limit, a seam that does not close): such a call may release for
-// nothing, which costs the caller a wait and changes no result. The testing hooks at the end keep
-// the GIL: they are reached from the test-only `_testing` module alone.
+// than the dimension, a direction or a parameter out of range, nothing to do, such as bounds on
+// both ends of a clamped direction) counts no work, so such a call keeps the GIL. Every other
+// refusal is left unmirrored, since mirroring it would repeat the library's own checks (a knot
+// outside the domain, a multiplicity above `degree + 1`, a capacity limit, a seam that does not
+// close): such a call may release for nothing, which costs the caller a wait and changes no result.
+// The testing hooks at the end keep the GIL: they are reached from the test-only `_testing` module
+// alone.
 #include "arrays.hpp"
 #include "interface.hpp"
 
@@ -194,8 +195,11 @@ double subdivision_ops(const bspline::Bspline<T>& b, const std::vector<long long
 /// a count of bounds other than the dimension, no direction bounded, or bounds of the first
 /// bounded direction, when it has no extents before it, that `validate_restrict_bounds` refuses (a
 /// NaN, a lower bound not below the upper one, or a bound beyond a domain end by more than the
-/// space's tolerance). Bounds refused in a later direction are reached after an earlier
-/// direction's restriction or the net's flattened copy, `b.size()` values written either way.
+/// space's tolerance) or that `compute_boundary_knots_to_insert` refuses (both within the
+/// tolerance of the domain's ends, both of them open, in a non-periodic direction). Bounds
+/// refused in a later direction are reached after an earlier direction's restriction or the net's
+/// flattened copy, `b.size()` values written either way, and a periodic direction refuses the full
+/// domain after its conversion to open form.
 template <class T>
 double restriction_ops(const bspline::Bspline<T>& b,
                        const std::vector<std::optional<std::pair<double, double>>>& bounds) {
@@ -214,12 +218,16 @@ double restriction_ops(const bspline::Bspline<T>& b,
       continue;
     }
     const auto [lo, hi] = *bounds[d];
-    const auto [start, end] = whole.spaces()[d].domain();
+    const bspline::BsplineSpace1D<T>& space = whole.spaces()[d];
+    const auto [start, end] = space.domain();
     const auto a = static_cast<double>(start);
     const auto e = static_cast<double>(end);
-    const double tol = whole.spaces()[d].tolerance();
-    if (std::isnan(lo) || std::isnan(hi) || lo >= hi || (lo < a && std::abs(lo - a) > tol) ||
-        (hi > e && std::abs(hi - e) > tol)) {
+    const double tol = space.tolerance();
+    const bool invalid = std::isnan(lo) || std::isnan(hi) || lo >= hi ||
+                         (lo < a && std::abs(lo - a) > tol) || (hi > e && std::abs(hi - e) > tol);
+    const bool full = !space.periodic() && std::abs(lo - a) <= tol && std::abs(hi - e) <= tol &&
+                      space.knots().front() == start && space.knots().back() == end;
+    if (invalid || full) {
       // Refused when its direction is reached: after an earlier direction's restriction, or after
       // the net's flattened copy for a direction with extents before it.
       return first && outer == 1 ? 0.0 : net;
