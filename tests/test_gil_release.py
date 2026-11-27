@@ -441,8 +441,9 @@ SETUPS: dict[str, Callable[[], Callable[[], object]]] = {
     # As insert_knots, for one knot halving each of the 593 intervals of each direction:
     # 2 * 1800 * (1193 * 8 - 49).
     "subdivide": _on_spline(7, [593, 593], 3, lambda b: b.subdivide([2, 2])),
-    # The net's 1303^2 * 3 values, inserted at the bounds or copied.
-    "Bspline.restrict": _on_spline(3, [1300, 1300], 3, lambda b: b.restrict([(0.2, 0.7), None])),
+    # The net's 1303^2 * 3 values, inserted at the bounds or copied, along direction 1, whose
+    # flattened copy keeps the call long enough to tell on a fast machine.
+    "Bspline.restrict": _on_spline(3, [1300, 1300], 3, lambda b: b.restrict([None, (0.2, 0.7)])),
     # Three passes over the 1000^2 * 3 values of a degree-7 net.
     "Bspline.split": _on_spline(7, [993, 993], 3, lambda b: b.split(0, 0.3)),
     # 2 (n + m), n = 1.5e6 + 3 knots and m = 1e6 new ones, which the call also sorts.
@@ -454,9 +455,9 @@ SETUPS: dict[str, Callable[[], Callable[[], object]]] = {
     # rest * (intervals * (q + 1) (p + 1) + removals * (q + intervals)), one forced removal at each
     # of the 169 interior knots: 519 * (170 * 12 + 169 * 172).
     "Bspline.reduce_degree": _on_spline(3, [170, 170], 3, lambda b: b.reduce_degree([1, 0])),
-    # rest * (n + sum_k (n - 3 k)) for the copy and the 8 removals' working copies:
-    # 1800 * (600 + 8 * 600 - 3 * 28).
-    "remove_knots": _remove_knots(597, 8),
+    # rest * (n + sum_k (n - 3 k)) for the copy and the 16 removals' working copies:
+    # 1800 * (600 + 16 * 600 - 3 * 120).
+    "remove_knots": _remove_knots(597, 16),
     # 2 * rest * (n - 1) = 2 * 3300 * 1099, along direction 1, which flattens the net (a
     # transposed copy) and restores it.
     "derivative": _on_spline(3, [1097, 1097], 3, lambda b: b.derivative(1)),
