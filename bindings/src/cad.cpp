@@ -55,6 +55,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <numeric>
@@ -136,11 +137,18 @@ double interior_knots(const bspline::BsplineSpace1D<T>& s) {
   return static_cast<double>(std::accumulate(m.begin() + 1, m.end() - 1, std::int64_t{0}));
 }
 
+/// The in-domain classes of a direction other than its two end classes.
+template <class T>
+std::size_t interior_classes(const bspline::BsplineSpace1D<T>& s) {
+  const std::size_t classes = s.unique_knots_and_multiplicity(true).second.size();
+  return classes <= 2 ? 0 : classes - 2;
+}
+
 /// Work of `make_compat` on `bsplines` along `axes`, for the GIL decision only. Counted:
 ///
 ///  - in a list of mixed dtypes, each float32 input's conversion to double, a copy of its net;
-///  - each input periodic along a selected axis, converted to open form (`to_open_ops`'s
-///    `b.size()`);
+///  - each input periodic along a selected axis, converted to open form, which writes at least its
+///    net, `b.size()` values (the open form has at least the stored rows);
 ///  - along each selected axis, each input below the largest degree there, elevated to it
 ///    (`elevation_ops`);
 ///  - along each selected axis, each input already at the largest degree, given the in-domain
@@ -149,8 +157,16 @@ double interior_knots(const bspline::BsplineSpace1D<T>& s) {
 ///    holds at least the most interior knots any input holds after its elevation, `I + t (N - 1)`
 ///    for one with `I` interior knots, `N` intervals and increment `t` (A5.9 adds `t` copies of
 ///    every distinct interior value). An input at the largest degree is not elevated, so it
-///    receives at least the difference. A lower bound when the breakpoints are further apart than
-///    the merge tolerance; a chain of closer ones merges into fewer classes.
+///    receives at least the difference;
+///  - along each selected axis, the merge of the interior classes
+///  (`cad::detail::merge_breakpoints`):
+///    each class of each input is searched for in the union of every input's classes by
+///    `std::lower_bound`, at least `floor(log2(M + 1))` comparisons over its `M` entries, and `M`
+///    is at least the most classes any input has, as the union holds each input's distinct values.
+///    A lower bound: it leaves out the sort of the union and the classifications.
+///
+/// A lower bound when the breakpoints are further apart than the merge tolerance; a chain of
+/// closer ones merges into fewer classes.
 ///
 /// Zero for fewer than two inputs, which the call returns unchanged, and for the arguments it
 /// refuses or returns unchanged before any work: dimensions that differ, an axis out of range, or
@@ -202,6 +218,17 @@ double make_compat_ops(std::span<const AnyB> bsplines,
       top = (std::max)(
           top, std::visit([a](const auto& v) { return v.space().spaces()[a].degree(); }, b));
     }
+    std::size_t classes = 0;
+    std::size_t most_classes = 0;
+    for (const AnyB& b : bsplines) {
+      const std::size_t c =
+          std::visit([a](const auto& v) { return interior_classes(v.space().spaces()[a]); }, b);
+      classes += c;
+      most_classes = (std::max)(most_classes, c);
+    }
+    // floor(log2(M + 1)) for the M >= most_classes entries of the union.
+    const auto searches = static_cast<double>(std::bit_width(most_classes + 1) - 1);
+    ops += static_cast<double>(classes) * searches;
     double most = 0.0;
     for (const AnyB& b : bsplines) {
       most = (std::max)(most, std::visit(
@@ -313,8 +340,11 @@ double coons_volume_ops(const std::array<AnyB, 6>& f) {
 }
 
 /// Work of `join`, for the GIL decision only: `make_compat_ops` along the other axes, plus the
-/// joined net, written and then copied into the result, which holds at least either input's net.
-/// A lower bound: it leaves out the opening and the junction's knot removal. Zero for dimensions
+/// joined net, written and then copied into the result, which holds at least either input's net,
+/// and, at a degree above 1 along the axis (the larger of the two), the junction's knot removal
+/// (`remove_knots` of one value), which copies the joined net and then copies it into the kernel's
+/// working rows, as `removal_ops` in `bspline_modify.cpp` counts it. A lower bound: it leaves out
+/// the opening, the elevation along the axis and the removal kernel's result. Zero for dimensions
 /// that differ or an axis out of range, which the call refuses before any work.
 double join_ops(const AnyB& b1, const AnyB& b2, long long axis) {
   const std::size_t dim = dim_of(b1);
@@ -329,7 +359,16 @@ double join_ops(const AnyB& b1, const AnyB& b2, long long axis) {
   }
   const std::array<AnyB, 2> pair = {b1, b2};
   const double compat = others.empty() ? 0.0 : make_compat_ops(pair, others);
-  return compat + 2.0 * static_cast<double>((std::max)(size_of(b1), size_of(b2)));
+  const auto joined = static_cast<double>((std::max)(size_of(b1), size_of(b2)));
+  const auto degree_along = [axis](const AnyB& b) {
+    return std::visit(
+        [axis](const auto& v) {
+          return v.space().spaces()[static_cast<std::size_t>(axis)].degree();
+        },
+        b);
+  };
+  const bool removal = (std::max)(degree_along(b1), degree_along(b2)) > 1;
+  return compat + (removal ? 4.0 : 2.0) * joined;
 }
 
 AnyB ruled_any(const AnyB& b1, const AnyB& b2) {
