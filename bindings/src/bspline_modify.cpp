@@ -5,9 +5,14 @@
 //
 // This translation unit reaches Eigen through the periodic directions of elevation and reduction
 // (the QR of the periodic conversion), which the module's vectorization settings already cover for
-// every unit (EIGEN_DONT_VECTORIZE on MSVC's v4 rung). Nothing here uses the pool, so no call
-// releases the GIL. Arguments arrive as the wrapper normalised them (C-contiguous arrays of the
-// exact dtype); validation of values is the C++ API's, with the messages the Python suite matches.
+// every unit (EIGEN_DONT_VECTORIZE on MSVC's v4 rung). Arguments arrive as the wrapper normalised
+// them (C-contiguous arrays of the exact dtype); validation of values is the C++ API's, with the
+// messages the Python suite matches.
+//
+// Nothing here reaches the pool, so a call releases the GIL through `ReleaseIfLong`, on a lower
+// bound of its work, as in `bspline_refine.cpp`: a refusal the estimate can read off the arguments
+// alone counts no work, one the call makes only after reading the knots is not mirrored. The
+// testing hooks at the end keep the GIL.
 #include "arrays.hpp"
 #include "interface.hpp"
 
@@ -29,6 +34,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <numeric>
 #include <optional>
 #include <span>
 #include <string>
@@ -72,6 +78,165 @@ std::size_t columns_of(const In2D<T>& ctrl) {
 template <class T>
 using MaybeKnots = std::optional<In1D<T>>;
 
+/// Work of `elevate_degree`, for the GIL decision only: each elevated direction's
+/// `elevation_ops`. Zero for the increments the call refuses before any work: a count other than
+/// the dimension, a negative one, none positive, or an elevated degree above `bincoeff_max_n`.
+template <class T>
+double elevate_ops(const bspline::Bspline<T>& b, const std::vector<long long>& increments) {
+  if (increments.size() != b.dim() ||
+      std::any_of(increments.begin(), increments.end(), [](long long t) { return t < 0; })) {
+    return 0.0;
+  }
+  const bspline::BsplineSpace<T> whole = b.space();
+  double ops = 0.0;
+  for (std::size_t d = 0; d < b.dim(); ++d) {
+    const long long t = increments[d];
+    if (t == 0) {
+      continue;
+    }
+    if (t > bincoeff_max_n - whole.spaces()[d].degree()) {
+      return 0.0;
+    }
+    ops += elevation_ops(b, d, static_cast<double>(t));
+  }
+  return ops;
+}
+
+/// Work of `reduce_degree`, for the GIL decision only, in the first reduced direction, of degree
+/// `p`, decrement `t` and `N` intervals, for each of the `rest = b.size() / shape[d]` values the
+/// other extents and the coordinates hold:
+///
+///  - the `(q + 1, p + 1)` reduction operator, `q = p - t`, applied to each of at least `N` Bezier
+///    segments (`detail::degree_reduce_kernel` splits at every distinct knot value),
+///    `N (q + 1) (p + 1)` multiply-adds;
+///  - the forced removal that restores the continuity (`coarsen_knots_after_reduction`): each
+///    interior class whose Bezier multiplicity `q` exceeds its target `max(1, m - t)` is removed
+///    by one call of `remove_knot_1d`, which copies the whole net into its working rows, at least
+///    the `q + N` rows of the coarsened result.
+///
+/// A lower bound: it leaves out the later directions, whose nets the reduction can shrink, the
+/// Bezier extraction, and the build of an operator the process table does not hold. Zero for the
+/// decrements the call refuses before any work: a count other than the dimension, a negative one,
+/// none positive, or one above its direction's degree.
+template <class T>
+double reduce_ops(const bspline::Bspline<T>& b, const std::vector<long long>& decrements) {
+  if (decrements.size() != b.dim()) {
+    return 0.0;
+  }
+  const bspline::BsplineSpace<T> whole = b.space();
+  double ops = 0.0;
+  for (std::size_t d = 0; d < b.dim(); ++d) {
+    const bspline::BsplineSpace1D<T>& space = whole.spaces()[d];
+    const long long p = space.degree();
+    const long long t = decrements[d];
+    if (t < 0 || t > p) {
+      return 0.0;
+    }
+    if (t == 0 || ops > 0.0) {
+      continue;
+    }
+    const long long q = p - t;
+    const auto n_int = static_cast<double>(space.num_intervals());
+    const std::span<const std::int64_t> mults = space.unique_knots_and_multiplicity(true).second;
+    double removals = 0.0;
+    for (std::size_t i = 1; i + 1 < mults.size(); ++i) {
+      removals += q > (std::max)(1LL, static_cast<long long>(mults[i]) - t) ? 1.0 : 0.0;
+    }
+    const auto rest = static_cast<double>(b.size() / b.shape()[d]);
+    ops = rest * (n_int * static_cast<double>((q + 1) * (p + 1)) +
+                  removals * (static_cast<double>(q) + n_int));
+  }
+  return ops;
+}
+
+/// Work of `remove_knots`, for the GIL decision only: the first direction with knots copies the
+/// net, and each removal of one of its values copies the net into the kernel's working rows
+/// (`detail::remove_knot_kernel`), `b.size()` values each. A lower bound: it leaves out the later
+/// directions, whose nets the removal shrinks. Zero for the arguments the call refuses before any
+/// work: a periodic direction, a count of directions other than the dimension, every direction
+/// skipped, or `num` below 1.
+template <class T>
+double removal_ops(const bspline::Bspline<T>& b, std::span<const std::span<const T>> knot_values,
+                   std::optional<long long> num) {
+  const bspline::BsplineSpace<T> whole = b.space();
+  const bool periodic = std::any_of(whole.spaces().begin(), whole.spaces().end(),
+                                    [](const auto& s) { return s.periodic(); });
+  if (periodic || knot_values.size() != b.dim() || (num.has_value() && *num < 1)) {
+    return 0.0;
+  }
+  for (const std::span<const T> k : knot_values) {
+    if (!k.empty()) {
+      return static_cast<double>(b.size()) * (1.0 + static_cast<double>(k.size()));
+    }
+  }
+  return 0.0;
+}
+
+/// Work of `derivative`, for the GIL decision only: each of the `shape[d] - 1` rows of the
+/// hodograph forms a difference of two rows and stores it, scaled, for each of the
+/// `b.size() / shape[d]` values the other extents and the coordinates hold
+/// (`derivative_ctrl_1d`). Zero for a rational B-spline, a direction out of range or one of
+/// degree 0, which the call refuses before any work.
+template <class T>
+double derivative_ops(const bspline::Bspline<T>& b, long long direction) {
+  if (b.rational() || direction < 0 || direction >= static_cast<long long>(b.dim())) {
+    return 0.0;
+  }
+  const auto d = static_cast<std::size_t>(direction);
+  if (b.space().spaces()[d].degree() < 1) {
+    return 0.0;
+  }
+  const std::size_t n = b.shape()[d];
+  return 2.0 * static_cast<double>(b.size() / n) * static_cast<double>(n - 1);
+}
+
+/// Work of `derivative_keep_degree`, for the GIL decision only: `derivative_ops`, plus the
+/// hodograph's elevation by one, whose rows store `shape[d] - 1 + S` rows, `S >= num_intervals`
+/// (as `elevation_ops`). Zero where `derivative_ops` is, and for a degree above `bincoeff_max_n`,
+/// which the call refuses before any work.
+template <class T>
+double derivative_keep_degree_ops(const bspline::Bspline<T>& b, long long direction) {
+  const double hodograph = derivative_ops(b, direction);
+  if (hodograph == 0.0) {
+    return 0.0;
+  }
+  const auto d = static_cast<std::size_t>(direction);
+  const bspline::BsplineSpace1D<T> space = b.space().spaces()[d];
+  if (space.degree() > bincoeff_max_n) {
+    return 0.0;
+  }
+  const std::size_t n = b.shape()[d];
+  const auto rows = static_cast<double>(n - 1) + static_cast<double>(space.num_intervals());
+  return hodograph + static_cast<double>(b.size() / n) * rows;
+}
+
+/// The knots of the in-domain classes of direction `d` of `b`.
+template <class T>
+double in_domain_knots(const bspline::Bspline<T>& b, std::size_t d) {
+  const bspline::BsplineSpace1D<T> space = b.space().spaces()[d];
+  const auto mults = space.unique_knots_and_multiplicity(true).second;
+  return static_cast<double>(std::accumulate(mults.begin(), mults.end(), std::int64_t{0}));
+}
+
+/// Work of `refine_to_common_space_1d`, for the GIL decision only: each of the two receives every
+/// in-domain knot of the other that it lacks, so the one with fewer in-domain knots receives at
+/// least the difference, `refinement_ops` for them. A lower bound when the classes of either are
+/// further apart than the larger of the two tolerances, the comparison the call matches them by.
+/// Zero for a direction outside either B-spline, which the call does not check.
+template <class T>
+double common_space_ops(const bspline::Bspline<T>& a, const bspline::Bspline<T>& b,
+                        std::size_t direction) {
+  if (direction >= a.dim() || direction >= b.dim()) {
+    return 0.0;
+  }
+  const double ka = in_domain_knots(a, direction);
+  const double kb = in_domain_knots(b, direction);
+  if (ka == kb) {
+    return 0.0;
+  }
+  return ka < kb ? refinement_ops(a, direction, kb - ka) : refinement_ops(b, direction, ka - kb);
+}
+
 /// A knot vector as a NumPy array.
 template <class T>
 NumpyArray<T> knots_to_numpy(const std::vector<T>& v) {
@@ -93,6 +258,7 @@ void def_modify(nb::class_<bspline::Bspline<T>>& cls) {
   cls.def(
          "elevate_degree",
          [](const B& b, const std::vector<long long>& increments) {
+           const ReleaseIfLong release(elevate_ops(b, increments));
            return bspline::elevate_degree<T>(b, increments);
          },
          nb::arg("increments"),
@@ -101,6 +267,7 @@ void def_modify(nb::class_<bspline::Bspline<T>>& cls) {
       .def(
           "reduce_degree",
           [](const B& b, const std::vector<long long>& decrements) {
+            const ReleaseIfLong release(reduce_ops(b, decrements));
             return bspline::reduce_degree<T>(b, decrements);
           },
           nb::arg("decrements"),
@@ -114,6 +281,7 @@ void def_modify(nb::class_<bspline::Bspline<T>>& cls) {
             for (const auto& k : per_dim) {
               views.push_back(k ? as_span(*k) : std::span<const T>());
             }
+            const ReleaseIfLong release(removal_ops<T>(b, views, num));
             return bspline::remove_knots<T>(b, views, num, tol);
           },
           nb::arg("knot_values"), nb::arg("num").none(), nb::arg("tol").none(),
@@ -122,12 +290,14 @@ void def_modify(nb::class_<bspline::Bspline<T>>& cls) {
       .def(
           "derivative",
           [](const B& b, long long direction) {
+            const ReleaseIfLong release(derivative_ops(b, direction));
             return bspline::derivative_nonrational<T>(b, direction);
           },
           nb::arg("direction"), "The partial derivative of a non-rational B-spline.")
       .def(
           "derivative_keep_degree",
           [](const B& b, long long direction) {
+            const ReleaseIfLong release(derivative_keep_degree_ops(b, direction));
             return bspline::derivative_keep_degree_nonrational<T>(b, direction);
           },
           nb::arg("direction"),
@@ -139,6 +309,7 @@ void def_functions(nb::module_& m, const std::string& suffix) {
   using B = bspline::Bspline<T>;
   m.def(("refine_to_common_space_1d" + suffix).c_str(),
         [](const B& a, const B& b, std::size_t direction) {
+          const ReleaseIfLong release(common_space_ops(a, b, direction));
           return bspline::refine_to_common_space_1d<T>(a, b, direction);
         },
         nb::arg("a"), nb::arg("b"), nb::arg("direction"),

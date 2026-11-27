@@ -216,6 +216,41 @@ class ReleaseIfParallel {
   std::optional<nb::gil_scoped_release> release_;
 };
 
+// Lower bounds on the work of rebuilding a B-spline along one direction, for the GIL decisions of
+// the refinement, modification and CAD bindings (`ReleaseIfLong`). `B` is a `bspline::Bspline<T>`;
+// the templates name no B-spline header, so that this file stays free of the library's types.
+
+/// Work of inserting `inserted` knots into direction `d` of `b`, for the GIL decision only: the
+/// refined direction has `shape[d] + inserted` rows, each a multiply-add of the old rows in its
+/// Oslo band (`bspline::detail::combine_oslo_row`), for each of the `b.size() / shape[d]` values
+/// the other extents and the coordinates hold. A band spans `degree + 1` rows of the net, all of
+/// them for a new knot at or above the domain start; at most `degree` new knots lie below it (an
+/// unclamped start), each of whose bands misses at most `degree` rows, hence the `degree^2`
+/// subtracted. A lower bound for the first direction refined and for each later one, since
+/// insertion never shrinks an extent; a periodic direction is refined through its open form, which
+/// is clamped and has at least the stored rows.
+template <class B>
+double refinement_ops(const B& b, std::size_t d, double inserted) {
+  const std::size_t n = b.shape()[d];
+  const auto rest = static_cast<double>(b.size() / n);
+  const auto p = static_cast<double>(b.space().spaces()[d].degree());
+  return rest * ((static_cast<double>(n) + inserted) * (p + 1.0) - p * p);
+}
+
+/// Work of elevating direction `d` of `b` by `increment`, for the GIL decision only: the elevated
+/// direction has `shape[d] + increment * S` rows, `S` the Bezier segments of the knot vector (Piegl
+/// and Tiller A5.9, `bspline::detail::degree_elevate_kernel`), and each row stores its
+/// `b.size() / shape[d]` values. `S` is at least the space's `num_intervals`, since the kernel
+/// splits at every distinct knot value and the space groups them into classes. A lower bound: it
+/// leaves out the Bezier extraction and the blends that form each row.
+template <class B>
+double elevation_ops(const B& b, std::size_t d, double increment) {
+  const std::size_t n = b.shape()[d];
+  const auto rest = static_cast<double>(b.size() / n);
+  const auto intervals = static_cast<double>(b.space().spaces()[d].num_intervals());
+  return rest * (static_cast<double>(n) + increment * intervals);
+}
+
 }  // namespace pantr::bindings
 
 namespace nanobind::detail {

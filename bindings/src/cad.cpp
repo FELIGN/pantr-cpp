@@ -21,8 +21,15 @@
 //                 float64 only; a float32 input is refused after the same checks, for the same
 //                 reason.
 //
-// None of these functions releases the GIL: none is gated by `gil_release_min_ops` yet (design
-// §2.8), so a large input holds it for the length of the call.
+// None of these calls reaches the pool. `make_compat`, `create_ruled`, `create_revolution`, the
+// two Coons constructions and `join` release the GIL through `ReleaseIfLong`, on a lower bound of
+// their work (design §2.8): the B-splines arrive as C++ values and the result leaves as one, so
+// nothing inside the guard touches a Python object. A refusal the estimate can read off the
+// arguments alone (dimensions that differ, an axis out of range, nothing to do) counts no work, so
+// such a call keeps the GIL; one the call makes only after its work has begun (a corner or edge
+// mismatch, a mixed dtype refused at the end) is counted, since the work is done. The primitives
+// build a handful of control points and keep the GIL, as does the testing hook.
+#include "arrays.hpp"
 #include "interface.hpp"
 
 #include "pantr/bspline/bspline.hpp"
@@ -46,6 +53,8 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cstdint>
+#include <numeric>
 #include <optional>
 #include <span>
 #include <string>
@@ -95,7 +104,233 @@ AnyB in_first_dtype(const AnyB& first, Fn&& fn) {
   return AnyB(fn(std::type_identity<double>{}));
 }
 
+// Work estimates, for the GIL decisions only. Each reads the arguments as supplied and bounds the
+// call's work from below.
+
+std::size_t dim_of(const AnyB& b) {
+  return std::visit([](const auto& v) { return v.dim(); }, b);
+}
+
+std::size_t size_of(const AnyB& b) {
+  return std::visit([](const auto& v) { return v.size(); }, b);
+}
+
+std::size_t extent_of(const AnyB& b, std::size_t d) {
+  return std::visit([d](const auto& v) { return v.shape()[d]; }, b);
+}
+
+std::size_t cp_size_of(const AnyB& b) {
+  return std::visit([](const auto& v) { return v.cp_size(); }, b);
+}
+
+/// The knots of the in-domain classes of a direction other than its two end classes.
+template <class T>
+double interior_knots(const bspline::BsplineSpace1D<T>& s) {
+  const std::span<const std::int64_t> m = s.unique_knots_and_multiplicity(true).second;
+  if (m.size() <= 2) {
+    return 0.0;
+  }
+  return static_cast<double>(std::accumulate(m.begin() + 1, m.end() - 1, std::int64_t{0}));
+}
+
+/// Work of `make_compat` on `bsplines` along `axes`, for the GIL decision only. Counted:
+///
+///  - in a list of mixed dtypes, each float32 input's conversion to double, a copy of its net;
+///  - each input periodic along a selected axis, converted to open form (`to_open_ops`'s
+///    `b.size()`);
+///  - along each selected axis, each input below the largest degree there, elevated to it
+///    (`elevation_ops`);
+///  - along each selected axis, each input already at the largest degree, given the in-domain
+///    interior knots it lacks (`refinement_ops`). The outputs share their interior classes and
+///    their multiplicities there, and insertion and elevation only add knots, so every output
+///    holds at least the most interior knots any input holds after its elevation, `I + t (N - 1)`
+///    for one with `I` interior knots, `N` intervals and increment `t` (A5.9 adds `t` copies of
+///    every distinct interior value). An input at the largest degree is not elevated, so it
+///    receives at least the difference. A lower bound when the breakpoints are further apart than
+///    the merge tolerance; a chain of closer ones merges into fewer classes.
+///
+/// Zero for fewer than two inputs, which the call returns unchanged, and for the arguments it
+/// refuses or returns unchanged before any work: dimensions that differ, an axis out of range, or
+/// an empty list of axes.
+double make_compat_ops(std::span<const AnyB> bsplines,
+                       const std::optional<std::vector<long long>>& axes) {
+  if (bsplines.size() < 2) {
+    return 0.0;
+  }
+  const std::size_t dim = dim_of(bsplines[0]);
+  if (std::any_of(bsplines.begin(), bsplines.end(),
+                  [dim](const AnyB& b) { return dim_of(b) != dim; })) {
+    return 0.0;
+  }
+  std::vector<bool> selected(dim, !axes.has_value());
+  if (axes) {
+    if (axes->empty()) {
+      return 0.0;
+    }
+    for (const long long a : *axes) {
+      if (a < 0 || a >= static_cast<long long>(dim)) {
+        return 0.0;
+      }
+      selected[static_cast<std::size_t>(a)] = true;
+    }
+  }
+  const bool any_f32 = std::any_of(bsplines.begin(), bsplines.end(), is_f32);
+  const bool mixed = any_f32 && !std::all_of(bsplines.begin(), bsplines.end(), is_f32);
+  double ops = 0.0;
+  for (const AnyB& b : bsplines) {
+    std::visit(
+        [&](const auto& v) {
+          const auto whole = v.space();
+          bool periodic = false;
+          for (std::size_t a = 0; a < dim; ++a) {
+            periodic = periodic || (selected[a] && whole.spaces()[a].periodic());
+          }
+          const auto net = static_cast<double>(v.size());
+          ops += (mixed && is_f32(b) ? net : 0.0) + (periodic ? net : 0.0);
+        },
+        b);
+  }
+  for (std::size_t a = 0; a < dim; ++a) {
+    if (!selected[a]) {
+      continue;
+    }
+    int top = 0;
+    for (const AnyB& b : bsplines) {
+      top = (std::max)(
+          top, std::visit([a](const auto& v) { return v.space().spaces()[a].degree(); }, b));
+    }
+    double most = 0.0;
+    for (const AnyB& b : bsplines) {
+      most = (std::max)(most, std::visit(
+                                  [a, top](const auto& v) {
+                                    const auto space = v.space().spaces()[a];
+                                    const auto t = static_cast<double>(top - space.degree());
+                                    const auto n = static_cast<double>(space.num_intervals());
+                                    return interior_knots(space) + t * (n - 1.0);
+                                  },
+                                  b));
+    }
+    for (const AnyB& b : bsplines) {
+      ops += std::visit(
+          [a, top, most](const auto& v) {
+            const auto space = v.space().spaces()[a];
+            if (space.degree() < top) {
+              return elevation_ops(v, a, static_cast<double>(top - space.degree()));
+            }
+            const double lacking = most - interior_knots(space);
+            return lacking > 0.0 ? refinement_ops(v, a, lacking) : 0.0;
+          },
+          b);
+    }
+  }
+  return ops;
+}
+
+/// Work of `create_ruled`, for the GIL decision only: `make_compat_ops` for the pair, plus the
+/// stacked net, `2 * points * width` values written and then copied into the result, where
+/// `points * width` holds at least either input's net (compatibility only grows a net, and the
+/// second's width is the first's or 1). Zero for dimensions that differ or above 2, which the call
+/// refuses before any work.
+double ruled_ops(const AnyB& b1, const AnyB& b2) {
+  const std::size_t dim = dim_of(b1);
+  if (dim != dim_of(b2) || dim > cad::detail::max_dim_for_operations) {
+    return 0.0;
+  }
+  const std::array<AnyB, 2> pair = {b1, b2};
+  const auto nets = static_cast<double>(size_of(b1) + size_of(b2));
+  return make_compat_ops(pair, std::nullopt) + 2.0 * nets;
+}
+
+/// Work of `create_revolution`, for the GIL decision only: every control point of the input,
+/// promoted to rational, is multiplied into each of the arc's control points, a `(4, 4)` matrix
+/// product of 16 multiply-adds (`detail::revolve_control_points`); the full circle has 9 arc points
+/// and any sweep at least 3 (one quadratic span). A lower bound: it leaves out the two affine maps
+/// and the promotion. Zero for the arguments the call refuses before any work: a dimension above
+/// 2, a rank other than 3, a point or an axis of more than three coordinates, or an axis whose
+/// squared norm is zero.
+double revolution_ops(const AnyB& b, const std::vector<double>& point,
+                      const std::vector<double>& axis, const Sweep& sweep) {
+  const std::size_t rank = std::visit([](const auto& v) { return v.rank(); }, b);
+  if (dim_of(b) > cad::detail::max_dim_for_operations || rank != cad::detail::physical_dim ||
+      point.size() > cad::detail::physical_dim || axis.size() > cad::detail::physical_dim) {
+    return 0.0;
+  }
+  double squared = 0.0;
+  for (const double c : axis) {
+    squared += c * c;
+  }
+  if (squared == 0.0) {
+    return 0.0;
+  }
+  const auto points = static_cast<double>(size_of(b) / cp_size_of(b));
+  const double arc_points = sweep.has_value() ? 3.0 : 9.0;
+  return 16.0 * points * arc_points;
+}
+
+/// Work of `create_coons_surface`, for the GIL decision only: the result's net is at least as
+/// large as the u-curves' points by the v-curves' (compatibility only grows a net), of at least
+/// the narrowest input's width, and `combine_terms` adds three terms into each of its values, a
+/// multiply-add each. A lower bound: it leaves out the compatibility and the ruled surfaces. Zero
+/// when a curve is not 1D, which the call refuses before any work.
+double coons_surface_ops(const AnyB& v0, const AnyB& v1, const AnyB& u0, const AnyB& u1) {
+  const std::array<const AnyB*, 4> all = {&v0, &v1, &u0, &u1};
+  if (std::any_of(all.begin(), all.end(), [](const AnyB* c) { return dim_of(*c) != 1; })) {
+    return 0.0;
+  }
+  std::size_t width = cp_size_of(v0);
+  for (const AnyB* c : all) {
+    width = (std::min)(width, cp_size_of(*c));
+  }
+  const auto n_u = static_cast<double>((std::max)(extent_of(u0, 0), extent_of(u1, 0)));
+  const auto n_v = static_cast<double>((std::max)(extent_of(v0, 0), extent_of(v1, 0)));
+  return 3.0 * n_u * n_v * static_cast<double>(width);
+}
+
+/// Work of `create_coons_volume`, for the GIL decision only: as `coons_surface_ops`, with seven
+/// terms added into a net at least as large, along each direction, as either face pair that spans
+/// it (the u- and v-faces, `(v, w)` and `(u, w)`; the w-faces, `(u, v)`). Zero when a face is not
+/// 2D, which the call refuses before any work.
+double coons_volume_ops(const std::array<AnyB, 6>& f) {
+  if (std::any_of(f.begin(), f.end(), [](const AnyB& b) { return dim_of(b) != 2; })) {
+    return 0.0;
+  }
+  std::size_t width = cp_size_of(f[0]);
+  for (const AnyB& b : f) {
+    width = (std::min)(width, cp_size_of(b));
+  }
+  const auto most = [&](std::size_t i, std::size_t ai, std::size_t j, std::size_t aj) {
+    const std::array<std::size_t, 4> e = {extent_of(f[i], ai), extent_of(f[i + 1], ai),
+                                          extent_of(f[j], aj), extent_of(f[j + 1], aj)};
+    return static_cast<double>(*std::max_element(e.begin(), e.end()));
+  };
+  const double n_u = most(2, 0, 4, 0);  // the v-faces' axis 0, the w-faces' axis 0
+  const double n_v = most(0, 0, 4, 1);  // the u-faces' axis 0, the w-faces' axis 1
+  const double n_w = most(0, 1, 2, 1);  // the u-faces' axis 1, the v-faces' axis 1
+  return 7.0 * n_u * n_v * n_w * static_cast<double>(width);
+}
+
+/// Work of `join`, for the GIL decision only: `make_compat_ops` along the other axes, plus the
+/// joined net, written and then copied into the result, which holds at least either input's net.
+/// A lower bound: it leaves out the opening and the junction's knot removal. Zero for dimensions
+/// that differ or an axis out of range, which the call refuses before any work.
+double join_ops(const AnyB& b1, const AnyB& b2, long long axis) {
+  const std::size_t dim = dim_of(b1);
+  if (dim != dim_of(b2) || axis < 0 || axis >= static_cast<long long>(dim)) {
+    return 0.0;
+  }
+  std::vector<long long> others;
+  for (std::size_t a = 0; a < dim; ++a) {
+    if (a != static_cast<std::size_t>(axis)) {
+      others.push_back(static_cast<long long>(a));
+    }
+  }
+  const std::array<AnyB, 2> pair = {b1, b2};
+  const double compat = others.empty() ? 0.0 : make_compat_ops(pair, others);
+  return compat + 2.0 * static_cast<double>((std::max)(size_of(b1), size_of(b2)));
+}
+
 AnyB ruled_any(const AnyB& b1, const AnyB& b2) {
+  const ReleaseIfLong release(ruled_ops(b1, b2));
   return in_first_dtype(b1, [&](auto tag) {
     using T = typename decltype(tag)::type;
     return cad::create_ruled<T>(as<T>(b1), as<T>(b2));
@@ -104,6 +339,7 @@ AnyB ruled_any(const AnyB& b1, const AnyB& b2) {
 
 std::vector<AnyB> make_compat_any(const std::vector<AnyB>& bsplines,
                                   const std::optional<std::vector<long long>>& axes) {
+  const ReleaseIfLong release(make_compat_ops(bsplines, axes));
   std::vector<F32> f32;
   std::vector<F64> f64;
   for (const AnyB& b : bsplines) {
@@ -129,6 +365,7 @@ std::vector<AnyB> make_compat_any(const std::vector<AnyB>& bsplines,
 }
 
 AnyB coons_surface_any(const AnyB& v0, const AnyB& v1, const AnyB& u0, const AnyB& u1) {
+  const ReleaseIfLong release(coons_surface_ops(v0, v1, u0, u1));
   const std::array<AnyB, 4> all = {v0, v1, u0, u1};
   const double tier = tier_of(all);
   return in_first_dtype(v0, [&](auto tag) {
@@ -146,6 +383,7 @@ std::array<std::array<bspline::Bspline<T>, 2>, 3> faces_as(const std::array<AnyB
 }
 
 AnyB coons_volume_any(const std::array<AnyB, 6>& f) {
+  const ReleaseIfLong release(coons_volume_ops(f));
   const double tier = tier_of(f);
   return in_first_dtype(f[0], [&](auto tag) {
     using T = typename decltype(tag)::type;
@@ -154,6 +392,7 @@ AnyB coons_volume_any(const std::array<AnyB, 6>& f) {
 }
 
 AnyB join_any(const AnyB& b1, const AnyB& b2, long long axis) {
+  const ReleaseIfLong release(join_ops(b1, b2, axis));
   if (is_f32(b1) == is_f32(b2)) {
     if (is_f32(b1)) {
       return AnyB(cad::join<float>(std::get<F32>(b1), std::get<F32>(b2), axis));
@@ -173,6 +412,7 @@ AnyB join_any(const AnyB& b1, const AnyB& b2, long long axis) {
 
 AnyB revolution_any(const AnyB& b, const std::vector<double>& point,
                     const std::vector<double>& axis, const Sweep& sweep) {
+  const ReleaseIfLong release(revolution_ops(b, point, axis, sweep));
   const F64 revolved = cad::create_revolution(as<double>(b), std::span<const double>(point),
                                               std::span<const double>(axis), sweep);
   if (is_f32(b)) {

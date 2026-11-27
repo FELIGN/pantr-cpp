@@ -374,8 +374,9 @@ exhaustion becomes a status the caller receives, never a plausible value:
   conservative by choice: it counts the Gram assembly alone, so a cold build of middle degree can keep the GIL),
   reaches `gil_release_min_ops`. The lazy BVH build releases when `bvh_build_ops` reaches it, or on a hierarchical
   grid also when the corner collection reaches the pool; the serial grid passes on a tensor-product grid release on
-  `gil_release_min_ops` likewise. The CAD, refinement and modification bindings never release (no estimate is stated
-  for them yet).
+  `gil_release_min_ops` likewise, and so do the CAD constructions and the B-spline refinement and modification
+  bindings, each on its own lower bound (`bindings/src/cad.cpp`, `bspline_refine.cpp`, `bspline_modify.cpp`); their
+  testing hooks and the CAD primitives keep the GIL.
 - MPI: `MPI_THREAD_FUNNELED` is sufficient because collectives are only called by the calling thread, outside
   `parallel_for`; `pantr::mpi` checks `MPI_Query_thread() >= FUNNELED` at entry and says that the caller must be the
   thread that initialised MPI.

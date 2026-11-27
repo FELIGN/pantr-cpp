@@ -240,6 +240,13 @@
   1, 1.5, 2]` at degree 2) are still not detected.
 
 ### Changed
+- **The B-spline refinements and modifications and the CAD constructions release the GIL when
+  long**: `Bspline.insert_knots`, `subdivide`, `restrict`, `split`, `to_open_bspline`,
+  `to_periodic`, `elevate_degree`, `reduce_degree`, `remove_knots` and `derivative`,
+  `BsplineSpace1D.insert_knots` and `subdivide`, and `make_compat`, `create_ruled`,
+  `create_revolution`, `create_coons_surface`, `create_coons_volume` and `join`, from a fixed
+  amount of work, about the default switch interval (`sys.getswitchinterval()`), as the other calls
+  that never use the thread pool do. They held it for the whole call, however large the input.
 - **A tensor-product grid's `collect_cell_bounds`, `cell_quadrature` and `partition_grid`, and
   `cell_quadrature` with a cell selection on a hierarchical grid, release the GIL when long**: from
   a fixed amount of work, about the default switch interval (`sys.getswitchinterval()`), as the

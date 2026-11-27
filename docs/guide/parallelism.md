@@ -120,14 +120,23 @@ BVH build of its first `query_aabb` or `cell_bvh`, each of which collects the ce
 pool. Operations that never use the pool (Bézier multiply and composition, the degree reductions,
 the fits, projections and quasi-interpolants, a tensor-product grid's `collect_cell_bounds`,
 `cell_quadrature` and `partition_grid`, `cell_quadrature` with a cell selection on any grid, the
-mapping of the rule in a hierarchical grid's `cell_quadrature` without one, and the tree of any
-grid's first `query_aabb` or `cell_bvh`, which is built serially) release it only when they are
-long. Several Python threads then run PaNTr kernels concurrently, as in this pattern. A call counts
-as long when its estimated work reaches a fixed threshold, about the work of the default switch
-interval (`sys.getswitchinterval()`, 5 ms); the threshold does not follow a changed interval. The
-estimates bound the work from below, and the one for a degree reduction's first build of its exact
+mapping of the rule in a hierarchical grid's `cell_quadrature` without one, the tree of any grid's
+first `query_aabb` or `cell_bvh`, which is built serially, the B-spline refinements and
+modifications (`insert_knots`, `subdivide`, `restrict`, `split`, `to_open_bspline`, `to_periodic`,
+`elevate_degree`, `reduce_degree`, `remove_knots`, `derivative`, and `BsplineSpace1D`'s knot
+insertion and subdivision), and the CAD constructions `make_compat`, `create_ruled`,
+`create_revolution`, `create_coons_surface`, `create_coons_volume` and `join`) release it only when
+they are long. The CAD primitives (`create_line`, `create_circle`, `create_bilinear`,
+`create_trilinear`) build a handful of control points and keep it. Several Python threads then
+run PaNTr kernels concurrently, as in this pattern. A call counts as long when its estimated work
+reaches a fixed threshold, about the work of the default switch interval
+(`sys.getswitchinterval()`, 5 ms); the threshold does not follow a changed interval. The estimates
+bound the work from below, and the one for a degree reduction's first build of its exact
 operator is conservative: it counts only the assembly of the Gram matrices, so a cold reduction of
-middle degree can keep the GIL for its whole first call. One cost remains: when another Python
+middle degree can keep the GIL for its whole first call. `Bspline.reduce_degree` does not count that
+build at all, and `make_compat` (with the CAD constructions that call it) counts only the knots
+it can show are missing from an input, so either can keep the GIL for a call longer than the
+threshold. One cost remains: when another Python
 thread runs CPU-bound bytecode, a call that releases the GIL waits up to a switch interval to get it
 back, which a mid-size pool call notices and a short call that keeps the GIL does not.
 
