@@ -292,8 +292,9 @@ def tabulate_bernstein(
         returns the same array.
 
     Raises:
-        ValueError: If any degree is negative, or if `out` is provided and has incorrect
-            shape or dtype.
+        ValueError: If any degree is negative, if the number of degrees differs from the
+            points' dimension (an empty `degrees` included), or if `out` is provided and has
+            incorrect shape or dtype.
     """
     degrees = _validate_degrees(degrees)
     return _tabulate_tensor(_Family.BERNSTEIN, degrees, 0, pts, funcs_order, out)
@@ -331,8 +332,9 @@ def tabulate_cardinal_bspline(
         returns the same array.
 
     Raises:
-        ValueError: If any degree is negative, or if `out` is provided and has incorrect
-            shape or dtype.
+        ValueError: If any degree is negative, if the number of degrees differs from the
+            points' dimension (an empty `degrees` included), or if `out` is provided and has
+            incorrect shape or dtype.
     """
     degrees = _validate_degrees(degrees)
     return _tabulate_tensor(_Family.CARDINAL_BSPLINE, degrees, 0, pts, funcs_order, out)
@@ -372,9 +374,9 @@ def tabulate_lagrange(
         returns the same array.
 
     Raises:
-        ValueError: If any degree is negative, if `out` is provided and has incorrect
-            shape or dtype, or if `pts` is a masked array and a
-            degree is at least 1.
+        ValueError: If any degree is negative, if the number of degrees differs from the
+            points' dimension (an empty `degrees` included), if `out` is provided and has
+            incorrect shape or dtype, or if `pts` is a masked array and a degree is at least 1.
     """
     degrees = _validate_degrees(degrees)
     if isinstance(pts, np.ma.MaskedArray) and any(d >= 1 for d in degrees):

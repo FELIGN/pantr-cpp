@@ -467,6 +467,8 @@ NdArray<T> compute(Kind kind, int degree, LagrangeVariant variant) {
 ///
 /// Raises:
 ///     value_error: As the matching builder.
+///     capacity_error: As the matching builder.
+///     state_error: As the matching builder.
 ///     std::system_error: The table's fork handler could not be registered (POSIX).
 template <StorageFloat T>
 [[nodiscard]] std::shared_ptr<const NdArray<T>> cached(Kind kind, int degree,

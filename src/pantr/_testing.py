@@ -756,9 +756,9 @@ def lagrange_identity_mask(
 ) -> npt.NDArray[np.bool_]:
     """Flag the intervals of a 1D space whose Lagrange extraction operator is the identity.
 
-    A degree-0 space flags every interval. Otherwise the intervals are those of
-    :func:`bezier_identity_mask` when the Lagrange-to-Bernstein matrix of ``variant`` is the
-    identity, and none when it is not.
+    The intervals are those of :func:`bezier_identity_mask` when the Lagrange-to-Bernstein
+    matrix of ``variant`` is the identity, and none when it is not. At degree 0 that matrix is
+    ``[[1]]`` for every variant and every interval is Bézier-like, so every interval is flagged.
 
     Args:
         space_1d (BsplineSpace1D): The space.
