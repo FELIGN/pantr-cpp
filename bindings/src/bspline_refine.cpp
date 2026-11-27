@@ -151,7 +151,8 @@ double to_periodic_ops(const bspline::Bspline<T>& b,
     if (c < 0 || c > p - 1) {
       return ops;  // refused once its direction is reached, after the earlier conversions
     }
-    const auto k = static_cast<double>((std::max)(static_cast<long long>(b.shape()[d]) - p, 0LL));
+    // At least 1: a space holds at least `degree + 1` functions (its constructor refuses fewer).
+    const auto k = static_cast<double>(static_cast<long long>(b.shape()[d]) - p);
     ops += 2.0 / 3.0 * (k * k * k - k);
   }
   return ops;

@@ -223,18 +223,23 @@ class ReleaseIfParallel {
 /// Work of inserting `inserted` knots into direction `d` of `b`, for the GIL decision only: the
 /// refined direction has `shape[d] + inserted` rows, each a multiply-add of the old rows in its
 /// Oslo band (`bspline::detail::combine_oslo_row`), for each of the `b.size() / shape[d]` values
-/// the other extents and the coordinates hold. A band spans `degree + 1` rows of the net, all of
-/// them for a new knot at or above the domain start; at most `degree` new knots lie below it (an
-/// unclamped start), each of whose bands misses at most `degree` rows, hence the `degree^2`
-/// subtracted. A lower bound for the first direction refined and for each later one, since
-/// insertion never shrinks an extent; a periodic direction is refined through its open form, which
-/// is clamped and has at least the stored rows.
+/// the other extents and the coordinates hold. Row `i` takes the band of the old span `mu` that
+/// holds its knot, the old rows `mu - degree` to `mu`, of which only those from 0 exist, so only a
+/// row whose knot lies below the domain start (an unclamped start) misses any, `degree - mu` of
+/// them. The rows of the `degree` old knots below the start miss at most `degree - j` for the
+/// `j`-th, `degree (degree + 1) / 2` in all; a new knot below the start lies within the tolerance
+/// of it, so above every old knot outside the start's class, of `s` knots, and its row misses at
+/// most `s`, for at most `degree + 1 - s` such knots. Together at most `degree (degree + 1) / 2 +
+/// (degree + 1)^2 / 4 <= degree (degree + 1)`, hence the `degree (degree + 1)` subtracted. A lower
+/// bound for the first direction refined and for each later one, since insertion never shrinks an
+/// extent; a periodic direction is refined through its open form, which is clamped and has at
+/// least the stored rows.
 template <class B>
 double refinement_ops(const B& b, std::size_t d, double inserted) {
   const std::size_t n = b.shape()[d];
   const auto rest = static_cast<double>(b.size() / n);
   const auto p = static_cast<double>(b.space().spaces()[d].degree());
-  return rest * ((static_cast<double>(n) + inserted) * (p + 1.0) - p * p);
+  return rest * ((static_cast<double>(n) + inserted) * (p + 1.0) - p * (p + 1.0));
 }
 
 /// Work of elevating direction `d` of `b` by `increment`, for the GIL decision only: the elevated
