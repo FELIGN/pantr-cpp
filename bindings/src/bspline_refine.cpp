@@ -8,13 +8,15 @@
 // validation of values is the C++ API's, with the messages the Python suite matches.
 //
 // Nothing here reaches the pool, so a call releases the GIL through `ReleaseIfLong`, on a lower
-// bound of its work, and only around the C++ call: the arguments are read into spans before the
-// guard and the NumPy results are built after it. Each estimate runs before the call validates its
-// arguments. A refusal it can read off the arguments alone (a count other than the dimension, a
-// direction or a parameter out of range, nothing to do) counts no work, so such a call keeps the
-// GIL; one the call makes only after reading the knots (a value outside the domain, a
-// multiplicity above `degree + 1`) is not mirrored, and such a call may release for nothing,
-// which costs the caller a wait and changes no result. The testing hooks at the end keep the GIL.
+// bound of its work, and only around the C++ call: no Python object is touched inside the guard,
+// and the NumPy results are built after it. Each estimate runs before the call validates its
+// arguments. A refusal it can read off the arguments and the space's cached state (a count other
+// than the dimension, a direction or a parameter out of range, nothing to do) counts no work, so
+// such a call keeps the GIL. Every other refusal is left unmirrored, since mirroring it would
+// repeat the library's own checks (a knot outside the domain, a multiplicity above
+// `degree + 1`, a capacity limit, a seam that does not close): such a call may release for
+// nothing, which costs the caller a wait and changes no result. The testing hooks at the end keep
+// the GIL: they are reached from the test-only `_testing` module alone.
 #include "arrays.hpp"
 #include "interface.hpp"
 
@@ -33,6 +35,7 @@
 #include <nanobind/stl/vector.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -186,14 +189,33 @@ double subdivision_ops(const bspline::Bspline<T>& b, const std::vector<long long
 
 /// Work of `restrict`, for the GIL decision only: the first restricted direction inserts knots at
 /// its bounds, or copies, over every row of the net before it cuts the piece (`restrict_1d`), so
-/// it writes at least `b.size()` values. Zero when the count of bounds is not the dimension or no
-/// direction is bounded, which the call refuses.
+/// it writes at least `b.size()` values. Zero for the arguments the call refuses before any work:
+/// a count of bounds other than the dimension, no direction bounded, or a bounded direction whose
+/// bounds `validate_restrict_bounds` refuses (a NaN, a lower bound not below the upper one, or a
+/// bound beyond a domain end by more than the space's tolerance).
 template <class T>
 double restriction_ops(const bspline::Bspline<T>& b,
                        const std::vector<std::optional<std::pair<double, double>>>& bounds) {
-  const bool any =
-      std::any_of(bounds.begin(), bounds.end(), [](const auto& x) { return x.has_value(); });
-  return bounds.size() == b.dim() && any ? static_cast<double>(b.size()) : 0.0;
+  if (bounds.size() != b.dim() ||
+      std::none_of(bounds.begin(), bounds.end(), [](const auto& x) { return x.has_value(); })) {
+    return 0.0;
+  }
+  const bspline::BsplineSpace<T> whole = b.space();
+  for (std::size_t d = 0; d < b.dim(); ++d) {
+    if (!bounds[d].has_value()) {
+      continue;
+    }
+    const auto [lo, hi] = *bounds[d];
+    const auto [start, end] = whole.spaces()[d].domain();
+    const auto a = static_cast<double>(start);
+    const auto e = static_cast<double>(end);
+    const double tol = whole.spaces()[d].tolerance();
+    if (std::isnan(lo) || std::isnan(hi) || lo >= hi || (lo < a && std::abs(lo - a) > tol) ||
+        (hi > e && std::abs(hi - e) > tol)) {
+      return 0.0;
+    }
+  }
+  return static_cast<double>(b.size());
 }
 
 /// Work of `split`, for the GIL decision only: the net is flattened along the direction (a copy),

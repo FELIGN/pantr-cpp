@@ -11,8 +11,9 @@
 //
 // Nothing here reaches the pool, so a call releases the GIL through `ReleaseIfLong`, on a lower
 // bound of its work, as in `bspline_refine.cpp`: a refusal the estimate can read off the arguments
-// alone counts no work, one the call makes only after reading the knots is not mirrored. The
-// testing hooks at the end keep the GIL.
+// alone counts no work; every other one (a knot that is not one, an unclamped knot vector) is left
+// unmirrored, and such a call may release for nothing, which costs a wait. The testing hooks at
+// the end keep the GIL: they are reached from the test-only `_testing` module alone.
 #include "arrays.hpp"
 #include "interface.hpp"
 
@@ -149,10 +150,12 @@ double reduce_ops(const bspline::Bspline<T>& b, const std::vector<long long>& de
   return ops;
 }
 
-/// Work of `remove_knots`, for the GIL decision only: the first direction with knots copies the
-/// net, and each removal of one of its values copies the net into the kernel's working rows
-/// (`detail::remove_knot_kernel`), `b.size()` values each. A lower bound: it leaves out the later
-/// directions, whose nets the removal shrinks. Zero for the arguments the call refuses before any
+/// Work of `remove_knots`, for the GIL decision only: the first direction with knots, of `n` rows
+/// and degree `p`, copies the net, and the removal of its `k`-th value (from 0) copies the net as
+/// it stands into the kernel's working rows (`detail::remove_knot_kernel`), at least `n - k p`
+/// rows, since each removal takes at most `p`; each row holds `b.size() / n` values. A lower
+/// bound: it leaves out the kernel's result and the later directions, whose nets the removal
+/// shrinks. Zero for the arguments the call refuses before any
 /// work: a periodic direction, a count of directions other than the dimension, every direction
 /// skipped, or `num` below 1.
 template <class T>
@@ -164,10 +167,17 @@ double removal_ops(const bspline::Bspline<T>& b, std::span<const std::span<const
   if (periodic || knot_values.size() != b.dim() || (num.has_value() && *num < 1)) {
     return 0.0;
   }
-  for (const std::span<const T> k : knot_values) {
-    if (!k.empty()) {
-      return static_cast<double>(b.size()) * (1.0 + static_cast<double>(k.size()));
+  for (std::size_t d = 0; d < b.dim(); ++d) {
+    if (knot_values[d].empty()) {
+      continue;
     }
+    const auto n = static_cast<double>(b.shape()[d]);
+    const auto p = static_cast<double>(whole.spaces()[d].degree());
+    double rows = n;
+    for (std::size_t k = 0; k < knot_values[d].size() && n > static_cast<double>(k) * p; ++k) {
+      rows += n - static_cast<double>(k) * p;
+    }
+    return static_cast<double>(b.size() / b.shape()[d]) * rows;
   }
   return 0.0;
 }

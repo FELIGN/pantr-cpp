@@ -26,9 +26,12 @@
 // their work (design §2.8): the B-splines arrive as C++ values and the result leaves as one, so
 // nothing inside the guard touches a Python object. A refusal the estimate can read off the
 // arguments alone (dimensions that differ, an axis out of range, nothing to do) counts no work, so
-// such a call keeps the GIL; one the call makes only after its work has begun (a corner or edge
-// mismatch, a mixed dtype refused at the end) is counted, since the work is done. The primitives
-// build a handful of control points and keep the GIL, as does the testing hook.
+// such a call keeps the GIL. The other refusals are left unmirrored, since mirroring them would
+// repeat the library's own comparisons: a corner, edge or seam mismatch and a ruled pair whose
+// widths or nets differ are refused after the compatibility but before the work the estimate
+// counts, so such a call may release for nothing, which costs a wait and changes no result; a
+// mixed dtype refused at the end has done the work. The primitives build a handful of control
+// points and keep the GIL, as does the testing hook.
 #include "arrays.hpp"
 #include "interface.hpp"
 

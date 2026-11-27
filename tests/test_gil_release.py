@@ -287,6 +287,17 @@ def _refine_to_common(
     return setup
 
 
+def _refused(op: Callable[[Bspline], object], match: str) -> Callable[[Bspline], object]:
+    """Run ``op``, which the call refuses before any work, and check that it does."""
+
+    def call(b: Bspline) -> object:
+        with pytest.raises(ValueError, match=match):
+            op(b)
+        return None
+
+    return call
+
+
 def _linear_space(intervals: int) -> BsplineSpace1D:
     """A clamped degree-1 space of uniform knots."""
     return BsplineSpace1D(np.concatenate(([0.0], np.linspace(0.0, 1.0, intervals + 1), [1.0])), 1)
@@ -443,7 +454,8 @@ SETUPS: dict[str, Callable[[], Callable[[], object]]] = {
     # rest * (intervals * (q + 1) (p + 1) + removals * (q + intervals)), one forced removal at each
     # of the 169 interior knots: 519 * (170 * 12 + 169 * 172).
     "Bspline.reduce_degree": _on_spline(3, [170, 170], 3, lambda b: b.reduce_degree([1, 0])),
-    # (1 + values) copies of the 600^2 * 3 values.
+    # rest * (n + sum_k (n - 3 k)) for the copy and the 8 removals' working copies:
+    # 1800 * (600 + 8 * 600 - 3 * 28).
     "remove_knots": _remove_knots(597, 8),
     # 2 * rest * (n - 1) = 2 * 3300 * 1099, along direction 1, which flattens the net (a
     # transposed copy) and restores it.
@@ -457,7 +469,7 @@ SETUPS: dict[str, Callable[[], Callable[[], object]]] = {
     "refine_to_common_space_1d": _refine_to_common(7, 800, 1600, 1493),
     # Per direction, the coarser surface lacks one interior knot: 2 * 1509 * (504 * 4 - 9).
     "make_compat": _make_compat(500),
-    # make_compat's estimate (below) for surfaces of 500^2 and 501^2 intervals, plus twice their
+    # make_compat's estimate (above) for surfaces of 500^2 and 501^2 intervals, plus twice their
     # two nets, stacked and copied.
     "create_ruled": _ruled(500, 1),
     # 16 * points * 9 for the full turn, 383^2 points.
@@ -599,6 +611,17 @@ SHORT_CALLS: dict[str, Callable[[], Callable[[], object]]] = {
     "create_coons_surface": _coons_surface(147),
     "create_coons_volume": _coons_volume(17),
     "join": _join([200, 200]),
+    # Refused before any work on nets whose estimate would otherwise be above the threshold (the
+    # long entries' sizes), so each counts no work and keeps the GIL.
+    "Bspline.restrict refused": _on_spline(
+        3, [1300, 1300], 3, _refused(lambda b: b.restrict([(0.7, 0.2), None]), "strictly less")
+    ),
+    "Bspline.split refused": _on_spline(
+        7, [993, 993], 3, _refused(lambda b: b.split(0, 1.5), "strictly inside")
+    ),
+    "elevate_degree refused": _on_spline(
+        3, [997, 997], 3, _refused(lambda b: b.elevate_degree([59, 0]), "binomial")
+    ),
 }
 
 

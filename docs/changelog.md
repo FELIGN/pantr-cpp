@@ -242,7 +242,8 @@
 ### Changed
 - **The B-spline refinements and modifications and the CAD constructions release the GIL when
   long**: `Bspline.insert_knots`, `subdivide`, `restrict`, `split`, `to_open_bspline`,
-  `to_periodic`, `elevate_degree`, `reduce_degree`, `remove_knots` and `derivative`,
+  `to_periodic`, `elevate_degree`, `reduce_degree`, `remove_knots` and a non-rational
+  B-spline's `derivative`,
   `BsplineSpace1D.insert_knots` and `subdivide`, and `make_compat`, `create_ruled`,
   `create_revolution`, `create_coons_surface`, `create_coons_volume` and `join`, from a fixed
   amount of work, about the default switch interval (`sys.getswitchinterval()`), as the other calls
