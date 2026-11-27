@@ -110,17 +110,26 @@ with concurrent.futures.ThreadPoolExecutor(8) as pool:
     results = [f.result() for f in futures]
 ```
 
-This works for the operations that **release the GIL** while they compute. The parallel entry
-points do so once the call is large enough to use the pool (whatever the thread setting): the
-basis tabulations, B-spline and Bézier evaluation, Bézier split, slice and restrict, the spanwise
-extraction's batch applies, point location, the grids' batch queries, the THB evaluations and
-prolongation, and interface detection. Operations that never use the pool (Bézier multiply and
-composition, the degree reductions, the fits, projections and quasi-interpolants) release it only
-when they are long, about a switch interval of work (`sys.getswitchinterval()`) or more. Several
-Python threads then run PaNTr kernels concurrently, as in this pattern. One cost remains: when
-another Python thread runs CPU-bound bytecode, a call that releases the GIL waits up to a switch
-interval to get it back, which a mid-size pool call notices and a short call that keeps the GIL
-does not.
+This works for the operations that **release the GIL** while they compute. The parallel entry points
+do so once the call is large enough to use the pool (whatever the thread setting): the basis
+tabulations, B-spline and Bézier evaluation, Bézier split, slice and restrict, the spanwise
+extraction's batch applies, `Bspline.to_beziers`, applying an `AffineTransform`, point location, the
+grids' batch queries, the THB evaluations and prolongation, interface detection, and a hierarchical
+grid's `collect_cell_bounds`, `partition_grid`, `cell_quadrature` without a cell selection and the
+BVH build of its first `query_aabb` or `cell_bvh`, each of which collects the cells' corners on the
+pool. Operations that never use the pool (Bézier multiply and composition, the degree reductions,
+the fits, projections and quasi-interpolants, a tensor-product grid's `collect_cell_bounds`,
+`cell_quadrature` and `partition_grid`, `cell_quadrature` with a cell selection on any grid, the
+mapping of the rule in a hierarchical grid's `cell_quadrature` without one, and the tree of any
+grid's first `query_aabb` or `cell_bvh`, which is built serially) release it only when they are
+long. Several Python threads then run PaNTr kernels concurrently, as in this pattern. A call counts
+as long when its estimated work reaches a fixed threshold, about the work of the default switch
+interval (`sys.getswitchinterval()`, 5 ms); the threshold does not follow a changed interval. The
+estimates bound the work from below, and the one for a degree reduction's first build of its exact
+operator is conservative: it counts only the assembly of the Gram matrices, so a cold reduction of
+middle degree can keep the GIL for its whole first call. One cost remains: when another Python
+thread runs CPU-bound bytecode, a call that releases the GIL waits up to a switch interval to get it
+back, which a mid-size pool call notices and a short call that keeps the GIL does not.
 
 ### Pattern 3: Balanced -- user and PaNTr share cores
 

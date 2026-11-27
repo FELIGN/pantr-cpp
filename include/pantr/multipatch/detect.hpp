@@ -412,10 +412,32 @@ template <StorageFloat T>
     return false;
   }
   const std::size_t n = corners_a.size() / rank_a;
-  // `hypot` rather than the square root of a sum of squares, as in `joint_tolerances`: the square
-  // of a difference overflows from about 1.3e154, and a pair of corners that coincide to rounding
-  // on patches that large then had no partner.
+  // The square root of the sum of squares where that sum is a finite normal number, and otherwise
+  // the chain of `hypot` calls, as in `joint_tolerances`, which is far slower. A finite normal sum
+  // is within about `(2 rank - 1) u` of the exact one, an underflowed square losing at most half
+  // the smallest subnormal, under `u` times the sum (gradual underflow: under flush-to-zero a
+  // square near `DBL_MIN` is lost whole and only the `hypot` chain holds); so its root is within a
+  // few units of rounding of the distance, as the `hypot` chain is. The bound assumes
+  // round-to-nearest in `double` and holds whether or not the compiler contracts `sum += diff *
+  // diff` into a fused multiply-add (`-ffp-contract=on`, which `pantr::pantr` sets), since the
+  // contraction only drops a rounding. Whether a pair whose distance is within a few units of
+  // rounding of `tol` matches therefore depends on those roundings: it may differ between a target
+  // with FMA, where the sum may be contracted (the extension's x86-64 v3 and v4 rungs, arm64), and
+  // one without (x86-64 generic), in either direction. The chain takes a sum that overflowed (a
+  // difference from about 1.3e154, where corners coinciding to rounding would otherwise have no
+  // partner); a subnormal one, which may have lost its relative accuracy to underflow; a zero one,
+  // most often from bitwise-equal corners, where the chain returns zero too, and otherwise from
+  // squares that all underflowed; and NaN.
   const auto distance = [&](std::size_t i, std::size_t j) {
+    double sum = 0.0;
+    for (std::size_t c = 0; c < rank_a; ++c) {
+      const double diff = corners_a[i * rank_a + c] - corners_b[j * rank_a + c];
+      sum += diff * diff;
+    }
+    if (sum >= (std::numeric_limits<double>::min)() &&
+        sum <= (std::numeric_limits<double>::max)()) {
+      return std::sqrt(sum);
+    }
     double d = 0.0;
     for (std::size_t c = 0; c < rank_a; ++c) {
       const double diff = corners_a[i * rank_a + c] - corners_b[j * rank_a + c];

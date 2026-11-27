@@ -5,12 +5,13 @@ millisecond and records when it ran. A call that holds the GIL blocks that threa
 duration; one that releases it leaves gaps of about the wake period. The assertion compares the
 largest gap with half the call's duration, a margin of an order of magnitude over the wake period
 on any machine where the call takes tens of milliseconds, so it does not depend on the machine's
-speed. The cases cover the Bezier operations that reach the thread pool and the reductions and fits
-that run exact or dense solves; each is sized above the work at which the binding releases the GIL
-(``gil_release_min_ops`` in ``bindings/src/arrays.hpp``), or builds an exact reduction operator
-the process table does not hold yet. ``l2_project_bspline`` releases it too but is absent: its
-sum-factorised solves are short beside sampling the user's function, so the call does not tell a
-held GIL from a released one.
+speed. The cases cover the Bezier operations that reach the thread pool, the reductions and fits
+that run exact or dense solves, and the grids' serial passes over their cells; each is sized above
+the work at which the binding releases the GIL (``gil_release_min_ops`` in
+``bindings/src/arrays.hpp``), or builds a high-degree exact reduction operator the process table
+does not hold yet. ``l2_project_bspline`` releases it too but is absent: its sum-factorised solves
+are short beside sampling the user's function, so the call does not tell a held GIL from a released
+one.
 
 A short call keeps the GIL: releasing it while another thread is CPU-bound costs the caller about
 one switch interval before it gets the GIL back, which is far more than the call itself.
@@ -38,6 +39,9 @@ from pantr.bspline import (
     fit_bspline,
     quasi_interpolate_bspline,
 )
+from pantr.geometry import AABB
+from pantr.grid import cell_quadrature, partition_grid, uniform_grid
+from pantr.quad import gauss_legendre_quadrature
 
 _WAKE_PERIOD = 0.001
 _MIN_DURATION = 0.02  # below this the gap and the wake period are not an order of magnitude apart
@@ -153,6 +157,62 @@ def _multiply() -> Callable[[], object]:
     return lambda: square.multiply(square)
 
 
+_UNIT_SQUARE = [[0.0, 1.0], [0.0, 1.0]]
+
+
+def _collect_cell_bounds(cells: int) -> Callable[[], Callable[[], object]]:
+    """Collect the corners of a tensor-product grid's cells (``2 * ndim`` stores per cell)."""
+
+    def setup() -> Callable[[], object]:
+        grid = uniform_grid(_UNIT_SQUARE, cells)
+        return grid.collect_cell_bounds
+
+    return setup
+
+
+def _selected_cell_quadrature(cells: int) -> Callable[[], Callable[[], object]]:
+    """Map a one-point rule onto every cell of a tensor-product grid, given as a selection."""
+
+    def setup() -> Callable[[], object]:
+        grid = uniform_grid(_UNIT_SQUARE, cells)
+        ids = np.arange(grid.num_cells)
+        rule = gauss_legendre_quadrature(2, 1)
+        return lambda: cell_quadrature(grid, rule, ids)
+
+    return setup
+
+
+def _cell_quadrature(cells: int) -> Callable[[], Callable[[], object]]:
+    """Map a one-point rule onto every cell of a tensor-product grid, without a selection."""
+
+    def setup() -> Callable[[], object]:
+        grid = uniform_grid(_UNIT_SQUARE, cells)
+        rule = gauss_legendre_quadrature(2, 1)
+        return lambda: cell_quadrature(grid, rule)
+
+    return setup
+
+
+def _block_partition(cells: int) -> Callable[[], Callable[[], object]]:
+    """Partition a tensor-product grid into four blocks."""
+
+    def setup() -> Callable[[], object]:
+        grid = uniform_grid(_UNIT_SQUARE, cells)
+        return lambda: partition_grid(grid, 4, backend="block")
+
+    return setup
+
+
+def _first_query(cells: int) -> Callable[[], Callable[[], object]]:
+    """Query a new grid, so that the call builds its BVH."""
+
+    def setup() -> Callable[[], object]:
+        box = AABB([0.1, 0.1], [0.2, 0.2])  # made here: one held by the module outlives nanobind
+        return lambda: uniform_grid(_UNIT_SQUARE, cells).query_aabb(box)
+
+    return setup
+
+
 _WINDOWS_BLOCKED = pytest.mark.skipif(
     sys.platform == "win32",
     reason="the Windows wheel legs showed slice and restrict, and in a later run split and "
@@ -175,6 +235,14 @@ SETUPS: dict[str, Callable[[], Callable[[], object]]] = {
     "fit_bspline scattered": _untimed_setup(_scattered_fit),
     "fit_bspline tensor": _untimed_setup(_tensor_fit),
     "quasi_interpolate_bspline": _untimed_setup(_qi),
+    # 2500^2 cells of 4 stores each, 4500^2 of 4 operations each, and 1500^2 and 1000^2 cells of
+    # 4 + 5 operations each: above the threshold.
+    "collect_cell_bounds": _collect_cell_bounds(2500),
+    "partition_grid": _block_partition(4500),
+    "cell_quadrature": _cell_quadrature(1500),
+    "cell_quadrature selection": _selected_cell_quadrature(1000),
+    # A BVH of 600^2 cells: 4 operations per cell for its corners and each of its 19 full levels.
+    "query_aabb first": _first_query(600),
 }
 
 
@@ -206,6 +274,39 @@ def _small_compose() -> Callable[[], object]:
 
 _SMALL = _net((4, 4, 2))
 
+
+def _cold_reduction_error(b: Bezier) -> object:
+    """Reduce a curve whose exact operator is built in the call: a short build at a low degree."""
+    reduction_cache_clear()
+    return b.degree_reduction_error(1)
+
+
+def _cold_reduction(b: Bezier) -> object:
+    """Reduce as ``_cold_reduction_error`` does, returning the reduced Bezier."""
+    reduction_cache_clear()
+    return b.reduce_degree(1)
+
+
+def _cold_minimization(b: Bezier) -> object:
+    """Minimize a curve whose first trial's exact operator is built in the call."""
+    reduction_cache_clear()
+    return b.minimize_degree()
+
+
+def _cold_zero_tol_minimization(b: Bezier) -> object:
+    """Minimize with ``tol=0``, which runs no trial and builds nothing, up to ``bincoeff_max_n``."""
+    reduction_cache_clear()
+    return b.minimize_degree(0.0)
+
+
+def _refused_minimization(b: Bezier) -> object:
+    """Minimize a curve of degree above ``bincoeff_max_n`` (61), which the call refuses at once."""
+    reduction_cache_clear()  # unrefused, the call would build an operator above the threshold
+    with pytest.raises(ValueError, match="binomial coefficients"):
+        b.minimize_degree()
+    return None
+
+
 SHORT_CALLS: dict[str, Callable[[], Callable[[], object]]] = {
     "split": _on(_SMALL, lambda b: b.split(0, 0.3)),
     "multiply": _on(_SMALL, lambda b: b.multiply(b)),
@@ -215,7 +316,15 @@ SHORT_CALLS: dict[str, Callable[[], Callable[[], object]]] = {
     "compose": _small_compose,
     "reduce_degree": _on(_SMALL, lambda b: b.reduce_degree(1)),
     "degree_reduction_error": _on(_SMALL, lambda b: b.degree_reduction_error(1)),
+    # A cold build at degree 10 is estimated at 16 * 2290 operations, two orders below the
+    # threshold; at degree 61 with ``tol=0`` the call builds nothing and copies the net, wide
+    # enough here that the call is not trivially short.
+    "degree_reduction_error cold": _on(_net((11, 1)), _cold_reduction_error),
+    "reduce_degree cold": _on(_net((11, 1)), _cold_reduction),
     "minimize_degree": _on(_SMALL, lambda b: b.minimize_degree()),
+    "minimize_degree cold": _on(_net((11, 1)), _cold_minimization),
+    "minimize_degree tol 0 cold": _on(_net((62, 2000)), _cold_zero_tol_minimization),
+    "minimize_degree refused": _on(_net((63, 1)), _refused_minimization),
     "fit_bezier tensor": lambda: lambda: fit_bezier(
         _rng().random((5, 5)), [np.linspace(0.0, 1.0, 5)] * 2, degree=[3, 3]
     ),
@@ -231,6 +340,13 @@ SHORT_CALLS: dict[str, Callable[[], Callable[[], object]]] = {
     "quasi_interpolate_bspline": lambda: lambda: quasi_interpolate_bspline(
         lambda pts: np.ones(pts.shape[0]), create_uniform_space(2, [4, 4])
     ),
+    # Sized so that each estimate is at most a tenth of the threshold while the call is not
+    # trivially short: 300^2 cells of 4 stores, 300^2 of 4 operations, 100^2 of 4 + 5, and a BVH
+    # of 40^2 cells at 4 operations per cell for its corners and each of its 11 full levels.
+    "collect_cell_bounds": _collect_cell_bounds(300),
+    "partition_grid": _block_partition(300),
+    "cell_quadrature selection": _selected_cell_quadrature(100),
+    "query_aabb first": _first_query(40),
 }
 
 

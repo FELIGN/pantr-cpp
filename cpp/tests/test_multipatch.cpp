@@ -1,6 +1,6 @@
-// Interfaces between patches: `Interface`, `match_face_cps`, `detect_interfaces`,
-// `verify_interface`, `MultiPatch`, and the storage-type conversion `bspline::astype` the binding
-// uses for patches of mixed dtypes.
+// Interfaces between patches: `Interface`, `match_face_cps`, `detect_interfaces` and its corner
+// comparison `corner_sets_match`, `verify_interface`, `MultiPatch`, and the storage-type conversion
+// `bspline::astype` the binding uses for patches of mixed dtypes.
 //
 // Oracles. Every detection is checked against patches built with a known geometry: a lattice of
 // control points on a box, translated so that two boxes share a face, with the neighbour's control
@@ -909,6 +909,33 @@ TEST_CASE("detect: the result does not depend on the number of threads") {
     many = mp::detect_interfaces(view(p));
   }
   CHECK(many == want);
+}
+
+TEST_CASE("detect: corner_sets_match takes the hypot route for a sum outside the normal range") {
+  using mp::detail::corner_sets_match;
+  const std::vector<double> origin = {0.0, 0.0, 0.0};
+  // Normal sum: the square root of 25 is exactly 5.
+  const std::vector<double> pythagorean = {3.0, 4.0, 0.0};
+  CHECK(corner_sets_match(origin, 3, pythagorean, 3, 5.0));
+  CHECK_FALSE(corner_sets_match(origin, 3, pythagorean, 3, 4.9));
+  // Each square underflows to zero, so the sum is zero while the corners are 1e-170 apart: a
+  // square root of the sum would read them as coincident.
+  const std::vector<double> underflow = {1e-170, 1e-170, 0.0};
+  CHECK_FALSE(corner_sets_match(origin, 3, underflow, 3, 1e-180));
+  CHECK(corner_sets_match(origin, 3, underflow, 3, 2e-170));
+  // The square, 1e-320, is subnormal and keeps only about 11 bits: its root is about 9.99994e-161,
+  // within a tolerance of 9.99999e-161 that the distance 1e-160 exceeds. The guard at `DBL_MIN`
+  // sends it to `hypot`, whose single coordinate is the exact distance; a guard at zero would not.
+  const std::vector<double> subnormal = {1e-160, 0.0, 0.0};
+  CHECK_FALSE(corner_sets_match(origin, 3, subnormal, 3, 9.99999e-161));
+  CHECK(corner_sets_match(origin, 3, subnormal, 3, 1e-160));
+  // The square overflows to infinity while the distance, 2e154, is finite.
+  const std::vector<double> overflow = {2e154, 0.0, 0.0};
+  CHECK(corner_sets_match(origin, 3, overflow, 3, 3e154));
+  CHECK_FALSE(corner_sets_match(origin, 3, overflow, 3, 1e154));
+  // A NaN coordinate has no partner, whatever the tolerance.
+  const std::vector<double> nan = {std::numeric_limits<double>::quiet_NaN(), 0.0, 0.0};
+  CHECK_FALSE(corner_sets_match(origin, 3, nan, 3, 1e300));
 }
 
 // ----------------------------------------------------------------------------- verify_interface

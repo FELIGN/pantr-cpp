@@ -1,0 +1,305 @@
+{
+ "protocol": {
+  "k": 10,
+  "repeats": 30,
+  "threads": [
+   1,
+   8
+  ],
+  "cpus": "0-7",
+  "reference": "before",
+  "argv": [
+   "benchmarks/compare.py",
+   "--out-dir",
+   "<absolute path>",
+   "--side",
+   "before=<before src>",
+   "--side",
+   "after=<after src>",
+   "--reference",
+   "before",
+   "--k",
+   "10",
+   "--threads",
+   "1",
+   "8",
+   "--cpus",
+   "0-7",
+   "--filter",
+   "^S7\\.detect_interfaces"
+  ]
+ },
+ "sides": {
+  "before": {
+   "commit": "fd834c393876d50a1578ef92aadf9f717db83419-dirty",
+   "extension": "pantr._pantr_v4 (v4, _pantr_v4.abi3.so)"
+  },
+  "after": {
+   "commit": "483a9e7f34ba559a37032b3e243f68a39fd0028f",
+   "extension": "pantr._pantr_v4 (v4, _pantr_v4.abi3.so)"
+  }
+ },
+ "machine": {
+  "cpu": "Intel(R) Xeon(R) Gold 6148 CPU @ 2.40GHz",
+  "platform": "Linux-5.15.0-204-generic-x86_64-with-glibc2.35",
+  "affinity": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7
+  ],
+  "governor": "schedutil"
+ },
+ "cases": {
+  "S7.detect_interfaces.tiny@t1": {
+   "what": {
+    "before": "detect_interfaces, 1 x 2 patches",
+    "after": "detect_interfaces, 1 x 2 patches"
+   },
+   "sides": {
+    "before": {
+     "statistic_ns": 9388.500260473787,
+     "range_ns": 1779.697272557445,
+     "process_medians_ns": [
+      8656.168122270743,
+      9941.004926108375,
+      8586.717821782178,
+      9293.264102564102,
+      9336.18817204301,
+      9411.433510638297,
+      9365.567010309278,
+      9472.608108108108,
+      10366.415094339623,
+      9430.021341463415
+     ]
+    },
+    "after": {
+     "statistic_ns": 8915.08138353309,
+     "range_ns": 2007.4866798941803,
+     "process_medians_ns": [
+      8332.128099173555,
+      8233.4075,
+      8664.002262443439,
+      10240.89417989418,
+      8928.099502487563,
+      8922.531578947368,
+      8873.711442786069,
+      8907.631188118812,
+      9173.536516853932,
+      9299.383663366338
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S7.detect_interfaces.medium@t1": {
+   "what": {
+    "before": "detect_interfaces, 4 x 4 patches",
+    "after": "detect_interfaces, 4 x 4 patches"
+   },
+   "sides": {
+    "before": {
+     "statistic_ns": 247812.60416666666,
+     "range_ns": 55297.25,
+     "process_medians_ns": [
+      218775.5,
+      234985.11111111112,
+      221453.65,
+      245996.94444444444,
+      247459.875,
+      257788.6666666667,
+      248165.3333333333,
+      250109.5625,
+      266075.1875,
+      274072.75
+     ]
+    },
+    "after": {
+     "statistic_ns": 209209.75,
+     "range_ns": 40038.1333333333,
+     "process_medians_ns": [
+      180112.6666666667,
+      196261.77272727274,
+      199730.2272727273,
+      212787.27777777778,
+      209751.15,
+      209075.85,
+      215712.25,
+      208422.90000000002,
+      209343.65,
+      220150.8
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S7.detect_interfaces.large@t1": {
+   "what": {
+    "before": "detect_interfaces, 8 x 8 patches",
+    "after": "detect_interfaces, 8 x 8 patches"
+   },
+   "sides": {
+    "before": {
+     "statistic_ns": 2849845.5,
+     "range_ns": 523974.5,
+     "process_medians_ns": [
+      2602093.5,
+      2832096.5,
+      2564425.5,
+      2709212.5,
+      2941514.0,
+      3044497.0,
+      2867594.5,
+      2951365.0,
+      3088400.0,
+      2822886.5
+     ]
+    },
+    "after": {
+     "statistic_ns": 2062189.75,
+     "range_ns": 185261.25,
+     "process_medians_ns": [
+      1998833.75,
+      1950335.75,
+      1997380.75,
+      2085240.0,
+      2059895.0,
+      2103626.5,
+      2064484.5,
+      2057884.0,
+      2115981.0,
+      2135597.0
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S7.detect_interfaces.tiny@t8": {
+   "what": {
+    "before": "detect_interfaces, 1 x 2 patches",
+    "after": "detect_interfaces, 1 x 2 patches"
+   },
+   "sides": {
+    "before": {
+     "statistic_ns": 9357.705381944445,
+     "range_ns": 841.5843053676726,
+     "process_medians_ns": [
+      8990.309644670051,
+      9036.538461538461,
+      8682.527093596058,
+      9348.171875,
+      9367.238888888889,
+      9524.11139896373,
+      9402.739583333332,
+      9450.117948717947,
+      9317.751282051282,
+      9508.103626943006
+     ]
+    },
+    "after": {
+     "statistic_ns": 8936.866688665235,
+     "range_ns": 847.8665053763452,
+     "process_medians_ns": [
+      8754.752155172413,
+      8341.404999999999,
+      8442.6875,
+      9189.271505376344,
+      8880.688524590165,
+      9053.068965517241,
+      8911.879310344828,
+      8968.267676767677,
+      9106.281862745098,
+      8961.854066985645
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S7.detect_interfaces.medium@t8": {
+   "what": {
+    "before": "detect_interfaces, 4 x 4 patches",
+    "after": "detect_interfaces, 4 x 4 patches"
+   },
+   "sides": {
+    "before": {
+     "statistic_ns": 248105.90277777778,
+     "range_ns": 35474.35714285716,
+     "process_medians_ns": [
+      229847.27777777778,
+      219457.5,
+      233896.0,
+      250055.375,
+      251000.05555555556,
+      248281.05555555556,
+      249467.5625,
+      254931.85714285716,
+      247930.75,
+      247264.0625
+     ]
+    },
+    "after": {
+     "statistic_ns": 210176.5,
+     "range_ns": 41346.458333333314,
+     "process_medians_ns": [
+      210690.25,
+      196648.6,
+      189087.5416666667,
+      211461.45,
+      230434.0,
+      208967.05,
+      209662.75,
+      209317.3,
+      212080.09999999998,
+      223356.45
+     ],
+     "flagged": false
+    }
+   }
+  },
+  "S7.detect_interfaces.large@t8": {
+   "what": {
+    "before": "detect_interfaces, 8 x 8 patches",
+    "after": "detect_interfaces, 8 x 8 patches"
+   },
+   "sides": {
+    "before": {
+     "statistic_ns": 1144231.125,
+     "range_ns": 212013.5,
+     "process_medians_ns": [
+      1089864.0,
+      1090956.6666666665,
+      1102287.3333333335,
+      1058193.5,
+      1230634.75,
+      1217701.25,
+      1164032.25,
+      1260071.5,
+      1270207.0,
+      1124430.0
+     ]
+    },
+    "after": {
+     "statistic_ns": 976183.25,
+     "range_ns": 208658.75,
+     "process_medians_ns": [
+      977271.6666666666,
+      817337.5,
+      952692.5,
+      975094.8333333333,
+      1004115.1666666667,
+      993913.0,
+      974776.8333333334,
+      955871.0,
+      1025996.25,
+      981042.5
+     ],
+     "flagged": false
+    }
+   }
+  }
+ }
+}

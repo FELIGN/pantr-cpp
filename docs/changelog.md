@@ -240,6 +240,17 @@
   1, 1.5, 2]` at degree 2) are still not detected.
 
 ### Changed
+- **A tensor-product grid's `collect_cell_bounds`, `cell_quadrature` and `partition_grid`, and
+  `cell_quadrature` with a cell selection on a hierarchical grid, release the GIL when long**: from
+  a fixed amount of work, about the default switch interval (`sys.getswitchinterval()`), as the
+  other calls that never use the thread pool do. They held it for the whole call, however many
+  cells. A hierarchical grid's `cell_quadrature` without a selection, which released it only when
+  its corners were collected on the thread pool, now also releases it when its mapping of the rule
+  is long.
+- **A grid's first `query_aabb` or `cell_bvh` keeps the GIL while it builds a small grid's BVH**,
+  and releases it for a large one (about the default switch interval of work or more) or one whose
+  corners are collected on the thread pool. It released it for every build, so under a CPU-bound
+  Python thread the first query of a small grid waited about a switch interval.
 - **`TensorProductGrid.is_uniform` judges an axis's spacings relative to its scale**: uniform when
   their spread is at most `16 eps max(span, |b[0]|, |b[-1]|)`, where the previous release took an
   absolute `1e-10`. That read spacings of `1e-13` and `9e-13` as uniform, and most `linspace`
@@ -328,17 +339,18 @@
 - **Compiled calls release the GIL when they run on pantr's thread pool or are long**, so other
   Python threads run meanwhile. `Bezier.split`, `slice` and `restrict`, like the evaluations and
   tabulations, release it when their nets are large enough to use the thread pool.
-  `Bezier.multiply`, `compose`, `reduce_degree`, `degree_reduction_error` and `minimize_degree`,
-  and the compiled parts of `fit_bezier`, `interpolate_bezier`, `fit_bspline`,
-  `interpolate_bspline`, `l2_project_bspline` and `quasi_interpolate_bspline`, never use the pool
-  and release it only when their estimated work is about the default switch interval
-  (`sys.getswitchinterval()`) or more, or when a degree reduction first builds an exact operator:
-  while another Python thread is busy, releasing costs the caller about a switch interval, more
-  than a shorter call computes. A call on the pool releases from a far smaller size, so Python
-  threads that each run pantr calls scale, and a mid-size pool call can wait up to a switch
-  interval when another Python thread is busy. `THBSpline.prolong_to`, the THB prolongation and
-  multipatch interface detection release it only when their work reaches the pool, where they
-  used to release it always.
+  `Bezier.multiply`, `compose`, `reduce_degree`, `degree_reduction_error` and `minimize_degree`, and
+  the compiled parts of `fit_bezier`, `interpolate_bezier`, `fit_bspline`, `interpolate_bspline`,
+  `l2_project_bspline` and `quasi_interpolate_bspline`, never use the pool and release it only when
+  their estimated work is about the default switch interval (`sys.getswitchinterval()`) or more:
+  while another Python thread is busy, releasing costs the caller about a switch interval, more than
+  a shorter call computes. A degree reduction that first builds an exact operator counts a lower
+  bound on that build toward its work. The bound is conservative, so a build of low or middle degree
+  can keep the GIL for its whole first call, and a high-degree one releases it. A call on the pool
+  releases from a far smaller size, so Python threads that each run pantr calls scale, and a
+  mid-size pool call can wait up to a switch interval when another Python thread is busy.
+  `THBSpline.prolong_to`, the THB prolongation and multipatch interface detection release it only
+  when their work reaches the pool, where they used to release it always.
 - **numba and threadpoolctl are no longer dependencies**, and `import pantr` imports neither:
   every Numba kernel is replaced by C++ compiled into pantr's extension, and its thread pool
   replaces Numba's. Nor does the import start a background thread to compile kernels, and the
@@ -1630,6 +1642,16 @@
   took the length of the patches' joint bounding box with `numpy.linalg.norm`, whose sum of
   squares overflowed to `inf`, so the tolerance became infinite and every face was matched with
   every face.
+- **`detect_interfaces` and `MultiPatch` compare face corners whose differences are huge or tiny
+  without overflow or underflow.** The previous release took each corner distance with
+  `numpy.linalg.norm`, whose sum of squares overflowed to `inf` for a coordinate difference from
+  about `1.34e154`, so corners of huge patches that coincide to rounding had no partner, and
+  underflowed to zero for corners about `1e-170` apart, which then read as coincident under any
+  tolerance. Such a sum, one that overflows, is subnormal or zero, or is NaN, now takes a chain of
+  `hypot` calls. A finite normal sum still takes its square root, with its own roundings, so a pair
+  whose distance is within a few units of rounding of the geometric tolerance may be classified
+  differently from the previous release, in either direction, and differently on a target with
+  fused multiply-add (the extension's x86-64-v3 and v4 rungs, arm64) than on x86-64 generic.
 - **`detect_interfaces` and `MultiPatch` of a patch whose knot vector sits far from the origin
   relative to its span** find the interfaces there are. The knots are compared after mapping
   each vector onto `[0, 1]`, whose rounding grows with that ratio, against the bare relative
