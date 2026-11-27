@@ -216,6 +216,46 @@ class ReleaseIfParallel {
   std::optional<nb::gil_scoped_release> release_;
 };
 
+// Lower bounds on the work of rebuilding a B-spline along one direction, for the GIL decisions of
+// the refinement, modification and CAD bindings (`ReleaseIfLong`). `B` is a `bspline::Bspline<T>`;
+// the templates name no B-spline header, so that this file stays free of the library's types.
+
+/// Work of inserting `inserted` knots into direction `d` of `b`, for the GIL decision only: the
+/// refined direction has `shape[d] + inserted` rows, each a multiply-add of the old rows in its
+/// Oslo band (`bspline::detail::combine_oslo_row`), for each of the `b.size() / shape[d]` values
+/// the other extents and the coordinates hold. Row `i` takes the band of the old span `mu` that
+/// holds its knot, the old rows `mu - degree` to `mu`, of which only those from 0 exist, so only a
+/// row whose knot lies below the domain start (an unclamped start) misses any, `degree - mu` of
+/// them. The rows of the `degree` old knots below the start miss at most `degree - j` for the
+/// `j`-th, `degree (degree + 1) / 2` in all; a new knot below the start lies within the tolerance
+/// of it, so above every old knot outside the start's class, of `s` knots, and its row misses at
+/// most `s`, for at most `degree + 1 - s` such knots. Together at most `degree (degree + 1) / 2 +
+/// (degree + 1)^2 / 4 <= degree (degree + 1)`, hence the `degree (degree + 1)` subtracted. A lower
+/// bound for the first direction refined and for each later one, since insertion never shrinks an
+/// extent; a periodic direction is refined through its open form, which is clamped and has at
+/// least the stored rows.
+template <class B>
+double refinement_ops(const B& b, std::size_t d, double inserted) {
+  const std::size_t n = b.shape()[d];
+  const auto rest = static_cast<double>(b.size() / n);
+  const auto p = static_cast<double>(b.space().spaces()[d].degree());
+  return rest * ((static_cast<double>(n) + inserted) * (p + 1.0) - p * (p + 1.0));
+}
+
+/// Work of elevating direction `d` of `b` by `increment`, for the GIL decision only: the elevated
+/// direction has `shape[d] + increment * S` rows, `S` the Bezier segments of the knot vector (Piegl
+/// and Tiller A5.9, `bspline::detail::degree_elevate_kernel`), and each row stores its
+/// `b.size() / shape[d]` values. `S` is at least the space's `num_intervals`, since the kernel
+/// splits at every distinct knot value and the space groups them into classes. A lower bound: it
+/// leaves out the Bezier extraction and the blends that form each row.
+template <class B>
+double elevation_ops(const B& b, std::size_t d, double increment) {
+  const std::size_t n = b.shape()[d];
+  const auto rest = static_cast<double>(b.size() / n);
+  const auto intervals = static_cast<double>(b.space().spaces()[d].num_intervals());
+  return rest * (static_cast<double>(n) + increment * intervals);
+}
+
 }  // namespace pantr::bindings
 
 namespace nanobind::detail {
