@@ -27,6 +27,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable
+from typing import Any, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -411,6 +412,19 @@ def _coons_volume(intervals: int) -> Callable[[], Callable[[], object]]:
     return setup
 
 
+def _surface_and_curves(intervals: int) -> list[Bspline]:
+    """A random cubic surface followed by three of its boundary curves."""
+    s = _spline(3, [intervals, intervals], 3)
+    return [s, *(cast("Bspline", s.boundary(a, side)) for a, side in [(0, 1), (1, 0), (1, 1)])]
+
+
+def _volume_and_faces(intervals: int) -> list[Any]:
+    """A random cubic volume's handle followed by five of its boundary faces' handles."""
+    v = _spline(3, [intervals] * 3, 3)
+    sides = [(0, 1), (1, 0), (1, 1), (2, 0), (2, 1)]
+    return [v._h, *(cast("Bspline", v.boundary(a, side))._h for a, side in sides)]
+
+
 def _join(intervals: list[int]) -> Callable[[], Callable[[], object]]:
     """Join the two halves of a random cubic surface split along direction 0."""
 
@@ -652,9 +666,9 @@ SHORT_CALLS: dict[str, Callable[[], Callable[[], object]]] = {
     # Refused before any work, by an argument the estimate reads, on inputs whose estimate would
     # otherwise be above the threshold (the long entries' sizes, or ones of the long entry's
     # formula above it), so each counts no work and keeps the GIL: one per refining, modifying and
-    # CAD call that has such a refusal. ``refine_to_common_space_1d`` has none.
-    # The binding: ``Bspline.insert_knots`` refuses a count other than the dimension itself. The
-    # knots are made outside the timed call, since NumPy releases the GIL to compute them.
+    # CAD call that has such a refusal. ``refine_to_common_space_1d`` has none. Where the Python
+    # wrapper refuses the argument itself, the entry calls the binding, whose refusal it pins.
+    # The knots are made outside the timed call, since NumPy releases the GIL to compute them.
     "insert_knots refused": _refused(
         _prepared(
             lambda: (_spline(7, [593, 593], 3), np.linspace(0.0, 1.0, 1002)[1:-1]),
@@ -690,17 +704,19 @@ SHORT_CALLS: dict[str, Callable[[], Callable[[], object]]] = {
         _on_spline(3, [997, 997], 3, lambda b: b.elevate_degree([59, 0])), "binomial"
     ),
     "Bspline.reduce_degree refused": _refused(
-        _on_spline(3, [215, 215], 3, lambda b: b.reduce_degree([4, 0])), "exceeds current degree"
+        _on_spline(3, [215, 215], 3, lambda b: b._h.reduce_degree([4, 0])), "exceeds current degree"
     ),
     "remove_knots refused": _refused(
-        _on_spline(3, [597, 597], 3, lambda b: b.remove_knots([np.arange(1, 37) / 597])),
+        _on_spline(
+            3, [597, 597], 3, lambda b: b._h.remove_knots([np.arange(1, 37) / 597], None, None)
+        ),
         "sequence length",
     ),
     "derivative refused": _refused(
-        _on_spline(3, [1097, 1097], 3, lambda b: b.derivative(5)), "direction must be in"
+        _on_spline(3, [1097, 1097], 3, lambda b: b._h.derivative(5)), "direction must be in"
     ),
     "derivative keep_degree refused": _refused(
-        _on_spline(3, [897, 897], 3, lambda b: b.derivative(5, keep_degree=True)),
+        _on_spline(3, [897, 897], 3, lambda b: b._h.derivative_keep_degree(5)),
         "direction must be in",
     ),
     "make_compat refused": _refused(
@@ -718,25 +734,21 @@ SHORT_CALLS: dict[str, Callable[[], Callable[[], object]]] = {
         _on_spline(3, [380, 380], 3, lambda b: create_revolution(b, [0.0] * 3, axis=[0.0] * 3)),
         "must be non-zero",
     ),
-    # The first curve is the surface itself, whose extents alone put the estimate above it.
+    # The first curve is the surface itself, whose extents alone put the estimate above it. The
+    # other curves are taken outside the timed call, as the faces below are.
     "create_coons_surface refused": _refused(
         _prepared(
-            lambda: _spline(3, [1200, 1200], 3),
-            lambda s: create_coons_surface(
-                ((s, s.boundary(0, 1)), (s.boundary(1, 0), s.boundary(1, 1)))  # type: ignore[arg-type]
-            ),
+            lambda: _surface_and_curves(1200),
+            lambda sc: create_coons_surface(((sc[0], sc[1]), (sc[2], sc[3]))),
         ),
         "must be 1D",
     ),
+    # The first face is the volume itself. The faces are taken outside the timed call: with
+    # them inside, the mutant that releases the GIL for every call passed this entry.
     "create_coons_volume refused": _refused(
         _prepared(
-            lambda: _spline(3, [70, 70, 70], 3),
-            lambda v: create_coons_volume(
-                (  # type: ignore[arg-type]
-                    (v, v.boundary(0, 1)),
-                    *((v.boundary(a, 0), v.boundary(a, 1)) for a in (1, 2)),
-                )
-            ),
+            lambda: _volume_and_faces(70),
+            lambda vf: ext.cad.create_coons_volume(*vf),
         ),
         "must be 2D",
     ),
