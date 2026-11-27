@@ -128,8 +128,9 @@ double to_open_ops(const bspline::Bspline<T>& b) {
 /// multiply-add each per entry, `2 (k - j) (k - j - 1)` at least; summed, `(2 / 3) (k^3 - k)`.
 /// Eigen's blocked form applies each block of reflectors with at least as many. A lower bound: it
 /// leaves out the matrix's assembly, the right-hand side and the residual check. Zero when the
-/// count is not the dimension, nothing is converted, or a continuity is out of range, which the
-/// call refuses.
+/// count is not the dimension or nothing is converted, which the call refuses before any work; a
+/// continuity out of range is refused when its direction is reached, so only the directions
+/// converted before it count.
 template <class T>
 double to_periodic_ops(const bspline::Bspline<T>& b,
                        const std::vector<std::optional<long long>>& continuity) {
@@ -147,7 +148,7 @@ double to_periodic_ops(const bspline::Bspline<T>& b,
     const long long c =
         *continuity[d] == bspline::convert_default_continuity ? p - 1 : *continuity[d];
     if (c < 0 || c > p - 1) {
-      return 0.0;
+      return ops;  // refused once its direction is reached, after the earlier conversions
     }
     const auto k = static_cast<double>((std::max)(static_cast<long long>(b.shape()[d]) - p, 0LL));
     ops += 2.0 / 3.0 * (k * k * k - k);
@@ -190,9 +191,11 @@ double subdivision_ops(const bspline::Bspline<T>& b, const std::vector<long long
 /// Work of `restrict`, for the GIL decision only: the first restricted direction inserts knots at
 /// its bounds, or copies, over every row of the net before it cuts the piece (`restrict_1d`), so
 /// it writes at least `b.size()` values. Zero for the arguments the call refuses before any work:
-/// a count of bounds other than the dimension, no direction bounded, or a bounded direction whose
-/// bounds `validate_restrict_bounds` refuses (a NaN, a lower bound not below the upper one, or a
-/// bound beyond a domain end by more than the space's tolerance).
+/// a count of bounds other than the dimension, no direction bounded, or bounds of the first
+/// bounded direction, when it has no extents before it, that `validate_restrict_bounds` refuses (a
+/// NaN, a lower bound not below the upper one, or a bound beyond a domain end by more than the
+/// space's tolerance). Bounds refused in a later direction are reached after an earlier
+/// direction's restriction or the net's flattened copy, `b.size()` values written either way.
 template <class T>
 double restriction_ops(const bspline::Bspline<T>& b,
                        const std::vector<std::optional<std::pair<double, double>>>& bounds) {
@@ -201,7 +204,12 @@ double restriction_ops(const bspline::Bspline<T>& b,
     return 0.0;
   }
   const bspline::BsplineSpace<T> whole = b.space();
+  const auto net = static_cast<double>(b.size());
+  std::size_t before = 1;  // the extents before direction `d`
+  bool first = true;
   for (std::size_t d = 0; d < b.dim(); ++d) {
+    const std::size_t outer = before;
+    before *= b.shape()[d];
     if (!bounds[d].has_value()) {
       continue;
     }
@@ -212,10 +220,13 @@ double restriction_ops(const bspline::Bspline<T>& b,
     const double tol = whole.spaces()[d].tolerance();
     if (std::isnan(lo) || std::isnan(hi) || lo >= hi || (lo < a && std::abs(lo - a) > tol) ||
         (hi > e && std::abs(hi - e) > tol)) {
-      return 0.0;
+      // Refused when its direction is reached: after an earlier direction's restriction, or after
+      // the net's flattened copy for a direction with extents before it.
+      return first && outer == 1 ? 0.0 : net;
     }
+    first = false;
   }
-  return static_cast<double>(b.size());
+  return net;
 }
 
 /// Work of `split`, for the GIL decision only: the net is flattened along the direction (a copy),

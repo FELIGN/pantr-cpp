@@ -155,21 +155,25 @@ double reduce_ops(const bspline::Bspline<T>& b, const std::vector<long long>& de
 /// it stands into the kernel's working rows (`detail::remove_knot_kernel`), at least `n - k p`
 /// rows, since each removal takes at most `p`; each row holds `b.size() / n` values. A lower
 /// bound: it leaves out the kernel's result and the later directions, whose nets the removal
-/// shrinks. Zero for the arguments the call refuses before any
-/// work: a periodic direction, a count of directions other than the dimension, every direction
-/// skipped, or `num` below 1.
+/// shrinks. Zero for the arguments the call refuses before any work: a periodic direction, a
+/// count of directions other than the dimension, or every direction skipped; `num` below 1 is
+/// refused after the first direction's copy of the net, `b.size()` values.
 template <class T>
 double removal_ops(const bspline::Bspline<T>& b, std::span<const std::span<const T>> knot_values,
                    std::optional<long long> num) {
   const bspline::BsplineSpace<T> whole = b.space();
   const bool periodic = std::any_of(whole.spaces().begin(), whole.spaces().end(),
                                     [](const auto& s) { return s.periodic(); });
-  if (periodic || knot_values.size() != b.dim() || (num.has_value() && *num < 1)) {
+  if (periodic || knot_values.size() != b.dim()) {
     return 0.0;
   }
+  const bool refused_num = num.has_value() && *num < 1;  // refused after the net's copy
   for (std::size_t d = 0; d < b.dim(); ++d) {
     if (knot_values[d].empty()) {
       continue;
+    }
+    if (refused_num) {
+      return static_cast<double>(b.size());
     }
     const auto n = static_cast<double>(b.shape()[d]);
     const auto p = static_cast<double>(whole.spaces()[d].degree());
