@@ -158,9 +158,8 @@ std::size_t interior_classes(const bspline::BsplineSpace1D<T>& s) {
 ///    for one with `I` interior knots, `N` intervals and increment `t` (A5.9 adds `t` copies of
 ///    every distinct interior value). An input at the largest degree is not elevated, so it
 ///    receives at least the difference;
-///  - along each selected axis, the merge of the interior classes
-///  (`cad::detail::merge_breakpoints`):
-///    each class of each input is searched for in the union of every input's classes by
+///  - along each selected axis, the merge of the interior classes (`merge_breakpoints`): each
+///    class of each input is searched for in the union of every input's classes by
 ///    `std::lower_bound`, at least `floor(log2(M + 1))` comparisons over its `M` entries, and `M`
 ///    is at least the most classes any input has, as the union holds each input's distinct values.
 ///    A lower bound: it leaves out the sort of the union and the classifications.
@@ -359,7 +358,7 @@ double join_ops(const AnyB& b1, const AnyB& b2, long long axis) {
   }
   const std::array<AnyB, 2> pair = {b1, b2};
   const double compat = others.empty() ? 0.0 : make_compat_ops(pair, others);
-  const auto joined = static_cast<double>((std::max)(size_of(b1), size_of(b2)));
+  const auto larger = static_cast<double>((std::max)(size_of(b1), size_of(b2)));
   const auto degree_along = [axis](const AnyB& b) {
     return std::visit(
         [axis](const auto& v) {
@@ -368,7 +367,7 @@ double join_ops(const AnyB& b1, const AnyB& b2, long long axis) {
         b);
   };
   const bool removal = (std::max)(degree_along(b1), degree_along(b2)) > 1;
-  return compat + (removal ? 4.0 : 2.0) * joined;
+  return compat + (removal ? 4.0 : 2.0) * larger;
 }
 
 AnyB ruled_any(const AnyB& b1, const AnyB& b2) {
