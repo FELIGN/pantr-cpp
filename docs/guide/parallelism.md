@@ -124,21 +124,26 @@ mapping of the rule in a hierarchical grid's `cell_quadrature` without one, the 
 first `query_aabb` or `cell_bvh`, which is built serially, the B-spline refinements and
 modifications (`insert_knots`, `subdivide`, `restrict`, `split`, `to_open_bspline`, `to_periodic`,
 `elevate_degree`, `reduce_degree`, `remove_knots`, a non-rational B-spline's `derivative`, and
-`BsplineSpace1D`'s knot insertion and subdivision), and the CAD constructions `make_compat`,
-`create_ruled`, `create_revolution`, `create_coons_surface`, `create_coons_volume` and `join`)
-release it only when they are long. The CAD primitives (`create_line`, `create_circle`,
-`create_bilinear`, `create_trilinear`) build a handful of control points and keep it. Several Python
-threads then run PaNTr kernels concurrently, as in this pattern. A call counts as long when its
-estimated work reaches a fixed threshold, about the work of the default switch interval
-(`sys.getswitchinterval()`, 5 ms); the threshold does not follow a changed interval. The estimates
-bound the work from below, and the one for a degree reduction's first build of its exact operator is
-conservative: it counts only the assembly of the Gram matrices, so a cold reduction of middle degree
-can keep the GIL for its whole first call. `Bspline.reduce_degree` does not count that build at all,
-and `make_compat` (with the CAD constructions that call it) counts, beside elevation, opening and
-dtype widening, only the knots it can show are missing from an input, so either can keep the GIL for
-a call longer than the threshold. One cost remains: when another Python thread runs CPU-bound
-bytecode, a call that releases the GIL waits up to a switch interval to get it back, which a
-mid-size pool call notices and a short call that keeps the GIL does not.
+the knot-vector computation of `BsplineSpace1D.insert_knots` and `subdivide`), and the CAD
+constructions `make_compat`, `create_ruled`, `create_revolution`, `create_coons_surface`,
+`create_coons_volume` and `join`) release it only when they are long. `BsplineSpace1D.insert_knots`
+and `subdivide` then build the new space with the GIL held, a large share of the call at large
+sizes. The CAD primitives (`create_line`, `create_circle`, `create_bilinear`, `create_trilinear`)
+build a handful of control points and keep it. Several Python threads then run PaNTr kernels
+concurrently, as in this pattern. A call counts as long when its estimated work reaches a fixed
+threshold, about the work of the default switch interval (`sys.getswitchinterval()`, 5 ms); the
+threshold does not follow a changed interval. The estimates bound the work from below, and the one
+for a degree reduction's first build of its exact operator is conservative: it counts only the
+assembly of the Gram matrices, so a cold reduction of middle degree can keep the GIL for its whole
+first call. `Bspline.reduce_degree` does not count that build at all.
+The estimates of `make_compat`, and of `create_ruled` and `join`, which count its work as part of
+theirs, count beside elevation, opening and dtype widening only the search that merges the inputs'
+knot classes and the knots they can show are missing from an input; those of `create_coons_surface`
+and `create_coons_volume` count only the combination of their terms, and none of the compatibility
+or the ruled surfaces they build. Each of these can keep the GIL for a call longer than the
+threshold. One cost remains: when another Python thread runs CPU-bound bytecode, a call that
+releases the GIL waits up to a switch interval to get it back, which a mid-size pool call notices
+and a short call that keeps the GIL does not.
 
 ### Pattern 3: Balanced -- user and PaNTr share cores
 
