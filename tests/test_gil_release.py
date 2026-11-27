@@ -6,12 +6,12 @@ duration; one that releases it leaves gaps of about the wake period. The asserti
 largest gap with half the call's duration, a margin of an order of magnitude over the wake period
 on any machine where the call takes tens of milliseconds, so it does not depend on the machine's
 speed. The cases cover the Bezier operations that reach the thread pool, the reductions and fits
-that run exact or dense solves, and the grids' serial passes over their cells; each is sized above
-the work at which the binding releases the GIL (``gil_release_min_ops`` in
-``bindings/src/arrays.hpp``), or builds a high-degree exact reduction operator the process table
-does not hold yet. ``l2_project_bspline`` releases it too but is absent: its sum-factorised solves
-are short beside sampling the user's function, so the call does not tell a held GIL from a released
-one.
+that run exact or dense solves, the grids' serial passes over their cells, and the B-spline
+refinements, modifications and CAD constructions; each is sized above the work at which the binding
+releases the GIL (``gil_release_min_ops`` in ``bindings/src/arrays.hpp``), or builds a high-degree
+exact reduction operator the process table does not hold yet. ``l2_project_bspline`` releases it
+too but is absent: its sum-factorised solves are short beside sampling the user's function, so the
+call does not tell a held GIL from a released one.
 
 A short call keeps the GIL: releasing it while another thread is CPU-bound costs the caller about
 one switch interval before it gets the GIL back, which is far more than the call itself.
@@ -32,12 +32,23 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
+from pantr._ext import ext
 from pantr._testing import reduction_cache_clear
 from pantr.bezier import Bezier, fit_bezier
 from pantr.bspline import (
+    Bspline,
+    BsplineSpace1D,
     create_uniform_space,
     fit_bspline,
     quasi_interpolate_bspline,
+)
+from pantr.cad import (
+    create_coons_surface,
+    create_coons_volume,
+    create_revolution,
+    create_ruled,
+    join,
+    make_compat,
 )
 from pantr.geometry import AABB
 from pantr.grid import cell_quadrature, partition_grid, uniform_grid
@@ -213,6 +224,169 @@ def _first_query(cells: int) -> Callable[[], Callable[[], object]]:
     return setup
 
 
+# The B-spline refinements, modifications and CAD constructions. Each estimate named below is the
+# binding's lower bound on the call's work (``bindings/src/bspline_refine.cpp``,
+# ``bspline_modify.cpp``, ``cad.cpp``); ``n`` is a direction's control points, ``rest`` the values
+# of the other extents and the coordinates.
+
+
+def _spline(degree: int, intervals: list[int], rank: int, *, periodic: bool = False) -> Bspline:
+    """A B-spline of uniform knots and random control points."""
+    space = create_uniform_space(degree, intervals, periodic=periodic)
+    return Bspline(space, _rng().random((*space.num_basis, rank)))
+
+
+def _on_spline(
+    degree: int,
+    intervals: list[int],
+    rank: int,
+    op: Callable[[Bspline], object],
+    *,
+    periodic: bool = False,
+) -> Callable[[], Callable[[], object]]:
+    """Build the B-spline outside the timed call and time ``op`` on it."""
+
+    def setup() -> Callable[[], object]:
+        b = _spline(degree, intervals, rank, periodic=periodic)
+        return lambda: op(b)
+
+    return setup
+
+
+def _to_periodic(intervals: int) -> Callable[[], Callable[[], object]]:
+    """Convert the open form of a periodic cubic curve back to periodic form."""
+
+    def setup() -> Callable[[], object]:
+        opened = _spline(3, [intervals], 3, periodic=True).to_open_bspline()
+        return lambda: opened.to_periodic()
+
+    return setup
+
+
+def _remove_knots(intervals: int, values: int) -> Callable[[], Callable[[], object]]:
+    """Try to remove ``values`` interior knots of direction 0 of a random cubic surface."""
+
+    def setup() -> Callable[[], object]:
+        b = _spline(3, [intervals, intervals], 3)
+        knots = np.arange(1, values + 1) / intervals
+        return lambda: b.remove_knots([knots, None])
+
+    return setup
+
+
+def _refine_to_common(
+    degree: int, intervals: int, intervals_b: int, other: int
+) -> Callable[[], Callable[[], object]]:
+    """Refine two surfaces to the union of their knots in direction 0."""
+
+    def setup() -> Callable[[], object]:
+        a = _spline(degree, [intervals, other], 3)
+        b = _spline(degree, [intervals_b, other], 3)
+        return lambda: ext.bspline.refine_to_common_space_1d(a._h, b._h, 0)
+
+    return setup
+
+
+def _linear_space(intervals: int) -> BsplineSpace1D:
+    """A clamped degree-1 space of uniform knots."""
+    return BsplineSpace1D(np.concatenate(([0.0], np.linspace(0.0, 1.0, intervals + 1), [1.0])), 1)
+
+
+def _inserted_knot_vector(
+    intervals: int, inserted: int, *, shuffled: bool
+) -> Callable[[], Callable[[], object]]:
+    """Merge ``inserted`` knots, shuffled or sorted, into a uniform degree-1 knot vector.
+
+    The binding is called, not the wrapper, which then builds a space of the result with the GIL
+    held.
+    """
+
+    def setup() -> Callable[[], object]:
+        space = _linear_space(intervals)
+        knots, tol = np.asarray(space.knots, dtype=np.float64), space.tolerance
+        new = np.linspace(0.0, 1.0, inserted + 2)[1:-1]
+        if shuffled:
+            new = _rng().permutation(new)
+        return lambda: ext.bspline.compute_inserted_knot_vector(knots, 1, new, tol)
+
+    return setup
+
+
+def _subdivision_knots(intervals: int) -> Callable[[], Callable[[], object]]:
+    """The knots that halve every interval of a degree-1 knot vector (the binding)."""
+
+    def setup() -> Callable[[], object]:
+        space = _linear_space(intervals)
+        knots, tol = np.asarray(space.knots, dtype=np.float64), space.tolerance
+        return lambda: ext.bspline.compute_uniform_subdivision_knots(knots, 1, tol, 2, None)
+
+    return setup
+
+
+def _make_compat(intervals: int) -> Callable[[], Callable[[], object]]:
+    """Two cubic surfaces of ``intervals`` and ``intervals + 1`` intervals per direction."""
+
+    def setup() -> Callable[[], object]:
+        a = _spline(3, [intervals, intervals], 3)
+        b = _spline(3, [intervals + 1, intervals + 1], 3)
+        return lambda: make_compat(a, b)
+
+    return setup
+
+
+def _ruled(intervals: int, more: int) -> Callable[[], Callable[[], object]]:
+    """The ruled volume between cubic surfaces of ``intervals`` and ``intervals + more``."""
+
+    def setup() -> Callable[[], object]:
+        a = _spline(3, [intervals, intervals], 3)
+        b = _spline(3, [intervals + more, intervals + more], 3)
+        return lambda: create_ruled(a, b)
+
+    return setup
+
+
+def _revolution(intervals: int) -> Callable[[], Callable[[], object]]:
+    """A cubic surface revolved a full turn about the z axis."""
+
+    def setup() -> Callable[[], object]:
+        b = _spline(3, [intervals, intervals], 3)
+        return lambda: create_revolution(b, [0.0, 0.0, 0.0])
+
+    return setup
+
+
+def _coons_surface(intervals: int) -> Callable[[], Callable[[], object]]:
+    """The Coons patch of the four boundary curves of a random cubic surface."""
+
+    def setup() -> Callable[[], object]:
+        s = _spline(3, [intervals, intervals], 3)
+        curves = ((s.boundary(0, 0), s.boundary(0, 1)), (s.boundary(1, 0), s.boundary(1, 1)))
+        return lambda: create_coons_surface(curves)  # type: ignore[arg-type]
+
+    return setup
+
+
+def _coons_volume(intervals: int) -> Callable[[], Callable[[], object]]:
+    """The Coons volume of the six boundary faces of a random cubic volume."""
+
+    def setup() -> Callable[[], object]:
+        v = _spline(3, [intervals, intervals, intervals], 3)
+        faces = tuple((v.boundary(a, 0), v.boundary(a, 1)) for a in range(3))
+        return lambda: create_coons_volume(faces)  # type: ignore[arg-type]
+
+    return setup
+
+
+def _join(intervals: list[int]) -> Callable[[], Callable[[], object]]:
+    """Join the two halves of a random cubic surface split along direction 0."""
+
+    def setup() -> Callable[[], object]:
+        left, right = _spline(3, intervals, 3).split(0, 0.5)
+        return lambda: join(left, right, 0)
+
+    return setup
+
+
 _WINDOWS_BLOCKED = pytest.mark.skipif(
     sys.platform == "win32",
     reason="the Windows wheel legs showed slice and restrict, and in a later run split and "
@@ -243,6 +417,57 @@ SETUPS: dict[str, Callable[[], Callable[[], object]]] = {
     "cell_quadrature selection": _selected_cell_quadrature(1000),
     # A BVH of 600^2 cells: 4 operations per cell for its corners and each of its 19 full levels.
     "query_aabb first": _first_query(600),
+    # rest * ((n + inserted) * (degree + 1) - degree^2) for the knots inserted into each direction
+    # of a 600^2 degree-7 net of rank 3, rest read off the input: 2 * 1800 * (1600 * 8 - 49).
+    "insert_knots": _on_spline(
+        7, [593, 593], 3, lambda b: b.insert_knots([np.linspace(0.0, 1.0, 1002)[1:-1]] * 2)
+    ),
+    # refinement_ops with nothing inserted, for each of the two periodic directions of an 800^2
+    # cubic net: 2 * 2400 * (800 * 4 - 9).
+    "to_open_bspline": _on_spline(3, [800, 800], 3, lambda b: b.to_open_bspline(), periodic=True),
+    # (2 / 3) (k^3 - k) for the QR of a curve of 1103 open points, k = 1103 - 3.
+    "to_periodic": _to_periodic(1100),
+    # As insert_knots, for one knot halving each of the 593 intervals of each direction:
+    # 2 * 1800 * (1193 * 8 - 49).
+    "subdivide": _on_spline(7, [593, 593], 3, lambda b: b.subdivide([2, 2])),
+    # The net's 1303^2 * 3 values, inserted at the bounds or copied.
+    "Bspline.restrict": _on_spline(3, [1300, 1300], 3, lambda b: b.restrict([(0.2, 0.7), None])),
+    # Three passes over the 1000^2 * 3 values of a degree-7 net.
+    "Bspline.split": _on_spline(7, [993, 993], 3, lambda b: b.split(0, 0.3)),
+    # 2 (n + m), n = 1.5e6 + 3 knots and m = 1e6 new ones, which the call also sorts.
+    "compute_inserted_knot_vector": _inserted_knot_vector(1_500_000, 1_000_000, shuffled=True),
+    # The 4.5e6 + 3 knots, each read for the classes.
+    "compute_uniform_subdivision_knots": _subdivision_knots(4_500_000),
+    # rest * (n + increment * intervals) = 3000 * (1000 + 997).
+    "elevate_degree": _on_spline(3, [997, 997], 3, lambda b: b.elevate_degree([1, 0])),
+    # rest * (intervals * (q + 1) (p + 1) + removals * (q + intervals)), one forced removal at each
+    # of the 169 interior knots: 519 * (170 * 12 + 169 * 172).
+    "Bspline.reduce_degree": _on_spline(3, [170, 170], 3, lambda b: b.reduce_degree([1, 0])),
+    # (1 + values) copies of the 600^2 * 3 values.
+    "remove_knots": _remove_knots(597, 8),
+    # 2 * rest * (n - 1) = 2 * 3300 * 1099, along direction 1, which flattens the net (a
+    # transposed copy) and restores it.
+    "derivative": _on_spline(3, [1097, 1097], 3, lambda b: b.derivative(1)),
+    # As derivative, plus rest * (n - 1 + intervals) for the elevation: 2700 * (2 * 899 + 1796).
+    "derivative keep_degree": _on_spline(
+        3, [897, 897], 3, lambda b: b.derivative(0, keep_degree=True)
+    ),
+    # refinement_ops for the 800 in-domain knots the coarser degree-7 one lacks:
+    # 4500 * (1607 * 8 - 49).
+    "refine_to_common_space_1d": _refine_to_common(7, 800, 1600, 1493),
+    # Per direction, the coarser surface lacks one interior knot: 2 * 1509 * (504 * 4 - 9).
+    "make_compat": _make_compat(500),
+    # make_compat's estimate (below) for surfaces of 500^2 and 501^2 intervals, plus twice their
+    # two nets, stacked and copied.
+    "create_ruled": _ruled(500, 1),
+    # 16 * points * 9 for the full turn, 383^2 points.
+    "create_revolution": _revolution(380),
+    # 3 * 1203^2 * 3: three terms added into the patch.
+    "create_coons_surface": _coons_surface(1200),
+    # 7 * 73^3 * 3: seven terms added into the volume.
+    "create_coons_volume": _coons_volume(70),
+    # Twice the larger half's net, 503 * 1703 * 3 values.
+    "join": _join([1000, 1700]),
 }
 
 
@@ -347,6 +572,33 @@ SHORT_CALLS: dict[str, Callable[[], Callable[[], object]]] = {
     "partition_grid": _block_partition(300),
     "cell_quadrature selection": _selected_cell_quadrature(100),
     "query_aabb first": _first_query(40),
+    # Each estimate at most a tenth of the threshold (the long entry's formula, at these sizes),
+    # with the call not trivially short.
+    "insert_knots": _on_spline(
+        3, [97, 97], 3, lambda b: b.insert_knots([np.linspace(0.0, 1.0, 202)[1:-1], None])
+    ),
+    "to_open_bspline": _on_spline(3, [100, 100], 3, lambda b: b.to_open_bspline(), periodic=True),
+    "to_periodic": _to_periodic(80),
+    "subdivide": _on_spline(3, [120, 120], 3, lambda b: b.subdivide([2, 1])),
+    "Bspline.restrict": _on_spline(3, [300, 300], 3, lambda b: b.restrict([(0.2, 0.7), None])),
+    "Bspline.split": _on_spline(3, [200, 200], 3, lambda b: b.split(0, 0.3)),
+    "compute_inserted_knot_vector": _inserted_knot_vector(100_000, 50_000, shuffled=False),
+    "compute_uniform_subdivision_knots": _subdivision_knots(100_000),
+    "elevate_degree": _on_spline(3, [197, 197], 3, lambda b: b.elevate_degree([1, 0])),
+    "Bspline.reduce_degree": _on_spline(3, [40, 40], 3, lambda b: b.reduce_degree([1, 0])),
+    "remove_knots": _remove_knots(97, 4),
+    "derivative": _on_spline(3, [197, 197], 3, lambda b: b.derivative(1)),
+    "derivative keep_degree": _on_spline(
+        3, [147, 147], 3, lambda b: b.derivative(0, keep_degree=True)
+    ),
+    # Knots that do not nest: each receives about 120, the estimate counts the one of difference.
+    "refine_to_common_space_1d": _refine_to_common(3, 120, 121, 97),
+    "make_compat": _make_compat(100),
+    "create_ruled": _ruled(170, 0),
+    "create_revolution": _revolution(37),
+    "create_coons_surface": _coons_surface(147),
+    "create_coons_volume": _coons_volume(17),
+    "join": _join([200, 200]),
 }
 
 
