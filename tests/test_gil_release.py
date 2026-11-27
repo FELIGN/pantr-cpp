@@ -253,12 +253,14 @@ def _on_spline(
     return setup
 
 
-def _to_periodic(intervals: int) -> Callable[[], Callable[[], object]]:
+def _to_periodic(
+    intervals: int, continuity: int | None = None
+) -> Callable[[], Callable[[], object]]:
     """Convert the open form of a periodic cubic curve back to periodic form."""
 
     def setup() -> Callable[[], object]:
         opened = _spline(3, [intervals], 3, periodic=True).to_open_bspline()
-        return lambda: opened.to_periodic()
+        return lambda: opened.to_periodic(continuity)
 
     return setup
 
@@ -287,15 +289,34 @@ def _refine_to_common(
     return setup
 
 
-def _refused(op: Callable[[Bspline], object], match: str) -> Callable[[Bspline], object]:
-    """Run ``op``, which the call refuses before any work, and check that it does."""
+def _prepared[T](
+    build: Callable[[], T], op: Callable[[T], object]
+) -> Callable[[], Callable[[], object]]:
+    """Build the arguments outside the timed call and time ``op`` on them."""
 
-    def call(b: Bspline) -> object:
-        with pytest.raises(ValueError, match=match):
-            op(b)
-        return None
+    def setup() -> Callable[[], object]:
+        args = build()
+        return lambda: op(args)
 
-    return call
+    return setup
+
+
+def _refused(
+    setup: Callable[[], Callable[[], object]], match: str
+) -> Callable[[], Callable[[], object]]:
+    """Time the call ``setup`` prepares, which refuses its arguments, and check that it does."""
+
+    def refusing_setup() -> Callable[[], object]:
+        call = setup()
+
+        def refused() -> object:
+            with pytest.raises(ValueError, match=match):
+                call()
+            return None
+
+        return refused
+
+    return refusing_setup
 
 
 def _linear_space(intervals: int) -> BsplineSpace1D:
@@ -323,24 +344,26 @@ def _inserted_knot_vector(
     return setup
 
 
-def _subdivision_knots(intervals: int) -> Callable[[], Callable[[], object]]:
-    """The knots that halve every interval of a degree-1 knot vector (the binding)."""
+def _subdivision_knots(intervals: int, count: int = 2) -> Callable[[], Callable[[], object]]:
+    """The knots that split every interval of a degree-1 knot vector in ``count`` (the binding)."""
 
     def setup() -> Callable[[], object]:
         space = _linear_space(intervals)
         knots, tol = np.asarray(space.knots, dtype=np.float64), space.tolerance
-        return lambda: ext.bspline.compute_uniform_subdivision_knots(knots, 1, tol, 2, None)
+        return lambda: ext.bspline.compute_uniform_subdivision_knots(knots, 1, tol, count, None)
 
     return setup
 
 
-def _make_compat(intervals: int) -> Callable[[], Callable[[], object]]:
-    """Two cubic surfaces of ``intervals`` and ``intervals + 1`` intervals per direction."""
+def _make_compat(
+    first: tuple[int, list[int]], second: tuple[int, list[int]], axes: list[int] | None = None
+) -> Callable[[], Callable[[], object]]:
+    """Make two B-splines compatible, each given as its degree and its intervals per direction."""
 
     def setup() -> Callable[[], object]:
-        a = _spline(3, [intervals, intervals], 3)
-        b = _spline(3, [intervals + 1, intervals + 1], 3)
-        return lambda: make_compat(a, b)
+        a = _spline(first[0], first[1], 3)
+        b = _spline(second[0], second[1], 3)
+        return lambda: make_compat(a, b, axes=axes)
 
     return setup
 
@@ -428,24 +451,25 @@ SETUPS: dict[str, Callable[[], Callable[[], object]]] = {
     "cell_quadrature selection": _selected_cell_quadrature(1000),
     # A BVH of 600^2 cells: 4 operations per cell for its corners and each of its 19 full levels.
     "query_aabb first": _first_query(600),
-    # rest * ((n + inserted) * (degree + 1) - degree^2) for the knots inserted into each direction
-    # of a 600^2 degree-7 net of rank 3, rest read off the input: 2 * 1800 * (1600 * 8 - 49).
+    # rest * ((n + inserted) * (degree + 1) - degree (degree + 1)) for the knots inserted into each
+    # direction of a 600^2 degree-7 net of rank 3, rest read off the input:
+    # 2 * 1800 * (1600 * 8 - 56).
     "insert_knots": _on_spline(
         7, [593, 593], 3, lambda b: b.insert_knots([np.linspace(0.0, 1.0, 1002)[1:-1]] * 2)
     ),
     # refinement_ops with nothing inserted, for each of the two periodic directions of an 800^2
-    # cubic net: 2 * 2400 * (800 * 4 - 9).
+    # cubic net: 2 * 2400 * (800 * 4 - 12).
     "to_open_bspline": _on_spline(3, [800, 800], 3, lambda b: b.to_open_bspline(), periodic=True),
-    # (2 / 3) (k^3 - k) for the QR of a curve of 1103 open points, k = 1103 - 3.
-    "to_periodic": _to_periodic(1100),
-    # As insert_knots, for one knot halving each of the 593 intervals of each direction:
-    # 2 * 1800 * (1193 * 8 - 49).
-    "subdivide": _on_spline(7, [593, 593], 3, lambda b: b.subdivide([2, 2])),
+    # (2 / 3) (k^3 - k) for the QR of a curve of 1403 open points, k = 1403 - 3.
+    "to_periodic": _to_periodic(1400),
+    # As insert_knots, for one knot halving each of the 840 intervals of each direction:
+    # 2 * 2541 * (1687 * 8 - 56).
+    "subdivide": _on_spline(7, [840, 840], 3, lambda b: b.subdivide([2, 2])),
     # The net's 1303^2 * 3 values, inserted at the bounds or copied, along direction 1, whose
     # flattened copy keeps the call long enough to tell on a fast machine.
     "Bspline.restrict": _on_spline(3, [1300, 1300], 3, lambda b: b.restrict([None, (0.2, 0.7)])),
-    # Three passes over the 1000^2 * 3 values of a degree-7 net.
-    "Bspline.split": _on_spline(7, [993, 993], 3, lambda b: b.split(0, 0.3)),
+    # Three passes over the 1407^2 * 3 values of a degree-7 net.
+    "Bspline.split": _on_spline(7, [1400, 1400], 3, lambda b: b.split(0, 0.3)),
     # 2 (n + m), n = 1.5e6 + 3 knots and m = 1e6 new ones, which the call also sorts.
     "compute_inserted_knot_vector": _inserted_knot_vector(1_500_000, 1_000_000, shuffled=True),
     # The 4.5e6 + 3 knots, each read for the classes.
@@ -453,11 +477,11 @@ SETUPS: dict[str, Callable[[], Callable[[], object]]] = {
     # rest * (n + increment * intervals) = 3000 * (1000 + 997).
     "elevate_degree": _on_spline(3, [997, 997], 3, lambda b: b.elevate_degree([1, 0])),
     # rest * (intervals * (q + 1) (p + 1) + removals * (q + intervals)), one forced removal at each
-    # of the 169 interior knots: 519 * (170 * 12 + 169 * 172).
-    "Bspline.reduce_degree": _on_spline(3, [170, 170], 3, lambda b: b.reduce_degree([1, 0])),
-    # rest * (n + sum_k (n - 3 k)) for the copy and the 16 removals' working copies:
-    # 1800 * (600 + 16 * 600 - 3 * 120).
-    "remove_knots": _remove_knots(597, 16),
+    # of the 214 interior knots: 654 * (215 * 12 + 214 * 217).
+    "Bspline.reduce_degree": _on_spline(3, [215, 215], 3, lambda b: b.reduce_degree([1, 0])),
+    # rest * (n + sum_k (n - 3 k)) for the copy and the 36 removals' working copies:
+    # 1800 * (600 + 36 * 600 - 3 * 630).
+    "remove_knots": _remove_knots(597, 36),
     # 2 * rest * (n - 1) = 2 * 3300 * 1099, along direction 1, which flattens the net (a
     # transposed copy) and restores it.
     "derivative": _on_spline(3, [1097, 1097], 3, lambda b: b.derivative(1)),
@@ -466,10 +490,19 @@ SETUPS: dict[str, Callable[[], Callable[[], object]]] = {
         3, [897, 897], 3, lambda b: b.derivative(0, keep_degree=True)
     ),
     # refinement_ops for the 800 in-domain knots the coarser degree-7 one lacks:
-    # 4500 * (1607 * 8 - 49).
-    "refine_to_common_space_1d": _refine_to_common(7, 800, 1600, 1493),
-    # Per direction, the coarser surface lacks one interior knot: 2 * 1509 * (504 * 4 - 9).
-    "make_compat": _make_compat(500),
+    # 9021 * (1607 * 8 - 56).
+    "refine_to_common_space_1d": _refine_to_common(7, 800, 1600, 3000),
+    # Per direction, the coarser surface lacks one interior knot: 2 * 1509 * (504 * 4 - 12), with
+    # the merge's searches beside it.
+    "make_compat": _make_compat((3, [500, 500]), (3, [501, 501])),
+    # Two equal curves lack no knot, so only the merge counts: each input's interior classes, each
+    # searched for in the union of them all (``std::lower_bound``, at least floor(log2(M + 1))
+    # comparisons over M >= 499999 entries): 2 * 499999 * 18.
+    "make_compat knots": _make_compat((1, [500_000]), (1, [500_000])),
+    # The quadratic surface is elevated, ``rest * (n + intervals)`` per direction, and the cubic
+    # then receives a copy of each of its 799 interior knots: 2 * (2406 * 1602 + 2409 * (1602 * 4
+    # - 12)), with the merge's searches beside them.
+    "make_compat elevated": _make_compat((3, [800, 800]), (2, [800, 800])),
     # make_compat's estimate (above) for surfaces of 500^2 and 501^2 intervals, plus twice their
     # two nets, stacked and copied.
     "create_ruled": _ruled(500, 1),
@@ -479,8 +512,12 @@ SETUPS: dict[str, Callable[[], Callable[[], object]]] = {
     "create_coons_surface": _coons_surface(1200),
     # 7 * 73^3 * 3: seven terms added into the volume.
     "create_coons_volume": _coons_volume(70),
-    # Twice the larger half's net, 503 * 1703 * 3 values.
+    # Four times the larger half's net, 503 * 1703 * 3 values: the joined net written and copied,
+    # then copied twice by the junction's knot removal.
     "join": _join([1000, 1700]),
+    # As join, for the two halves of a curve of 1.2e6 intervals: 4 * 600003 * 3, where the joined
+    # net alone, without the knot removal, is below the threshold.
+    "join curves": _join([1_200_000]),
 }
 
 
@@ -606,22 +643,106 @@ SHORT_CALLS: dict[str, Callable[[], Callable[[], object]]] = {
     ),
     # Knots that do not nest: each receives about 120, the estimate counts the one of difference.
     "refine_to_common_space_1d": _refine_to_common(3, 120, 121, 97),
-    "make_compat": _make_compat(100),
+    "make_compat": _make_compat((3, [100, 100]), (3, [101, 101])),
     "create_ruled": _ruled(170, 0),
     "create_revolution": _revolution(37),
     "create_coons_surface": _coons_surface(147),
     "create_coons_volume": _coons_volume(17),
     "join": _join([200, 200]),
-    # Refused before any work on nets whose estimate would otherwise be above the threshold (the
-    # long entries' sizes), so each counts no work and keeps the GIL.
-    "Bspline.restrict refused": _on_spline(
-        3, [1300, 1300], 3, _refused(lambda b: b.restrict([(0.7, 0.2), None]), "strictly less")
+    # Refused before any work, by an argument the estimate reads, on inputs whose estimate would
+    # otherwise be above the threshold (the long entries' sizes, or ones of the long entry's
+    # formula above it), so each counts no work and keeps the GIL: one per refining, modifying and
+    # CAD call that has such a refusal. ``refine_to_common_space_1d`` has none.
+    # The binding: ``Bspline.insert_knots`` refuses a count other than the dimension itself. The
+    # knots are made outside the timed call, since NumPy releases the GIL to compute them.
+    "insert_knots refused": _refused(
+        _prepared(
+            lambda: (_spline(7, [593, 593], 3), np.linspace(0.0, 1.0, 1002)[1:-1]),
+            lambda bk: bk[0]._h.insert_knots([bk[1]]),
+        ),
+        "sequence length",
     ),
-    "Bspline.split refused": _on_spline(
-        7, [993, 993], 3, _refused(lambda b: b.split(0, 1.5), "strictly inside")
+    "to_open_bspline refused": _refused(
+        _on_spline(3, [800, 800], 3, lambda b: b.to_open_bspline()), "already open"
     ),
-    "elevate_degree refused": _on_spline(
-        3, [997, 997], 3, _refused(lambda b: b.elevate_degree([59, 0]), "binomial")
+    "to_periodic refused": _refused(_to_periodic(1400, continuity=9), "continuity must be in"),
+    "subdivide refused": _refused(
+        _on_spline(7, [840, 840], 3, lambda b: b.subdivide([2, 2], 9)), "regularity must be in"
+    ),
+    "Bspline.restrict refused": _refused(
+        _on_spline(3, [1300, 1300], 3, lambda b: b.restrict([(0.7, 0.2), None])), "strictly less"
+    ),
+    # Both bounds on the ends of a clamped direction: nothing to restrict.
+    "Bspline.restrict full domain refused": _refused(
+        _on_spline(3, [1300, 1300], 3, lambda b: b.restrict([(0.0, 1.0), None])),
+        "nothing to restrict",
+    ),
+    "Bspline.split refused": _refused(
+        _on_spline(7, [993, 993], 3, lambda b: b.split(0, 1.5)), "strictly inside"
+    ),
+    "compute_inserted_knot_vector refused": _refused(
+        _inserted_knot_vector(1_500_000, 0, shuffled=False), "must not be empty"
+    ),
+    "compute_uniform_subdivision_knots refused": _refused(
+        _subdivision_knots(4_500_000, count=1), "must be >= 2"
+    ),
+    "elevate_degree refused": _refused(
+        _on_spline(3, [997, 997], 3, lambda b: b.elevate_degree([59, 0])), "binomial"
+    ),
+    "Bspline.reduce_degree refused": _refused(
+        _on_spline(3, [215, 215], 3, lambda b: b.reduce_degree([4, 0])), "exceeds current degree"
+    ),
+    "remove_knots refused": _refused(
+        _on_spline(3, [597, 597], 3, lambda b: b.remove_knots([np.arange(1, 37) / 597])),
+        "sequence length",
+    ),
+    "derivative refused": _refused(
+        _on_spline(3, [1097, 1097], 3, lambda b: b.derivative(5)), "direction must be in"
+    ),
+    "derivative keep_degree refused": _refused(
+        _on_spline(3, [897, 897], 3, lambda b: b.derivative(5, keep_degree=True)),
+        "direction must be in",
+    ),
+    "make_compat refused": _refused(
+        _make_compat((3, [500, 500]), (3, [501, 501]), axes=[9]), "out of range"
+    ),
+    # Two cubic volumes of 73^3 points: twice their nets alone is above the threshold.
+    "create_ruled refused": _refused(
+        _prepared(
+            lambda: (_spline(3, [70, 70, 70], 3), _spline(3, [70, 70, 70], 3)),
+            lambda pair: create_ruled(*pair),
+        ),
+        "requires dim <= 2",
+    ),
+    "create_revolution refused": _refused(
+        _on_spline(3, [380, 380], 3, lambda b: create_revolution(b, [0.0] * 3, axis=[0.0] * 3)),
+        "must be non-zero",
+    ),
+    # The first curve is the surface itself, whose extents alone put the estimate above it.
+    "create_coons_surface refused": _refused(
+        _prepared(
+            lambda: _spline(3, [1200, 1200], 3),
+            lambda s: create_coons_surface(
+                ((s, s.boundary(0, 1)), (s.boundary(1, 0), s.boundary(1, 1)))  # type: ignore[arg-type]
+            ),
+        ),
+        "must be 1D",
+    ),
+    "create_coons_volume refused": _refused(
+        _prepared(
+            lambda: _spline(3, [70, 70, 70], 3),
+            lambda v: create_coons_volume(
+                (  # type: ignore[arg-type]
+                    (v, v.boundary(0, 1)),
+                    *((v.boundary(a, 0), v.boundary(a, 1)) for a in (1, 2)),
+                )
+            ),
+        ),
+        "must be 2D",
+    ),
+    "join refused": _refused(
+        _prepared(lambda: _spline(3, [1000, 1700], 3).split(0, 0.5), lambda h: join(*h, 7)),
+        "axis must be in",
     ),
 }
 
