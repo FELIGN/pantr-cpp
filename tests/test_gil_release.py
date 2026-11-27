@@ -34,7 +34,7 @@ import numpy.typing as npt
 import pytest
 
 from pantr._ext import ext
-from pantr._testing import reduction_cache_clear
+from pantr._testing import oslo_rows, reduction_cache_clear
 from pantr.bezier import Bezier, fit_bezier
 from pantr.bspline import (
     Bspline,
@@ -435,6 +435,34 @@ def _join(intervals: list[int]) -> Callable[[], Callable[[], object]]:
     return setup
 
 
+@pytest.mark.parametrize("degree", range(1, 7))
+def test_refinement_bound_holds_below_an_unclamped_start(degree: int) -> None:
+    """The Oslo bands of a refinement hold the entries ``refinement_ops`` counts.
+
+    ``refinement_ops`` (``bindings/src/arrays.hpp``) takes each refined row's band as
+    ``degree + 1`` old rows less ``degree (degree + 1)`` in all, the most an unclamped start can
+    cut. Each start class of ``s`` knots is given the ``degree + 1 - s`` new knots below it,
+    within the tolerance, that the cut is largest with. Oracle: the kernel's own bands
+    (``oslo_rows``), counted where they fall inside the old net. Bug caught: the ``degree^2``
+    subtracted before, one entry short at degrees 1 and 2.
+    """
+    p = degree
+    for s in range(1, p + 1):
+        knots = np.concatenate(
+            [-1.0 - np.arange(p - s + 1)[::-1], np.zeros(s), [0.5], np.ones(p + 1)]
+        )
+        space = BsplineSpace1D(knots, p)
+        old = np.asarray(space.knots, dtype=np.float64)
+        k = p + 1 - s
+        new = np.concatenate([-space.tolerance * np.arange(1, k + 1) / (k + 1), [0.25]])
+        refined = ext.bspline.compute_inserted_knot_vector(old, p, new, space.tolerance)
+        _, first = oslo_rows(p, old, np.asarray(refined, dtype=np.float64))
+        cols = first[:, None] + np.arange(p + 1)[None, :]
+        inside = int(((cols >= 0) & (cols < len(old) - p - 1)).sum())
+        rows = len(refined) - p - 1
+        assert inside >= rows * (p + 1) - p * (p + 1), f"start class of {s}: {inside} entries"
+
+
 _WINDOWS_BLOCKED = pytest.mark.skipif(
     sys.platform == "win32",
     reason="the Windows wheel legs showed slice and restrict, and in a later run split and "
@@ -680,8 +708,9 @@ SHORT_CALLS: dict[str, Callable[[], Callable[[], object]]] = {
         _on_spline(3, [800, 800], 3, lambda b: b.to_open_bspline()), "already open"
     ),
     "to_periodic refused": _refused(_to_periodic(1400, continuity=9), "continuity must be in"),
+    # Regularity -2, not one above the degree, for which the unmirrored estimate is negative.
     "subdivide refused": _refused(
-        _on_spline(7, [840, 840], 3, lambda b: b.subdivide([2, 2], 9)), "regularity must be in"
+        _on_spline(7, [840, 840], 3, lambda b: b.subdivide([2, 2], -2)), "regularity must be in"
     ),
     "Bspline.restrict refused": _refused(
         _on_spline(3, [1300, 1300], 3, lambda b: b.restrict([(0.7, 0.2), None])), "strictly less"
@@ -694,8 +723,10 @@ SHORT_CALLS: dict[str, Callable[[], Callable[[], object]]] = {
     "Bspline.split refused": _refused(
         _on_spline(7, [993, 993], 3, lambda b: b.split(0, 1.5)), "strictly inside"
     ),
+    # 2 (n + 0) for n = 2.2e6 + 3 knots: above the threshold, which the long entry's knots alone
+    # are not.
     "compute_inserted_knot_vector refused": _refused(
-        _inserted_knot_vector(1_500_000, 0, shuffled=False), "must not be empty"
+        _inserted_knot_vector(2_200_000, 0, shuffled=False), "must not be empty"
     ),
     "compute_uniform_subdivision_knots refused": _refused(
         _subdivision_knots(4_500_000, count=1), "must be >= 2"
@@ -703,8 +734,9 @@ SHORT_CALLS: dict[str, Callable[[], Callable[[], object]]] = {
     "elevate_degree refused": _refused(
         _on_spline(3, [997, 997], 3, lambda b: b.elevate_degree([59, 0])), "binomial"
     ),
+    # The first direction refused, the second reducible: unmirrored, the second would count.
     "Bspline.reduce_degree refused": _refused(
-        _on_spline(3, [215, 215], 3, lambda b: b._h.reduce_degree([4, 0])), "exceeds current degree"
+        _on_spline(3, [215, 215], 3, lambda b: b._h.reduce_degree([4, 1])), "exceeds current degree"
     ),
     "remove_knots refused": _refused(
         _on_spline(
